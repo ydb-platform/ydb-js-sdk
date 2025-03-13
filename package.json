@@ -1,0 +1,40 @@
+{
+	"name": "ydbjs",
+	"version": "0.0.0",
+	"private": true,
+	"workspaces": [
+		"packages/*"
+	],
+	"devDependencies": {
+		"@arethetypeswrong/cli": "^0.17.4",
+		"@types/node": "^22.13.10",
+		"prettier": "^3.5.3",
+		"typescript": "^5.8.2"
+	},
+	"engineStrict": true,
+	"engines": {
+		"node": ">=20",
+		"npm": ">=9"
+	},
+	"prettier": {
+		"printWidth": 120,
+		"tabWidth": 4,
+		"useTabs": true,
+		"semi": false,
+		"singleQuote": true,
+		"trailingComma": "es5",
+		"bracketSpacing": true,
+		"bracketSameLine": false,
+		"arrowParens": "always",
+		"endOfLine": "lf",
+		"overrides": [
+			{
+				"files": "*.{md,yml,yaml}",
+				"options": {
+					"tabWidth": 2,
+					"useTabs": false
+				}
+			}
+		]
+	}
+}
