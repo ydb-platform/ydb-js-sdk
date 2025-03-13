@@ -1,0 +1,135 @@
+{
+	"name": "@ydbjs/api",
+	"version": "6.0.0",
+	"description": "YDB API",
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"scripts": {
+		"generate": "buf generate",
+		"prebuild": "rm -rf ./dist/*",
+		"build": "npm run build:cjs && npm run build:esm",
+		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
+		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"test": "bun test",
+		"attw": "attw --pack"
+	},
+	"exports": {
+		"./auth": {
+			"require": "./dist/cjs/auth.js",
+			"import": "./dist/esm/auth.js"
+		},
+		"./cms": {
+			"require": "./dist/cjs/cms.js",
+			"import": "./dist/esm/cms.js"
+		},
+		"./coordination": {
+			"require": "./dist/cjs/coordination.js",
+			"import": "./dist/esm/coordination.js"
+		},
+		"./discovery": {
+			"require": "./dist/cjs/discovery.js",
+			"import": "./dist/esm/discovery.js"
+		},
+		"./export": {
+			"require": "./dist/cjs/export.js",
+			"import": "./dist/esm/export.js"
+		},
+		"./federation-discovery": {
+			"require": "./dist/cjs/federation_discovery.js",
+			"import": "./dist/esm/federation_discovery.js"
+		},
+		"./import": {
+			"require": "./dist/cjs/import.js",
+			"import": "./dist/esm/import.js"
+		},
+		"./monitoring": {
+			"require": "./dist/cjs/monitoring.js",
+			"import": "./dist/esm/monitoring.js"
+		},
+		"./operation": {
+			"require": "./dist/cjs/operation.js",
+			"import": "./dist/esm/operation.js"
+		},
+		"./query": {
+			"require": "./dist/cjs/query.js",
+			"import": "./dist/esm/query.js"
+		},
+		"./rate-limiter": {
+			"require": "./dist/cjs/rate_limiter.js",
+			"import": "./dist/esm/rate_limiter.js"
+		},
+		"./scheme": {
+			"require": "./dist/cjs/scheme.js",
+			"import": "./dist/esm/scheme.js"
+		},
+		"./scripting": {
+			"require": "./dist/cjs/scripting.js",
+			"import": "./dist/esm/scripting.js"
+		},
+		"./table": {
+			"require": "./dist/cjs/table.js",
+			"import": "./dist/esm/table.js"
+		},
+		"./topic": {
+			"require": "./dist/cjs/topic.js",
+			"import": "./dist/esm/topic.js"
+		}
+	},
+	"typesVersions": {
+		"*": {
+			"auth": [
+				"./dist/cjs/auth.d.ts"
+			],
+			"cms": [
+				"./dist/cjs/cms.d.ts"
+			],
+			"coordination": [
+				"./dist/cjs/coordination.d.ts"
+			],
+			"discovery": [
+				"./dist/cjs/discovery.d.ts"
+			],
+			"export": [
+				"./dist/cjs/export.d.ts"
+			],
+			"federation-discovery": [
+				"./dist/cjs/federation_discovery.d.ts"
+			],
+			"import": [
+				"./dist/cjs/import.d.ts"
+			],
+			"monitoring": [
+				"./dist/cjs/monitoring.d.ts"
+			],
+			"operation": [
+				"./dist/cjs/operation.d.ts"
+			],
+			"query": [
+				"./dist/cjs/query.d.ts"
+			],
+			"rate-limiter": [
+				"./dist/cjs/rate_limiter.d.ts"
+			],
+			"scheme": [
+				"./dist/cjs/scheme.d.ts"
+			],
+			"scripting": [
+				"./dist/cjs/scripting.d.ts"
+			],
+			"table": [
+				"./dist/cjs/table.d.ts"
+			],
+			"topic": [
+				"./dist/cjs/topic.d.ts"
+			]
+		}
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "^2.2.3"
+	},
+	"devDependencies": {
+		"@bufbuild/buf": "^1.50.0",
+		"@bufbuild/protoc-gen-es": "^2.2.3"
+	}
+}
