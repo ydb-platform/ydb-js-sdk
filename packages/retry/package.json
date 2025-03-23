@@ -1,7 +1,7 @@
 {
-	"name": "@ydbjs/retrier",
+	"name": "@ydbjs/retry",
 	"version": "6.0.0",
-	"description": "YDB Retrier",
+	"description": "YDB Retry",
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,

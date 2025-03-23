@@ -9,7 +9,7 @@ import type { RetryContext } from "./context.js";
  *
  * @example
  * ```ts
- * import { retry, fixed } from '@ydbjs/retrier'
+ * import { retry, fixed } from '@ydbjs/retry'
  *
  * await retry(() => fetch('https://example.com'), {
  *     strategy: fixed(1000),
