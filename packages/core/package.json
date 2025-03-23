@@ -1,0 +1,29 @@
+{
+	"name": "@ydbjs/core",
+	"version": "6.0.0",
+	"description": "YDB Core",
+	"license": "Apache-2.0",
+	"type": "module",
+	"scripts": {
+		"prebuild": "rm -rf ./dist/*",
+		"build": "npm run build:cjs && npm run build:esm",
+		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
+		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"build:watch": "tsc --project tsconfig.json --outDir ./dist/esm --watch",
+		"test": "node --test --experimental-strip-types",
+		"attw": "attw --pack"
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "^2.2.3",
+		"@connectrpc/connect": "^2.0.2",
+		"@connectrpc/connect-node": "^2.0.2",
+		"@ydbjs/api": "6.0.0",
+		"@ydbjs/auth": "6.0.0",
+		"debug": "^4.4.0"
+	},
+	"devDependencies": {
+		"@types/debug": "^4.1.12",
+		"mitata": "^1.0.34",
+		"tinybench": "^3.1.1"
+	}
+}
