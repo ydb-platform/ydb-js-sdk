@@ -3,6 +3,8 @@
 		// We target ES2020, but require the Text Encoding API, BigInt and AsyncIterable, see below.
 		"target": "ES2020",
 		"lib": [
+			// DOM for the HeadersInit type.
+			"DOM",
 			"ES2020",
 			// ES2024.Promise for the Promise.withResolvers().
 			"ES2024.Promise"
@@ -10,7 +12,9 @@
 		"rewriteRelativeImportExtensions": true,
 		"allowImportingTsExtensions": true,
 		"declaration": true,
-		"types": ["node"],
+		"types": [
+			"node"
+		],
 		// We don't have dependencies that require interop
 		"esModuleInterop": false,
 		// As strict as possible
@@ -33,5 +37,7 @@
 		"verbatimModuleSyntax": true,
 		"skipLibCheck": false
 	},
-	"exclude": ["node_modules"]
+	"exclude": [
+		"node_modules"
+	]
 }
