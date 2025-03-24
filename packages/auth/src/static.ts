@@ -4,7 +4,7 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import { AuthService, createAuthServiceClient, LoginResultSchema } from "@ydbjs/api/auth";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
 
-import { CredentialsProvider } from "./index.ts";
+import { CredentialsProvider } from "./index.js";
 
 export type StaticCredentialsToken = {
 	value: string
@@ -43,6 +43,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		this.#client = createAuthServiceClient(endpointOrTransport);
 	}
 
+	// TODO: add retry logic
 	async getToken(force = false, signal?: AbortSignal): Promise<string> {
 		if (!force && this.#token && this.#token.exp > Date.now() / 1000) {
 			return this.#token.value;
