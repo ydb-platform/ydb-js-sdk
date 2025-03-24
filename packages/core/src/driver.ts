@@ -8,7 +8,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation';
 import type { CredentialsProvider } from '@ydbjs/auth';
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
 
-import { nodeIdKey } from './ctx.js';
+import { nodeIdKey } from './context.js';
 import { dbg } from './dbg.js';
 import { ConnectionPool, LazyConnection } from './pool.js';
 

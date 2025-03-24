@@ -6,7 +6,7 @@ import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/conn
 import { grpcStatusOk, headerGrpcStatus } from '@connectrpc/connect/protocol-grpc';
 import { EndpointInfoSchema, type EndpointInfo } from '@ydbjs/api/discovery';
 
-import { nodeIdKey } from './ctx.js';
+import { nodeIdKey } from './context.js';
 import { dbg } from './dbg.js';
 
 export interface Connection {
