@@ -5,13 +5,16 @@
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
+	"module": "dist/esm/index.js",
+	"main": "dist/cjs/index.js",
 	"scripts": {
 		"generate": "buf generate",
 		"prebuild": "rm -rf ./dist/*",
 		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
-		"test": "bun test",
+		"test": "node --experimental-strip-types --test",
+		"test:watch": "node --experimental-strip-types --test --watch",
 		"attw": "attw --pack"
 	},
 	"exports": {
@@ -76,6 +79,7 @@
 			"import": "./dist/esm/topic.js"
 		}
 	},
+	"types": "dist/esm/index.d.ts",
 	"typesVersions": {
 		"*": {
 			"auth": [

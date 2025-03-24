@@ -8,13 +8,12 @@
 	"module": "dist/esm/index.js",
 	"main": "dist/cjs/index.js",
 	"scripts": {
-		"generate": "buf generate",
 		"prebuild": "rm -rf ./dist/*",
 		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
-		"build:watch": "tsc --project tsconfig.json --outDir ./dist/esm --watch",
-		"test": "node --test --experimental-strip-types",
+		"test": "node --experimental-strip-types --test",
+		"test:watch": "node --experimental-strip-types --test --watch",
 		"attw": "attw --pack"
 	},
 	"exports": {
@@ -56,7 +55,6 @@
 		"@bufbuild/protobuf": "^2.2.3",
 		"@connectrpc/connect": "^2.0.2",
 		"@connectrpc/connect-node": "^2.0.2",
-		"@ydbjs/api": "6.0.0",
-		"@ydbjs/retry": "6.0.0"
+		"@ydbjs/api": "6.0.0"
 	}
 }
