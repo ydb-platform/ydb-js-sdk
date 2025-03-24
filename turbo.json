@@ -1,0 +1,56 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"tasks": {
+		"codegen": {
+			"dependsOn": [
+				"^codegen"
+			],
+			"outputs": [
+				"./src/gen/**"
+			]
+		},
+		"build:esm": {
+			"dependsOn": [
+				"^build:esm"
+			],
+			"inputs": [
+				"./src/**"
+			],
+			"outputs": [
+				"./dist/esm/**"
+			]
+		},
+		"build:cjs": {
+			"dependsOn": [
+				"^build:cjs"
+			],
+			"inputs": [
+				"./src/**"
+			],
+			"outputs": [
+				"./dist/cjs/**"
+			]
+		},
+		"test": {
+			"env": [
+				"YDB_CONNECTION_STRING",
+				"YDB_CONNECTION_STRING_SECURE",
+				"YDB_SSL_ROOT_CERTIFICATES_FILE"
+			],
+			"dependsOn": [
+				"build:esm"
+			]
+		},
+		"attw": {
+			"dependsOn": [
+				"^attw",
+				"build:esm",
+				"build:cjs"
+			],
+			"inputs": [
+				"./dist/**",
+				"package.json"
+			]
+		}
+	}
+}
