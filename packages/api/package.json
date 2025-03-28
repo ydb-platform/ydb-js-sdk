@@ -77,6 +77,10 @@
 		"./topic": {
 			"require": "./dist/cjs/topic.js",
 			"import": "./dist/esm/topic.js"
+		},
+		"./value": {
+			"require": "./dist/cjs/value.js",
+			"import": "./dist/esm/value.js"
 		}
 	},
 	"types": "dist/esm/index.d.ts",
@@ -126,6 +130,9 @@
 			],
 			"topic": [
 				"./dist/cjs/topic.d.ts"
+			],
+			"value": [
+				"./dist/cjs/value.d.ts"
 			]
 		}
 	},
