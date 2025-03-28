@@ -1,0 +1,38 @@
+{
+	"name": "@ydbjs/query",
+	"version": "6.0.0",
+	"description": "YDB Query Client",
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"module": "dist/esm/index.js",
+	"main": "dist/cjs/index.js",
+	"scripts": {
+		"prebuild": "rm -rf ./dist/*",
+		"build": "npm run build:cjs && npm run build:esm",
+		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
+		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"test": "node --experimental-strip-types --test",
+		"test:watch": "node --experimental-strip-types --test --watch",
+		"attw": "attw --pack"
+	},
+	"exports": {
+		".": {
+			"require": "./dist/cjs/index.js",
+			"import": "./dist/esm/index.js"
+		}
+	},
+	"types": "dist/esm/index.d.ts",
+	"dependencies": {
+		"@bufbuild/protobuf": "^2.2.3",
+		"@connectrpc/connect": "^2.0.2",
+		"@connectrpc/connect-node": "^2.0.2",
+		"@ydbjs/api": "6.0.0",
+		"@ydbjs/core": "6.0.0",
+		"@ydbjs/value": "6.0.0",
+		"debug": "^4.4.0"
+	},
+	"devDependencies": {
+		"@types/debug": "^4.1.12"
+	}
+}
