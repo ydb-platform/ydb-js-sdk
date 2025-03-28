@@ -1,0 +1,97 @@
+{
+	"name": "@ydbjs/value",
+	"version": "6.0.0",
+	"description": "YDB Value",
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"module": "dist/esm/index.js",
+	"main": "dist/cjs/index.js",
+	"scripts": {
+		"prebuild": "rm -rf ./dist/*",
+		"build": "npm run build:cjs && npm run build:esm",
+		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
+		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"test": "node --experimental-strip-types --test",
+		"test:watch": "node --experimental-strip-types --test --watch",
+		"attw": "attw --pack"
+	},
+	"exports": {
+		".": {
+			"require": "./dist/cjs/index.js",
+			"import": "./dist/esm/index.js"
+		},
+		"./primitive": {
+			"require": "./dist/cjs/primitive.js",
+			"import": "./dist/esm/primitive.js"
+		},
+		"./struct": {
+			"require": "./dist/cjs/struct.js",
+			"import": "./dist/esm/struct.js"
+		},
+		"./dict": {
+			"require": "./dist/cjs/dict.js",
+			"import": "./dist/esm/dict.js"
+		},
+		"./tuple": {
+			"require": "./dist/cjs/tuple.js",
+			"import": "./dist/esm/tuple.js"
+		},
+		"./list": {
+			"require": "./dist/cjs/list.js",
+			"import": "./dist/esm/list.js"
+		},
+		"./null": {
+			"require": "./dist/cjs/null.js",
+			"import": "./dist/esm/null.js"
+		},
+		"./uuid": {
+			"require": "./dist/cjs/uuid.js",
+			"import": "./dist/esm/uuid.js"
+		},
+		"./print": {
+			"require": "./dist/cjs/print.js",
+			"import": "./dist/esm/print.js"
+		}
+	},
+	"types": "dist/esm/index.d.ts",
+	"typesVersions": {
+		"*": {
+			".": [
+				"./dist/cjs/index.d.ts"
+			],
+			"primitive": [
+				"./dist/cjs/primitive.d.ts"
+			],
+			"struct": [
+				"./dist/cjs/struct.d.ts"
+			],
+			"dict": [
+				"./dist/cjs/dict.d.ts"
+			],
+			"tuple": [
+				"./dist/cjs/tuple.d.ts"
+			],
+			"list": [
+				"./dist/cjs/list.d.ts"
+			],
+			"null": [
+				"./dist/cjs/null.d.ts"
+			],
+			"uuid": [
+				"./dist/cjs/uuid.d.ts"
+			],
+			"print": [
+				"./dist/cjs/print.d.ts"
+			]
+		}
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "^2.2.3",
+		"@date-fns/tz": "^1.2.0",
+		"@ydbjs/api": "6.0.0",
+		"date-fns": "^4.1.0",
+		"debug": "^4.4.0",
+		"proposal-decimal": "^20240325.0.0"
+	}
+}
