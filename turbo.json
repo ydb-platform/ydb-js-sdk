@@ -31,6 +31,17 @@
 				"./dist/cjs/**"
 			]
 		},
+		"build": {
+			"dependsOn": [
+				"^build"
+			],
+			"inputs": [
+				"./src/**"
+			],
+			"outputs": [
+				"./dist/**"
+			]
+		},
 		"test": {
 			"env": [
 				"YDB_CONNECTION_STRING",
