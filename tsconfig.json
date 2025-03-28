@@ -10,7 +10,6 @@
 			"ES2024.Promise"
 		],
 		"rewriteRelativeImportExtensions": true,
-		"allowImportingTsExtensions": true,
 		"declaration": true,
 		"types": [
 			"node"
