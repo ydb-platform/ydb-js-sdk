@@ -8,9 +8,10 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation';
 import type { CredentialsProvider } from '@ydbjs/auth';
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
 
+import { LazyConnection, type Connection } from './connection.js';
 import { nodeIdKey } from './context.js';
 import { dbg } from './dbg.js';
-import { ConnectionPool, LazyConnection } from './pool.js';
+import { ConnectionPool } from './pool.js';
 
 export type DriverOptions = {
 	ssl?: tls.SecureContextOptions
@@ -76,6 +77,12 @@ export class Driver implements Transport, Disposable {
 			nodeId: Infinity,
 			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80')),
 			ssl: this.isSecure,
+		})
+
+		this.#interceptors.push((next) => (req) => {
+			req.header.set('x-ydb-database', this.database)
+			req.header.set('x-ydb-application-name', this.options['ydb.sdk.application'] || '')
+			return next(req)
 		})
 
 		if (options.credentialsProvier) {
@@ -174,6 +181,18 @@ export class Driver implements Transport, Disposable {
 		return result
 	}
 
+	get database(): string {
+		return this.cs.pathname || this.cs.searchParams.get('database') || ''
+	}
+
+	get isSecure(): boolean {
+		return this.cs.protocol === 'https:'
+	}
+
+	getConnection(preferNodeId?: number): Connection {
+		return this.#pool.aquire(preferNodeId)
+	}
+
 	ready(signal?: AbortSignal): Promise<boolean> {
 		if (signal) {
 			let onabort = () => {
@@ -185,14 +204,6 @@ export class Driver implements Transport, Disposable {
 		}
 
 		return this.#ready.promise
-	}
-
-	get database(): string {
-		return this.cs.pathname || this.cs.searchParams.get('database') || ''
-	}
-
-	get isSecure(): boolean {
-		return this.cs.protocol === 'https:'
 	}
 
 	unary<I extends DescMessage, O extends DescMessage>(method: DescMethodUnary<I, O>, signal: AbortSignal | undefined, timeoutMs: number | undefined, header: Headers | undefined, input: MessageInitShape<I>, contextValues?: ContextValues): Promise<UnaryResponse<I, O>> {

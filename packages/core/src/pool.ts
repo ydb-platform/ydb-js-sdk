@@ -1,84 +1,13 @@
-import { checkServerIdentity } from 'node:tls';
-
-import { equals, type DescMessage, type MessageShape } from '@bufbuild/protobuf';
-import { type Interceptor, type StreamResponse, type Transport } from '@connectrpc/connect';
-import { createGrpcTransport, type GrpcTransportOptions } from '@connectrpc/connect-node';
+import { equals } from '@bufbuild/protobuf';
+import type { Interceptor } from '@connectrpc/connect';
+import { type GrpcTransportOptions } from '@connectrpc/connect-node';
 import { grpcStatusOk, headerGrpcStatus } from '@connectrpc/connect/protocol-grpc';
 import { EndpointInfoSchema, type EndpointInfo } from '@ydbjs/api/discovery';
 
+import { LazyConnection, type Connection } from './connection.js';
 import { nodeIdKey } from './context.js';
 import { dbg } from './dbg.js';
-
-export interface Connection {
-	readonly endpoint: EndpointInfo;
-	readonly transport: Transport;
-	pessimizedUntil?: number;
-}
-
-export class LazyConnection implements Connection {
-	#options: GrpcTransportOptions;
-	#transport: Transport | null = null;
-
-	endpoint: EndpointInfo;
-	pessimizedUntil: number = 0;
-
-	constructor(endpoint: EndpointInfo, options: Omit<GrpcTransportOptions, 'baseUrl'>) {
-		this.endpoint = endpoint;
-
-		this.#options = {
-			...options,
-			baseUrl: this.endpoint.ssl ? `https://${endpoint.address}:${endpoint.port}` : `http://${endpoint.address}:${endpoint.port}`,
-			nodeOptions: {
-				...options.nodeOptions,
-				checkServerIdentity(hostname, cert) {
-					return checkServerIdentity(endpoint.sslTargetNameOverride || hostname, cert);
-				},
-			},
-			interceptors: [...options.interceptors || []]
-		};
-
-		this.#options.interceptors!.unshift(this.#debug)
-		this.#options.interceptors!.unshift(this.#markNodeId)
-	}
-
-	get transport(): Transport {
-		if (this.#transport === null) {
-			dbg.extend("conn")('create transport to node id=%d address=%s:%d', this.endpoint.nodeId, this.endpoint.address, this.endpoint.port);
-
-			this.#transport = createGrpcTransport(this.#options);
-		}
-
-		return this.#transport;
-	};
-
-	#markNodeId: Interceptor = (next) => {
-		return async (req) => {
-			req.contextValues.set(nodeIdKey, this.endpoint.nodeId);
-			return next(req);
-		}
-	}
-
-	#debug: Interceptor = (next) => {
-		return async (req) => {
-			let res = await next(req);
-
-			if (!res.stream) {
-				dbg.extend("grpc")('%s/%s', req.service.typeName, req.method.name, res.trailer.get(headerGrpcStatus));
-
-				return res;
-			}
-
-			return {
-				...res,
-				message: withHooks(res, {
-					onTailer: (trailer) => {
-						dbg.extend("grpc")('%s/%s', req.service.typeName, req.method.name, trailer.get(headerGrpcStatus));
-					}
-				})
-			}
-		}
-	}
-}
+import { withHooks } from './interceptors/with-hooks.js';
 
 export class ConnectionPool implements Disposable {
 	protected connections: Set<Connection> = new Set();
@@ -251,21 +180,4 @@ export class ConnectionPool implements Disposable {
 	[Symbol.dispose]() {
 		// TODO: Dispose of connections
 	}
-}
-
-async function* withHooks<I extends DescMessage, O extends DescMessage>(res: StreamResponse<I, O>, hooks: {
-	onMessage?: (message: MessageShape<O>) => void,
-	onHeader?: (header: Headers) => void,
-	onTailer?: (trailer: Headers) => void
-}) {
-	hooks.onHeader?.(res.header);
-
-	for await (const m of res.message) {
-		yield m;
-		hooks.onMessage?.(m);
-	}
-
-	yield* res.message;
-
-	hooks.onTailer?.(res.trailer);
 }
