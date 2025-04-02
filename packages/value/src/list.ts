@@ -26,7 +26,6 @@ export class ListType implements Type {
 	}
 }
 
-
 export class List<T extends Value = Value> implements Value<ListType> {
 	readonly type: ListType;
 	readonly items: T[] = [];
@@ -51,23 +50,9 @@ export class List<T extends Value = Value> implements Value<ListType> {
 		return this.#valueInstance;
 	}
 
-	[Symbol.iterator](): IterableIterator<T> {
-		let index = 0;
-
-		return {
-			next: (): IteratorResult<T> => {
-				if (index < this.items.length) {
-					return {
-						value: this.items[index++] as T,
-						done: false
-					};
-				}
-
-				return { value: undefined as any, done: true };
-			},
-			[Symbol.iterator](): IterableIterator<T> {
-				return this;
-			}
-		};
+	*[Symbol.iterator](): Iterator<T> {
+		for (let i = 0; i < this.items.length; i++) {
+			yield this.items[i];
+		}
 	}
 }
