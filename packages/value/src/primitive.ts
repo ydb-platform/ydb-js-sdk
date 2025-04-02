@@ -1,12 +1,12 @@
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import type { GenMessage } from "@bufbuild/protobuf/codegenv1";
+import type { TZDate } from "@date-fns/tz";
 import * as Ydb from "@ydbjs/api/value";
+import { formatISO9075, type GenericDateConstructor } from "date-fns";
 
 import { type Type, TypeKind } from "./type.js";
+import { bigIntsFromUuid } from "./uuid.js";
 import { type Value } from "./value.js";
-import { bigIntsFromUuid } from "./uuid.ts";
-import { formatISO9075, type GenericDateConstructor } from "date-fns";
-import type { TZDate } from "@date-fns/tz";
 
 export class PrimitiveType implements Type {
 	readonly id: Ydb.Type_PrimitiveTypeId;
