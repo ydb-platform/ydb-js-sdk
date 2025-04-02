@@ -61,23 +61,9 @@ export class Dict<K extends Value = Value, V extends Value = Value> implements V
 		return this.#valueInstance;
 	}
 
-	[Symbol.iterator](): IterableIterator<[K, V]> {
-		let index = 0;
-
-		return {
-			next: (): IteratorResult<[K, V]> => {
-				if (index < this.pairs.length) {
-					return {
-						value: this.pairs[index++] as [K, V],
-						done: false
-					};
-				}
-
-				return { value: undefined as any, done: true };
-			},
-			[Symbol.iterator](): IterableIterator<[K, V]> {
-				return this;
-			}
-		};
+	*[Symbol.iterator](): Iterator<[K, V]> {
+		for (let i = 0; i < this.pairs.length; i++) {
+			yield this.pairs[i];
+		}
 	}
 }
