@@ -6,6 +6,7 @@ import type { ListType } from "./list.js";
 import type { DictType } from "./dict.js";
 import type { TupleType } from "./tuple.js";
 import type { StructType } from "./struct.js";
+import type { OptionalType } from "./optional.ts";
 
 function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
 	switch (pTypeId) {
@@ -78,6 +79,8 @@ export function typeToString(type: Type): string {
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(",")}>`;
 		case TypeKind.STRUCT:
 			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index])}`).join(",")}>`;
+		case TypeKind.OPTIONAL:
+			return `Optional<${typeToString((type as OptionalType).itemType)}>`;
 		case TypeKind.NULL:
 			return "Null";
 	}
