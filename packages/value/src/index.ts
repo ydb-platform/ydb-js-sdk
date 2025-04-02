@@ -4,10 +4,11 @@ import * as Ydb from "@ydbjs/api/value";
 import { Dict } from "./dict.js";
 import { List } from "./list.js";
 import { Null } from "./null.js";
+import { Optional } from "./optional.js";
 import { Bool, Bytes, Datetime, Int32, Int64, PrimitiveType, PrimitiveValue, Text, TzDatetime, Uuid } from "./primitive.js";
-import { Struct } from "./struct.ts";
+import { Struct, StructType } from "./struct.ts";
 import { Tuple } from "./tuple.js";
-import { TypeKind } from "./type.js";
+import { TypeKind, type Type } from "./type.js";
 import { uuidFromBigInts } from "./uuid.js";
 import type { Value } from "./value.js";
 
@@ -34,24 +35,26 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 			return new Tuple(...value.items.map((v, i) => fromYdb(v, (type.type.value as unknown as Ydb.TupleType).elements[i])));
 		case "dictType":
 			let dict: [Value, Value][] = [];
-
 			for (let i = 0; i < value.pairs.length; i++) {
 				let pair = value.pairs[i];
 				dict.push([fromYdb(pair.key!, (type.type.value).key!), fromYdb(pair.payload!, (type.type.value as unknown as Ydb.DictType).payload!)]);
 			}
-
 			return new Dict(...dict);
 		case "structType":
 			let struct: { [key: string]: Value } = {};
-
 			for (let i = 0; i < value.items.length; i++) {
 				let member = (type.type.value as unknown as Ydb.StructType).members[i]
 				struct[member.name] = fromYdb(value.items[i], member.type!);
 			}
-
 			return new Struct(struct);
 		case "nullType":
 			return new Null();
+		case "optionalType":
+			if (value.value.case === "nullFlagValue") {
+				return new Null();
+			}
+
+			return new Optional(fromYdb(value, type.type.value.item!))
 	}
 
 	throw new Error("Unsupported value.");
@@ -86,12 +89,8 @@ export function fromJs(native: JSValue): Value {
 				return new Bytes(native);
 			}
 
-			if (Array.isArray(native)) {
-				return new Tuple(...native.map(fromJs));
-			}
-
 			if (native instanceof Set) {
-				return new List(...Array.from(native).map(fromJs));
+				return new Tuple(...Array.from(native).map(fromJs));
 			}
 
 			if (native instanceof Map) {
@@ -102,6 +101,61 @@ export function fromJs(native: JSValue): Value {
 				}
 
 				return new Dict(...pairs);
+			}
+
+			if (Array.isArray(native)) {
+				let values: Value[] = []
+				let structs: [string, Value][][] = [];
+
+				for (let i = 0; i < native.length; i++) {
+					if (typeof native[i] === "object" && !Array.isArray(native[i]) && native[i] !== null) {
+						let element = native[i] as { [key: string]: JSValue }
+
+						let struct: [string, Value][] = []
+						for (let key in element) {
+							let value = fromJs(element[key]);
+							struct.push([key, value]);
+						}
+
+						structs.push(struct);
+						continue
+					}
+
+					values.push(fromJs(native[i]));
+				}
+
+				if (structs.length > 0) {
+					let structNames: string[] = []
+					let structNamesSet: Set<string> = new Set()
+					let structTypes: Type[] = []
+					let structValues: { [key: string]: Value }[] = []
+
+					for (let struct of structs) {
+						let record: { [key: string]: Value } = {}
+
+						for (let [key, value] of struct) {
+							value = new Optional(value);
+
+							if (!structNamesSet.has(key)) {
+								structNames.push(key);
+								structTypes.push(value.type);
+
+								structNamesSet.add(key);
+							}
+
+							record[key] = value;
+						}
+
+						structValues.push(record);
+					}
+
+					let structTypeDef = new StructType(structNames, structTypes);
+					for (let struct of structValues) {
+						values.push(new Struct(struct, structTypeDef));
+					}
+				}
+
+				return new List(...values);
 			}
 
 			let struct: { [key: string]: Value } = {};
@@ -157,6 +211,9 @@ export function toJs(value: Value): JSValue {
 					}
 			}
 			break;
+		case TypeKind.OPTIONAL:
+			let { item } = (value as Optional<Type>)
+			return item === null ? null : toJs(item)
 		case TypeKind.LIST:
 		case TypeKind.TUPLE:
 			return (value as List).items.map(toJs);
