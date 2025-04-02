@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf"
 import { StatusIds_StatusCode } from "@ydbjs/api/operation"
-import { ExecMode, Syntax, type QueryServiceClient } from "@ydbjs/api/query"
+import { ExecMode, Syntax, type QueryServiceClient, type SessionState } from "@ydbjs/api/query"
 import { TypedValueSchema, type TypedValue } from "@ydbjs/api/value"
 import { toJs } from "@ydbjs/value"
 import { fromYdb } from "@ydbjs/value"
@@ -71,23 +71,20 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 			return
 		}
 
-		let attachResponse = this.#client.attachSession({ sessionId: sessionResponse.sessionId }, { signal })
-		let attachResponseResult = await attachResponse[Symbol.asyncIterator]().next()
-		if (attachResponseResult.done) {
-			this.#execute.reject(new Error("Failed to attach session. Unexpected end of stream."))
+		let attachSessionResult = Promise.withResolvers<SessionState>();
+		(async (stream: AsyncIterable<SessionState>) => {
+			try {
+				for await (let state of stream) {
+					attachSessionResult.resolve(state)
+				}
+			} catch (err) { attachSessionResult.reject(err) }
+		})(this.#client.attachSession({ sessionId: sessionResponse.sessionId }, { signal }))
+
+		if ((await attachSessionResult.promise).status !== StatusIds_StatusCode.SUCCESS) {
+			this.#execute.reject(new Error("Failed to attach session. " + (await attachSessionResult.promise).status))
 			this.#active = false
 			return
 		}
-
-		if (attachResponseResult.value.status !== StatusIds_StatusCode.SUCCESS) {
-			this.#execute.reject(new Error("Failed to attach session. " + attachResponseResult.value.status))
-			this.#active = false
-			return
-		}
-
-		(async function drainStream(stream: AsyncIterable<any>) {
-			try { for await (let _ of stream) { ; } } catch (_) { }
-		})(attachResponse)
 
 		let parameters: Record<string, TypedValue> = {}
 		for (let key in this.#parameters) {
