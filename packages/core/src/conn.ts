@@ -1,5 +1,5 @@
 import type { EndpointInfo } from "@ydbjs/api/discovery";
-import { createChannel, createClientFactory, type Channel, type ChannelCredentials, type ChannelOptions, type ClientFactory, type ClientMiddleware } from "nice-grpc";
+import { ClientError, createChannel, createClientFactory, type Channel, type ChannelCredentials, type ChannelOptions, type ClientFactory, type ClientMiddleware } from "nice-grpc";
 
 import { dbg } from "./dbg.ts";
 
@@ -32,6 +32,8 @@ export class LazyConnection implements Connection {
 			'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
 		};
 		this.#channelCredentials = channelCredentials;
+
+		this.#debug = this.#debug.bind(this);
 	}
 
 	get nodeId(): bigint {
@@ -56,12 +58,30 @@ export class LazyConnection implements Connection {
 		return createClientFactory().use(this.#debug).use(this.#markNodeId);
 	}
 
-	#debug: ClientMiddleware<ConnectionCallOptions> = (call, options) => {
-		return call.next(call.request, {
-			onTrailer: (trailer) => {
-				dbg.extend("grpc")('%s%s %s', this.address, call.method.path, trailer.get('grpc-status')?.[0] ?? 'OK');
+	#debug: ClientMiddleware<ConnectionCallOptions> = async function* (this: Connection, call, options) {
+		try {
+			if (!call.responseStream) {
+				const response = yield* call.next(call.request, options);
+
+				return response;
+			} else {
+				for await (const response of call.next(call.request, options)) {
+					yield response;
+				}
+
+				return;
 			}
-		})
+		} catch (error) {
+			if (error instanceof ClientError) {
+				dbg.extend("grpc")('%s%s', this.address, error.message);
+			}
+
+			if (error instanceof Error && error.name === 'AbortError') {
+				dbg.extend("grpc")('%s%s %s: %s', this.address, call.method.path, 'CANCELLED', error.message);
+			}
+
+			throw error;
+		}
 	}
 
 	#markNodeId: ClientMiddleware<ConnectionCallOptions> = (call, options) => {
