@@ -1,10 +1,11 @@
 import type { RetryConfig } from "./config.js";
 import type { RetryContext } from "./context.js";
+import { linear } from "./strategy.js";
 
-export const defaultRetryConfig: Required<RetryConfig> = {
+export const defaultRetryConfig: RetryConfig = {
 	retry: (error) => error instanceof Error,
 	budget: Number.POSITIVE_INFINITY,
-	strategy: (ctx) => ctx.attempt * 100,
+	strategy: linear(100),
 	idempotent: true,
 }
 
@@ -13,7 +14,12 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 	let ctx: RetryContext = { attempt: 0, error: null };
 
 	let budget: number
-	while (ctx.attempt < (budget = (typeof config.budget === "number" ? config.budget : config.budget(ctx, config)))) {
+	while (ctx.attempt < (budget = (typeof config.budget === "number" ? config.budget : config.budget!(ctx, config)))) {
+		let start = Date.now()
+		if (cfg.signal?.aborted) {
+			throw cfg.signal.reason;
+		}
+
 		try {
 			return await fn();
 		} catch (error) {
@@ -25,13 +31,33 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 				throw error;
 			}
 
-			const delay = typeof config.strategy === "number" ? config.strategy : config.strategy(ctx, config);
-			await new Promise((resolve) => setTimeout(resolve, delay));
+			let delay = typeof config.strategy === "number" ? config.strategy : config.strategy!(ctx, config);
+			let remaining = Math.max(delay - (Date.now() - start), 0);
+			if (!remaining) {
+				continue;
+			}
+
+			if (cfg.signal?.aborted) {
+				throw cfg.signal.reason;
+			}
+
+			await Promise.race([
+				new Promise((resolve) => setTimeout(resolve, remaining)),
+				new Promise((_, reject) => {
+					let signal = cfg.signal
+					if (signal) {
+						signal.addEventListener('abort', function abortHandler() {
+							reject(signal.reason)
+							signal.removeEventListener('abort', abortHandler)
+						})
+					}
+				}),
+			]);
 		}
 	}
 
 	throw new Error('Retry budget exceeded')
 }
 
-export * from './config.js'
-export * from './context.js'
+export * from './config.js';
+export * from './context.js';
