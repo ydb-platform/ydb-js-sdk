@@ -1,4 +1,4 @@
-import { CredentialsProvider } from "./index.ts";
+import { CredentialsProvider } from "./index.js";
 
 export type AccessTokenCredentials = {
 	// TODO: support read from file

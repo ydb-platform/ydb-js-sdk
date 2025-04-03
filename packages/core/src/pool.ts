@@ -1,70 +1,33 @@
-import { equals } from '@bufbuild/protobuf';
-import type { Interceptor } from '@connectrpc/connect';
-import { type GrpcTransportOptions } from '@connectrpc/connect-node';
-import { grpcStatusOk, headerGrpcStatus } from '@connectrpc/connect/protocol-grpc';
-import { EndpointInfoSchema, type EndpointInfo } from '@ydbjs/api/discovery';
+import { type EndpointInfo } from '@ydbjs/api/discovery';
+import type { ChannelCredentials, ChannelOptions } from 'nice-grpc';
 
-import { LazyConnection, type Connection } from './connection.js';
-import { nodeIdKey } from './context.js';
+import { LazyConnection, type Connection } from './conn.ts';
 import { dbg } from './dbg.js';
-import { withHooks } from './interceptors/with-hooks.js';
 
 export class ConnectionPool implements Disposable {
 	protected connections: Set<Connection> = new Set();
 	protected pessimized: Set<Connection> = new Set();
 
-	private options: Omit<GrpcTransportOptions, 'baseUrl'>;
-	private pessimizationTimeoutMs = 60000;
+	#pessimizationTimeoutMs = 60000;
+	#channelCredentials: ChannelCredentials;
+	#channelOptions: ChannelOptions;
 
-	constructor(options: Omit<GrpcTransportOptions, 'baseUrl'>) {
-		this.options = {
-			...options,
-			interceptors: options.interceptors || []
-		}
-
-		this.options.interceptors!.push(this.#pessimizer)
-	}
-
-	/**
-	 * Pessimize a connection if it returns a non-OK status.
-	 */
-	#pessimizer: Interceptor = (next) => {
-		return async (req) => {
-			let nodeId = req.contextValues.get(nodeIdKey)
-
-			const res = await next(req);
-			if (!res.stream) {
-				if (res.trailer.get(headerGrpcStatus) !== grpcStatusOk) {
-					this.pessimize(this.findByNodeId(nodeId)!)
-				}
-
-				return res;
-			}
-
-			return {
-				...res,
-				message: withHooks(res, {
-					onTailer: (trailer) => {
-						if (trailer.get(headerGrpcStatus) !== grpcStatusOk) {
-							this.pessimize(this.findByNodeId(nodeId)!)
-						}
-					}
-				})
-			}
-		}
+	constructor(channelCredentials: ChannelCredentials, channelOptions: ChannelOptions) {
+		this.#channelCredentials = channelCredentials
+		this.#channelOptions = channelOptions
 	}
 
 	/**
 	 * Get a channel based on load balancing rules
 	 */
-	aquire(preferNodeId?: Connection["endpoint"]["nodeId"]): Connection {
+	aquire(preferNodeId?: Connection["nodeId"]): Connection {
 		let candidate: Connection | null = null;
 		this.refreshPessimizedChannels();
 
 		for (let connection of this.connections) {
 			candidate ??= connection;
 
-			if (connection.endpoint.nodeId === preferNodeId) {
+			if (connection.nodeId === preferNodeId) {
 				return connection;
 			}
 		}
@@ -79,7 +42,7 @@ export class ConnectionPool implements Disposable {
 		for (let connection of this.pessimized) {
 			candidate ??= connection;
 
-			if (connection.endpoint.nodeId === preferNodeId) {
+			if (connection.nodeId === preferNodeId) {
 				return connection
 			}
 		}
@@ -91,28 +54,34 @@ export class ConnectionPool implements Disposable {
 			return candidate;
 		}
 
-		throw new Error('No connections available');
+		throw new Error('No connection available');
 	}
 
 	release(conn: Connection) {
-		throw new Error('Method not implemented.');
+		this.connections.delete(conn);
+		this.connections.add(conn);
+
+		this.pessimized.delete(conn);
+		this.pessimized.add(conn);
+
+		dbg.extend("pool")('release connection to node id=%s address=%s', conn.nodeId, conn.address);
+		return this;
 	}
 
 	/**
 	 * Add a new connection to the pool
 	 */
 	add(endpoint: EndpointInfo) {
-		let connection = this.findByNodeId(endpoint.nodeId)
-		if (connection && equals(EndpointInfoSchema, connection.endpoint, endpoint)) {
-			return this;
-		} else if (connection) {
-			// TODO: graceful shutdown
+		let connection = this.findByNodeId(BigInt(endpoint.nodeId))
+		if (connection) {
 			this.remove(connection);
+			connection.channel.close();
 		}
 
-		connection = new LazyConnection(endpoint, this.options);
+		connection = new LazyConnection(endpoint, this.#channelCredentials, this.#channelOptions);
+
 		this.connections.add(connection);
-		dbg.extend("pool")('add connection to node id=%s address=%s:%d', endpoint.nodeId, endpoint.address, endpoint.port);
+		dbg.extend("pool")('add connection to node id=%s address=%s', connection.nodeId, connection.address);
 
 		return this;
 	}
@@ -120,15 +89,15 @@ export class ConnectionPool implements Disposable {
 	/**
 	 * Find a connection by node id
 	 */
-	findByNodeId(nodeId: number): Connection | undefined {
+	findByNodeId(nodeId: Connection["nodeId"]): Connection | undefined {
 		for (let connection of this.connections) {
-			if (connection.endpoint.nodeId === nodeId) {
+			if (connection.nodeId === nodeId) {
 				return connection;
 			}
 		}
 
 		for (let connection of this.pessimized) {
-			if (connection.endpoint.nodeId === nodeId) {
+			if (connection.nodeId === nodeId) {
 				return connection;
 			}
 		}
@@ -143,7 +112,7 @@ export class ConnectionPool implements Disposable {
 		this.connections.delete(connection);
 		this.pessimized.delete(connection);
 
-		dbg.extend("pool")('remove connection to node id=%s address=%s:%d', connection.endpoint.nodeId, connection.endpoint.address, connection.endpoint.port);
+		dbg.extend("pool")('remove connection to node id=%s address=%s', connection.nodeId, connection.address);
 
 		return this;
 	}
@@ -152,11 +121,11 @@ export class ConnectionPool implements Disposable {
 	 * Pessimize a connection for a set amount of time
 	 */
 	pessimize(connection: Connection) {
-		connection.pessimizedUntil = Date.now() + this.pessimizationTimeoutMs;
+		connection.pessimizedUntil = Date.now() + this.#pessimizationTimeoutMs;
 		this.pessimized.add(connection);
 		this.connections.delete(connection);
 
-		dbg.extend("pool")('pessimize node id=%s address=%s:%d', connection.endpoint.nodeId, connection.endpoint.address, connection.endpoint.port);
+		dbg.extend("pool")('pessimize node id=%s address=%s', connection.nodeId, connection.address);
 
 		return this
 	}
@@ -172,12 +141,27 @@ export class ConnectionPool implements Disposable {
 				this.pessimized.delete(connection);
 				this.connections.add(connection);
 
-				dbg.extend("pool")('unpesimize node id=%s address=%s:%d', connection.endpoint.nodeId, connection.endpoint.address, connection.endpoint.port);
+				dbg.extend("pool")('unpesimize node id=%s address=%s', connection.nodeId, connection.address);
 			}
 		}
 	}
 
+	close() {
+		for (let connection of this.connections) {
+			connection.channel.close();
+		}
+
+		for (let connection of this.pessimized) {
+			connection.channel.close();
+		}
+
+		this.connections.clear();
+		this.pessimized.clear();
+
+		dbg.extend("pool")('close pool');
+	}
+
 	[Symbol.dispose]() {
-		// TODO: Dispose of connections
+		return this.close();
 	}
 }

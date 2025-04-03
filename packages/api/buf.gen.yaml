@@ -10,5 +10,5 @@ inputs:
   - git_repo: https://github.com/ydb-platform/ydb-api-protos.git
     branch: master
     depth: 1
-    exclude_paths:
-      - draft
+    paths:
+      - protos

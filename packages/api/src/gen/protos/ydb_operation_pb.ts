@@ -4,8 +4,10 @@
 
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv1";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv1";
-import type { Any, Duration } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_any, file_google_protobuf_duration } from "@bufbuild/protobuf/wkt";
+import type { Any } from "../google/protobuf/any_pb.js";
+import { file_google_protobuf_any } from "../google/protobuf/any_pb.js";
+import type { Duration } from "../google/protobuf/duration_pb.js";
+import { file_google_protobuf_duration } from "../google/protobuf/duration_pb.js";
 import { file_protos_annotations_validation } from "./annotations/validation_pb.js";
 import type { CostInfo, FeatureFlag_Status } from "./ydb_common_pb.js";
 import { file_protos_ydb_common } from "./ydb_common_pb.js";

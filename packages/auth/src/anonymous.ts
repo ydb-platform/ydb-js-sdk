@@ -1,4 +1,4 @@
-import { CredentialsProvider } from "./index.ts";
+import { CredentialsProvider } from "./index.js";
 
 export class AnonymousCredentialsProvider extends CredentialsProvider {
 	constructor() {

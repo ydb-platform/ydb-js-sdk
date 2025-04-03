@@ -4,8 +4,8 @@
 
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv1";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv1";
-import type { NullValue } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
+import type { NullValue } from "../google/protobuf/struct_pb.js";
+import { file_google_protobuf_struct } from "../google/protobuf/struct_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**

@@ -1,17 +1,23 @@
-/** @typedef {HeadersInit} HeadersInit */
-
-import type { Interceptor } from "@connectrpc/connect";
+import { Metadata, type CallOptions, type ClientMiddlewareCall } from "nice-grpc";
 
 export abstract class CredentialsProvider {
-    constructor() {
-        this.interceptor = this.interceptor.bind(this);
-    }
+	constructor() {
+		// @ts-ignore
+		this.middleware = this.middleware.bind(this);
+	}
 
-    abstract getToken(force?: boolean, signal?: AbortSignal): Promise<string>
+	abstract getToken(force?: boolean, signal?: AbortSignal): Promise<string>
 
-    readonly interceptor: Interceptor = (next) => async (req) => {
-        req.header.set('x-ydb-auth-ticket', await this.getToken(false, req.signal));
+	readonly middleware = async function* <Request = unknown, Response = unknown>(
+		this: CredentialsProvider,
+		call: ClientMiddlewareCall<Request, Response>,
+		options: CallOptions,
+	) {
+		let token = await this.getToken(false)
 
-        return next(req);
-    }
+		return yield* call.next(call.request, {
+			...options,
+			metadata: Metadata(options.metadata).set('x-ydb-auth-ticket', token),
+		});
+	}
 }

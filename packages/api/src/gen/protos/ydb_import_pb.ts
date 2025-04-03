@@ -7,8 +7,8 @@ import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv1";
 import { file_protos_annotations_validation } from "./annotations/validation_pb.js";
 import type { Operation, OperationParams } from "./ydb_operation_pb.js";
 import { file_protos_ydb_operation } from "./ydb_operation_pb.js";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { Timestamp } from "../google/protobuf/timestamp_pb.js";
+import { file_google_protobuf_timestamp } from "../google/protobuf/timestamp_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**

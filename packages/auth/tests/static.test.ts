@@ -1,29 +1,18 @@
 import { mock, test } from 'node:test'
 import * as assert from 'node:assert'
-
-import { createGrpcTransport } from '@connectrpc/connect-node';
+import { createClientFactory } from 'nice-grpc';
 
 import { StaticCredentialsProvider } from "../dist/esm/static.js";
-import { Code } from '@connectrpc/connect';
 
 test('BasicCredentialsProvider', async (tc) => {
 	let calls = 0
 
-	let url = new URL(process.env.YDB_CONNECTION_STRING!)
-	let baseUrl = url.protocol.includes('s:') ? 'https://' : 'http://' + url.host
-
-	let transport = createGrpcTransport({
-		baseUrl,
-		interceptors: [
-			function (next) {
-				return async function (request) {
-					calls += 1
-
-					return next(request)
-				}
-			}
-		]
-	});
+	let cs = new URL(process.env.YDB_CONNECTION_STRING!.replace(/^grpc/, 'http'))
+	let cf = createClientFactory()
+		.use((call, options) => {
+			calls++
+			return call.next(call.request, options)
+		})
 
 	tc.afterEach(() => {
 		calls = 0
@@ -31,14 +20,14 @@ test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('valid token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		assert.ok(token, 'Token is not empty')
 	})
 
 	await tc.test('reuse token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		let token2 = await provider.getToken(false, tc.signal)
@@ -48,7 +37,7 @@ test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('force refresh token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = await provider.getToken()
 		let token2 = await provider.getToken(true)
@@ -57,11 +46,11 @@ test('BasicCredentialsProvider', async (tc) => {
 		assert.strictEqual(calls, 2, 'Two calls were made')
 	})
 
-	await tc.test('refresh expired token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+	await tc.test('auto refresh expired token', async (tc) => {
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = await provider.getToken()
-		mock.timers.enable({ apis: ['Date'], now: Number.MAX_SAFE_INTEGER })
+		mock.timers.enable({ apis: ['Date'], now: new Date(2100, 0, 1) })
 		let token2 = await provider.getToken()
 
 		assert.notStrictEqual(token, token2, 'Token is different')
@@ -69,7 +58,7 @@ test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('multiple token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let tokens = await Promise.all([
 			provider.getToken(),
@@ -82,22 +71,20 @@ test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('abort token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let controller = new AbortController()
 		setTimeout(() => controller.abort(), 0)
 		let token = provider.getToken(false, controller.signal)
 
-		await assert.rejects(token, { name: 'ConnectError', code: Code.Canceled }, 'Token aquisition was canceled')
+		await assert.rejects(token, { name: 'AbortError' }, 'Token aquisition was canceled')
 	})
 
 	await tc.test('timeout token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, transport)
+		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = provider.getToken(false, AbortSignal.timeout(0))
 
-		// TODO: Replace InternalError with DeadlineExceeded when bug will be fixed in connect
-		// https://github.com/connectrpc/connect-es/issues/1453
-		await assert.rejects(token, { name: 'ConnectError', code: Code.Internal }, 'Token aquisition was timed out')
+		await assert.rejects(token, { name: 'AbortError' }, 'Token aquisition was timed out')
 	})
 })

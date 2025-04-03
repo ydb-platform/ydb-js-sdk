@@ -21,7 +21,7 @@
 	"engineStrict": true,
 	"engines": {
 		"node": ">=20",
-		"npm": ">=9"
+		"npm": ">=10"
 	},
 	"packageManager": "npm@11.2.0",
 	"prettier": {

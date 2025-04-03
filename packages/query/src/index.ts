@@ -1,4 +1,3 @@
-import { createQueryServiceClient, type QueryServiceClient } from "@ydbjs/api/query";
 import type { Driver } from "@ydbjs/core";
 import { fromJs, type Value } from "@ydbjs/value";
 import { typeToString } from "@ydbjs/value/print";
@@ -32,9 +31,7 @@ export interface QueryClient extends AsyncDisposable {
 	transaction<T = unknown>(iso: Isolation, fn: TransactionContextCallback): Promise<T>
 }
 
-export function query(db: Driver): QueryClient {
-	let client: QueryServiceClient = createQueryServiceClient(db);
-
+export function query(driver: Driver): QueryClient {
 	let doImpl = async function <T = unknown>(): Promise<T> {
 		throw new Error("Not implemented")
 	}
@@ -65,7 +62,7 @@ export function query(db: Driver): QueryClient {
 				text += strings.reduce((prev, curr, i) => prev + curr + (values[i] ? `$p${i}` : ''), '')
 			}
 
-			return new Query(client, text, params)
+			return new Query(driver, text, params)
 		},
 		{
 			do: doImpl,

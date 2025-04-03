@@ -23,8 +23,12 @@ import type { PartitioningSettings as PartitioningSettings$1 } from "./ydb_topic
 import { file_protos_ydb_topic } from "./ydb_topic_pb.js";
 import type { ArrowBatchSettings, CsvSettings } from "./ydb_formats_pb.js";
 import { file_protos_ydb_formats } from "./ydb_formats_pb.js";
-import type { Duration, Empty, Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_duration, file_google_protobuf_empty, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { Empty } from "../google/protobuf/empty_pb.js";
+import { file_google_protobuf_empty } from "../google/protobuf/empty_pb.js";
+import type { Duration } from "../google/protobuf/duration_pb.js";
+import { file_google_protobuf_duration } from "../google/protobuf/duration_pb.js";
+import type { Timestamp } from "../google/protobuf/timestamp_pb.js";
+import { file_google_protobuf_timestamp } from "../google/protobuf/timestamp_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
 /**

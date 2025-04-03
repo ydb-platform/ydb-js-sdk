@@ -1,23 +1,24 @@
 import * as tls from 'node:tls';
 
-import { create, type DescMessage, type DescMethodStreaming, type DescMethodUnary, type MessageInitShape } from '@bufbuild/protobuf';
+import { create } from '@bufbuild/protobuf';
 import { anyUnpack } from '@bufbuild/protobuf/wkt';
-import { Code, ConnectError, type Client, type ContextValues, type Interceptor, type StreamResponse, type Transport, type UnaryResponse } from '@connectrpc/connect';
-import { createDiscoveryServiceClient, DiscoveryService, EndpointInfoSchema, ListEndpointsResultSchema, WhoAmIResultSchema, type ListEndpointsResult, type WhoAmIResult } from '@ydbjs/api/discovery';
+import { credentials } from '@grpc/grpc-js';
+import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSchema } from '@ydbjs/api/discovery';
 import { StatusIds_StatusCode } from '@ydbjs/api/operation';
 import type { CredentialsProvider } from '@ydbjs/auth';
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
+import { ClientError, composeClientMiddleware, Metadata, Status, waitForChannelReady, type ChannelOptions, type Client, type ClientMiddleware, type CompatServiceDefinition } from 'nice-grpc';
 
-import { LazyConnection, type Connection } from './connection.js';
-import { nodeIdKey } from './context.js';
+import { LazyConnection, type Connection, type ConnectionCallOptions } from './conn.ts';
 import { dbg } from './dbg.js';
 import { ConnectionPool } from './pool.js';
 
-export type DriverOptions = {
+export type DriverOptions = ChannelOptions & {
 	ssl?: tls.SecureContextOptions
 	credentialsProvier?: CredentialsProvider
 
 	'ydb.sdk.application'?: string;
+	'ydb.sdk.ready_timeout_ms'?: number;
 	'ydb.sdk.enable_discovery'?: boolean;
 	'ydb.sdk.discovery_timeout_ms'?: number;
 	'ydb.sdk.discovery_interval_ms'?: number;
@@ -31,18 +32,18 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.discovery_interval_ms': 60000,
 }
 
-
-export class Driver implements Transport, Disposable {
+export class Driver implements Disposable {
 	protected readonly cs: URL
 	protected readonly options: DriverOptions = {}
 
 	#pool: ConnectionPool
-	#ready = Promise.withResolvers<boolean>()
+	#ready: PromiseWithResolvers<void> = Promise.withResolvers<void>()
 
-	#credentials: CredentialsProvider = new AnonymousCredentialsProvider()
-	#interceptors: Interceptor[] = []
+	#connection: Connection
+	#middleware: ClientMiddleware
 
-	#discoveryClient!: Client<typeof DiscoveryService>
+	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
+	#discoveryClient!: Client<typeof DiscoveryServiceDefinition, ConnectionCallOptions>
 	#rediscoverTimer?: NodeJS.Timeout
 
 	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
@@ -74,111 +75,57 @@ export class Driver implements Transport, Disposable {
 
 		let endpoint = create(EndpointInfoSchema, {
 			address: this.cs.hostname,
-			nodeId: Infinity,
+			nodeId: -1,
 			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80')),
 			ssl: this.isSecure,
 		})
 
-		this.#interceptors.push((next) => (req) => {
-			req.header.set('x-ydb-database', this.database)
-			req.header.set('x-ydb-application-name', this.options['ydb.sdk.application'] || '')
-			return next(req)
-		})
+		let channelCredentials = this.options.ssl
+			? credentials.createFromSecureContext(tls.createSecureContext(this.options.ssl))
+			: this.isSecure ? credentials.createSsl() : credentials.createInsecure()
 
-		if (options.credentialsProvier) {
-			this.#credentials = options.credentialsProvier
-			this.#interceptors.push(this.#credentials.interceptor)
+		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options)
+
+		this.#middleware = (call, options) => {
+			let metadata = Metadata(options.metadata)
+				.set('x-ydb-database', this.database)
+				.set('x-ydb-application-name', this.options['ydb.sdk.application'] || '')
+
+			return call.next(call.request, Object.assign(options, { metadata }))
 		}
 
-		this.#pool = new ConnectionPool({
-			nodeOptions: { ...options.ssl },
-			interceptors: [...this.#interceptors],
-		})
+		if (options.credentialsProvier) {
+			this.#credentialsProvider = options.credentialsProvier
+			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
+		}
+
+		this.#pool = new ConnectionPool(channelCredentials, this.options)
+
+		this.#discoveryClient = this.#connection.clientFactory.use(this.#middleware).create(DiscoveryServiceDefinition, this.#connection.channel)
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
-			dbg.extend("driver")('Discovery disabled, using single endpoint')
-			this.#pool.add(endpoint)
-
-			this.#discoveryClient = createDiscoveryServiceClient(this)
-
-			this.#whoAmI(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
-				.then((r) => {
-					this.#ready.resolve(true)
-				})
-				.catch((err) => {
-					this.#ready.reject(err)
-				})
+			dbg.extend("driver")('discovery disabled, using single endpoint')
+			waitForChannelReady(this.#connection.channel, new Date(Date.now() + (this.options['ydb.sdk.ready_timeout_ms'] || 10000)))
+				.then(this.#ready.resolve)
+				.catch(this.#ready.reject)
 		}
 
 		if (this.options['ydb.sdk.enable_discovery'] === true) {
-			dbg.extend("driver")('Discovery enabled, using connection pool')
-			let conn = new LazyConnection(endpoint, { ...options.ssl, interceptors: this.#interceptors })
-
-			this.#discoveryClient = createDiscoveryServiceClient(conn.transport)
+			dbg.extend("driver")('discovery enabled, using connection pool')
 
 			// Initial discovery
-			this.#listEndpoints(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+			this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+				.then(this.#ready.resolve)
+				.catch(this.#ready.reject)
 
 			// Periodic discovery
 			this.#rediscoverTimer = setInterval(() => {
-				this.#listEndpoints(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+				this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
 			}, this.options['ydb.sdk.discovery_interval_ms'] || 60 * 1000)
 
 			// Unref the timer so it doesn't keep the process running
 			this.#rediscoverTimer.unref()
 		}
-	}
-
-	// TODO: add retry logic
-	async #listEndpoints(signal?: AbortSignal): Promise<ListEndpointsResult> {
-		dbg.extend("driver")("#listEndpoints(signal: %o)", signal)
-
-		let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
-		if (!response.operation) {
-			throw new ConnectError('No operation in response', Code.DataLoss)
-		}
-
-		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
-			throw new Error(`(${response.operation.status}) ${response.operation.issues}`)
-		}
-
-		let result = anyUnpack(response.operation.result!, ListEndpointsResultSchema);
-		if (!result) {
-			throw new ConnectError('No result in operation', Code.DataLoss)
-		}
-
-		try {
-			for (let endpoint of result.endpoints) {
-				this.#pool.add(endpoint)
-			}
-
-			this.#ready.resolve(true)
-			return result
-		} catch (err) {
-			this.#ready.reject(err)
-			throw err
-		}
-	}
-
-	// TODO: add retry logic
-	async #whoAmI(signal?: AbortSignal): Promise<WhoAmIResult> {
-		dbg.extend("driver")("#whoAmI(signal: %o)", signal)
-
-		let response = await this.#discoveryClient.whoAmI({}, { signal })
-		if (!response.operation) {
-			throw new ConnectError('No operation in response', Code.DataLoss)
-		}
-
-		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
-			throw new Error(`(${response.operation.status}) ${response.operation.issues}`)
-		}
-
-		let result = anyUnpack(response.operation.result!, WhoAmIResultSchema);
-		if (!result) {
-			throw new ConnectError('No result in operation', Code.DataLoss)
-		}
-
-		return result
 	}
 
 	get database(): string {
@@ -189,37 +136,58 @@ export class Driver implements Transport, Disposable {
 		return this.cs.protocol === 'https:'
 	}
 
-	getConnection(preferNodeId?: number): Connection {
-		return this.#pool.aquire(preferNodeId)
-	}
+	// TODO: add retry logic
+	async #discovery(signal?: AbortSignal): Promise<void> {
+		dbg.extend("driver")("discovery(signal: %o)", signal)
 
-	ready(signal?: AbortSignal): Promise<boolean> {
-		if (signal) {
-			let onabort = () => {
-				signal.removeEventListener('abort', onabort)
-				this.#ready.reject(new Error('Aborted'))
-			}
-
-			signal.addEventListener('abort', onabort)
+		let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
+		if (!response.operation) {
+			throw new ClientError(DiscoveryServiceDefinition.listEndpoints.path, Status.UNKNOWN, 'No operation in response');
 		}
 
-		return this.#ready.promise
+		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
+			throw new Error(`(${response.operation.status}) ${response.operation.issues}`)
+		}
+
+		let result = anyUnpack(response.operation.result!, ListEndpointsResultSchema);
+		if (!result) {
+			throw new ClientError(DiscoveryServiceDefinition.listEndpoints.path, Status.UNKNOWN, 'No result in operation');
+		}
+
+		for (let endpoint of result.endpoints) {
+			this.#pool.add(endpoint)
+		}
 	}
 
-	unary<I extends DescMessage, O extends DescMessage>(method: DescMethodUnary<I, O>, signal: AbortSignal | undefined, timeoutMs: number | undefined, header: Headers | undefined, input: MessageInitShape<I>, contextValues?: ContextValues): Promise<UnaryResponse<I, O>> {
-		let preferNodeId = contextValues?.get(nodeIdKey)
+	ready(signal?: AbortSignal): Promise<void> {
+		let abortPromise = new Promise<void>((_, reject) => {
+			if (signal) {
+				signal.addEventListener('abort', function abortHandler() {
+					reject(new Error('Operation aborted'))
+					signal.removeEventListener('abort', abortHandler)
+				})
+			}
+		})
 
-		return this.#pool.aquire(preferNodeId).transport.unary(method, signal, timeoutMs, header, input, contextValues)
-	}
-
-	stream<I extends DescMessage, O extends DescMessage>(method: DescMethodStreaming<I, O>, signal: AbortSignal | undefined, timeoutMs: number | undefined, header: Headers | undefined, input: AsyncIterable<MessageInitShape<I>>, contextValues?: ContextValues): Promise<StreamResponse<I, O>> {
-		let preferNodeId = contextValues?.get(nodeIdKey)
-
-		return this.#pool.aquire(preferNodeId).transport.stream(method, signal, timeoutMs, header, input, contextValues)
+		return Promise.race([
+			this.#ready.promise,
+			abortPromise,
+		])
 	}
 
 	close(): void {
 		clearInterval(this.#rediscoverTimer)
+		this.#pool.close()
+		this.#connection.channel.close()
+	}
+
+	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service, ConnectionCallOptions> {
+		let connection = this.options['ydb.sdk.enable_discovery'] ? this.#pool.aquire(preferNodeId) : this.#connection
+		let factory = connection.clientFactory.use(this.#middleware)
+
+		return factory.create(service, connection.channel, {
+			'*': this.options,
+		})
 	}
 
 	[Symbol.dispose](): void {

@@ -1,14 +1,18 @@
 version: v2
-clean: true
 plugins:
-  - local: protoc-gen-es
+  - local:
+      [
+        'node',
+        '--disable-warning=ExperimentalWarning',
+        '--experimental-strip-types',
+        './plugins/protoc-gen-nice-grpc.ts',
+      ]
     opt: target=ts,import_extension=js
     out: ./src/gen
-    include_imports: true
-    include_wkt: true
 inputs:
   - git_repo: https://github.com/ydb-platform/ydb-api-protos.git
     branch: master
     depth: 1
     exclude_paths:
       - draft
+      - protos

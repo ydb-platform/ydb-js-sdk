@@ -1,8 +1,8 @@
 import { anyUnpack } from "@bufbuild/protobuf/wkt";
-import { Code, ConnectError, type Client, type Transport } from "@connectrpc/connect";
-import { createGrpcTransport } from "@connectrpc/connect-node";
-import { AuthService, createAuthServiceClient, LoginResultSchema } from "@ydbjs/api/auth";
+import { AuthServiceDefinition } from "@ydbjs/api/auth";
+import { LoginResultSchema } from "@ydbjs/api/auth";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
+import { type Client, ClientError, type ClientFactory, createChannel, createClientFactory, Status } from "nice-grpc";
 
 import { CredentialsProvider } from "./index.js";
 
@@ -22,25 +22,20 @@ export type StaticCredentials = {
 }
 
 export class StaticCredentialsProvider extends CredentialsProvider {
-	#client: Client<typeof AuthService>
+	#client: Client<typeof AuthServiceDefinition>
 	#promise: Promise<string> | null = null
 
 	#token: StaticCredentialsToken | null = null
 	#username: string
 	#password: string
 
-	constructor(credentials: StaticCredentials, endpointOrTransport: string | Transport) {
+	constructor(credentials: StaticCredentials, endpoint: string, clientFactory: ClientFactory = createClientFactory()) {
 		super();
 		this.#username = credentials.username;
 		this.#password = credentials.password;
 
-		if (typeof endpointOrTransport === 'string') {
-			let url = new URL(endpointOrTransport.replace(/^grpc/, 'http'));
-
-			endpointOrTransport = createGrpcTransport({ baseUrl: url.origin })
-		}
-
-		this.#client = createAuthServiceClient(endpointOrTransport);
+		let cs = new URL(endpoint.replace(/^grpc/, 'http'));
+		this.#client = clientFactory.create(AuthServiceDefinition, createChannel(cs.origin));
 	}
 
 	// TODO: add retry logic
@@ -60,7 +55,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			}, { signal });
 
 			if (!response.operation) {
-				throw ConnectError.from('No operation in response', Code.DataLoss);
+				throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No operation in response');
 			}
 
 			if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
@@ -69,7 +64,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 
 			let result = anyUnpack(response.operation.result!, LoginResultSchema);
 			if (!result) {
-				throw ConnectError.from('No result in operation', Code.DataLoss);
+				throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No result in operation');
 			}
 
 			// Parse the JWT token to extract expiration time

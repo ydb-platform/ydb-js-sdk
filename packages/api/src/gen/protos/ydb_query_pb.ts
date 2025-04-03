@@ -4,8 +4,8 @@
 
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv1";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv1";
-import type { Duration } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_duration } from "@bufbuild/protobuf/wkt";
+import type { Duration } from "../google/protobuf/duration_pb.js";
+import { file_google_protobuf_duration } from "../google/protobuf/duration_pb.js";
 import { file_protos_annotations_validation } from "./annotations/validation_pb.js";
 import type { IssueMessage } from "./ydb_issue_message_pb.js";
 import { file_protos_ydb_issue_message } from "./ydb_issue_message_pb.js";
