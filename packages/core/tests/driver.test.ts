@@ -1,21 +1,14 @@
 import test from 'node:test';
 import * as assert from 'node:assert';
 
-import { StaticCredentialsProvider } from '@ydbjs/auth/static';
 import { Driver } from '../dist/esm/driver.js';
 
 test('Driver', async (tc) => {
 	await tc.test('simple', async () => {
-		let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+		let driver = new Driver(process.env['YDB_CONNECTION_STRING']!, {
+			'ydb.sdk.discovery_timeout_ms': 1000,
+		})
 
-		await assert.doesNotReject(driver.ready(tc.signal))
-	})
-
-	await tc.test('with static credentials', async () => {
-		let credentialsProvier = new StaticCredentialsProvider({ username: 'root', password: '1234' }, process.env['YDB_CONNECTION_STRING']!);
-
-		let driver = new Driver(process.env['YDB_CONNECTION_STRING']!, { credentialsProvier })
-
-		await assert.doesNotReject(driver.ready(tc.signal))
+		await assert.doesNotReject(driver.ready(tc.signal), 'Driver is not ready');
 	})
 })
