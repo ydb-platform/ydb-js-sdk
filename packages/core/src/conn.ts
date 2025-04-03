@@ -59,6 +59,7 @@ export class LazyConnection implements Connection {
 	}
 
 	#debug: ClientMiddleware<ConnectionCallOptions> = async function* (this: Connection, call, options) {
+		let hasError = false;
 		try {
 			if (!call.responseStream) {
 				const response = yield* call.next(call.request, options);
@@ -72,15 +73,20 @@ export class LazyConnection implements Connection {
 				return;
 			}
 		} catch (error) {
+			hasError = true;
 			if (error instanceof ClientError) {
 				dbg.extend("grpc")('%s%s', this.address, error.message);
-			}
-
-			if (error instanceof Error && error.name === 'AbortError') {
+			} else if (error instanceof Error && error.name === 'AbortError') {
 				dbg.extend("grpc")('%s%s %s: %s', this.address, call.method.path, 'CANCELLED', error.message);
+			} else {
+				dbg.extend("grpc")('%s%s %s: %s', this.address, call.method.path, 'UNKNOWN', error);
 			}
 
 			throw error;
+		} finally {
+			if (!hasError) {
+				dbg.extend("grpc")('%s%s %s', this.address, call.method.path, 'OK');
+			}
 		}
 	}
 
