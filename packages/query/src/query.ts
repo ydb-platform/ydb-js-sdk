@@ -43,7 +43,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		this.#parameters = params
 	}
 
-	async #executeQuery(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
+	async #execute(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
 		// If we already have a promise, return it without executing the query again
 		if (this.#promise) {
 			return this.#promise;
@@ -165,7 +165,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		onfulfilled?: ((value: S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>) | null | undefined,
 		onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null | undefined
 	): Promise<TResult1 | TResult2> {
-		return this.#executeQuery().then(onfulfilled, onrejected)
+		return this.#execute().then(onfulfilled, onrejected)
 	}
 
 	/** Indicates if the query is currently executing */
@@ -242,7 +242,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Executes the query */
 	execute(): Query<T, S> {
-		this.#executeQuery()
+		this.#execute()
 
 		return this
 	}
