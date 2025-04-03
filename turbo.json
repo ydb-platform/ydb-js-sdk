@@ -44,6 +44,7 @@
 		},
 		"test": {
 			"env": [
+				"DEBUG",
 				"YDB_CONNECTION_STRING",
 				"YDB_CONNECTION_STRING_SECURE",
 				"YDB_SSL_ROOT_CERTIFICATES_FILE"

@@ -39,6 +39,7 @@
 		"@ydbjs/api": "6.0.0-alpha.1",
 		"@ydbjs/auth": "6.0.0-alpha.1",
 		"@ydbjs/retry": "6.0.0-alpha.1",
+		"@ydbjs/errors": "6.0.0-alpha.1",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
