@@ -7,7 +7,7 @@ import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSche
 import { StatusIds_StatusCode } from '@ydbjs/api/operation';
 import type { CredentialsProvider } from '@ydbjs/auth';
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
-import { YDBError } from '@ydbjs/errors';
+import { YDBError } from '@ydbjs/error';
 import { retry, type RetryConfig } from '@ydbjs/retry';
 import { exponential } from '@ydbjs/retry/strategy';
 import { ClientError, composeClientMiddleware, Metadata, Status, waitForChannelReady, type ChannelOptions, type Client, type ClientMiddleware, type CompatServiceDefinition } from 'nice-grpc';
