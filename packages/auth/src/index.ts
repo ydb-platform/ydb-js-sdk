@@ -13,7 +13,7 @@ export abstract class CredentialsProvider {
 		call: ClientMiddlewareCall<Request, Response>,
 		options: CallOptions,
 	) {
-		let token = await this.getToken(false)
+		let token = await this.getToken(false, options.signal)
 
 		return yield* call.next(call.request, {
 			...options,
