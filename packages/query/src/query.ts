@@ -1,6 +1,6 @@
 import { create } from "@bufbuild/protobuf"
 import { StatusIds_StatusCode } from "@ydbjs/api/operation"
-import { ExecMode, QueryServiceDefinition, Syntax, type SessionState } from "@ydbjs/api/query"
+import { ExecMode, QueryServiceDefinition, StatsMode, Syntax, type QueryStats, type SessionState } from "@ydbjs/api/query"
 import { TypedValueSchema, type TypedValue } from "@ydbjs/api/value"
 import type { Driver } from "@ydbjs/core"
 import { YDBError } from "@ydbjs/error"
@@ -14,9 +14,7 @@ type ArrayifyTuple<T extends any[]> = {
 	[K in keyof T]: T[K][]
 }
 
-type WithQueryStats<T> = T & { stats: QueryResultStats }
-
-export interface QueryResultStats { }
+type WithQueryStats<T> = T & { stats: QueryStats }
 
 export class Query<T extends any[] = unknown[], S extends boolean = false> implements PromiseLike<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>>, AsyncDisposable {
 	#driver: Driver
@@ -37,6 +35,9 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	#syntax: Syntax = Syntax.YQL_V1
 	#poolId: string | undefined
+
+	#stats: QueryStats | undefined
+	#statsMode: StatsMode = StatsMode.UNSPECIFIED
 
 	#raw: boolean = false
 	#values: boolean = false
@@ -168,6 +169,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 					}
 				},
 				parameters,
+				statsMode: this.#statsMode,
 				poolId: this.#poolId
 			}, { signal })
 
@@ -176,6 +178,12 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 			for await (let part of stream) {
 				if (part.status !== StatusIds_StatusCode.SUCCESS) {
 					throw new YDBError(part.status, part.issues)
+				}
+
+				if (part.execStats) {
+					if (this.#statsMode !== StatsMode.UNSPECIFIED) {
+						this.#stats = part.execStats
+					}
 				}
 
 				if (!part.resultSet) {
@@ -257,12 +265,24 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	}
 
 	/** Adds a parameter to the query */
-	parameter(name: string, parameter: null | string | number | boolean | Value): Query<T, S> {
+	parameter(name: string, parameter: Value | undefined): Query<T, S> {
+		if (parameter === undefined) {
+			delete this.#parameters[name]
+			return this
+		}
+
+		this.#parameters[name] = parameter
 		return this
 	}
 
 	/** Adds a parameter to the query */
-	param(name: string, parameter: null | string | number | boolean | Value): Query<T, S> {
+	param(name: string, parameter: Value | undefined): Query<T, S> {
+		if (parameter === undefined) {
+			delete this.#parameters[name]
+			return this
+		}
+
+		this.#parameters[name] = parameter
 		return this
 	}
 
@@ -272,12 +292,14 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	}
 
 	/** Returns the query execution statistics */
-	stats(): QueryResultStats {
-		return {}
+	stats(): QueryStats | undefined {
+		return this.#stats
 	}
 
 	/** Returns a query with statistics enabled */
-	withStats(): Query<T, true> {
+	withStats(mode: Exclude<StatsMode, StatsMode.UNSPECIFIED>): Query<T, true> {
+		this.#statsMode = mode
+
 		// @ts-expect-error
 		return this
 	}
