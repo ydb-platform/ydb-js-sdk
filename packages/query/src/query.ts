@@ -7,6 +7,7 @@ import { YDBError } from "@ydbjs/error"
 import { retry, type RetryConfig } from "@ydbjs/retry"
 import { exponential, fixed } from "@ydbjs/retry/strategy"
 import { fromYdb, toJs, type Value } from "@ydbjs/value"
+import { typeToString } from "@ydbjs/value/print"
 import { ClientError, Status } from "nice-grpc"
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
@@ -45,7 +46,12 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	constructor(driver: Driver, text: string, params: Record<string, Value>) {
 		this.#text = text
 		this.#driver = driver
-		this.#parameters = params
+		this.#parameters = {}
+
+		for (let key in params) {
+			key.startsWith('$') || (key = '$' + key)
+			this.#parameters[key] = params[key]
+		}
 	}
 
 	async #execute(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
@@ -165,7 +171,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 					case: 'queryContent',
 					value: {
 						syntax: this.#syntax,
-						text: this.#text,
+						text: this.text,
 					}
 				},
 				parameters,
@@ -245,7 +251,14 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	}
 
 	get text(): string {
-		return this.#text
+		let queryText = this.#text
+		if (this.#parameters) {
+			for (let [name, value] of Object.entries(this.#parameters)) {
+				queryText = `DECLARE ${name.startsWith('$') ? name : '$' + name} AS ${typeToString(value.type)};\n` + queryText
+			}
+		}
+
+		return queryText
 	}
 
 	get parameters(): Record<string, Value> {
@@ -266,6 +279,8 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Adds a parameter to the query */
 	parameter(name: string, parameter: Value | undefined): Query<T, S> {
+		name.startsWith('$') || (name = '$' + name)
+
 		if (parameter === undefined) {
 			delete this.#parameters[name]
 			return this
@@ -277,13 +292,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Adds a parameter to the query */
 	param(name: string, parameter: Value | undefined): Query<T, S> {
-		if (parameter === undefined) {
-			delete this.#parameters[name]
-			return this
-		}
-
-		this.#parameters[name] = parameter
-		return this
+		return this.parameter(name, parameter)
 	}
 
 	idempotent(idempotent: boolean): Query<T, S> {

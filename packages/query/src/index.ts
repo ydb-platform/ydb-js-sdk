@@ -1,6 +1,5 @@
 import type { Driver } from "@ydbjs/core";
 import { fromJs, type Value } from "@ydbjs/value";
-import { typeToString } from "@ydbjs/value/print";
 
 import { Query } from "./query.js";
 
@@ -47,10 +46,9 @@ export function query(driver: Driver): QueryClient {
 
 			if (Array.isArray(values)) {
 				values.forEach((value, i) => {
-					let ydbValue = fromJs(value)
+					let ydbValue = "type" in value && "kind" in value["type"] ? value : fromJs(value)
 
 					params[`$p${i}`] = ydbValue
-					text += `DECLARE $p${i} AS ${typeToString(ydbValue.type)};\n`
 				})
 			}
 
