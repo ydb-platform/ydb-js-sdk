@@ -14,9 +14,7 @@ test('Query', async (tc) => {
 		let sql = query(driver)
 
 		let stmt = sql`SELECT ${[{ "name": "Vlad", "age": 26n }, { "name": "Anonymous" }]};`
-			.timeout(5)
-
-		stmt.execute()
+			.signal(tc.signal)
 
 		console.log(`========================== TEXT ==========================`)
 		console.log(stmt.text)
