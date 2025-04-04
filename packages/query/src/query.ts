@@ -5,7 +5,7 @@ import { TypedValueSchema, type TypedValue } from "@ydbjs/api/value"
 import type { Driver } from "@ydbjs/core"
 import { YDBError } from "@ydbjs/error"
 import { retry, type RetryConfig } from "@ydbjs/retry"
-import { exponential } from "@ydbjs/retry/strategy"
+import { exponential, fixed } from "@ydbjs/retry/strategy"
 import { fromYdb, toJs, type Value } from "@ydbjs/value"
 import { ClientError, Status } from "nice-grpc"
 
@@ -25,6 +25,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	#text: string
 	#parameters: Record<string, Value>
+	#idempotent: boolean = false
 
 	#active: boolean = false
 	#disposed: boolean = false
@@ -73,14 +74,57 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		let retryConfig: RetryConfig = {
 			retry: (err) => {
 				return (err instanceof ClientError && err.code !== Status.CANCELLED)
+					|| (err instanceof ClientError && err.code !== Status.UNKNOWN)
+					|| (err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT)
+					|| (err instanceof ClientError && err.code !== Status.NOT_FOUND)
+					|| (err instanceof ClientError && err.code !== Status.ALREADY_EXISTS)
+					|| (err instanceof ClientError && err.code !== Status.PERMISSION_DENIED)
+					|| (err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION)
+					|| (err instanceof ClientError && err.code !== Status.OUT_OF_RANGE)
+					|| (err instanceof ClientError && err.code !== Status.UNIMPLEMENTED)
+					|| (err instanceof ClientError && err.code !== Status.DATA_LOSS)
+					|| (err instanceof ClientError && err.code !== Status.UNAUTHENTICATED)
 					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR)
 					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR)
 					|| (err instanceof Error && err.name !== 'TimeoutError')
 					|| (err instanceof Error && err.name !== 'AbortError')
 			},
 			signal,
-			budget: 5,
-			strategy: exponential(10)
+			budget: Infinity,
+			strategy: (ctx, cfg) => {
+				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.BAD_SESSION) {
+					return fixed(0)(ctx, cfg)
+				}
+
+				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.SESSION_EXPIRED) {
+					return fixed(0)(ctx, cfg)
+				}
+
+				if (ctx.error instanceof ClientError && ctx.error.code === Status.ABORTED) {
+					return fixed(0)(ctx, cfg)
+				}
+
+				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
+					return exponential(1000)(ctx, cfg)
+				}
+
+				if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
+					return exponential(1000)(ctx, cfg)
+				}
+
+				return exponential(10)(ctx, cfg)
+			},
+			idempotent: this.#idempotent,
 		}
 
 		this.#promise = retry(retryConfig, async () => {
@@ -219,6 +263,11 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Adds a parameter to the query */
 	param(name: string, parameter: null | string | number | boolean | Value): Query<T, S> {
+		return this
+	}
+
+	idempotent(idempotent: boolean): Query<T, S> {
+		this.#idempotent = idempotent
 		return this
 	}
 
