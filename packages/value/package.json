@@ -25,6 +25,10 @@
 			"require": "./dist/cjs/primitive.js",
 			"import": "./dist/esm/primitive.js"
 		},
+		"./optional": {
+			"require": "./dist/cjs/optional.js",
+			"import": "./dist/esm/optional.js"
+		},
 		"./struct": {
 			"require": "./dist/cjs/struct.js",
 			"import": "./dist/esm/struct.js"
@@ -62,6 +66,9 @@
 			],
 			"primitive": [
 				"./dist/cjs/primitive.d.ts"
+			],
+			"optional": [
+				"./dist/cjs/optional.d.ts"
 			],
 			"struct": [
 				"./dist/cjs/struct.d.ts"
