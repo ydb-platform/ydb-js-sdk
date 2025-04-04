@@ -33,6 +33,10 @@
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
+	"peerDependencies": {
+		"@ydbjs/api": "6.0.0-alpha.1",
+		"@ydbjs/core": "6.0.0-alpha.1"
+	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
 	}
