@@ -145,7 +145,12 @@ export class Driver implements Disposable {
 		dbg.extend("driver")("discovery(signal: %o)", signal)
 
 		let retryConfig: RetryConfig = {
-			retry: (err) => err instanceof ClientError || err instanceof YDBError || err instanceof Error && err.name !== 'TimeoutError',
+			retry: (err) => {
+				return (err instanceof ClientError && err.code !== Status.CANCELLED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST)
+					|| (err instanceof Error && err.name !== 'TimeoutError')
+					|| (err instanceof Error && err.name !== 'AbortError')
+			},
 			signal,
 			budget: Infinity,
 			strategy: exponential(50)

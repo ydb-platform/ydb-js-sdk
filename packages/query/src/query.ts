@@ -3,9 +3,11 @@ import { StatusIds_StatusCode } from "@ydbjs/api/operation"
 import { ExecMode, QueryServiceDefinition, Syntax, type SessionState } from "@ydbjs/api/query"
 import { TypedValueSchema, type TypedValue } from "@ydbjs/api/value"
 import type { Driver } from "@ydbjs/core"
-import { toJs } from "@ydbjs/value"
-import { fromYdb } from "@ydbjs/value"
-import { type Value } from "@ydbjs/value"
+import { YDBError } from "@ydbjs/error"
+import { retry, type RetryConfig } from "@ydbjs/retry"
+import { exponential } from "@ydbjs/retry/strategy"
+import { fromYdb, toJs, type Value } from "@ydbjs/value"
+import { ClientError, Status } from "nice-grpc"
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
 type ArrayifyTuple<T extends any[]> = {
@@ -25,6 +27,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	#parameters: Record<string, Value>
 
 	#active: boolean = false
+	#disposed: boolean = false
 	#cancelled: boolean = false
 	#controller: AbortController = new AbortController()
 
@@ -44,6 +47,10 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	}
 
 	async #execute(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
+		if (this.#disposed) {
+			throw new Error("Query has been disposed.")
+		}
+
 		// If we already have a promise, return it without executing the query again
 		if (this.#promise) {
 			return this.#promise;
@@ -63,100 +70,107 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 		signal.throwIfAborted()
 
-		this.#promise = new Promise(async (resolve, reject) => {
-			try {
-				await this.#driver.ready(signal)
-				let client = this.#driver.createClient(QueryServiceDefinition)
+		let retryConfig: RetryConfig = {
+			retry: (err) => {
+				return (err instanceof ClientError && err.code !== Status.CANCELLED)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST)
+					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR)
+					|| (err instanceof Error && err.name !== 'TimeoutError')
+					|| (err instanceof Error && err.name !== 'AbortError')
+			},
+			signal,
+			budget: 5,
+			strategy: exponential(10)
+		}
 
-				let sessionResponse = await client.createSession({}, { signal })
-				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
-					throw new Error("Failed to create session.")
-				}
+		this.#promise = retry(retryConfig, async () => {
+			await this.#driver.ready(signal)
+			let client = this.#driver.createClient(QueryServiceDefinition)
 
-				client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
-
-				let attachSessionResult = Promise.withResolvers<SessionState>();
-				(async (stream: AsyncIterable<SessionState>) => {
-					try {
-						for await (let state of stream) {
-							attachSessionResult.resolve(state)
-						}
-					} catch (err) { attachSessionResult.reject(err) }
-				})(client.attachSession({ sessionId: sessionResponse.sessionId }, { signal }))
-
-				if ((await attachSessionResult.promise).status !== StatusIds_StatusCode.SUCCESS) {
-					throw new Error("Failed to attach session. " + (await attachSessionResult.promise).status)
-				}
-
-				let parameters: Record<string, TypedValue> = {}
-				for (let key in this.#parameters) {
-					parameters[key] = create(TypedValueSchema, { type: this.#parameters[key].type.encode(), value: this.#parameters[key].encode() })
-				}
-
-				let stream = client.executeQuery({
-					sessionId: sessionResponse.sessionId,
-					execMode: ExecMode.EXECUTE,
-					query: {
-						case: 'queryContent',
-						value: {
-							syntax: this.#syntax,
-							text: this.#text,
-						}
-					},
-					parameters,
-					poolId: this.#poolId
-				}, { signal })
-
-				let results = [] as unknown as S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
-
-				for await (let part of stream) {
-					if (part.status !== StatusIds_StatusCode.SUCCESS) {
-						throw new Error(`Failed to read query result part. ${JSON.stringify(part.issues)}`)
-					}
-
-					if (!part.resultSet) {
-						continue
-					}
-
-					while (part.resultSetIndex >= results.length) {
-						results.push([])
-					}
-
-					for (let i = 0; i < part.resultSet.rows.length; i++) {
-						let result: any = this.#values ? [] : {}
-
-						for (let j = 0; j < part.resultSet.columns.length; j++) {
-							let column = part.resultSet.columns[j]
-							let value = part.resultSet.rows[i].items[j]
-
-							if (this.#values) {
-								result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
-								continue
-							}
-
-							result[column.name] = this.#raw ? value : toJs(fromYdb(value, column.type!))
-						}
-
-						results[Number(part.resultSetIndex)].push(result)
-					}
-				}
-
-				if (sessionResponse.sessionId) {
-					this.#cleanup.push(client.deleteSession({ sessionId: sessionResponse.sessionId }))
-				}
-
-				return resolve(results)
-			} catch (err) {
-				if (err instanceof Error && err.name === "AbortError") {
-					this.#cancelled = true
-					return reject(err)
-				}
-
-				return reject(err)
-			} finally {
-				this.#active = false
+			let sessionResponse = await client.createSession({}, { signal })
+			if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
+				throw new YDBError(sessionResponse.status, sessionResponse.issues)
 			}
+
+			client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
+
+			let attachSession = Promise.withResolvers<SessionState>();
+			(async (stream: AsyncIterable<SessionState>) => {
+				try {
+					for await (let state of stream) {
+						attachSession.resolve(state)
+					}
+				} catch (err) { attachSession.reject(err) }
+			})(client.attachSession({ sessionId: sessionResponse.sessionId }, { signal }))
+
+			let attachSessionResult = await attachSession.promise
+			if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
+				throw new YDBError(attachSessionResult.status, attachSessionResult.issues)
+			}
+
+			let parameters: Record<string, TypedValue> = {}
+			for (let key in this.#parameters) {
+				parameters[key] = create(TypedValueSchema, { type: this.#parameters[key].type.encode(), value: this.#parameters[key].encode() })
+			}
+
+			let stream = client.executeQuery({
+				sessionId: sessionResponse.sessionId,
+				execMode: ExecMode.EXECUTE,
+				query: {
+					case: 'queryContent',
+					value: {
+						syntax: this.#syntax,
+						text: this.#text,
+					}
+				},
+				parameters,
+				poolId: this.#poolId
+			}, { signal })
+
+			let results = [] as unknown as S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
+
+			for await (let part of stream) {
+				if (part.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(part.status, part.issues)
+				}
+
+				if (!part.resultSet) {
+					continue
+				}
+
+				while (part.resultSetIndex >= results.length) {
+					results.push([])
+				}
+
+				for (let i = 0; i < part.resultSet.rows.length; i++) {
+					let result: any = this.#values ? [] : {}
+
+					for (let j = 0; j < part.resultSet.columns.length; j++) {
+						let column = part.resultSet.columns[j]
+						let value = part.resultSet.rows[i].items[j]
+
+						if (this.#values) {
+							result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
+							continue
+						}
+
+						result[column.name] = this.#raw ? value : toJs(fromYdb(value, column.type!))
+					}
+
+					results[Number(part.resultSetIndex)].push(result)
+				}
+			}
+
+			if (sessionResponse.sessionId) {
+				this.#cleanup.push(client.deleteSession({ sessionId: sessionResponse.sessionId }))
+			}
+
+			return results
 		})
+			.finally(() => {
+				this.#active = false
+				this.#controller.abort("Query completed.")
+			})
 
 		return this.#promise
 	}
@@ -262,5 +276,8 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	async [Symbol.asyncDispose](): Promise<void> {
 		this.#controller.abort("Query disposed.")
 		await Promise.all(this.#cleanup)
+		this.#cleanup = []
+		this.#promise = null
+		this.#disposed = true
 	}
 }
