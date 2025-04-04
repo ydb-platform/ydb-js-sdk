@@ -301,6 +301,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	}
 
 	/** Returns the query execution statistics */
+	// TODO: Return user-friendly stats report
 	stats(): QueryStats | undefined {
 		return this.#stats
 	}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import { inspect } from 'node:util';
 import * as assert from 'node:assert';
 
+import { StatsMode } from '@ydbjs/api/query';
 import { Driver } from '@ydbjs/core';
 
 import { query } from '../dist/esm/index.js';
@@ -15,6 +16,7 @@ test('Query', async (tc) => {
 
 		let stmt = sql`SELECT ${[{ "name": "Vlad", "age": 26n }, { "name": "Anonymous" }]};`
 			.signal(tc.signal)
+			.withStats(StatsMode.BASIC)
 
 		console.log(`========================== TEXT ==========================`)
 		console.log(stmt.text)
@@ -31,5 +33,9 @@ test('Query', async (tc) => {
 		console.log('==========================RESULT==========================',)
 		console.log(inspect(await stmt, { depth: 10 }))
 		console.log('==========================RESULT==========================',)
+
+		console.log('==========================STATS===========================',)
+		console.log(inspect(stmt.stats(), { depth: 10 }))
+		console.log('==========================STATS===========================',)
 	})
 })
