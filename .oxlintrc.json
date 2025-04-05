@@ -1,0 +1,25 @@
+{
+	"rules": {
+		"sort-imports": [
+			"warn",
+			{
+				"allowSeparatedGroups": true,
+				"ignoreDeclarationSort": true,
+				"ignoreMemberSort": false,
+				"ignoreCase": false
+			}
+		]
+	},
+	// Enable all rules in the `correctness` and `suspicious` categories
+	"ignorePatterns": [
+		"node_modules",
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/*.test.ts"
+	],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "warn",
+		"perf": "warn"
+	}
+}

@@ -35,7 +35,7 @@ export function uuidFromBigInts(low128: bigint, high128: bigint): string {
 
 export function bigIntsFromUuid(uuid: string): { low128: bigint, high128: bigint } {
 	// Remove dashes from the UUID string
-	let hex = uuid.replace(/-/g, '');
+	let hex = uuid.replaceAll("-", '');
 
 	// Create a buffer from the hexadecimal string
 	let bytes = Buffer.from(hex, 'hex');

@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import * as wkt from "@bufbuild/protobuf/wkt";
 import * as Ydb from "@ydbjs/api/value";
 
-import { TypeKind, type Type } from "./type.js";
+import { type Type, TypeKind } from "./type.js";
 import type { Value } from "./value.js";
 
 export class NullType implements Type {

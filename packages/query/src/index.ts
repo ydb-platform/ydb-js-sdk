@@ -1,13 +1,13 @@
-import type { Driver } from "@ydbjs/core";
-import { fromJs, type Value } from "@ydbjs/value";
+import type { Driver } from '@ydbjs/core'
+import { type Value, fromJs } from '@ydbjs/value'
 
-import { Query } from "./query.js";
+import { Query } from './query.js'
 
-interface SessionContextCallback { }
+interface SessionContextCallback {}
 
-interface TransactionContextCallback { }
+interface TransactionContextCallback {}
 
-type Isolation = ""
+type Isolation = ''
 
 export interface QueryClient extends AsyncDisposable {
 	<T extends any[] = unknown[], P extends any[] = unknown[]>(
@@ -30,29 +30,32 @@ export interface QueryClient extends AsyncDisposable {
 	transaction<T = unknown>(iso: Isolation, fn: TransactionContextCallback): Promise<T>
 }
 
+const doImpl = function <T = unknown>(): Promise<T> {
+	throw new Error('Not implemented')
+}
+
+const beginIml = function <T = unknown>(): Promise<T> {
+	throw new Error('Not implemented')
+}
+
 export function query(driver: Driver): QueryClient {
-	let doImpl = async function <T = unknown>(): Promise<T> {
-		throw new Error("Not implemented")
-	}
-
-	let beginIml = async function <T = unknown>(): Promise<T> {
-		throw new Error("Not implemented")
-	}
-
 	return Object.assign(
-		function yql<T extends any[] = unknown[], P extends any[] = unknown[]>(strings: string | TemplateStringsArray, ...values: P): Query<T> {
-			let text = "";
+		function yql<T extends any[] = unknown[], P extends any[] = unknown[]>(
+			strings: string | TemplateStringsArray,
+			...values: P
+		): Query<T> {
+			let text = ''
 			let params: Record<string, Value> = Object.assign({}, null)
 
 			if (Array.isArray(values)) {
 				values.forEach((value, i) => {
-					let ydbValue = "type" in value && "kind" in value["type"] ? value : fromJs(value)
+					let ydbValue = 'type' in value && 'kind' in value['type'] ? value : fromJs(value)
 
 					params[`$p${i}`] = ydbValue
 				})
 			}
 
-			if (typeof strings === "string") {
+			if (typeof strings === 'string') {
 				text += strings
 			}
 
@@ -66,7 +69,7 @@ export function query(driver: Driver): QueryClient {
 			do: doImpl,
 			begin: beginIml,
 			transaction: beginIml,
-			async [Symbol.asyncDispose]() { },
+			async [Symbol.asyncDispose]() {},
 		}
 	)
 }

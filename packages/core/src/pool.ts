@@ -1,7 +1,7 @@
 import { type EndpointInfo } from '@ydbjs/api/discovery';
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc';
 
-import { LazyConnection, type Connection } from './conn.ts';
+import { type Connection, LazyConnection } from './conn.ts';
 import { dbg } from './dbg.js';
 
 export class ConnectionPool implements Disposable {

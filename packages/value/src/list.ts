@@ -1,7 +1,7 @@
 import { create } from '@bufbuild/protobuf';
 import * as Ydb from '@ydbjs/api/value'
 
-import { TypeKind, type Type } from './type.js';
+import { type Type, TypeKind } from './type.js';
 import type { Value } from './value.js';
 import { NullType } from './null.js';
 

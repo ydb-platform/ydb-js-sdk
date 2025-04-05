@@ -1,25 +1,34 @@
-import { create } from "@bufbuild/protobuf"
-import { StatusIds_StatusCode } from "@ydbjs/api/operation"
-import { ExecMode, QueryServiceDefinition, StatsMode, Syntax, type QueryStats, type SessionState } from "@ydbjs/api/query"
-import { TypedValueSchema, type TypedValue } from "@ydbjs/api/value"
-import type { Driver } from "@ydbjs/core"
-import { YDBError } from "@ydbjs/error"
-import { retry, type RetryConfig } from "@ydbjs/retry"
-import { exponential, fixed } from "@ydbjs/retry/strategy"
-import { fromYdb, toJs, type Value } from "@ydbjs/value"
-import { typeToString } from "@ydbjs/value/print"
-import { ClientError, Status } from "nice-grpc"
+import { create } from '@bufbuild/protobuf'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import {
+	ExecMode,
+	QueryServiceDefinition,
+	type QueryStats,
+	type SessionState,
+	StatsMode,
+	Syntax,
+} from '@ydbjs/api/query'
+import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
+import type { Driver } from '@ydbjs/core'
+import { YDBError } from '@ydbjs/error'
+import { type RetryConfig, retry } from '@ydbjs/retry'
+import { exponential, fixed } from '@ydbjs/retry/strategy'
+import { type Value, fromYdb, toJs } from '@ydbjs/value'
+import { typeToString } from '@ydbjs/value/print'
+import { ClientError, Status } from 'nice-grpc'
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
-type ArrayifyTuple<T extends any[]> = {
+type ArrayifyTuple<T extends unknown[]> = {
 	[K in keyof T]: T[K][]
 }
 
 type WithQueryStats<T> = T & { stats: QueryStats }
 
-export class Query<T extends any[] = unknown[], S extends boolean = false> implements PromiseLike<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>>, AsyncDisposable {
+export class Query<T extends unknown[] = unknown[], S extends boolean = false>
+	implements PromiseLike<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>>, AsyncDisposable
+{
 	#driver: Driver
-	#promise: (Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>>) | null = null
+	#promise: Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> | null = null
 	#cleanup: Promise<unknown>[] = []
 
 	#text: string
@@ -54,18 +63,19 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		}
 	}
 
+	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
 		if (this.#disposed) {
-			throw new Error("Query has been disposed.")
+			throw new Error('Query has been disposed.')
 		}
 
 		// If we already have a promise, return it without executing the query again
 		if (this.#promise) {
-			return this.#promise;
+			return this.#promise
 		}
 
 		if (this.#active) {
-			throw new Error("Query is already executing.")
+			throw new Error('Query is already executing.')
 		}
 
 		this.#active = true
@@ -80,31 +90,33 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 		let retryConfig: RetryConfig = {
 			retry: (err) => {
-				return (err instanceof ClientError && err.code !== Status.CANCELLED)
-					|| (err instanceof ClientError && err.code !== Status.UNKNOWN)
-					|| (err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT)
-					|| (err instanceof ClientError && err.code !== Status.NOT_FOUND)
-					|| (err instanceof ClientError && err.code !== Status.ALREADY_EXISTS)
-					|| (err instanceof ClientError && err.code !== Status.PERMISSION_DENIED)
-					|| (err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION)
-					|| (err instanceof ClientError && err.code !== Status.OUT_OF_RANGE)
-					|| (err instanceof ClientError && err.code !== Status.UNIMPLEMENTED)
-					|| (err instanceof ClientError && err.code !== Status.DATA_LOSS)
-					|| (err instanceof ClientError && err.code !== Status.UNAUTHENTICATED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR)
-					|| (err instanceof Error && err.name !== 'TimeoutError')
-					|| (err instanceof Error && err.name !== 'AbortError')
+				return (
+					(err instanceof ClientError && err.code !== Status.CANCELLED) ||
+					(err instanceof ClientError && err.code !== Status.UNKNOWN) ||
+					(err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT) ||
+					(err instanceof ClientError && err.code !== Status.NOT_FOUND) ||
+					(err instanceof ClientError && err.code !== Status.ALREADY_EXISTS) ||
+					(err instanceof ClientError && err.code !== Status.PERMISSION_DENIED) ||
+					(err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION) ||
+					(err instanceof ClientError && err.code !== Status.OUT_OF_RANGE) ||
+					(err instanceof ClientError && err.code !== Status.UNIMPLEMENTED) ||
+					(err instanceof ClientError && err.code !== Status.DATA_LOSS) ||
+					(err instanceof ClientError && err.code !== Status.UNAUTHENTICATED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR) ||
+					(err instanceof Error && err.name !== 'TimeoutError') ||
+					(err instanceof Error && err.name !== 'AbortError')
+				)
 			},
 			signal,
 			budget: Infinity,
@@ -134,6 +146,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 			idempotent: this.#idempotent,
 		}
 
+		/* oxlint-disable max-lines-per-function  */
 		this.#promise = retry(retryConfig, async () => {
 			await this.#driver.ready(signal)
 			let client = this.#driver.createClient(QueryServiceDefinition)
@@ -145,13 +158,15 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 			client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
 
-			let attachSession = Promise.withResolvers<SessionState>();
-			(async (stream: AsyncIterable<SessionState>) => {
+			let attachSession = Promise.withResolvers<SessionState>()
+			;(async (stream: AsyncIterable<SessionState>) => {
 				try {
 					for await (let state of stream) {
 						attachSession.resolve(state)
 					}
-				} catch (err) { attachSession.reject(err) }
+				} catch (err) {
+					attachSession.reject(err)
+				}
 			})(client.attachSession({ sessionId: sessionResponse.sessionId }, { signal }))
 
 			let attachSessionResult = await attachSession.promise
@@ -161,23 +176,29 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 			let parameters: Record<string, TypedValue> = {}
 			for (let key in this.#parameters) {
-				parameters[key] = create(TypedValueSchema, { type: this.#parameters[key].type.encode(), value: this.#parameters[key].encode() })
+				parameters[key] = create(TypedValueSchema, {
+					type: this.#parameters[key].type.encode(),
+					value: this.#parameters[key].encode(),
+				})
 			}
 
-			let stream = client.executeQuery({
-				sessionId: sessionResponse.sessionId,
-				execMode: ExecMode.EXECUTE,
-				query: {
-					case: 'queryContent',
-					value: {
-						syntax: this.#syntax,
-						text: this.text,
-					}
+			let stream = client.executeQuery(
+				{
+					sessionId: sessionResponse.sessionId,
+					execMode: ExecMode.EXECUTE,
+					query: {
+						case: 'queryContent',
+						value: {
+							syntax: this.#syntax,
+							text: this.text,
+						},
+					},
+					parameters,
+					statsMode: this.#statsMode,
+					poolId: this.#poolId,
 				},
-				parameters,
-				statsMode: this.#statsMode,
-				poolId: this.#poolId
-			}, { signal })
+				{ signal }
+			)
 
 			let results = [] as unknown as S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
 
@@ -187,9 +208,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 				}
 
 				if (part.execStats) {
-					if (this.#statsMode !== StatsMode.UNSPECIFIED) {
-						this.#stats = part.execStats
-					}
+					this.#stats = part.execStats
 				}
 
 				if (!part.resultSet) {
@@ -224,20 +243,25 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 			}
 
 			return results
+		}).finally(() => {
+			this.#active = false
+			this.#controller.abort('Query completed.')
 		})
-			.finally(() => {
-				this.#active = false
-				this.#controller.abort("Query completed.")
-			})
 
-		return this.#promise
+		return await this.#promise
 	}
 
+	/** Returns the result of the query */
+	/* oxlint-disable unicorn/no-thenable */
 	async then<TResult1 = S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>, TResult2 = never>(
-		onfulfilled?: ((value: S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>) | null | undefined,
-		onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null | undefined
+		onfulfilled?:
+			| ((
+					value: S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
+			  ) => TResult1 | PromiseLike<TResult1>)
+			| null,
+		onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
 	): Promise<TResult1 | TResult2> {
-		return this.#execute().then(onfulfilled, onrejected)
+		return await this.#execute().then(onfulfilled, onrejected)
 	}
 
 	/** Indicates if the query is currently executing */
@@ -254,7 +278,9 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		let queryText = this.#text
 		if (this.#parameters) {
 			for (let [name, value] of Object.entries(this.#parameters)) {
-				queryText = `DECLARE ${name.startsWith('$') ? name : '$' + name} AS ${typeToString(value.type)};\n` + queryText
+				name.startsWith('$') || (name = '$' + name)
+
+				queryText = `DECLARE ${name} AS ${typeToString(value.type)};\n` + queryText
 			}
 		}
 
@@ -287,6 +313,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		}
 
 		this.#parameters[name] = parameter
+
 		return this
 	}
 
@@ -295,8 +322,10 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 		return this.parameter(name, parameter)
 	}
 
+	/** Sets the idempotent flag for the query */
 	idempotent(idempotent: boolean): Query<T, S> {
 		this.#idempotent = idempotent
+
 		return this
 	}
 
@@ -310,8 +339,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	withStats(mode: Exclude<StatsMode, StatsMode.UNSPECIFIED>): Query<T, true> {
 		this.#statsMode = mode
 
-		// @ts-expect-error
-		return this
+		return this as Query<T, true>
 	}
 
 	/** Sets the query timeout */
@@ -323,7 +351,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Cancels the executing query */
 	cancel(): Query<T, S> {
-		this.#controller.abort("Query cancelled by user.")
+		this.#controller.abort('Query cancelled by user.')
 		this.#cancelled = true
 
 		return this
@@ -337,7 +365,7 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 
 	/** Executes the query */
 	execute(): Query<T, S> {
-		this.#execute()
+		void this.#execute()
 
 		return this
 	}
@@ -345,17 +373,19 @@ export class Query<T extends any[] = unknown[], S extends boolean = false> imple
 	/** Returns only the values from the query result */
 	values(): Query<unknown[], S> {
 		this.#values = true
+
 		return this
 	}
 
 	/** Returns raw values */
 	raw(): Query<T, S> {
 		this.#raw = true
+
 		return this
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
-		this.#controller.abort("Query disposed.")
+		this.#controller.abort('Query disposed.')
 		await Promise.all(this.#cleanup)
 		this.#cleanup = []
 		this.#promise = null

@@ -1,18 +1,17 @@
-import { mock, test } from 'node:test'
+import { createClientFactory } from 'nice-grpc'
 import * as assert from 'node:assert'
-import { createClientFactory } from 'nice-grpc';
+import { mock, test } from 'node:test'
 
-import { StaticCredentialsProvider } from "../dist/esm/static.js";
+import { StaticCredentialsProvider } from '../dist/esm/static.js'
 
-test('BasicCredentialsProvider', async (tc) => {
+await test('BasicCredentialsProvider', async (tc) => {
 	let calls = 0
 
 	let cs = new URL(process.env.YDB_CONNECTION_STRING!.replace(/^grpc/, 'http'))
-	let cf = createClientFactory()
-		.use((call, options) => {
-			calls++
-			return call.next(call.request, options)
-		})
+	let cf = createClientFactory().use((call, options) => {
+		calls++
+		return call.next(call.request, options)
+	})
 
 	tc.afterEach(() => {
 		calls = 0
@@ -39,8 +38,8 @@ test('BasicCredentialsProvider', async (tc) => {
 	await tc.test('force refresh token', async (tc) => {
 		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
-		let token = await provider.getToken()
-		let token2 = await provider.getToken(true)
+		let token = await provider.getToken(false, tc.signal)
+		let token2 = await provider.getToken(true, tc.signal)
 
 		assert.notStrictEqual(token, token2, 'Token is different')
 		assert.strictEqual(calls, 2, 'Two calls were made')
@@ -49,9 +48,9 @@ test('BasicCredentialsProvider', async (tc) => {
 	await tc.test('auto refresh expired token', async (tc) => {
 		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
-		let token = await provider.getToken()
+		let token = await provider.getToken(false, tc.signal)
 		mock.timers.enable({ apis: ['Date'], now: new Date(2100, 0, 1) })
-		let token2 = await provider.getToken()
+		let token2 = await provider.getToken(false, tc.signal)
 
 		assert.notStrictEqual(token, token2, 'Token is different')
 		assert.strictEqual(calls, 2, 'Two calls were made')
@@ -61,12 +60,15 @@ test('BasicCredentialsProvider', async (tc) => {
 		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let tokens = await Promise.all([
-			provider.getToken(),
-			provider.getToken(),
-			provider.getToken(),
+			provider.getToken(false, tc.signal),
+			provider.getToken(false, tc.signal),
+			provider.getToken(false, tc.signal),
 		])
 
-		assert.ok(tokens.every(t => t === tokens[0]), 'All tokens are the same')
+		assert.ok(
+			tokens.every((t) => t === tokens[0]),
+			'All tokens are the same'
+		)
 		assert.strictEqual(calls, 1, 'Only one call was made')
 	})
 
@@ -75,7 +77,7 @@ test('BasicCredentialsProvider', async (tc) => {
 
 		let controller = new AbortController()
 		setTimeout(() => controller.abort(), 0)
-		let token = provider.getToken(false, controller.signal)
+		let token = provider.getToken(false, AbortSignal.any([controller.signal, tc.signal]))
 
 		await assert.rejects(token, { name: 'AbortError' }, 'Token aquisition was canceled')
 	})
@@ -83,7 +85,7 @@ test('BasicCredentialsProvider', async (tc) => {
 	await tc.test('timeout token aquisition', async (tc) => {
 		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
-		let token = provider.getToken(false, AbortSignal.timeout(0))
+		let token = provider.getToken(false, AbortSignal.any([AbortSignal.timeout(0), tc.signal]))
 
 		await assert.rejects(token, { name: 'AbortError' }, 'Token aquisition was timed out')
 	})

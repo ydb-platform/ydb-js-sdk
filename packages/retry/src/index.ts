@@ -1,6 +1,6 @@
-import type { RetryConfig } from "./config.js";
-import type { RetryContext } from "./context.js";
-import { linear } from "./strategy.js";
+import type { RetryConfig } from './config.js'
+import type { RetryContext } from './context.js'
+import { linear } from './strategy.js'
 
 export const defaultRetryConfig: RetryConfig = {
 	retry: (error) => error instanceof Error,
@@ -11,36 +11,37 @@ export const defaultRetryConfig: RetryConfig = {
 
 export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
-	let ctx: RetryContext = { attempt: 0, error: null };
+	let ctx: RetryContext = { attempt: 0, error: null }
 
 	let budget: number
-	while (ctx.attempt < (budget = (typeof config.budget === "number" ? config.budget : config.budget!(ctx, config)))) {
+	while (ctx.attempt < (budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))) {
 		let start = Date.now()
 		if (cfg.signal?.aborted) {
-			throw cfg.signal.reason;
+			throw cfg.signal.reason
 		}
 
 		try {
-			return await fn();
+			return fn()
 		} catch (error) {
 			ctx.attempt += 1
 			ctx.error = error
 
 			let retry = typeof config.retry === 'function' ? config.retry(ctx.error) : config.retry
 			if (!retry || ctx.attempt >= budget) {
-				throw error;
+				throw error
 			}
 
-			let delay = typeof config.strategy === "number" ? config.strategy : config.strategy!(ctx, config);
-			let remaining = Math.max(delay - (Date.now() - start), 0);
+			let delay = typeof config.strategy === 'number' ? config.strategy : config.strategy!(ctx, config)
+			let remaining = Math.max(delay - (Date.now() - start), 0)
 			if (!remaining) {
-				continue;
+				continue
 			}
 
 			if (cfg.signal?.aborted) {
-				throw cfg.signal.reason;
+				throw cfg.signal.reason
 			}
 
+			// oxlint-disable no-await-in-loop
 			await Promise.race([
 				new Promise((resolve) => setTimeout(resolve, remaining)),
 				new Promise((_, reject) => {
@@ -52,12 +53,12 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 						})
 					}
 				}),
-			]);
+			])
 		}
 	}
 
 	throw new Error('Retry budget exceeded')
 }
 
-export * from './config.js';
-export * from './context.js';
+export * from './config.js'
+export * from './context.js'

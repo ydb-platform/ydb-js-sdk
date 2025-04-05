@@ -1,31 +1,41 @@
-import * as tls from 'node:tls';
+import * as tls from 'node:tls'
 
-import { create } from '@bufbuild/protobuf';
-import { anyUnpack } from '@bufbuild/protobuf/wkt';
-import { credentials } from '@grpc/grpc-js';
-import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSchema } from '@ydbjs/api/discovery';
-import { StatusIds_StatusCode } from '@ydbjs/api/operation';
-import type { CredentialsProvider } from '@ydbjs/auth';
-import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
-import { YDBError } from '@ydbjs/error';
-import { retry, type RetryConfig } from '@ydbjs/retry';
-import { exponential } from '@ydbjs/retry/strategy';
-import { ClientError, composeClientMiddleware, Metadata, Status, waitForChannelReady, type ChannelOptions, type Client, type ClientMiddleware, type CompatServiceDefinition } from 'nice-grpc';
-import { LazyConnection, type Connection, type ConnectionCallOptions } from './conn.ts';
-import { dbg } from './dbg.js';
-import { ConnectionPool } from './pool.js';
+import { create } from '@bufbuild/protobuf'
+import { anyUnpack } from '@bufbuild/protobuf/wkt'
+import { credentials } from '@grpc/grpc-js'
+import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSchema } from '@ydbjs/api/discovery'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import type { CredentialsProvider } from '@ydbjs/auth'
+import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
+import { YDBError } from '@ydbjs/error'
+import { type RetryConfig, retry } from '@ydbjs/retry'
+import { exponential } from '@ydbjs/retry/strategy'
+import {
+	type ChannelOptions,
+	type Client,
+	ClientError,
+	type ClientMiddleware,
+	type CompatServiceDefinition,
+	Metadata,
+	Status,
+	composeClientMiddleware,
+	waitForChannelReady,
+} from 'nice-grpc'
+import { type Connection, type ConnectionCallOptions, LazyConnection } from './conn.ts'
+import { dbg } from './dbg.js'
+import { ConnectionPool } from './pool.js'
 
 export type DriverOptions = ChannelOptions & {
 	ssl?: tls.SecureContextOptions
 	credentialsProvier?: CredentialsProvider
 
-	'ydb.sdk.application'?: string;
-	'ydb.sdk.ready_timeout_ms'?: number;
-	'ydb.sdk.enable_discovery'?: boolean;
-	'ydb.sdk.discovery_timeout_ms'?: number;
-	'ydb.sdk.discovery_interval_ms'?: number;
+	'ydb.sdk.application'?: string
+	'ydb.sdk.ready_timeout_ms'?: number
+	'ydb.sdk.enable_discovery'?: boolean
+	'ydb.sdk.discovery_timeout_ms'?: number
+	'ydb.sdk.discovery_interval_ms'?: number
 
-	[key: string]: any;
+	[key: string]: any
 }
 
 const defaultOptions: DriverOptions = {
@@ -48,8 +58,9 @@ export class Driver implements Disposable {
 	#discoveryClient!: Client<typeof DiscoveryServiceDefinition, ConnectionCallOptions>
 	#rediscoverTimer?: NodeJS.Timeout
 
+	/* oxlint-disable max-lines-per-function */
 	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
-		dbg.extend("driver")("Driver(connectionString: %s, options: %o)", connectionString, options)
+		dbg.extend('driver')('Driver(connectionString: %s, options: %o)', connectionString, options)
 
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
 
@@ -71,8 +82,8 @@ export class Driver implements Disposable {
 			this.options['ydb.sdk.application'] ??= this.cs.searchParams.get('application') || ''
 		}
 
-		const discoveryInterval = this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!;
-		const discoveryTimeout = this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!;
+		const discoveryInterval = this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!
+		const discoveryTimeout = this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!
 		if (discoveryInterval < discoveryTimeout) {
 			throw new Error('Discovery interval must be greater than discovery timeout.')
 		}
@@ -80,13 +91,15 @@ export class Driver implements Disposable {
 		let endpoint = create(EndpointInfoSchema, {
 			address: this.cs.hostname,
 			nodeId: -1,
-			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80')),
+			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80'), 10),
 			ssl: this.isSecure,
 		})
 
 		let channelCredentials = this.options.ssl
 			? credentials.createFromSecureContext(tls.createSecureContext(this.options.ssl))
-			: this.isSecure ? credentials.createSsl() : credentials.createInsecure()
+			: this.isSecure
+				? credentials.createSsl()
+				: credentials.createInsecure()
 
 		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options)
 
@@ -105,17 +118,22 @@ export class Driver implements Disposable {
 
 		this.#pool = new ConnectionPool(channelCredentials, this.options)
 
-		this.#discoveryClient = this.#connection.clientFactory.use(this.#middleware).create(DiscoveryServiceDefinition, this.#connection.channel)
+		this.#discoveryClient = this.#connection.clientFactory
+			.use(this.#middleware)
+			.create(DiscoveryServiceDefinition, this.#connection.channel)
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
-			dbg.extend("driver")('discovery disabled, using single endpoint')
-			waitForChannelReady(this.#connection.channel, new Date(Date.now() + (this.options['ydb.sdk.ready_timeout_ms'] || 10000)))
+			dbg.extend('driver')('discovery disabled, using single endpoint')
+			waitForChannelReady(
+				this.#connection.channel,
+				new Date(Date.now() + (this.options['ydb.sdk.ready_timeout_ms'] || 10000))
+			)
 				.then(this.#ready.resolve)
 				.catch(this.#ready.reject)
 		}
 
 		if (this.options['ydb.sdk.enable_discovery'] === true) {
-			dbg.extend("driver")('discovery enabled, using connection pool')
+			dbg.extend('driver')('discovery enabled, using connection pool')
 
 			// Initial discovery
 			this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
@@ -124,7 +142,7 @@ export class Driver implements Disposable {
 
 			// Periodic discovery
 			this.#rediscoverTimer = setInterval(() => {
-				this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+				void this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
 			}, this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!)
 
 			// Unref the timer so it doesn't keep the process running
@@ -140,35 +158,44 @@ export class Driver implements Disposable {
 		return this.cs.protocol === 'https:'
 	}
 
-	// TODO: add retry logic
 	async #discovery(signal?: AbortSignal): Promise<void> {
-		dbg.extend("driver")("discovery(signal: %o)", signal)
+		dbg.extend('driver')('discovery(signal: %o)', signal)
 
 		let retryConfig: RetryConfig = {
 			retry: (err) => {
-				return (err instanceof ClientError && err.code !== Status.CANCELLED)
-					|| (err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST)
-					|| (err instanceof Error && err.name !== 'TimeoutError')
-					|| (err instanceof Error && err.name !== 'AbortError')
+				return (
+					(err instanceof ClientError && err.code !== Status.CANCELLED) ||
+					(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
+					(err instanceof Error && err.name !== 'TimeoutError') ||
+					(err instanceof Error && err.name !== 'AbortError')
+				)
 			},
 			signal,
 			budget: Infinity,
-			strategy: exponential(50)
+			strategy: exponential(50),
 		}
 
 		let result = await retry(retryConfig, async () => {
 			let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
 			if (!response.operation) {
-				throw new ClientError(DiscoveryServiceDefinition.listEndpoints.path, Status.UNKNOWN, 'No operation in response');
+				throw new ClientError(
+					DiscoveryServiceDefinition.listEndpoints.path,
+					Status.UNKNOWN,
+					'No operation in response'
+				)
 			}
 
 			if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
 				throw new YDBError(response.operation.status, response.operation.issues)
 			}
 
-			let result = anyUnpack(response.operation.result!, ListEndpointsResultSchema);
+			let result = anyUnpack(response.operation.result!, ListEndpointsResultSchema)
 			if (!result) {
-				throw new ClientError(DiscoveryServiceDefinition.listEndpoints.path, Status.UNKNOWN, 'No result in operation');
+				throw new ClientError(
+					DiscoveryServiceDefinition.listEndpoints.path,
+					Status.UNKNOWN,
+					'No result in operation'
+				)
 			}
 
 			return result
@@ -189,10 +216,7 @@ export class Driver implements Disposable {
 			}
 		})
 
-		return Promise.race([
-			this.#ready.promise,
-			abortPromise,
-		])
+		return Promise.race([this.#ready.promise, abortPromise])
 	}
 
 	close(): void {
@@ -201,7 +225,10 @@ export class Driver implements Disposable {
 		this.#connection.channel.close()
 	}
 
-	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service, ConnectionCallOptions> {
+	createClient<Service extends CompatServiceDefinition>(
+		service: Service,
+		preferNodeId?: bigint
+	): Client<Service, ConnectionCallOptions> {
 		let connection = this.options['ydb.sdk.enable_discovery'] ? this.#pool.aquire(preferNodeId) : this.#connection
 		let factory = connection.clientFactory.use(this.#middleware)
 
