@@ -61,17 +61,7 @@ export class LazyConnection implements Connection {
 	#debug: ClientMiddleware<ConnectionCallOptions> = async function* (this: Connection, call, options) {
 		let hasError = false;
 		try {
-			if (!call.responseStream) {
-				const response = yield* call.next(call.request, options);
-
-				return response;
-			} else {
-				for await (const response of call.next(call.request, options)) {
-					yield response;
-				}
-
-				return;
-			}
+			return yield* call.next(call.request, options);
 		} catch (error) {
 			hasError = true;
 			if (error instanceof ClientError) {
