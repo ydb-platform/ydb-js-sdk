@@ -49,7 +49,8 @@ export function query(driver: Driver): QueryClient {
 
 			if (Array.isArray(values)) {
 				values.forEach((value, i) => {
-					let ydbValue = 'type' in value && 'kind' in value['type'] ? value : fromJs(value)
+					let isObject = typeof value === 'object' && value !== null && !Array.isArray(value)
+					let ydbValue = isObject && 'type' in value && 'kind' in value['type'] ? value : fromJs(value)
 
 					params[`$p${i}`] = ydbValue
 				})
