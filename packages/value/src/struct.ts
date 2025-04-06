@@ -66,7 +66,7 @@ export class Struct<T extends Record<string, Value | null> = Record<string, Valu
 					throw new Error(`Invalid type for ${name}: expected ${type.kind}, got ${value.type.kind}`)
 				}
 
-				this.items.push(new Optional(value, type))
+				this.items.push(new Optional((value ??= null), type))
 			}
 
 			return

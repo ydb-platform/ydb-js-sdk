@@ -1,8 +1,8 @@
 import { type MessageInitShape, create } from "@bufbuild/protobuf";
 import type { GenMessage } from "@bufbuild/protobuf/codegenv1";
-import { NullValue } from "@bufbuild/protobuf/wkt";
 import * as Ydb from "@ydbjs/api/value";
 
+import { Null } from "./null.js";
 import { type Type, TypeKind } from "./type.js";
 import type { Value } from "./value.js";
 
@@ -45,7 +45,7 @@ export class Optional<T extends Type> implements Value<OptionalType> {
 
 	encode(): Ydb.Value {
 		if (!this.#valueInstance) {
-			this.#valueInstance = create(Ydb.ValueSchema, this.item === null ? { value: { case: "nullFlagValue", value: NullValue.NULL_VALUE } } : this.item.encode());
+			this.#valueInstance = create(Ydb.ValueSchema, this.item === null ? new Null().encode() : this.item.encode());
 		}
 
 		return this.#valueInstance;
