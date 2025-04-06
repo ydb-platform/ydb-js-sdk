@@ -32,7 +32,8 @@
 				"esbenp.prettier-vscode",
 				"vitest.explorer",
 				"redhat.vscode-yaml",
-				"GitHub.copilot"
+				"GitHub.copilot",
+				"github.vscode-github-actions"
 			]
 		}
 	},
