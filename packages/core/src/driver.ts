@@ -46,6 +46,18 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.discovery_interval_ms': 60_000,
 } as const satisfies DriverOptions
 
+if (!Promise.withResolvers) {
+	Promise.withResolvers = function <T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason?: any) => void } {
+		let resolve: (value: T | PromiseLike<T>) => void;
+		let reject: (reason?: any) => void;
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		return { promise, resolve: resolve!, reject: reject! };
+	};
+}
+
 export class Driver implements Disposable {
 	protected readonly cs: URL
 	protected readonly options: DriverOptions = {}
