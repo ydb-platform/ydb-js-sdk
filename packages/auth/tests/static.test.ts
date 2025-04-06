@@ -46,6 +46,11 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('auto refresh expired token', async (tc) => {
+		if (parseInt(process.versions.node.split('.')[0], 10) < 20) {
+			tc.skip('Date apis mocking is not supported in Node < 20')
+			return
+		}
+
 		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
