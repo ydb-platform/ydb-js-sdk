@@ -44,10 +44,6 @@ export function backoff(base: number, max: number): RetryStrategy {
 	return (ctx) => Math.min(Math.pow(2, ctx.attempt) * base, max)
 }
 
-export function limit(max: number): RetryStrategy {
-	return (ctx) => Math.min(ctx.attempt, max)
-}
-
 export function combine(...strategies: RetryStrategy[]): RetryStrategy {
 	return (ctx, cfg) => strategies.reduce((acc, strategy) => acc + strategy(ctx, cfg), 0)
 }
