@@ -11,11 +11,9 @@ import {
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, retry } from '@ydbjs/retry'
-import { exponential, fixed } from '@ydbjs/retry/strategy'
+import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
-import { ClientError, Status } from 'nice-grpc'
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
 type ArrayifyTuple<T extends unknown[]> = {
@@ -89,60 +87,8 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 		signal.throwIfAborted()
 
 		let retryConfig: RetryConfig = {
-			retry: (err) => {
-				return (
-					(err instanceof ClientError && err.code !== Status.CANCELLED) ||
-					(err instanceof ClientError && err.code !== Status.UNKNOWN) ||
-					(err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT) ||
-					(err instanceof ClientError && err.code !== Status.NOT_FOUND) ||
-					(err instanceof ClientError && err.code !== Status.ALREADY_EXISTS) ||
-					(err instanceof ClientError && err.code !== Status.PERMISSION_DENIED) ||
-					(err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION) ||
-					(err instanceof ClientError && err.code !== Status.OUT_OF_RANGE) ||
-					(err instanceof ClientError && err.code !== Status.UNIMPLEMENTED) ||
-					(err instanceof ClientError && err.code !== Status.DATA_LOSS) ||
-					(err instanceof ClientError && err.code !== Status.UNAUTHENTICATED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR) ||
-					(err instanceof Error && err.name !== 'TimeoutError') ||
-					(err instanceof Error && err.name !== 'AbortError')
-				)
-			},
+			...defaultRetryConfig,
 			signal,
-			budget: Infinity,
-			strategy: (ctx, cfg) => {
-				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.BAD_SESSION) {
-					return fixed(0)(ctx, cfg)
-				}
-
-				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.SESSION_EXPIRED) {
-					return fixed(0)(ctx, cfg)
-				}
-
-				if (ctx.error instanceof ClientError && ctx.error.code === Status.ABORTED) {
-					return fixed(0)(ctx, cfg)
-				}
-
-				if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
-					return exponential(1000)(ctx, cfg)
-				}
-
-				if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
-					return exponential(1000)(ctx, cfg)
-				}
-
-				return exponential(10)(ctx, cfg)
-			},
 			idempotent: this.#idempotent,
 		}
 
@@ -162,6 +108,7 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 			;(async (stream: AsyncIterable<SessionState>) => {
 				try {
 					for await (let state of stream) {
+						signal.throwIfAborted()
 						attachSession.resolve(state)
 					}
 				} catch (err) {
@@ -203,6 +150,8 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 			let results = [] as unknown as S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
 
 			for await (let part of stream) {
+				signal.throwIfAborted()
+
 				if (part.status !== StatusIds_StatusCode.SUCCESS) {
 					throw new YDBError(part.status, part.issues)
 				}
