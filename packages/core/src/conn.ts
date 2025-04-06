@@ -3,27 +3,18 @@ import {
 	type Channel,
 	type ChannelCredentials,
 	type ChannelOptions,
-	ClientError,
-	type ClientFactory,
-	type ClientMiddleware,
 	createChannel,
-	createClientFactory,
 } from 'nice-grpc'
 
 import { dbg } from './dbg.ts'
-
-export type ConnectionCallOptions = {
-	readonly nodeId?: unique symbol
-}
-
-export const nodeIdSymbol = Symbol('nodeId')
 
 export interface Connection {
 	readonly nodeId: bigint
 	readonly address: string
 	readonly channel: Channel
-	readonly clientFactory: ClientFactory<ConnectionCallOptions>
 	pessimizedUntil?: number
+
+	close(): void
 }
 
 export class LazyConnection implements Connection {
@@ -41,9 +32,6 @@ export class LazyConnection implements Connection {
 			'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
 		}
 		this.#channelCredentials = channelCredentials
-
-		this.#debug = this.#debug.bind(this)
-		this.#markNodeId = this.#markNodeId.bind(this)
 	}
 
 	get nodeId(): bigint {
@@ -64,33 +52,11 @@ export class LazyConnection implements Connection {
 		return this.#channel
 	}
 
-	get clientFactory(): ClientFactory<ConnectionCallOptions> {
-		return createClientFactory().use(this.#debug).use(this.#markNodeId)
-	}
-
-	#debug: ClientMiddleware<ConnectionCallOptions> = async function* (this: Connection, call, options) {
-		let hasError = false
-		try {
-			return yield* call.next(call.request, options)
-		} catch (error) {
-			hasError = true
-			if (error instanceof ClientError) {
-				dbg.extend('grpc')('%s%s', this.address, error.message)
-			} else if (error instanceof Error && error.name === 'AbortError') {
-				dbg.extend('grpc')('%s%s %s: %s', this.address, call.method.path, 'CANCELLED', error.message)
-			} else {
-				dbg.extend('grpc')('%s%s %s: %s', this.address, call.method.path, 'UNKNOWN', error)
-			}
-
-			throw error
-		} finally {
-			if (!hasError) {
-				dbg.extend('grpc')('%s%s %s', this.address, call.method.path, 'OK')
-			}
+	close() {
+		if (this.#channel) {
+			dbg.extend('conn')('close channel to node id=%d address=%s', this.nodeId, this.address)
+			this.#channel.close()
+			this.#channel = null
 		}
-	}
-
-	#markNodeId: ClientMiddleware<ConnectionCallOptions> = (call, options) => {
-		return call.next(call.request, Object.assign(options, { [nodeIdSymbol]: this.nodeId }))
 	}
 }
