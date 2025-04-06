@@ -1,0 +1,17 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "@ydbjs/api": "6.0.0-alpha.2",
+    "@ydbjs/auth": "6.0.0-alpha.2",
+    "@ydbjs/core": "6.0.0-alpha.2",
+    "@ydbjs/error": "6.0.0-alpha.2",
+    "@ydbjs/query": "6.0.0-alpha.2",
+    "@ydbjs/retry": "6.0.0-alpha.2",
+    "@ydbjs/topic": "6.0.0-alpha.2",
+    "@ydbjs/value": "6.0.0-alpha.2"
+  },
+  "changesets": [
+    "moody-houses-divide"
+  ]
+}
