@@ -13,8 +13,8 @@
 		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
-		"test": "node --experimental-strip-types --test",
-		"test:watch": "node --experimental-strip-types --test --watch",
+		"test": "node --import tsx --test",
+		"test:watch": "node --import tsx --watch --test",
 		"attw": "attw --pack"
 	},
 	"exports": {
