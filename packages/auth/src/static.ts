@@ -5,6 +5,7 @@ import { type Client, ClientError, type ClientFactory, Status, createChannel, cr
 
 import { CredentialsProvider } from './index.js'
 import { defaultRetryConfig, retry } from '@ydbjs/retry'
+import { YDBError } from '@ydbjs/error'
 
 export type StaticCredentialsToken = {
 	value: string
@@ -65,7 +66,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			}
 
 			if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
-				throw new Error(`(${response.operation.status}) ${JSON.stringify(response.operation.issues)}`)
+				throw new YDBError(response.operation.status, response.operation.issues)
 			}
 
 			let result = anyUnpack(response.operation.result!, LoginResultSchema)
