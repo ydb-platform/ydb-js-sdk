@@ -8,6 +8,7 @@
 	"module": "dist/esm/index.js",
 	"main": "dist/cjs/index.js",
 	"scripts": {
+		"prepublishOnly": "npm run build",
 		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
 		"prebuild": "rm -rf ./dist/*",
 		"build": "npm run build:cjs && npm run build:esm",

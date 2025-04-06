@@ -8,6 +8,7 @@
 	"module": "dist/esm/index.js",
 	"main": "dist/cjs/index.js",
 	"scripts": {
+		"prepublishOnly": "npm run build",
 		"prebuild": "rm -rf ./dist/*",
 		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
@@ -29,6 +30,10 @@
 			"require": "./dist/cjs/anonymous.js",
 			"import": "./dist/esm/anonymous.js"
 		},
+		"./metadata": {
+			"require": "./dist/cjs/metadata.js",
+			"import": "./dist/esm/metadata.js"
+		},
 		"./static": {
 			"require": "./dist/cjs/static.js",
 			"import": "./dist/esm/static.js"
@@ -45,6 +50,9 @@
 			],
 			"anonymous": [
 				"./dist/cjs/anonymous.d.ts"
+			],
+			"metadata": [
+				"./dist/cjs/metadata.d.ts"
 			],
 			"static": [
 				"./dist/cjs/static.d.ts"
