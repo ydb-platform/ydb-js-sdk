@@ -112,3 +112,45 @@ import { Optional } from '@ydbjs/value/optional'
 await sql`SELECT ${new Optional(null, new PrimitiveType(Ydb.Type_PrimitiveTypeId.INT8))};` // [ [ { column0: null } ] ]
 await sql`SELECT ${new Optional(new Int64(100n), new PrimitiveType(Ydb.Type_PrimitiveTypeId.INT64))};` // [ [ { column0: 100n } ] ]
 ```
+
+### TypeScript Support
+
+```ts
+// Type-safe parameter binding
+type User = {
+  id: bigint;
+  name: string;
+};
+
+let resultSets = await sql<[User]>`
+  SELECT * FROM users
+  WHERE id = ${userId} AND name = ${userName}
+`;
+
+let [resultSet] = resultSets;
+let [row] = resultSet;
+let { id, name } = row;
+console.log(`User ID: ${id}, Name: ${name}`); // User ID: 42n, Name: "Alice"
+```
+
+Multiple result sets are supported, and the type of each result set can be inferred from the query:
+```ts
+type User = {
+  id: bigint;
+  name: string;
+};
+type Product = {
+  id: bigint;
+  name: string;
+};
+let resultSets = await sql<[User, Product]>`
+  SELECT * FROM users;
+  SELECT * FROM products;
+`;
+let [users, products] = resultSets;
+let [user] = users;
+let [product] = products;
+
+console.log(`User ID: ${user.id}, Name: ${user.name}`); // User ID: 42n, Name: "Alice"
+console.log(`Product ID: ${product.id}, Name: ${product.name}`); // Product ID: 1n, Name: "Product A"
+```
