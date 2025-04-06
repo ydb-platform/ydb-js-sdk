@@ -77,7 +77,7 @@ export class Uint8 extends PrimitiveValue implements Value<PrimitiveType> {
 			throw new Error('Value must be greater than or equal to 0')
 		}
 
-		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.UINT8)
+		super({ value: { case: 'uint32Value', value: value } }, Ydb.Type_PrimitiveTypeId.UINT8)
 	}
 }
 
@@ -93,7 +93,7 @@ export class Uint16 extends PrimitiveValue implements Value<PrimitiveType> {
 			throw new Error('Value must be greater than or equal to 0')
 		}
 
-		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.UINT16)
+		super({ value: { case: 'uint32Value', value: value } }, Ydb.Type_PrimitiveTypeId.UINT16)
 	}
 }
 
