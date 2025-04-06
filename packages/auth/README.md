@@ -17,10 +17,18 @@ npm install @ydbjs/auth
 
 ## Usage
 
+### Anonymous Access
+
+```ts
+import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
+
+const provider = new AnonymousCredentialsProvider();
+```
+
 ### Static Credentials
 
 ```ts
-import { StaticCredentialsProvider } from '@ydbjs/auth';
+import { StaticCredentialsProvider } from '@ydbjs/auth/static';
 
 const provider = new StaticCredentialsProvider({
     user: 'username',
@@ -31,22 +39,27 @@ const provider = new StaticCredentialsProvider({
 ### Token-Based Authentication
 
 ```ts
-import { AccessTokenCredentialsProvider } from '@ydbjs/auth';
+import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token';
 
 const provider = new AccessTokenCredentialsProvider({
     token: 'your-access-token',
 });
 ```
 
-### Anonymous Access
+### VM Metadata Authentication
+[GoogleCloud](https://cloud.google.com/compute/docs/metadata/querying-metadata), [YandexCloud](https://yandex.cloud/ru/docs/compute/operations/vm-info/get-info)
 
 ```ts
-import { AnonymousCredentialsProvider } from '@ydbjs/auth';
+import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata';
 
-const provider = new AnonymousCredentialsProvider();
+const provider = new MetadataCredentialsProvider();
 ```
 
 ## API Reference
+
+### `AnonymousCredentialsProvider`
+
+- **Constructor**: `new AnonymousCredentialsProvider()`
 
 ### `StaticCredentialsProvider`
 
@@ -63,9 +76,12 @@ const provider = new AnonymousCredentialsProvider();
 - **Credentials**:
     - `token`: The access token.
 
-### `AnonymousCredentialsProvider`
+### `MetadataCredentialsProvider`
 
-- **Constructor**: `new AnonymousCredentialsProvider()`
+- **Constructor**: `new MetadataCredentialsProvider()`
+- **Credentials**:
+    - `endpoint`: The endpoint for the VM metadta service.
+    - `falvor`: The falvor of the metadata service. Typically `Google`.
 
 ## Development
 
