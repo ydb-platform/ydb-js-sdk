@@ -1,6 +1,6 @@
 # YDB JavaScript SDK (`ydb-sdk`)
 
-The `ydb-sdk` SDK provides a comprehensive set of tools for interacting with Yandex Database (YDB) in JavaScript/TypeScript. It is modular, allowing developers to use only the parts they need, and supports a wide range of YDB features, including query execution, value manipulation, error handling, and more.
+The `ydb-sdk` SDK provides a comprehensive set of tools for interacting with YDB in JavaScript/TypeScript. It is modular, allowing developers to use only the parts they need, and supports a wide range of YDB features, including query execution, value manipulation, error handling, and more.
 
 ## Table of Contents
 
