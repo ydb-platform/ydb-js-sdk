@@ -1,6 +1,14 @@
 {
 	"$schema": "https://turbo.build/schema.json",
 	"tasks": {
+		"prebuild": {
+			"dependsOn": [
+				"^prebuild"
+			],
+			"outputs": [
+				"./dist/**"
+			]
+		},
 		"codegen": {
 			"dependsOn": [
 				"^codegen"
@@ -11,7 +19,9 @@
 		},
 		"build:esm": {
 			"dependsOn": [
-				"^build:esm"
+				"^build:esm",
+				"codegen",
+				"prebuild"
 			],
 			"inputs": [
 				"./src/**"
@@ -22,7 +32,9 @@
 		},
 		"build:cjs": {
 			"dependsOn": [
-				"^build:cjs"
+				"^build:cjs",
+				"codegen",
+				"prebuild"
 			],
 			"inputs": [
 				"./src/**"
@@ -33,13 +45,8 @@
 		},
 		"build": {
 			"dependsOn": [
-				"^build"
-			],
-			"inputs": [
-				"./src/**"
-			],
-			"outputs": [
-				"./dist/**"
+				"build:esm",
+				"build:cjs"
 			]
 		},
 		"test": {
@@ -52,14 +59,14 @@
 				"YDB_SSL_ROOT_CERTIFICATES_FILE"
 			],
 			"dependsOn": [
+				"^test",
 				"build:esm"
 			]
 		},
 		"attw": {
 			"dependsOn": [
 				"^attw",
-				"build:esm",
-				"build:cjs"
+				"build"
 			],
 			"inputs": [
 				"./dist/**",

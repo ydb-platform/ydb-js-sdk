@@ -12,7 +12,7 @@ The `@ydbjs/auth` package provides authentication utilities for interacting with
 ## Installation
 
 ```sh
-npm install @ydbjs/auth
+npm install @ydbjs/auth@6.0.0-alpha.2
 ```
 
 ## Usage

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/core",
-	"version": "6.0.0-alpha.1",
+	"version": "6.0.0-alpha.2",
 	"description": "YDB Core",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -8,9 +8,6 @@
 	"module": "dist/esm/index.js",
 	"main": "dist/cjs/index.js",
 	"scripts": {
-		"prepublishOnly": "npm run build",
-		"prebuild": "rm -rf ./dist/*",
-		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
 		"test": "node --import tsx --test ./tests/**.test.ts",
@@ -26,10 +23,10 @@
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.2.3",
-		"@ydbjs/api": "6.0.0-alpha.1",
-		"@ydbjs/auth": "6.0.0-alpha.1",
-		"@ydbjs/retry": "6.0.0-alpha.1",
-		"@ydbjs/error": "6.0.0-alpha.1",
+		"@ydbjs/api": "6.0.0-alpha.2",
+		"@ydbjs/auth": "^6.0.0-alpha.2",
+		"@ydbjs/error": "6.0.0-alpha.2",
+		"@ydbjs/retry": "6.0.0-alpha.2",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},

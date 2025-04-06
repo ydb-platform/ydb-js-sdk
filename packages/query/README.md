@@ -13,8 +13,8 @@ The @ydbjs/query package provides a client for executing queries against a YDB d
 ## Installation
 
 ```sh
-npm install @ydbjs/core@6.0.0-alpha.1 # Driver
-npm install @ydbjs/query@6.0.0-alpha.1 # Query Client
+npm install @ydbjs/core@6.0.0-alpha.2 # Driver
+npm install @ydbjs/query@6.0.0-alpha.2 # Query Client
 ```
 
 ## Quick Start

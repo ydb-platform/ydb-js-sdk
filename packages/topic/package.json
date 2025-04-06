@@ -1,8 +1,9 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "6.0.0-alpha.1",
+	"version": "6.0.0-alpha.2",
 	"description": "YDB Topic Client",
 	"license": "Apache-2.0",
+	"private": true,
 	"type": "module",
 	"sideEffects": false,
 	"module": "dist/esm/index.js",
@@ -17,9 +18,9 @@
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.2.3",
-		"@ydbjs/api": "6.0.0-alpha.1",
-		"@ydbjs/core": "6.0.0-alpha.1",
-		"@ydbjs/value": "6.0.0-alpha.1",
+		"@ydbjs/api": "6.0.0-alpha.2",
+		"@ydbjs/core": "6.0.0-alpha.2",
+		"@ydbjs/value": "6.0.0-alpha.2",
 		"debug": "^4.4.0"
 	},
 	"devDependencies": {

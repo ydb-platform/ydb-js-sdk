@@ -14,7 +14,7 @@ The `@ydbjs/core` package provides core utilities and foundational components fo
 To install the package, use your preferred package manager:
 
 ```bash
-npm install @ydbjs/core
+npm install @ydbjs/core@6.0.0-alpha.2
 ```
 
 ## Usage

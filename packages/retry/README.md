@@ -1,4 +1,3 @@
-```markdown
 # @ydbjs/retry
 
 The `@ydbjs/retry` package provides utilities for implementing retry logic in your applications. It is designed to work seamlessly with YDB services, allowing you to handle transient errors and ensure reliable operations.
@@ -17,7 +16,7 @@ The `@ydbjs/retry` package provides utilities for implementing retry logic in yo
 To install the package, use your preferred package manager:
 
 ```bash
-npm install @ydbjs/retry
+npm install @ydbjs/retry@6.0.0-alpha.2
 ```
 
 ## Usage
@@ -84,4 +83,3 @@ npm test
 ## License
 
 This project is licensed under the [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0).
-```

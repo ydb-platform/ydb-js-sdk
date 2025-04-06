@@ -1,19 +1,21 @@
 {
 	"name": "ydbjs",
-	"version": "0.0.0",
+	"version": "6.0.0-alpha.2",
 	"private": true,
 	"type": "module",
 	"workspaces": [
 		"packages/*"
 	],
 	"scripts": {
-		"dev": "turbo run dev",
+		"prepublishOnly": "npm run build && npm run attw",
+		"publish": "changeset publish",
 		"build": "turbo run build",
 		"test": "turbo run test",
 		"attw": "turbo run attw"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.17.4",
+		"@changesets/cli": "^2.28.1",
 		"@types/node": "^22.13.10",
 		"oxlint": "^0.16.4",
 		"prettier": "^3.5.3",

@@ -5,7 +5,7 @@ The `@ydbjs/api` package provides TypeScript/JavaScript bindings for interacting
 ## Installation
 
 ```sh
-npm install @ydbjs/api
+npm install @ydbjs/api@6.0.0-alpha.2
 ```
 
 ## Features

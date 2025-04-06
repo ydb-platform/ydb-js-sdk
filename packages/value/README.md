@@ -15,7 +15,7 @@
  * Install the package via npm:
  *
  * ```sh
- * npm install @ydbjs/value
+ * npm install @ydbjs/value@6.0.0-alpha.2
  * ```
  *
  * ## Usage

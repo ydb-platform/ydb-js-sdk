@@ -13,7 +13,7 @@ The `@ydbjs/error` package provides utilities for handling YDB-specific errors i
 Install the package using your preferred package manager:
 
 ```bash
-npm install @ydbjs/error
+npm install @ydbjs/error@6.0.0-alpha.2
 ```
 
 ## Usage
