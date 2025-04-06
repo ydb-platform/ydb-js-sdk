@@ -41,6 +41,10 @@ jobs:
       YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
       YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
 
+      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_REMOTE_ONLY: true
+
     steps:
       # Checkout the repository
       - name: Checkout code
