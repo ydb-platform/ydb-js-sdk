@@ -12,8 +12,8 @@
 		"build": "npm run build:cjs && npm run build:esm",
 		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
-		"test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test ./tests/**.test.ts",
-		"test:watch": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test --watch ./tests/**.test.ts",
+		"test": "node --experimental-strip-types --test ./tests/**.test.ts",
+		"test:watch": "node --experimental-strip-types --test --watch ./tests/**.test.ts",
 		"attw": "attw --pack"
 	},
 	"exports": {

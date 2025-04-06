@@ -3,7 +3,6 @@ plugins:
   - local:
       [
         'node',
-        '--disable-warning=ExperimentalWarning',
         '--experimental-strip-types',
         './plugins/protoc-gen-nice-grpc.ts',
       ]
