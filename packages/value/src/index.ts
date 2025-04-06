@@ -12,7 +12,7 @@ import {
 	Int32,
 	Int64,
 	PrimitiveType,
-	PrimitiveValue,
+	Primitive,
 	Text,
 	TzDatetime,
 	Uuid,
@@ -39,7 +39,7 @@ export type JSValue =
 export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 	switch (type.type.case) {
 		case 'typeId':
-			return new PrimitiveValue({ value: value.value }, type.type.value)
+			return new Primitive({ value: value.value }, type.type.value)
 		case 'listType':
 			return new List(...value.items.map((v) => fromYdb(v, (type.type.value as unknown as Ydb.ListType).item!)))
 		case 'tupleType':
@@ -187,7 +187,7 @@ export function toJs(value: Value): JSValue {
 		case TypeKind.PRIMITIVE:
 			switch ((value.type as PrimitiveType).id) {
 				case Ydb.Type_PrimitiveTypeId.BOOL:
-					return (value as PrimitiveValue).value as boolean
+					return (value as Primitive).value as boolean
 				case Ydb.Type_PrimitiveTypeId.INT8:
 				case Ydb.Type_PrimitiveTypeId.INT16:
 				case Ydb.Type_PrimitiveTypeId.INT32:
@@ -196,30 +196,30 @@ export function toJs(value: Value): JSValue {
 				case Ydb.Type_PrimitiveTypeId.UINT32:
 				case Ydb.Type_PrimitiveTypeId.FLOAT:
 				case Ydb.Type_PrimitiveTypeId.DOUBLE:
-					return (value as PrimitiveValue).value as number
+					return (value as Primitive).value as number
 				case Ydb.Type_PrimitiveTypeId.INT64:
 				case Ydb.Type_PrimitiveTypeId.UINT64:
-					return (value as PrimitiveValue).value as bigint
+					return (value as Primitive).value as bigint
 				case Ydb.Type_PrimitiveTypeId.UTF8:
-					return (value as PrimitiveValue).value as string
+					return (value as Primitive).value as string
 				case Ydb.Type_PrimitiveTypeId.JSON:
 				case Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT:
-					return JSON.parse((value as PrimitiveValue).value as string) as JSValue
+					return JSON.parse((value as Primitive).value as string) as JSValue
 				case Ydb.Type_PrimitiveTypeId.STRING:
 				case Ydb.Type_PrimitiveTypeId.YSON:
-					return (value as PrimitiveValue).value as Uint8Array
+					return (value as Primitive).value as Uint8Array
 				case Ydb.Type_PrimitiveTypeId.UUID:
 					return uuidFromBigInts((value as Uuid).value as bigint, (value as Uuid).high128)
 				case Ydb.Type_PrimitiveTypeId.DATE:
-					return new Date(((value as PrimitiveValue).value as number) * 24 * 60 * 60 * 1000)
+					return new Date(((value as Primitive).value as number) * 24 * 60 * 60 * 1000)
 				case Ydb.Type_PrimitiveTypeId.DATETIME:
-					return new Date(((value as PrimitiveValue).value as number) * 1000)
+					return new Date(((value as Primitive).value as number) * 1000)
 				case Ydb.Type_PrimitiveTypeId.TIMESTAMP:
-					return new Date(Number(((value as PrimitiveValue).value as bigint) / 1000n))
+					return new Date(Number(((value as Primitive).value as bigint) / 1000n))
 				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
 				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP: {
-					let [dateStr, tz] = ((value as PrimitiveValue).value as string).split(',')
+					let [dateStr, tz] = ((value as Primitive).value as string).split(',')
 
 					return new TZDate(dateStr, tz)
 				}

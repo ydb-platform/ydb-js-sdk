@@ -31,7 +31,7 @@ export class PrimitiveType implements Type {
 	}
 }
 
-export class PrimitiveValue implements Value<PrimitiveType> {
+export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
 	high128?: bigint
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
@@ -55,7 +55,7 @@ export class PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Bool extends PrimitiveValue implements Value<PrimitiveType> {
+export class Bool extends Primitive implements Value<PrimitiveType> {
 	constructor(value: boolean) {
 		super({ value: { case: 'boolValue', value: value } }, Ydb.Type_PrimitiveTypeId.BOOL)
 	}
@@ -65,13 +65,13 @@ export class Bool extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Int8 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Int8 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.INT8)
 	}
 }
 
-export class Uint8 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Uint8 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		if (value < 0) {
 			throw new Error('Value must be greater than or equal to 0')
@@ -81,13 +81,13 @@ export class Uint8 extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Int16 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Int16 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.INT16)
 	}
 }
 
-export class Uint16 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Uint16 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		if (value < 0) {
 			throw new Error('Value must be greater than or equal to 0')
@@ -97,13 +97,13 @@ export class Uint16 extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Int32 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Int32 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.INT32)
 	}
 }
 
-export class Uint32 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Uint32 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		if (value < 0) {
 			throw new Error('Value must be greater than or equal to 0')
@@ -113,13 +113,13 @@ export class Uint32 extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Int64 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Int64 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: bigint) {
 		super({ value: { case: 'int64Value', value: value } }, Ydb.Type_PrimitiveTypeId.INT64)
 	}
 }
 
-export class Uint64 extends PrimitiveValue implements Value<PrimitiveType> {
+export class Uint64 extends Primitive implements Value<PrimitiveType> {
 	constructor(value: bigint) {
 		if (value < BigInt(0)) {
 			throw new Error('Value must be greater than or equal to 0')
@@ -129,43 +129,43 @@ export class Uint64 extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Float extends PrimitiveValue implements Value<PrimitiveType> {
+export class Float extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'floatValue', value: value } }, Ydb.Type_PrimitiveTypeId.FLOAT)
 	}
 }
 
-export class Double extends PrimitiveValue implements Value<PrimitiveType> {
+export class Double extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'doubleValue', value: value } }, Ydb.Type_PrimitiveTypeId.DOUBLE)
 	}
 }
 
-export class Bytes extends PrimitiveValue implements Value<PrimitiveType> {
+export class Bytes extends Primitive implements Value<PrimitiveType> {
 	constructor(value: Uint8Array) {
 		super({ value: { case: 'bytesValue', value: value } }, Ydb.Type_PrimitiveTypeId.STRING)
 	}
 }
 
-export class Text extends PrimitiveValue implements Value<PrimitiveType> {
+export class Text extends Primitive implements Value<PrimitiveType> {
 	constructor(value: string) {
 		super({ value: { case: 'textValue', value: value } }, Ydb.Type_PrimitiveTypeId.UTF8)
 	}
 }
 
-export class Json extends PrimitiveValue implements Value<PrimitiveType> {
+export class Json extends Primitive implements Value<PrimitiveType> {
 	constructor(value: string) {
 		super({ value: { case: 'textValue', value: value } }, Ydb.Type_PrimitiveTypeId.JSON)
 	}
 }
 
-export class Yson extends PrimitiveValue implements Value<PrimitiveType> {
+export class Yson extends Primitive implements Value<PrimitiveType> {
 	constructor(value: Uint8Array) {
 		super({ value: { case: 'bytesValue', value: value } }, Ydb.Type_PrimitiveTypeId.YSON)
 	}
 }
 
-export class Uuid extends PrimitiveValue implements Value<PrimitiveType> {
+export class Uuid extends Primitive implements Value<PrimitiveType> {
 	override high128: bigint = 0n
 
 	constructor(value: string) {
@@ -177,7 +177,7 @@ export class Uuid extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Date extends PrimitiveValue implements Value<PrimitiveType> {
+export class Date extends Primitive implements Value<PrimitiveType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let datesFromEpoch = Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
 
@@ -185,7 +185,7 @@ export class Date extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class TzDate extends PrimitiveValue implements Value<PrimitiveType> {
+export class TzDate extends Primitive implements Value<PrimitiveType> {
 	constructor(value: TZDate) {
 		let date = formatISO9075(value, { representation: 'date' })
 
@@ -193,7 +193,7 @@ export class TzDate extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Datetime extends PrimitiveValue implements Value<PrimitiveType> {
+export class Datetime extends Primitive implements Value<PrimitiveType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let secondsFromEpoch = Math.floor(value.getTime() / 1000)
 
@@ -201,7 +201,7 @@ export class Datetime extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class TzDatetime extends PrimitiveValue implements Value<PrimitiveType> {
+export class TzDatetime extends Primitive implements Value<PrimitiveType> {
 	constructor(value: TZDate) {
 		let date = formatISO9075(value, { representation: 'date' })
 		let time = formatISO9075(value, { representation: 'time' })
@@ -213,13 +213,13 @@ export class TzDatetime extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class Interval extends PrimitiveValue implements Value<PrimitiveType> {
+export class Interval extends Primitive implements Value<PrimitiveType> {
 	constructor(value: number) {
 		super({ value: { case: 'int32Value', value: value } }, Ydb.Type_PrimitiveTypeId.INTERVAL)
 	}
 }
 
-export class Timestamp extends PrimitiveValue implements Value<PrimitiveType> {
+export class Timestamp extends Primitive implements Value<PrimitiveType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let microSecondsFromEpoch = BigInt(value.getTime()) * 1000n
 
@@ -227,7 +227,7 @@ export class Timestamp extends PrimitiveValue implements Value<PrimitiveType> {
 	}
 }
 
-export class TzTimestamp extends PrimitiveValue implements Value<PrimitiveType> {
+export class TzTimestamp extends Primitive implements Value<PrimitiveType> {
 	constructor(value: TZDate) {
 		let date = formatISO9075(value, { representation: 'date' })
 		let time = formatISO9075(value, { representation: 'time' })
@@ -240,7 +240,7 @@ export class TzTimestamp extends PrimitiveValue implements Value<PrimitiveType> 
 	}
 }
 
-export class JsonDocument extends PrimitiveValue implements Value<PrimitiveType> {
+export class JsonDocument extends Primitive implements Value<PrimitiveType> {
 	constructor(value: string) {
 		super({ value: { case: 'textValue', value: value } }, Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT)
 	}
