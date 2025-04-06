@@ -8,8 +8,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, retry } from '@ydbjs/retry'
-import { exponential } from '@ydbjs/retry/strategy'
+import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
 	type ChannelOptions,
 	type Client,
@@ -19,11 +18,14 @@ import {
 	Metadata,
 	Status,
 	composeClientMiddleware,
-	waitForChannelReady,
+	createClientFactory,
+	waitForChannelReady
 } from 'nice-grpc'
-import { type Connection, type ConnectionCallOptions, LazyConnection } from './conn.ts'
+
+import { type Connection, LazyConnection } from './conn.js'
 import { dbg } from './dbg.js'
 import { ConnectionPool } from './pool.js'
+import { debug } from './middleware.js'
 
 export type DriverOptions = ChannelOptions & {
 	ssl?: tls.SecureContextOptions
@@ -55,10 +57,9 @@ export class Driver implements Disposable {
 	#middleware: ClientMiddleware
 
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
-	#discoveryClient!: Client<typeof DiscoveryServiceDefinition, ConnectionCallOptions>
+	#discoveryClient!: Client<typeof DiscoveryServiceDefinition>
 	#rediscoverTimer?: NodeJS.Timeout
 
-	/* oxlint-disable max-lines-per-function */
 	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
 		dbg.extend('driver')('Driver(connectionString: %s, options: %o)', connectionString, options)
 
@@ -103,13 +104,14 @@ export class Driver implements Disposable {
 
 		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options)
 
-		this.#middleware = (call, options) => {
+		this.#middleware = debug
+		this.#middleware = composeClientMiddleware(this.#middleware, (call, options) => {
 			let metadata = Metadata(options.metadata)
 				.set('x-ydb-database', this.database)
 				.set('x-ydb-application-name', this.options['ydb.sdk.application'] || '')
 
 			return call.next(call.request, Object.assign(options, { metadata }))
-		}
+		})
 
 		if (options.credentialsProvier) {
 			this.#credentialsProvider = options.credentialsProvier
@@ -118,7 +120,7 @@ export class Driver implements Disposable {
 
 		this.#pool = new ConnectionPool(channelCredentials, this.options)
 
-		this.#discoveryClient = this.#connection.clientFactory
+		this.#discoveryClient = createClientFactory()
 			.use(this.#middleware)
 			.create(DiscoveryServiceDefinition, this.#connection.channel)
 
@@ -159,20 +161,9 @@ export class Driver implements Disposable {
 	}
 
 	async #discovery(signal?: AbortSignal): Promise<void> {
-		dbg.extend('driver')('discovery(signal: %o)', signal)
-
 		let retryConfig: RetryConfig = {
-			retry: (err) => {
-				return (
-					(err instanceof ClientError && err.code !== Status.CANCELLED) ||
-					(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
-					(err instanceof Error && err.name !== 'TimeoutError') ||
-					(err instanceof Error && err.name !== 'AbortError')
-				)
-			},
+			...defaultRetryConfig,
 			signal,
-			budget: Infinity,
-			strategy: exponential(50),
 		}
 
 		let result = await retry(retryConfig, async () => {
@@ -222,17 +213,20 @@ export class Driver implements Disposable {
 	close(): void {
 		clearInterval(this.#rediscoverTimer)
 		this.#pool.close()
-		this.#connection.channel.close()
+		this.#connection.close()
 	}
 
 	createClient<Service extends CompatServiceDefinition>(
 		service: Service,
 		preferNodeId?: bigint
-	): Client<Service, ConnectionCallOptions> {
-		let connection = this.options['ydb.sdk.enable_discovery'] ? this.#pool.aquire(preferNodeId) : this.#connection
-		let factory = connection.clientFactory.use(this.#middleware)
+	): Client<Service> {
+		return createClientFactory().use(this.#middleware).create(service, new Proxy(this.#connection.channel, {
+			get: (target, propertyKey) => {
+				let channel = this.options['ydb.sdk.enable_discovery'] ? this.#pool.aquire(preferNodeId).channel : target
 
-		return factory.create(service, connection.channel, {
+				return Reflect.get(channel, propertyKey, channel)
+			},
+		}), {
 			'*': this.options,
 		})
 	}
