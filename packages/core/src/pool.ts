@@ -148,11 +148,11 @@ export class ConnectionPool implements Disposable {
 
 	close() {
 		for (let connection of this.connections) {
-			connection.channel.close();
+			connection.close();
 		}
 
 		for (let connection of this.pessimized) {
-			connection.channel.close();
+			connection.close();
 		}
 
 		this.connections.clear();
