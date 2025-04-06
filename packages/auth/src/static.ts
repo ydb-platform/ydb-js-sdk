@@ -4,6 +4,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { type Client, ClientError, type ClientFactory, Status, createChannel, createClientFactory } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
+import { defaultRetryConfig, retry } from '@ydbjs/retry'
 
 export type StaticCredentialsToken = {
 	value: string
@@ -56,14 +57,8 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
-		this.#promise = (async () => {
-			let response = await this.#client.login(
-				{
-					user: this.#username,
-					password: this.#password,
-				},
-				{ signal }
-			)
+		this.#promise = retry({ ...defaultRetryConfig, signal }, async () => {
+			let response = await this.#client.login({ user: this.#username, password: this.#password }, { signal })
 
 			if (!response.operation) {
 				throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No operation in response')
@@ -88,7 +83,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			}
 
 			return this.#token!.value!
-		})().finally(() => {
+		}).finally(() => {
 			this.#promise = null
 		})
 
