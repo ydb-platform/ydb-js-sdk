@@ -19,7 +19,7 @@ async function run(logger: Logger, endpoint: string, database: string) {
 
             // Always drain the result to avoid session stuck
             for await (const resultSet of res.resultSets) {
-                for await (const row of resultSet.rows) {
+                for await (const _ of resultSet.rows) {
                 }
             }
         },

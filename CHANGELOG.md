@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [5.11.0](https://github.com/ydb-platform/ydb-nodejs-sdk/compare/v5.10.0...v5.11.0) (2025-03-24)
+
+
+### Features
+
+* enhance static credentials authentication with token refresh interval and improved token handling ([444a34d](https://github.com/ydb-platform/ydb-nodejs-sdk/commit/444a34d19bf4b0acdee4909f0c4f035c7be700e0))
+
+
+### Bug Fixes
+
+* avoid unnecessary variable declaration in consumed units example ([dd5ebcd](https://github.com/ydb-platform/ydb-nodejs-sdk/commit/dd5ebcd9fffb29e3260f2f285f768451e232f11e))
+
 ## [5.10.0](https://github.com/ydb-platform/ydb-nodejs-sdk/compare/v5.9.1...v5.10.0) (2025-03-19)
 
 
