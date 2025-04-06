@@ -1,0 +1,62 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: unit-${{ github.event_name }}-${{ github.ref }}-${{ matrix.node-version }}
+      cancel-in-progress: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+
+    services:
+      ydb:
+        image: ghcr.io/ydb-platform/local-ydb:24.3
+        ports:
+          - 2135:2135
+          - 2136:2136
+          - 8765:8765
+        volumes:
+          - /tmp/ydb_certs:/ydb_certs
+        env:
+          YDB_ENABLE_COLUMN_TABLES: true
+          YDB_USE_IN_MEMORY_PDISKS: true
+          YDB_LOCAL_SURVIVE_RESTART: true
+          YDB_TABLE_ENABLE_PREPARED_DDL: true
+          YDB_FEATURE_FLAGS: enable_topic_service_tx
+        options: '-h localhost'
+
+    env:
+      YDB_CONNECTION_STRING: grpc://localhost:2136/local
+      YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
+      YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
+
+    steps:
+      # Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: 'npm'
+          node-version: ${{ matrix.node-version }}
+
+      # Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # Run tests
+      - name: Run tests
+        run: npm test
