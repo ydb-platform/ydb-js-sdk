@@ -1,13 +1,13 @@
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { YDBError } from '@ydbjs/error'
+import { ClientError, Status } from 'nice-grpc'
+
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
-import { linear } from './strategy.js'
+import { exponential, fixed } from './strategy.js'
 
-export const defaultRetryConfig: RetryConfig = {
-	retry: (error) => error instanceof Error,
-	budget: Number.POSITIVE_INFINITY,
-	strategy: linear(100),
-	idempotent: true,
-}
+export * from './config.js'
+export * from './context.js'
 
 export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
@@ -60,5 +60,58 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 	throw new Error('Retry budget exceeded')
 }
 
-export * from './config.js'
-export * from './context.js'
+export const defaultRetryConfig: RetryConfig = {
+	retry: (err) => {
+		return (
+			(err instanceof ClientError && err.code !== Status.CANCELLED) ||
+			(err instanceof ClientError && err.code !== Status.UNKNOWN) ||
+			(err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT) ||
+			(err instanceof ClientError && err.code !== Status.NOT_FOUND) ||
+			(err instanceof ClientError && err.code !== Status.ALREADY_EXISTS) ||
+			(err instanceof ClientError && err.code !== Status.PERMISSION_DENIED) ||
+			(err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION) ||
+			(err instanceof ClientError && err.code !== Status.OUT_OF_RANGE) ||
+			(err instanceof ClientError && err.code !== Status.UNIMPLEMENTED) ||
+			(err instanceof ClientError && err.code !== Status.DATA_LOSS) ||
+			(err instanceof ClientError && err.code !== Status.UNAUTHENTICATED) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED) ||
+			(err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR) ||
+			(err instanceof Error && err.name !== 'TimeoutError') ||
+			(err instanceof Error && err.name !== 'AbortError')
+		)
+	},
+	budget: Infinity,
+	strategy: (ctx, cfg) => {
+		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.BAD_SESSION) {
+			return fixed(0)(ctx, cfg)
+		}
+
+		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.SESSION_EXPIRED) {
+			return fixed(0)(ctx, cfg)
+		}
+
+		if (ctx.error instanceof ClientError && ctx.error.code === Status.ABORTED) {
+			return fixed(0)(ctx, cfg)
+		}
+
+		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
+			return exponential(1000)(ctx, cfg)
+		}
+
+		if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
+			return exponential(1000)(ctx, cfg)
+		}
+
+		return exponential(10)(ctx, cfg)
+	},
+}
