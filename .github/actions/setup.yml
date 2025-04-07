@@ -1,0 +1,27 @@
+name: Setup CI
+
+inputs:
+  node-version:
+    description: 'Node.js version'
+    required: true
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        cache: 'npm'
+        node-version: ${{ inputs.node-version }}
+
+    - name: Setup turbo
+      uses: actions/cache@v4
+      with:
+        path: .turbo
+        key: ${{ inputs.node-version }}-turbo-${{ github.sha }}
+        restore-keys: |
+          ${{ inputs.node-version }}-turbo-
+
+    - name: Install dependencies
+      run: npm ci
