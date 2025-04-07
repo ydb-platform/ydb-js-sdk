@@ -1,4 +1,5 @@
 // @ts-ignore
+/* oxlint-disable */
 
 import { type Writable } from "node:stream";
 import { create } from "@bufbuild/protobuf";

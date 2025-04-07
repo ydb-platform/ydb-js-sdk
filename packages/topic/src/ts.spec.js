@@ -1,3 +1,5 @@
+/* oxlint-disable */
+
 import { AnonymousAuthService, Driver as YDB } from 'ydb-sdk'
 
 const db = new YDB({
@@ -56,7 +58,7 @@ let multiTopicReader3 = createTopicReader(
 	}
 )
 
-let multiTopicReader1 = createTopicReader(db, 'consumer', 'topicName', {
+let multiTopicReader4 = createTopicReader(db, 'consumer', 'topicName', {
 	deserialize: (value) => Buffer.from(value).toString('utf-8'),
 })
 
@@ -88,12 +90,7 @@ sql.begin(
 		})
 
 		writer.write(new Uint8Array([1, 2, 3])) // send and in bg verify msg. Acc messages into internal buffer before send.
-		writer.write([
-			new Uint8Array([1, 2, 3]),
-			new Uint8Array([1, 2, 3]),
-			new Uint8Array([1, 2, 3]),
-			new Uint8Array([1, 2, 3]),
-		])
+		writer.write([new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])])
 
 		await writer.write(msg) // Wait ack, seqNo >= seqNo msg
 		await writer.write([msg, msg, msg, msg])
