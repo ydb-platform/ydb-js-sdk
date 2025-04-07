@@ -1,4 +1,7 @@
 name: Setup CI
+description: |
+  This action sets up Node.js and installs dependencies for the project.
+  It also configures caching for TurboRepo to speed up the build process.
 
 inputs:
   node-version:
@@ -24,4 +27,5 @@ runs:
           ${{ inputs.node-version }}-turbo-
 
     - name: Install dependencies
+      shell: bash
       run: npm ci
