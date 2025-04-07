@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/core",
-	"version": "6.0.0-alpha.3",
+	"version": "6.0.0-alpha.4",
 	"description": "YDB Core",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -23,10 +23,10 @@
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.2.3",
-		"@ydbjs/api": "6.0.0-alpha.3",
-		"@ydbjs/auth": "^6.0.0-alpha.3",
-		"@ydbjs/error": "6.0.0-alpha.3",
-		"@ydbjs/retry": "6.0.0-alpha.3",
+		"@ydbjs/api": "6.0.0-alpha.4",
+		"@ydbjs/auth": "^6.0.0-alpha.4",
+		"@ydbjs/error": "6.0.0-alpha.4",
+		"@ydbjs/retry": "6.0.0-alpha.4",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
