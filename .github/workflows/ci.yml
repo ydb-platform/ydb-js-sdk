@@ -29,7 +29,7 @@ jobs:
     needs: build
 
     concurrency:
-      group: unit-${{ github.event_name }}-${{ github.ref }}-${{ matrix.node-version }}
+      group: ${{ github.event_name }}-${{ github.ref }}-${{ matrix.node-version }}
       cancel-in-progress: true
 
     strategy:
