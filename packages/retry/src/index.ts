@@ -21,7 +21,8 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 		}
 
 		try {
-			return fn()
+			// oxlint-disable no-await-in-loop
+			return await fn()
 		} catch (error) {
 			ctx.attempt += 1
 			ctx.error = error
