@@ -1,5 +1,11 @@
 # @ydbjs/retry
 
+## 6.0.0-alpha.5
+
+### Patch Changes
+
+- Ensure function execution in retry is awaited for proper error handling
+
 ## 6.0.0-alpha.4
 
 ### Patch Changes

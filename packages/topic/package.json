@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "6.0.0-alpha.4",
+	"version": "6.0.0-alpha.5",
 	"description": "YDB Topic Client",
 	"license": "Apache-2.0",
 	"private": true,
@@ -19,7 +19,7 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.2.3",
 		"@ydbjs/api": "6.0.0-alpha.4",
-		"@ydbjs/core": "6.0.0-alpha.4",
+		"@ydbjs/core": "6.0.0-alpha.5",
 		"@ydbjs/value": "6.0.0-alpha.4",
 		"debug": "^4.4.0"
 	},
