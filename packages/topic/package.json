@@ -25,5 +25,9 @@
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "restricted"
 	}
 }

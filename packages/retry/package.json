@@ -44,5 +44,9 @@
 		"@ydbjs/error": "6.0.0-alpha.4",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "public"
 	}
 }

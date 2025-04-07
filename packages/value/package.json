@@ -98,5 +98,9 @@
 		"date-fns": "^4.1.0",
 		"debug": "^4.4.0",
 		"proposal-decimal": "^20240325.0.0"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "public"
 	}
 }

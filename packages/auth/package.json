@@ -62,5 +62,9 @@
 		"@ydbjs/error": "6.0.0-alpha.4",
 		"@ydbjs/retry": "6.0.0-alpha.4",
 		"nice-grpc": "^2.1.12"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "public"
 	}
 }

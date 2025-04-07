@@ -23,5 +23,9 @@
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
 		"@ydbjs/api": "6.0.0-alpha.4"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "public"
 	}
 }
