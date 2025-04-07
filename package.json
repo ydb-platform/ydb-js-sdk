@@ -15,7 +15,6 @@
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.17.4",
-		"@changesets/cli": "^2.28.1",
 		"@types/node": "^22.13.10",
 		"oxlint": "^0.16.4",
 		"prettier": "^3.5.3",
