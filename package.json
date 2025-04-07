@@ -7,11 +7,10 @@
 		"packages/*"
 	],
 	"scripts": {
-		"prepublishOnly": "npm run build && npm run attw",
-		"publish": "changeset publish",
 		"build": "turbo run build",
 		"test": "turbo run test",
-		"attw": "turbo run attw"
+		"attw": "turbo run attw",
+		"lint": "oxlint"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "^0.17.4",
