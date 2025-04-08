@@ -35,12 +35,14 @@ jobs:
         env:
           YDB_LOCAL_SURVIVE_RESTART: true
           YDB_USE_IN_MEMORY_PDISKS: true
-        options: '-h localhost'
+        options: '-h localhost --name ydb'
 
     env:
       YDB_SHUTDOWN_URL: http://localhost:8765/actors/kqp_proxy?force_shutdown=all
 
     steps:
+    - name: Show YDB version
+      run: docker exec ydb /ydbd -V
     - uses: actions/checkout@v3
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v3
