@@ -9,7 +9,7 @@ import type { RetryStrategy } from "./strategy.js";
  */
 export interface RetryConfig extends Abortable {
 	/** Predicate to determine if an error is retryable */
-	retry?: boolean | ((error: RetryContext['error']) => boolean);
+	retry?: boolean | ((error: RetryContext['error'], idempotent: boolean) => boolean);
 	/** Budget for retry attempts */
 	budget?: number | RetryBudget;
 	/** Strategy to calculate delay */

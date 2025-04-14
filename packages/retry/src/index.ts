@@ -9,25 +9,24 @@ import { exponential, fixed } from './strategy.js'
 export * from './config.js'
 export * from './context.js'
 
-export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Promise<R> {
+export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R | Promise<R>): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
 	let ctx: RetryContext = { attempt: 0, error: null }
 
 	let budget: number
 	while (ctx.attempt < (budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))) {
 		let start = Date.now()
-		if (cfg.signal?.aborted) {
-			throw cfg.signal.reason
-		}
+		let controller = new AbortController()
 
 		try {
+			cfg.signal?.throwIfAborted()
 			// oxlint-disable no-await-in-loop
-			return await fn()
+			return await fn(controller.signal)
 		} catch (error) {
 			ctx.attempt += 1
 			ctx.error = error
 
-			let retry = typeof config.retry === 'function' ? config.retry(ctx.error) : config.retry
+			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
 			if (!retry || ctx.attempt >= budget) {
 				throw error
 			}
@@ -36,10 +35,6 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 			let remaining = Math.max(delay - (Date.now() - start), 0)
 			if (!remaining) {
 				continue
-			}
-
-			if (cfg.signal?.aborted) {
-				throw cfg.signal.reason
 			}
 
 			// oxlint-disable no-await-in-loop
@@ -55,6 +50,8 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 					}
 				}),
 			])
+		} finally {
+			controller.abort('Retry cancelled')
 		}
 	}
 
@@ -62,33 +59,23 @@ export async function retry<R>(cfg: RetryConfig, fn: () => R | Promise<R>): Prom
 }
 
 export const defaultRetryConfig: RetryConfig = {
-	retry: (err) => {
+	retry: (err, idempotent) => {
 		return (
-			(err instanceof ClientError && err.code !== Status.CANCELLED) ||
-			(err instanceof ClientError && err.code !== Status.UNKNOWN) ||
-			(err instanceof ClientError && err.code !== Status.INVALID_ARGUMENT) ||
-			(err instanceof ClientError && err.code !== Status.NOT_FOUND) ||
-			(err instanceof ClientError && err.code !== Status.ALREADY_EXISTS) ||
-			(err instanceof ClientError && err.code !== Status.PERMISSION_DENIED) ||
-			(err instanceof ClientError && err.code !== Status.FAILED_PRECONDITION) ||
-			(err instanceof ClientError && err.code !== Status.OUT_OF_RANGE) ||
-			(err instanceof ClientError && err.code !== Status.UNIMPLEMENTED) ||
-			(err instanceof ClientError && err.code !== Status.DATA_LOSS) ||
-			(err instanceof ClientError && err.code !== Status.UNAUTHENTICATED) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.BAD_REQUEST) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNAUTHORIZED) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.INTERNAL_ERROR) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.SCHEME_ERROR) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.GENERIC_ERROR) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.TIMEOUT) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.PRECONDITION_FAILED) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.ALREADY_EXISTS) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.NOT_FOUND) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.CANCELLED) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.UNSUPPORTED) ||
-			(err instanceof YDBError && err.code !== StatusIds_StatusCode.EXTERNAL_ERROR) ||
-			(err instanceof Error && err.name !== 'TimeoutError') ||
-			(err instanceof Error && err.name !== 'AbortError')
+			(err instanceof ClientError && err.code === Status.ABORTED) ||
+			(err instanceof ClientError && err.code === Status.INTERNAL) ||
+			(err instanceof ClientError && err.code === Status.RESOURCE_EXHAUSTED) ||
+
+			(err instanceof ClientError && err.code === Status.UNAVAILABLE && idempotent) ||
+
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.ABORTED) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.OVERLOADED) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.UNAVAILABLE) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.BAD_SESSION) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.SESSION_BUSY) ||
+
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.SESSION_EXPIRED && idempotent) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.UNDETERMINED && idempotent) ||
+			(err instanceof YDBError && err.code === StatusIds_StatusCode.TIMEOUT && idempotent)
 		)
 	},
 	budget: Infinity,
