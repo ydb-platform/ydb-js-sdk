@@ -120,35 +120,61 @@ await test("QueryService with transaction", async (tc) => {
 	let driver = new Driver(process.env.YDB_CONNECTION_STRING as string)
 	await driver.ready()
 
-	await tc.test("Simple transaction", async () => {
+	await tc.test("Simple transaction", async (tc) => {
 		let sql = query(driver)
 
-		let resultSets = await sql.begin(async (tx) => {
+		let resultSets = await sql.begin({ signal: tc.signal }, async (tx) => {
 			return await tx`SELECT 1 AS id`
 		})
 
 		assert.deepEqual(resultSets, [[{ id: 1 }]])
 	})
 
-	await tc.test("Transaction with parameters", async () => {
+	await tc.test("Transaction with parameters", async (tc) => {
 		let sql = query(driver)
 
-		let resultSets = await sql.begin(async (tx) => {
+		let resultSets = await sql.begin({ signal: tc.signal }, async (tx) => {
 			return await tx`SELECT ${1} AS id`
 		})
 
 		assert.deepEqual(resultSets, [[{ id: 1 }]])
 	})
 
-	await tc.test("Transaction with multiple queries", async () => {
+	await tc.test("Transaction with multiple queries", async (tc) => {
 		let sql = query(driver)
 
-		let resultSets = await sql.begin(async (tx) => {
-			let resultSets = await tx`SELECT 1 AS id;`
+		let resultSets = await sql.begin({ signal: tc.signal }, async (tx, signal) => {
+			let resultSets = await tx`SELECT 1 AS id;`.signal(signal)
 
-			return await tx`SELECT * from AS_TABLE(${resultSets[0]})`
+			return await tx`SELECT * from AS_TABLE(${resultSets[0]})`.signal(signal)
 		})
 
 		assert.deepEqual(resultSets, [[{ id: 1 }]])
+	})
+
+	await tc.test("Parallel transactions and queries", async (tc) => {
+		let sql = query(driver)
+
+		let results = await Promise.all([
+			sql.begin({ signal: tc.signal }, async (tx) => {
+				return await Promise.all([
+					tx`SELECT 1 AS id`,
+					tx`SELECT 2 AS id`,
+					tx`SELECT 3 AS id`,
+				])
+			}),
+			sql.begin({ signal: tc.signal }, async (tx) => {
+				return await Promise.all([
+					tx`SELECT 4 AS id`,
+					tx`SELECT 5 AS id`,
+					tx`SELECT 6 AS id`,
+				])
+			}),
+		])
+
+		assert.deepEqual(results, [
+			[[[{ id: 1 }]], [[{ id: 2 }]], [[{ id: 3 }]]],
+			[[[{ id: 4 }]], [[{ id: 5 }]], [[{ id: 6 }]]],
+		])
 	})
 })

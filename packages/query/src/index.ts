@@ -20,8 +20,8 @@ interface SessionContextCallback<T> {
 }
 
 interface TransactionExecuteOptions extends Abortable {
-	iso: 'serializableReadWrite' | 'onlineReadOnly' | 'staleReadOnly' | 'snapshotReadOnly'
-	allowInconsistentReads: boolean
+	iso?: 'serializableReadWrite' | 'onlineReadOnly' | 'staleReadOnly' | 'snapshotReadOnly'
+	allowInconsistentReads?: boolean
 }
 
 interface TransactionContextCallback<T> {
@@ -96,6 +96,7 @@ export function query(driver: Driver): QueryClient {
 				throw new YDBError(sessionResponse.status, sessionResponse.issues)
 			}
 
+			store.signal = signal
 			store.nodeId = sessionResponse.nodeId
 			store.sessionId = sessionResponse.sessionId
 
@@ -133,12 +134,17 @@ export function query(driver: Driver): QueryClient {
 			store.transactionId = beginTransactionResult.txMeta?.id
 
 			try {
-				return await storage.run(store, () => caller!(yql, signal))
+				let result = await storage.run(store, () => caller!(yql, signal))
+				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
+				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(commitResult.status, commitResult.issues)
+				}
+
+				return result
 			} catch (err) {
 				await client.rollbackTransaction({ sessionId: store.sessionId, txId: store.transactionId })
 				throw err
 			} finally {
-				await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				client.deleteSession({ sessionId: sessionResponse.sessionId })
 			}
 		})
