@@ -115,3 +115,40 @@ await test("QueryService", async (tc) => {
 		assert.deepEqual(resultSets, [[{ id: 1, name: "Neo", program: null }, { id: 2, name: "Morpheus", program: true }]])
 	})
 })
+
+await test("QueryService with transaction", async (tc) => {
+	let driver = new Driver(process.env.YDB_CONNECTION_STRING as string)
+	await driver.ready()
+
+	await tc.test("Simple transaction", async () => {
+		let sql = query(driver)
+
+		let resultSets = await sql.begin(async (tx) => {
+			return await tx`SELECT 1 AS id`
+		})
+
+		assert.deepEqual(resultSets, [[{ id: 1 }]])
+	})
+
+	await tc.test("Transaction with parameters", async () => {
+		let sql = query(driver)
+
+		let resultSets = await sql.begin(async (tx) => {
+			return await tx`SELECT ${1} AS id`
+		})
+
+		assert.deepEqual(resultSets, [[{ id: 1 }]])
+	})
+
+	await tc.test("Transaction with multiple queries", async () => {
+		let sql = query(driver)
+
+		let resultSets = await sql.begin(async (tx) => {
+			let resultSets = await tx`SELECT 1 AS id;`
+
+			return await tx`SELECT * from AS_TABLE(${resultSets[0]})`
+		})
+
+		assert.deepEqual(resultSets, [[{ id: 1 }]])
+	})
+})

@@ -15,19 +15,18 @@ import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 
+import { storage } from './storage.js'
+
 // Utility type to convert a tuple of types to a tuple of arrays of those types
 type ArrayifyTuple<T extends unknown[]> = {
 	[K in keyof T]: T[K][]
 }
 
-type WithQueryStats<T> = T & { stats: QueryStats }
-
-export class Query<T extends unknown[] = unknown[], S extends boolean = false>
-	implements PromiseLike<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>>, AsyncDisposable
-{
+export class Query<T extends unknown[] = unknown[]>
+	implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable {
 	#driver: Driver
-	#promise: Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> | null = null
-	#cleanup: Promise<unknown>[] = []
+	#promise: Promise<ArrayifyTuple<T>> | null = null
+	#cleanup: (() => Promise<unknown>)[] = []
 
 	#text: string
 	#parameters: Record<string, Value>
@@ -62,7 +61,7 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 	}
 
 	/* oxlint-disable max-lines-per-function  */
-	async #execute(): Promise<S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>> {
+	async #execute(): Promise<ArrayifyTuple<T>> {
 		if (this.#disposed) {
 			throw new Error('Query has been disposed.')
 		}
@@ -84,41 +83,46 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 			signal = AbortSignal.any([signal, timeout])
 		}
 
-		signal.throwIfAborted()
-
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal,
 			idempotent: this.#idempotent,
 		}
 
-		/* oxlint-disable max-lines-per-function  */
-		this.#promise = retry(retryConfig, async () => {
+		this.#promise = retry(retryConfig, async (signal) => {
+			let store = storage.getStore()!
+
 			await this.#driver.ready(signal)
-			let client = this.#driver.createClient(QueryServiceDefinition)
+			let client = this.#driver.createClient(QueryServiceDefinition, store?.nodeId)
 
-			let sessionResponse = await client.createSession({}, { signal })
-			if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
-				throw new YDBError(sessionResponse.status, sessionResponse.issues)
-			}
-
-			client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
-
-			let attachSession = Promise.withResolvers<SessionState>()
-			;(async (stream: AsyncIterable<SessionState>) => {
-				try {
-					for await (let state of stream) {
-						signal.throwIfAborted()
-						attachSession.resolve(state)
-					}
-				} catch (err) {
-					attachSession.reject(err)
+			if (!store?.sessionId) {
+				let sessionResponse = await client.createSession({}, { signal })
+				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(sessionResponse.status, sessionResponse.issues)
 				}
-			})(client.attachSession({ sessionId: sessionResponse.sessionId }, { signal }))
 
-			let attachSessionResult = await attachSession.promise
-			if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
-				throw new YDBError(attachSessionResult.status, attachSessionResult.issues)
+				store.nodeId = sessionResponse.nodeId
+				store.sessionId = sessionResponse.sessionId
+
+				client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
+				this.#cleanup.push(() => client.deleteSession({ sessionId: sessionResponse.sessionId }))
+
+				let attachSession = Promise.withResolvers<SessionState>()
+					; (async (stream: AsyncIterable<SessionState>) => {
+						try {
+							for await (let state of stream) {
+								signal.throwIfAborted()
+								attachSession.resolve(state)
+							}
+						} catch (err) {
+							attachSession.reject(err)
+						}
+					})(client.attachSession({ sessionId: store.sessionId }, { signal }))
+
+				let attachSessionResult = await attachSession.promise
+				if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(attachSessionResult.status, attachSessionResult.issues)
+				}
 			}
 
 			let parameters: Record<string, TypedValue> = {}
@@ -131,8 +135,14 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 
 			let stream = client.executeQuery(
 				{
-					sessionId: sessionResponse.sessionId,
+					sessionId: store.sessionId,
 					execMode: ExecMode.EXECUTE,
+					txControl: store.transactionId ? {
+						txSelector: {
+							case: "txId",
+							value: store.transactionId,
+						},
+					} : undefined,
 					query: {
 						case: 'queryContent',
 						value: {
@@ -147,7 +157,7 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 				{ signal }
 			)
 
-			let results = [] as unknown as S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
+			let results = [] as ArrayifyTuple<T>
 
 			for await (let part of stream) {
 				signal.throwIfAborted()
@@ -187,10 +197,6 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 				}
 			}
 
-			if (sessionResponse.sessionId) {
-				this.#cleanup.push(client.deleteSession({ sessionId: sessionResponse.sessionId }))
-			}
-
 			return results
 		}).finally(() => {
 			this.#active = false
@@ -202,13 +208,9 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 
 	/** Returns the result of the query */
 	/* oxlint-disable unicorn/no-thenable */
-	async then<TResult1 = S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>, TResult2 = never>(
-		onfulfilled?:
-			| ((
-					value: S extends true ? WithQueryStats<ArrayifyTuple<T>> : ArrayifyTuple<T>
-			  ) => TResult1 | PromiseLike<TResult1>)
-			| null,
-		onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+	async then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
+		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
+		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
 	): Promise<TResult1 | TResult2> {
 		return await this.#execute().then(onfulfilled, onrejected)
 	}
@@ -240,20 +242,20 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 		return this.#parameters
 	}
 
-	syntax(syntax: Exclude<Syntax, Syntax.UNSPECIFIED>): Query<T, S> {
+	syntax(syntax: Exclude<Syntax, Syntax.UNSPECIFIED>): Query<T> {
 		this.#syntax = syntax
 
 		return this
 	}
 
-	pool(poolId: string): Query<T, S> {
+	pool(poolId: string): Query<T> {
 		this.#poolId = poolId
 
 		return this
 	}
 
 	/** Adds a parameter to the query */
-	parameter(name: string, parameter: Value | undefined): Query<T, S> {
+	parameter(name: string, parameter: Value | undefined): Query<T> {
 		name.startsWith('$') || (name = '$' + name)
 
 		if (parameter === undefined) {
@@ -267,12 +269,12 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 	}
 
 	/** Adds a parameter to the query */
-	param(name: string, parameter: Value | undefined): Query<T, S> {
+	param(name: string, parameter: Value | undefined): Query<T> {
 		return this.parameter(name, parameter)
 	}
 
 	/** Sets the idempotent flag for the query */
-	idempotent(idempotent: boolean): Query<T, S> {
+	idempotent(idempotent: boolean): Query<T> {
 		this.#idempotent = idempotent
 
 		return this
@@ -285,49 +287,49 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 	}
 
 	/** Returns a query with statistics enabled */
-	withStats(mode: Exclude<StatsMode, StatsMode.UNSPECIFIED>): Query<T, true> {
+	withStats(mode: Exclude<StatsMode, StatsMode.UNSPECIFIED>): Query<T> {
 		this.#statsMode = mode
 
-		return this as Query<T, true>
+		return this as Query<T>
 	}
 
 	/** Sets the query timeout */
-	timeout(timeout: number): Query<T, S> {
+	timeout(timeout: number): Query<T> {
 		this.#timeout = timeout
 
 		return this
 	}
 
 	/** Cancels the executing query */
-	cancel(): Query<T, S> {
+	cancel(): Query<T> {
 		this.#controller.abort('Query cancelled by user.')
 		this.#cancelled = true
 
 		return this
 	}
 
-	signal(signal: AbortSignal): Query<T, S> {
+	signal(signal: AbortSignal): Query<T> {
 		this.#signal = signal
 
 		return this
 	}
 
 	/** Executes the query */
-	execute(): Query<T, S> {
+	execute(): Query<T> {
 		void this.#execute()
 
 		return this
 	}
 
 	/** Returns only the values from the query result */
-	values(): Query<unknown[], S> {
+	values(): Query<unknown[]> {
 		this.#values = true
 
 		return this
 	}
 
 	/** Returns raw values */
-	raw(): Query<T, S> {
+	raw(): Query<T> {
 		this.#raw = true
 
 		return this
@@ -335,7 +337,7 @@ export class Query<T extends unknown[] = unknown[], S extends boolean = false>
 
 	async [Symbol.asyncDispose](): Promise<void> {
 		this.#controller.abort('Query disposed.')
-		await Promise.all(this.#cleanup)
+		await Promise.all(this.#cleanup.map((fn) => fn()))
 		this.#cleanup = []
 		this.#promise = null
 		this.#disposed = true
