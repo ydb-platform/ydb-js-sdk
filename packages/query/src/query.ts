@@ -62,6 +62,8 @@ export class Query<T extends unknown[] = unknown[]>
 
 	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<ArrayifyTuple<T>> {
+		let store = storage.getStore() || {}
+
 		if (this.#disposed) {
 			throw new Error('Query has been disposed.')
 		}
@@ -77,10 +79,13 @@ export class Query<T extends unknown[] = unknown[]>
 
 		this.#active = true
 
-		let signal = this.#signal ? AbortSignal.any([this.#signal, this.#controller.signal]) : this.#controller.signal
-		if (this.#timeout) {
-			let timeout = AbortSignal.timeout(this.#timeout)
-			signal = AbortSignal.any([signal, timeout])
+		let signal = this.#controller.signal
+		if (store.signal) {
+			signal = AbortSignal.any([signal, store.signal])
+		} if (this.#signal) {
+			signal = AbortSignal.any([signal, this.#signal])
+		} if (this.#timeout) {
+			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
 		}
 
 		let retryConfig: RetryConfig = {
@@ -90,8 +95,6 @@ export class Query<T extends unknown[] = unknown[]>
 		}
 
 		this.#promise = retry(retryConfig, async (signal) => {
-			let store = storage.getStore()!
-
 			await this.#driver.ready(signal)
 			let client = this.#driver.createClient(QueryServiceDefinition, store?.nodeId)
 
