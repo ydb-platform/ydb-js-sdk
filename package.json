@@ -1,6 +1,6 @@
 {
 	"name": "ydbjs",
-	"version": "6.0.0-alpha.2",
+	"version": "0.0.0",
 	"private": true,
 	"type": "module",
 	"workspaces": [
