@@ -143,10 +143,10 @@ await test("QueryService with transaction", async (tc) => {
 	await tc.test("Transaction with multiple queries", async (tc) => {
 		let sql = query(driver)
 
-		let resultSets = await sql.begin({ signal: tc.signal }, async (tx, signal) => {
-			let resultSets = await tx`SELECT 1 AS id;`.signal(signal)
+		let resultSets = await sql.begin({ signal: tc.signal }, async (tx) => {
+			let resultSets = await tx`SELECT 1 AS id;`
 
-			return await tx`SELECT * from AS_TABLE(${resultSets[0]})`.signal(signal)
+			return await tx`SELECT * from AS_TABLE(${resultSets[0]})`
 		})
 
 		assert.deepEqual(resultSets, [[{ id: 1 }]])
