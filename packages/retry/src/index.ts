@@ -1,5 +1,5 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { YDBError } from '@ydbjs/error'
+import { CommitError, YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 
 import type { RetryConfig } from './config.js'
@@ -28,7 +28,7 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 
 			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
 			if (!retry || ctx.attempt >= budget) {
-				throw error
+				throw new Error('Retry budget exceeded', { cause: error })
 			}
 
 			let delay = typeof config.strategy === 'number' ? config.strategy : config.strategy!(ctx, config)
@@ -58,26 +58,29 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 	throw new Error('Retry budget exceeded')
 }
 
-export const defaultRetryConfig: RetryConfig = {
-	retry: (err, idempotent) => {
+export function isRetryableError(error: unknown, idempotent = false): boolean {
+	if (error instanceof ClientError) {
 		return (
-			(err instanceof ClientError && err.code === Status.ABORTED) ||
-			(err instanceof ClientError && err.code === Status.INTERNAL) ||
-			(err instanceof ClientError && err.code === Status.RESOURCE_EXHAUSTED) ||
-
-			(err instanceof ClientError && err.code === Status.UNAVAILABLE && idempotent) ||
-
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.ABORTED) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.OVERLOADED) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.UNAVAILABLE) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.BAD_SESSION) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.SESSION_BUSY) ||
-
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.SESSION_EXPIRED && idempotent) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.UNDETERMINED && idempotent) ||
-			(err instanceof YDBError && err.code === StatusIds_StatusCode.TIMEOUT && idempotent)
+			error.code === Status.ABORTED ||
+			error.code === Status.INTERNAL ||
+			error.code === Status.RESOURCE_EXHAUSTED ||
+			(error.code === Status.UNAVAILABLE && idempotent)
 		)
-	},
+	}
+
+	if (error instanceof YDBError) {
+		return error.retryable === true || (error.retryable === 'conditionally' && idempotent)
+	}
+
+	if (error instanceof CommitError) {
+		return error.retryable(idempotent)
+	}
+
+	return false
+}
+
+export const defaultRetryConfig: RetryConfig = {
+	retry: isRetryableError,
 	budget: Infinity,
 	strategy: (ctx, cfg) => {
 		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.BAD_SESSION) {
