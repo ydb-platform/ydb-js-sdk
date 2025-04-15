@@ -154,3 +154,38 @@ let [product] = products;
 console.log(`User ID: ${user.id}, Name: ${user.name}`); // User ID: 42n, Name: "Alice"
 console.log(`Product ID: ${product.id}, Name: ${product.name}`); // Product ID: 1n, Name: "Product A"
 ```
+
+## Working with Transactions
+
+To execute multiple queries within a single transaction, use the `begin` or `transaction` method:
+
+```ts
+import { Driver } from '@ydbjs/core';
+import { query } from '@ydbjs/query';
+
+const driver = new Driver('grpc://localhost:2136/local');
+await driver.ready();
+
+const sql = query(driver);
+
+// Execute a transaction with multiple queries
+const result = await sql.begin(async (tx, signal) => {
+  const users = await tx`SELECT * FROM users WHERE active = true`;
+  await tx`
+    UPDATE users
+    SET last_login = CurrentUtcTimestamp()
+    WHERE active = true
+  `;
+  return users;
+});s
+
+console.log(result); // [ [ { ... } ] ]
+```
+
+You can also pass options, for example, to control isolation level or cancellation via AbortSignal:
+
+```ts
+const result = await sql.begin({ isolation: 'serializableReadWrite', signal }, async (tx) => {
+  // your queries
+});
+```
