@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.0-alpha.4",
+	"version": "6.0.0-alpha.5",
 	"description": "YDB Value",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -94,7 +94,7 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.2.3",
 		"@date-fns/tz": "^1.2.0",
-		"@ydbjs/api": "6.0.0-alpha.4",
+		"@ydbjs/api": "6.0.0-alpha.5",
 		"date-fns": "^4.1.0",
 		"debug": "^4.4.0",
 		"proposal-decimal": "^20240325.0.0"

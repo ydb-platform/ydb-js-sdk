@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/error",
-	"version": "6.0.0-alpha.4",
+	"version": "6.0.0-alpha.5",
 	"description": "YDB Error",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -22,7 +22,7 @@
 	},
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
-		"@ydbjs/api": "6.0.0-alpha.4"
+		"@ydbjs/api": "6.0.0-alpha.5"
 	},
 	"publishConfig": {
 		"tag": "alpha",

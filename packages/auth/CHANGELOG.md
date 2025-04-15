@@ -1,5 +1,15 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.6
+
+### Patch Changes
+
+- Add transaction support
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.5
+  - @ydbjs/error@6.0.0-alpha.5
+  - @ydbjs/retry@6.0.0-alpha.6
+
 ## 6.0.0-alpha.5
 
 ### Patch Changes

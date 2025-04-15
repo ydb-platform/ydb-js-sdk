@@ -1,5 +1,11 @@
 # @ydbjs/api
 
+## 6.0.0-alpha.5
+
+### Patch Changes
+
+- Add transaction support
+
 ## 6.0.0-alpha.4
 
 ### Patch Changes

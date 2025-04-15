@@ -7,6 +7,7 @@
 		"packages/*"
 	],
 	"scripts": {
+		"version": "npx changeset",
 		"build": "turbo run build",
 		"test": "turbo run test",
 		"attw": "turbo run attw",
