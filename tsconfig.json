@@ -6,8 +6,9 @@
 			// DOM for the HeadersInit type.
 			"DOM",
 			"ES2021",
+			"ES2022.Error",
 			// ES2024.Promise for the Promise.withResolvers().
-			"ES2024.Promise"
+			"ES2024.Promise",
 		],
 		"rewriteRelativeImportExtensions": true,
 		"declaration": true,
