@@ -40,8 +40,9 @@
 				"VisualStudioExptTeam.vscodeintellicode",
 				"oxc.oxc-vscode",
 				"esbenp.prettier-vscode",
-				"vitest.explorer",
-				"redhat.vscode-yaml"
+				"redhat.vscode-yaml",
+				"qufiwefefwoyn.inline-sql-syntax",
+				"connor4312.nodejs-testing"
 			]
 		}
 	},

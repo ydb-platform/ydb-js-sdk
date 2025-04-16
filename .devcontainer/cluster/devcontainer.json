@@ -30,9 +30,9 @@
 				"VisualStudioExptTeam.vscodeintellicode",
 				"oxc.oxc-vscode",
 				"esbenp.prettier-vscode",
-				"vitest.explorer",
 				"redhat.vscode-yaml",
-				"GitHub.copilot",
+				"qufiwefefwoyn.inline-sql-syntax",
+				"connor4312.nodejs-testing",
 				"github.vscode-github-actions"
 			]
 		}
