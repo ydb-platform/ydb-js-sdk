@@ -27,6 +27,9 @@
 		"node": ">=18",
 		"npm": ">=10"
 	},
+	"overrides": {
+		"@grpc/proto-loader": "npm:dry-uninstall"
+	},
 	"packageManager": "npm@11.2.0",
 	"prettier": {
 		"printWidth": 160,
