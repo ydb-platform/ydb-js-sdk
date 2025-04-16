@@ -12,6 +12,7 @@
     "@ydbjs/value": "6.0.0-alpha.2"
   },
   "changesets": [
+    "common-facts-kneel",
     "moody-houses-divide",
     "tall-colts-follow",
     "tender-symbols-drive",

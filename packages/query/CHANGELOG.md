@@ -1,5 +1,11 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.7
+
+### Patch Changes
+
+- Add isolation option for single query execution
+
 ## 6.0.0-alpha.6
 
 ### Patch Changes

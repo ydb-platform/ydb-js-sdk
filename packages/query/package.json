@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "6.0.0-alpha.6",
+	"version": "6.0.0-alpha.7",
 	"description": "YDB Query Client",
 	"license": "Apache-2.0",
 	"type": "module",
