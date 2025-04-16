@@ -5,7 +5,7 @@ RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 20"
 RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 22"
 
 # [Optional] Uncomment if you want to install more global node modules
-ARG NODE_MODULES="typescript"
+ARG NODE_MODULES="turbo prettier typescript @changesets/cli"
 RUN su node -c "npm install -g ${NODE_MODULES}" \
     && npm cache clean --force > /dev/null 2>&1
 
