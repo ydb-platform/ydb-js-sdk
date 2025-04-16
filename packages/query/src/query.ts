@@ -46,6 +46,8 @@ export class Query<T extends unknown[] = unknown[]>
 	#stats: QueryStats | undefined
 	#statsMode: StatsMode = StatsMode.UNSPECIFIED
 
+	#isolation: 'serializableReadWrite' | 'snapshotReadOnly' | null = null
+
 	#raw: boolean = false
 	#values: boolean = false
 
@@ -140,11 +142,25 @@ export class Query<T extends unknown[] = unknown[]>
 				{
 					sessionId: store.sessionId,
 					execMode: ExecMode.EXECUTE,
+					// If we have a transactionId, we should use it
+					// If we have an isolation level, we should use it
+					// Otherwise, we should not use a transaction.
 					txControl: store.transactionId ? {
 						txSelector: {
 							case: "txId",
 							value: store.transactionId,
 						},
+					} : this.#isolation ? {
+						commitTx: true,
+						txSelector: {
+							case: "beginTx",
+							value: {
+								txMode: {
+									case: this.#isolation,
+									value: {},
+								}
+							}
+						}
 					} : undefined,
 					query: {
 						case: 'queryContent',
@@ -279,6 +295,18 @@ export class Query<T extends unknown[] = unknown[]>
 	/** Sets the idempotent flag for the query */
 	idempotent(idempotent: boolean): Query<T> {
 		this.#idempotent = idempotent
+
+		return this
+	}
+
+	/**
+	 * Configure transaction isolation for single execute call.
+	 * If not set or null, the query will be executed without transaction.
+	 * If set, the query will be executed in a transaction (inline begin and commit)
+	 * with the specified isolation level.
+	 */
+	isolation(isolation: 'serializableReadWrite' | 'snapshotReadOnly' | null) {
+		this.#isolation = isolation
 
 		return this
 	}
