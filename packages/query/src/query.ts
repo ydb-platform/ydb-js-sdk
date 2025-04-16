@@ -18,11 +18,11 @@ import { typeToString } from '@ydbjs/value/print'
 import { storage } from './storage.js'
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
-type ArrayifyTuple<T extends unknown[]> = {
+type ArrayifyTuple<T extends any[]> = {
 	[K in keyof T]: T[K][]
 }
 
-export class Query<T extends unknown[] = unknown[]>
+export class Query<T extends any[] = unknown[]>
 	implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable {
 	#driver: Driver
 	#promise: Promise<ArrayifyTuple<T>> | null = null
@@ -46,7 +46,8 @@ export class Query<T extends unknown[] = unknown[]>
 	#stats: QueryStats | undefined
 	#statsMode: StatsMode = StatsMode.UNSPECIFIED
 
-	#isolation: 'serializableReadWrite' | 'snapshotReadOnly' | null = null
+	#isolation: 'implicit' | 'serializableReadWrite' | 'snapshotReadOnly' | 'onlineReadOnly' | 'staleReadOnly' = 'implicit'
+	#isolationSettings: { allowInconsistentReads: boolean } | {} = {}
 
 	#raw: boolean = false
 	#values: boolean = false
@@ -150,14 +151,14 @@ export class Query<T extends unknown[] = unknown[]>
 							case: "txId",
 							value: store.transactionId,
 						},
-					} : this.#isolation ? {
+					} : this.#isolation !== "implicit" ? {
 						commitTx: true,
 						txSelector: {
 							case: "beginTx",
 							value: {
 								txMode: {
 									case: this.#isolation,
-									value: {},
+									value: this.#isolationSettings as {},
 								}
 							}
 						}
@@ -300,13 +301,28 @@ export class Query<T extends unknown[] = unknown[]>
 	}
 
 	/**
-	 * Configure transaction isolation for single execute call.
-	 * If not set or null, the query will be executed without transaction.
-	 * If set, the query will be executed in a transaction (inline begin and commit)
-	 * with the specified isolation level.
+	 * Sets the transaction isolation level for a single execute call.
+	 *
+	 * ONLY FOR SINGLE EXECUTE CALLS.
+	 * NOT WORKING WITH TRANSACTION CONTEXT (sql.begin or sql.transaction).
+	 *
+	 * A transaction is always used. If `mode` is 'implicit', the database decides the isolation level.
+	 * If a specific isolation `mode` is provided, the query will be executed within a single transaction (with inline begin and commit)
+	 * using the specified isolation level.
+	 *
+	 * @param mode Transaction isolation level:
+	 *  - 'serializableReadWrite' — serializable read/write
+	 *  - 'snapshotReadOnly' — snapshot read-only
+	 *  - 'onlineReadOnly' — online read-only
+	 *  - 'staleReadOnly' — stale read-only
+	 *  - 'implicit' — isolation is not set, server decides
+	 *  - 'implicit' is the default value
+	 * @param settings Additional options, e.g., allowInconsistentReads — allow inconsistent reads only with 'onlineReadOnly'
+	 * @returns The current instance for chaining
 	 */
-	isolation(isolation: 'serializableReadWrite' | 'snapshotReadOnly' | null) {
-		this.#isolation = isolation
+	isolation(mode: 'implicit' | 'serializableReadWrite' | 'snapshotReadOnly' | 'onlineReadOnly' | 'staleReadOnly', settings: { allowInconsistentReads: boolean } | {} | undefined = {}) {
+		this.#isolation = mode
+		this.#isolationSettings = settings
 
 		return this
 	}
@@ -353,7 +369,7 @@ export class Query<T extends unknown[] = unknown[]>
 	}
 
 	/** Returns only the values from the query result */
-	values(): Query<unknown[]> {
+	values(): Query<[unknown][]> {
 		this.#values = true
 
 		return this
