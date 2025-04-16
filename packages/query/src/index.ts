@@ -179,7 +179,6 @@ export function query(driver: Driver): QueryClient {
 
 			store.transactionId = beginTransactionResult.txMeta?.id
 
-
 			try {
 				let result = await storage.run(store, () => caller!(yql, signal))
 

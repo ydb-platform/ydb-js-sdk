@@ -293,7 +293,14 @@ export class Query<T extends any[] = unknown[]>
 		return this.parameter(name, parameter)
 	}
 
-	/** Sets the idempotent flag for the query */
+	/**
+	 * Sets the idempotent flag for the query.
+	 *
+	 * ONLY FOR SINGLE EXECUTE CALLS.
+	 * DO NOTHING IN TRANSACTION CONTEXT (sql.begin or sql.transaction).
+	 *
+	 * Idempotent queries may be retried without side effects.
+	 */
 	idempotent(idempotent: boolean): Query<T> {
 		this.#idempotent = idempotent
 
@@ -304,7 +311,7 @@ export class Query<T extends any[] = unknown[]>
 	 * Sets the transaction isolation level for a single execute call.
 	 *
 	 * ONLY FOR SINGLE EXECUTE CALLS.
-	 * NOT WORKING WITH TRANSACTION CONTEXT (sql.begin or sql.transaction).
+	 * DO NOTHING IN TRANSACTION CONTEXT (sql.begin or sql.transaction).
 	 *
 	 * A transaction is always used. If `mode` is 'implicit', the database decides the isolation level.
 	 * If a specific isolation `mode` is provided, the query will be executed within a single transaction (with inline begin and commit)
