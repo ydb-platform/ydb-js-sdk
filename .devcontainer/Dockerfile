@@ -1,8 +1,8 @@
 FROM mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
 
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 18"
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 20"
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 22"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=hydrogen"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=iron"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=jod"
 
 # [Optional] Uncomment if you want to install more global node modules
 ARG NODE_MODULES="turbo prettier typescript @changesets/cli"
