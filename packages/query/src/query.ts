@@ -76,6 +76,10 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		}
 	}
 
+	static get [Symbol.species]() {
+		return Promise;
+	}
+
 	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<ArrayifyTuple<T>> {
 		let { nodeId, sessionId, transactionId, signal } = ctx.getStore() || {}
