@@ -23,7 +23,9 @@
 	"forwardPorts": [
 		2135,
 		2136,
-		8765
+		8765,
+		9090,
+		9464
 	],
 	// Use 'initializeCommand' to run commands before the container is created.
 	"initializeCommand": "git config --local user.email \"$(git config user.email)\" && git config --local user.name \"$(git config user.name)\"",

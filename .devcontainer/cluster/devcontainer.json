@@ -16,7 +16,13 @@
 		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [2136, 8765, 19001],
+	"forwardPorts": [
+		2136,
+		8765,
+		19001,
+		9090,
+		9464
+	],
 	// Use 'initializeCommand' to run commands before the container is created.
 	"initializeCommand": "git config --local user.email \"$(git config user.email)\" && git config --local user.name \"$(git config user.name)\"",
 	// Use 'postStartCommand' to run commands after the container is started.
