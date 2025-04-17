@@ -1,4 +1,4 @@
-import { StatusIds_StatusCode, type IssueMessage } from '@ydbjs/api/operation'
+import { type IssueMessage, StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { ExtendableError } from 'ts-error'
 
 export class YDBError extends ExtendableError {
