@@ -50,6 +50,10 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 					}
 				}),
 			])
+
+			if (config.onRetry) {
+				config.onRetry(ctx)
+			}
 		} finally {
 			controller.abort('Retry cancelled')
 		}

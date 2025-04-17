@@ -16,4 +16,7 @@ export interface RetryConfig extends Abortable {
 	strategy?: number | RetryStrategy;
 	/** Idempotent operation */
 	idempotent?: boolean;
+
+	/** Hook to be called before retrying */
+	onRetry?: (ctx: RetryContext) => void;
 };
