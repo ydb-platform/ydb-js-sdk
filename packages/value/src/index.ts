@@ -9,6 +9,7 @@ import {
 	Bool,
 	Bytes,
 	Datetime,
+	Double,
 	Int32,
 	Int64,
 	Primitive,
@@ -81,7 +82,7 @@ export function fromJs(native: JSValue): Value {
 		case 'boolean':
 			return new Bool(native)
 		case 'number':
-			return new Int32(native)
+			return Number.isInteger(native) ? new Int32(native) : new Double(native)
 		case 'bigint':
 			return new Int64(native)
 		case 'string':

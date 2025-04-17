@@ -33,17 +33,17 @@ export class PrimitiveType implements Type {
 
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
+	value: unknown
 	high128?: bigint
+
+	// oxlint-disable no-unused-private-class-members
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
 	#valueInstance?: Ydb.Value
 
 	constructor(value: MessageInitShape<GenMessage<Ydb.Value>>, typeId: Ydb.Type_PrimitiveTypeId) {
 		this.type = new PrimitiveType(typeId)
+		this.value = value?.value?.value
 		this.#value = value
-	}
-
-	get value(): unknown {
-		return this.#value.value?.value
 	}
 
 	encode(): Ydb.Value {
