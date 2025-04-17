@@ -5,10 +5,10 @@ import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
-import { fromJs, type Value } from '@ydbjs/value'
+import { type Value, fromJs } from '@ydbjs/value'
 
 import { Query } from './query.js'
-import { storage } from './storage.js'
+import { ctx } from './ctx.js'
 
 type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -98,9 +98,7 @@ export function query(driver: Driver): QueryClient {
 			text += strings.reduce((prev, curr, i) => prev + curr + (values[i] ? `$p${i}` : ''), '')
 		}
 
-		storage.enterWith(storage.getStore() ?? {})
-
-		return new Query(driver, text, params)
+		return ctx.run(ctx.getStore() ?? {}, () => new Query(driver, text, params))
 	}
 
 	function txIml<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
@@ -132,7 +130,7 @@ export function query(driver: Driver): QueryClient {
 	 */
 	async function txIml<T = unknown>(optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>, fn?: TransactionContextCallback<T>): Promise<T> {
 		await driver.ready()
-		let store = storage.getStore() || {}
+		let store = ctx.getStore() || {}
 		let client = driver.createClient(QueryServiceDefinition)
 
 		let caller = (typeof optOrFn === "function" ? optOrFn : fn)
@@ -180,7 +178,7 @@ export function query(driver: Driver): QueryClient {
 			store.transactionId = beginTransactionResult.txMeta?.id
 
 			try {
-				let result = await storage.run(store, () => caller!(yql, signal))
+				let result = await ctx.run(store, () => caller!(yql, signal))
 
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {

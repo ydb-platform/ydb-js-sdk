@@ -15,7 +15,7 @@ import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 
-import { storage } from './storage.js'
+import { ctx } from './ctx.js'
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
 type ArrayifyTuple<T extends any[]> = {
@@ -65,7 +65,7 @@ export class Query<T extends any[] = unknown[]>
 
 	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<ArrayifyTuple<T>> {
-		let store = storage.getStore() || {}
+		let { nodeId, sessionId, transactionId, signal } = ctx.getStore() || {}
 
 		if (this.#disposed) {
 			throw new Error('Query has been disposed.')
@@ -82,10 +82,8 @@ export class Query<T extends any[] = unknown[]>
 
 		this.#active = true
 
-		let signal = this.#controller.signal
-		if (store.signal) {
-			signal = AbortSignal.any([signal, store.signal])
-		} if (this.#signal) {
+		signal = signal ? AbortSignal.any([signal, this.#controller.signal]) : this.#controller.signal
+if (this.#signal) {
 			signal = AbortSignal.any([signal, this.#signal])
 		} if (this.#timeout) {
 			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
@@ -97,21 +95,22 @@ export class Query<T extends any[] = unknown[]>
 			idempotent: this.#idempotent,
 		}
 
-		this.#promise = retry(retryConfig, async (signal) => {
-			await this.#driver.ready(signal)
-			let client = this.#driver.createClient(QueryServiceDefinition, store?.nodeId)
+		await this.#driver.ready(signal)
 
-			if (!store?.sessionId) {
+		this.#promise = retry(retryConfig, async (signal) => {
+			let client = this.#driver.createClient(QueryServiceDefinition, nodeId)
+
+			if (!sessionId) {
 				let sessionResponse = await client.createSession({}, { signal })
 				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
 					throw new YDBError(sessionResponse.status, sessionResponse.issues)
 				}
 
-				store.nodeId = sessionResponse.nodeId
-				store.sessionId = sessionResponse.sessionId
+				nodeId = sessionResponse.nodeId
+				sessionId = sessionResponse.sessionId
 
-				client = this.#driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
-				this.#cleanup.push(() => client.deleteSession({ sessionId: sessionResponse.sessionId }))
+				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
+				this.#cleanup.push(() => client.deleteSession({ sessionId }))
 
 				let attachSession = Promise.withResolvers<SessionState>()
 					; (async (stream: AsyncIterable<SessionState>) => {
@@ -123,7 +122,7 @@ export class Query<T extends any[] = unknown[]>
 						} catch (err) {
 							attachSession.reject(err)
 						}
-					})(client.attachSession({ sessionId: store.sessionId }, { signal }))
+					})(client.attachSession({ sessionId }, { signal }))
 
 				let attachSessionResult = await attachSession.promise
 				if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
@@ -141,15 +140,14 @@ export class Query<T extends any[] = unknown[]>
 
 			let stream = client.executeQuery(
 				{
-					sessionId: store.sessionId,
+					sessionId,
 					execMode: ExecMode.EXECUTE,
 					// If we have a transactionId, we should use it
 					// If we have an isolation level, we should use it
-					// Otherwise, we should not use a transaction.
-					txControl: store.transactionId ? {
+					txControl: transactionId ? {
 						txSelector: {
 							case: "txId",
-							value: store.transactionId,
+							value: transactionId,
 						},
 					} : this.#isolation !== "implicit" ? {
 						commitTx: true,
