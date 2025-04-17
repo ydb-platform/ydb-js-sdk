@@ -100,7 +100,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		this.#active = true
 
 		signal = signal ? AbortSignal.any([signal, this.#controller.signal]) : this.#controller.signal
-if (this.#signal) {
+		if (this.#signal) {
 			signal = AbortSignal.any([signal, this.#signal])
 		} if (this.#timeout) {
 			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
@@ -256,11 +256,17 @@ if (this.#signal) {
 				throw err
 			})
 			.finally(async () => {
-			this.#active = false
-			this.#controller.abort('Query completed.')
-		})
+				this.#active = false
+				this.#controller.abort('Query completed.')
 
-		return await this.#promise
+				void Promise
+					.all(this.#cleanup.map((fn) => fn()))
+					.finally(() => {
+						this.#cleanup = []
+					})
+			})
+
+		return this.#promise
 	}
 
 	/** Returns the result of the query */
