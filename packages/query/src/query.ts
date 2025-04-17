@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:stream'
+
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
@@ -11,9 +13,10 @@ import {
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
+import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
+import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
 
@@ -22,8 +25,16 @@ type ArrayifyTuple<T extends any[]> = {
 	[K in keyof T]: T[K][]
 }
 
-export class Query<T extends any[] = unknown[]>
-	implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable {
+export type QueryEventMap = {
+	'done': [ArrayifyTuple<any>],
+	'retry': [RetryContext],
+	'error': [unknown],
+	'stats': [QueryStats],
+	'cancel': [],
+	'metadata': [Metadata],
+}
+
+export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventMap> implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable {
 	#driver: Driver
 	#promise: Promise<ArrayifyTuple<T>> | null = null
 	#cleanup: (() => Promise<unknown>)[] = []
@@ -53,6 +64,8 @@ export class Query<T extends any[] = unknown[]>
 	#values: boolean = false
 
 	constructor(driver: Driver, text: string, params: Record<string, Value>) {
+		super()
+
 		this.#text = text
 		this.#driver = driver
 		this.#parameters = {}
@@ -93,6 +106,9 @@ if (this.#signal) {
 			...defaultRetryConfig,
 			signal,
 			idempotent: this.#idempotent,
+			onRetry: (retryCtx) => {
+				this.emit('retry', retryCtx)
+			}
 		}
 
 		await this.#driver.ready(signal)
@@ -172,7 +188,12 @@ if (this.#signal) {
 					statsMode: this.#statsMode,
 					poolId: this.#poolId,
 				},
-				{ signal }
+				{
+					signal,
+					onTrailer: (trailer) => {
+						this.emit('metadata', trailer)
+					},
+				}
 			)
 
 			let results = [] as ArrayifyTuple<T>
@@ -216,7 +237,21 @@ if (this.#signal) {
 			}
 
 			return results
-		}).finally(() => {
+		})
+			.then((results) => {
+				if (this.#stats) {
+					this.emit('stats', this.#stats)
+				}
+
+				this.emit('done', results)
+
+				return results
+			})
+			.catch((err) => {
+				this.emit('error', err)
+				throw err
+			})
+			.finally(async () => {
 			this.#active = false
 			this.#controller.abort('Query completed.')
 		})
@@ -226,11 +261,11 @@ if (this.#signal) {
 
 	/** Returns the result of the query */
 	/* oxlint-disable unicorn/no-thenable */
-	async then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
+	then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
 		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
 		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
 	): Promise<TResult1 | TResult2> {
-		return await this.#execute().then(onfulfilled, onrejected)
+		return this.#execute().then(onfulfilled, onrejected)
 	}
 
 	/** Indicates if the query is currently executing */
@@ -356,6 +391,7 @@ if (this.#signal) {
 	cancel(): Query<T> {
 		this.#controller.abort('Query cancelled by user.')
 		this.#cancelled = true
+		this.emit('cancel')
 
 		return this
 	}
