@@ -1,5 +1,15 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.9
+
+### Patch Changes
+
+- Consolidated and clarified README files across all packages.
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.6
+  - @ydbjs/error@6.0.0-alpha.6
+  - @ydbjs/retry@6.0.0-alpha.8
+
 ## 6.0.0-alpha.8
 
 ### Patch Changes

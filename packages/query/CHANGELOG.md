@@ -1,5 +1,17 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.12
+
+### Patch Changes
+
+- Consolidated and clarified README files across all packages.
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.6
+  - @ydbjs/core@6.0.0-alpha.9
+  - @ydbjs/error@6.0.0-alpha.6
+  - @ydbjs/retry@6.0.0-alpha.8
+  - @ydbjs/value@6.0.0-alpha.7
+
 ## 6.0.0-alpha.11
 
 ### Patch Changes

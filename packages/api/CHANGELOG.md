@@ -1,5 +1,11 @@
 # @ydbjs/api
 
+## 6.0.0-alpha.6
+
+### Patch Changes
+
+- Consolidated and clarified README files across all packages.
+
 ## 6.0.0-alpha.5
 
 ### Patch Changes
