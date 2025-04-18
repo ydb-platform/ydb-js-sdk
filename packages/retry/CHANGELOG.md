@@ -1,5 +1,13 @@
 # @ydbjs/retry
 
+## 6.0.0-alpha.7
+
+### Patch Changes
+
+- Refined retry logic: now throws the original AbortError, supports AbortSignal, and adds onRetry hook.
+- Expanded configuration options and documentation.
+- Improved test coverage for retry scenarios.
+
 ## 6.0.0-alpha.6
 
 ### Patch Changes
