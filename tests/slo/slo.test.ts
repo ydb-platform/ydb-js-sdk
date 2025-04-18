@@ -7,9 +7,9 @@ import { Timestamp, Uint64 } from "@ydbjs/value/primitive"
 
 import { meterProvider } from "./telemetry.ts"
 
-const RPS = 200
-const MAX_CONCURRENCY_READ = 1000
-const MAX_CONCURRENCY_WRITE = 500
+const QPS = 100
+const MAX_CONCURRENCY_READ = 200
+const MAX_CONCURRENCY_WRITE = 50
 
 let ctrl = new AbortController()
 let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
@@ -69,7 +69,10 @@ meter.createObservableGauge("sdk_memory_usage", { unit: 'bytes', valueType: 0, d
 	})
 
 function sleep(ms: number) {
-	return new Promise(resolve => setTimeout(resolve, ms));
+	return Promise.race([
+		new Promise(resolve => setTimeout(resolve, ms)),
+		new Promise((_, reject) => ctrl.signal.addEventListener('abort', () => reject(new Error('Aborted'))))
+	])
 }
 
 async function read(maxId: number) {
@@ -79,7 +82,8 @@ async function read(maxId: number) {
 	let randomId = new Uint64(BigInt(randomInt(maxId)))
 
 	try {
-		await using _ = sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
+		await using stmt = sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
+			.idempotent(true)
 			.isolation('onlineReadOnly')
 			.timeout(10 * 10000)
 			.signal(ctrl.signal)
@@ -87,6 +91,8 @@ async function read(maxId: number) {
 				sdk_errors_total.add(1, { operation_type: "read", error_type: error instanceof Error ? error.name : "Unknown" })
 				sdk_retry_attempts_total.add(1, { operation_type: "read", error_type: error instanceof Error ? error.name : "Unknown" })
 			})
+
+		await stmt
 
 		sdk_operations_success_total.add(1, { operation_type: "read" })
 	} catch (err) {
@@ -105,7 +111,7 @@ async function write(curId: number) {
 	let id = new Uint64(BigInt(curId))
 
 	try {
-		await using _ = sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+		await using stmt = sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 			Digest::NumericHash(${id}),
 			${id},
 			${randomUUID()},
@@ -120,6 +126,8 @@ async function write(curId: number) {
 				sdk_retry_attempts_total.add(1, { operation_type: "write", error_type: error instanceof Error ? error.name : "Unknown" })
 			})
 
+		await stmt
+
 		sdk_operations_success_total.add(1, { operation_type: "write" })
 	} catch (err) {
 		sdk_operations_failure_total.add(1, { operation_type: "write" })
@@ -130,25 +138,25 @@ async function write(curId: number) {
 	}
 }
 
-function spawn_read() {
+async function spawn_read() {
 	if (ctrl.signal.aborted) return
 
 	while (inFlightRead < MAX_CONCURRENCY_READ) {
 		ctrl.signal.throwIfAborted()
 
+		void read(curId).then(() => (inFlightRead -= 1))
 		inFlightRead += 1
-		read(curId).then(() => (inFlightRead -= 1))
 	}
 };
 
-function spawn_write() {
+async function spawn_write() {
 	if (ctrl.signal.aborted) return
 
 	while (inFlightWrite < MAX_CONCURRENCY_WRITE) {
 		ctrl.signal.throwIfAborted()
 
+		void write(curId++).then(() => (inFlightWrite -= 1))
 		inFlightWrite += 1
-		write(curId++).then(() => (inFlightWrite -= 1))
 	}
 };
 
@@ -165,10 +173,10 @@ process.on('SIGINT', async () => {
 });
 
 while (!ctrl.signal.aborted) {
-	spawn_read();
-	spawn_write();
+	await spawn_write();
+	await spawn_read();
 
-	await sleep(1000 / RPS);
+	await sleep(1000 / QPS);
 }
 
 await meterProvider.shutdown()
