@@ -95,7 +95,7 @@ type Result = [[{ id: number }], [{ count: number }]];
 const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`;
 
 // Listen for query statistics and retries
-const q = sql`SELECT * FROM users`.withStats('FULL');
+const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL);
 q.on('stats', (stats) => console.log('Query stats:', stats));
 q.on('retry', (ctx) => console.log('Retrying:', ctx));
 await q;
@@ -121,7 +121,7 @@ await sql`SELECT * FROM users`
   .isolation('onlineReadOnly', { allowInconsistentReads: true })
   .idempotent(true)
   .timeout(5000)
-  .withStats('FULL');
+  .withStats(StatsMode.FULL);
 ```
 
 ### Value Conversion and Type Safety
@@ -138,7 +138,7 @@ await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`;
 You can enable and access query execution statistics:
 
 ```ts
-const q = sql`SELECT * FROM users`.withStats('FULL');
+const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL);
 await q;
 console.log(q.stats());
 ```
