@@ -433,19 +433,28 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		return this
 	}
 
-	[Symbol.dispose](): void {
-		this.#controller.abort('Query disposed.')
-		this.#cleanup.forEach((fn) => fn())
-		this.#cleanup = []
-		this.#promise = null
-		this.#disposed = true
-	}
+	/**
+	 * Disposes the query and releases all resources.
+	 * This method is called automatically when the query is done.
+	 * It is recommended to call this method explicitly when the query is no longer needed.
+	 */
+	async dispose(): Promise<void> {
+		if (this.#disposed) {
+			return
+		}
 
-	async [Symbol.asyncDispose](): Promise<void> {
 		this.#controller.abort('Query disposed.')
 		await Promise.all(this.#cleanup.map((fn) => fn()))
 		this.#cleanup = []
 		this.#promise = null
 		this.#disposed = true
+	}
+
+	[Symbol.dispose](): void {
+		this.dispose()
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		await this.dispose()
 	}
 }
