@@ -44,7 +44,9 @@
 				"esbenp.prettier-vscode",
 				"redhat.vscode-yaml",
 				"qufiwefefwoyn.inline-sql-syntax",
-				"connor4312.nodejs-testing"
+				"connor4312.nodejs-testing",
+				"github.vscode-github-actions",
+				"GitHub.copilot-chat"
 			]
 		}
 	},
