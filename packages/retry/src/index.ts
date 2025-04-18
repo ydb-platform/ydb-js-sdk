@@ -29,7 +29,7 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 
 			if (error instanceof Error && error.name === 'AbortError') {
 				// AbortError is not retryable
-				throw new Error('Retry cancelled', { cause: error })
+				throw error
 			}
 
 			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
