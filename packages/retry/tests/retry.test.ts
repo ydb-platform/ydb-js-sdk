@@ -5,11 +5,11 @@ import { retry } from "@ydbjs/retry";
 
 let isError = (error: unknown) => error instanceof Error
 
-test("retry", async (tc) => {
-	await tc.test("do retry", async () => {
+await test("retry", async (tc) => {
+	await tc.test("do retry", async (tc) => {
 		let attempts = 0
 
-		await retry({ retry: isError }, async () => {
+		await retry({ retry: isError, signal: tc.signal }, async () => {
 			if (attempts > 2) {
 				return
 			}
@@ -21,10 +21,10 @@ test("retry", async (tc) => {
 		assert.strictEqual(attempts, 3)
 	})
 
-	await tc.test("budget exhausted", async () => {
+	await tc.test("budget exhausted", async (tc) => {
 		let attempts = 0
 
-		let result = retry({ retry: isError, budget: 0 }, async () => {
+		let result = retry({ retry: isError, budget: 0, signal: tc.signal }, async () => {
 			if (attempts > 2) {
 				return
 			}
@@ -36,11 +36,13 @@ test("retry", async (tc) => {
 		await assert.rejects(result)
 	})
 
-	await tc.test("retry with signal", async () => {
+	await tc.test("retry with signal", async (tc) => {
 		let attempts = 0
 		let controller = new AbortController()
 
-		let result = retry({ retry: isError, signal: controller.signal }, async () => {
+		controller.abort()
+
+		let result = retry({ retry: isError, signal: AbortSignal.any([tc.signal, controller.signal]) }, async () => {
 			if (attempts > 2) {
 				return
 			}
@@ -48,8 +50,6 @@ test("retry", async (tc) => {
 			attempts++
 			throw new Error("DO_RETRY")
 		})
-
-		controller.abort()
 
 		await assert.rejects(result)
 	})

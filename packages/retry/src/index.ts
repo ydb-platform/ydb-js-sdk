@@ -27,6 +27,11 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 			ctx.attempt += 1
 			ctx.error = error
 
+			if (error instanceof Error && error.name === 'AbortError') {
+				// AbortError is not retryable
+				throw new Error('Retry cancelled', { cause: error })
+			}
+
 			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
 			if (!retry || ctx.attempt >= budget) {
 				throw new Error('Retry budget exceeded', { cause: error })
