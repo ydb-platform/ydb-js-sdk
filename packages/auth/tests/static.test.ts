@@ -4,9 +4,15 @@ import { mock, test } from 'node:test'
 
 import { StaticCredentialsProvider } from '../dist/esm/static.js'
 
-await test('BasicCredentialsProvider', async (tc) => {
-	let calls = 0
+let ydbClusterMode = process.env.YDB_CLUSTER_MODE === "1" || process.env.YDB_CLUSTER_MODE === "true" || process.env.YDB_CLUSTER_MODE === "yes"
 
+await test('BasicCredentialsProvider', async (tc) => {
+	if (ydbClusterMode) {
+		tc.skip('In cluster mode the user does not exsist.')
+		return
+	}
+
+	let calls = 0
 	let cs = new URL(process.env.YDB_CONNECTION_STRING!.replace(/^grpc/, 'http'))
 	let cf = createClientFactory().use((call, options) => {
 		calls++

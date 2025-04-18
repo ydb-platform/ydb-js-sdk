@@ -1,14 +1,6 @@
 {
 	"$schema": "https://turbo.build/schema.json",
 	"tasks": {
-		"prebuild": {
-			"dependsOn": [
-				"^prebuild"
-			],
-			"outputs": [
-				"./dist/**"
-			]
-		},
 		"codegen": {
 			"dependsOn": [
 				"^codegen"
@@ -17,11 +9,16 @@
 				"./src/gen/**"
 			]
 		},
+		"clean:esm": {
+			"outputs": [
+				"./dist/esm/**"
+			]
+		},
 		"build:esm": {
 			"dependsOn": [
 				"^build:esm",
 				"codegen",
-				"prebuild"
+				"clean:esm"
 			],
 			"inputs": [
 				"./src/**"
@@ -30,11 +27,16 @@
 				"./dist/esm/**"
 			]
 		},
+		"clean:cjs": {
+			"outputs": [
+				"./dist/cjs/**"
+			]
+		},
 		"build:cjs": {
 			"dependsOn": [
 				"^build:cjs",
 				"codegen",
-				"prebuild"
+				"clean:cjs"
 			],
 			"inputs": [
 				"./src/**"
@@ -43,8 +45,15 @@
 				"./dist/cjs/**"
 			]
 		},
+		"clean": {
+			"dependsOn": [
+				"clean:esm",
+				"clean:cjs"
+			]
+		},
 		"build": {
 			"dependsOn": [
+				"clean",
 				"build:esm",
 				"build:cjs"
 			]
@@ -54,6 +63,7 @@
 				"DEBUG",
 				"GRPC_TRACE",
 				"GRPC_VERBOSITY",
+				"YDB_CLUSTER_MODE",
 				"YDB_CONNECTION_STRING",
 				"YDB_CONNECTION_STRING_SECURE",
 				"YDB_SSL_ROOT_CERTIFICATES_FILE"
