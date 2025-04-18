@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:stream'
+import { EventEmitter } from 'node:events'
 
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
