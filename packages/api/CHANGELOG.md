@@ -1,5 +1,11 @@
 # @ydbjs/api
 
+## 6.0.0-alpha.7
+
+### Patch Changes
+
+- Update packages description
+
 ## 6.0.0-alpha.6
 
 ### Patch Changes

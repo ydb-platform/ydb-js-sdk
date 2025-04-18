@@ -1,7 +1,7 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.0.0-alpha.8",
-	"description": "YDB Retry",
+	"version": "6.0.0-alpha.9",
+	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
@@ -40,8 +40,8 @@
 		}
 	},
 	"dependencies": {
-		"@ydbjs/api": "6.0.0-alpha.6",
-		"@ydbjs/error": "6.0.0-alpha.6",
+		"@ydbjs/api": "6.0.0-alpha.7",
+		"@ydbjs/error": "6.0.0-alpha.7",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
