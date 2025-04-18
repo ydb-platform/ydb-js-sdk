@@ -127,8 +127,12 @@ You do not need to manually set headers; the SDK handles this for you.
 
 ---
 
-## See Also
+## License
 
-- [@ydbjs/core](https://www.npmjs.com/package/@ydbjs/core) – YDB driver
-- [@ydbjs/query](https://www.npmjs.com/package/@ydbjs/query) – SQL query builder for YDB
-- [YDB Documentation](https://ydb.tech/docs/en/)
+This project is licensed under the [Apache 2.0 License](../../LICENSE).
+
+## Links
+
+- [YDB Documentation](https://ydb.tech)
+- [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
+- [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)

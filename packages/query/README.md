@@ -75,5 +75,5 @@ This project is licensed under the [Apache 2.0 License](../../LICENSE).
 ## Links
 
 - [YDB Documentation](https://ydb.tech)
-- [GitHub Repository](https://github.com/yandex-cloud/ydb-js-sdk)
-- [Issues](https://github.com/yandex-cloud/ydb-js-sdk/issues)
+- [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
+- [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)

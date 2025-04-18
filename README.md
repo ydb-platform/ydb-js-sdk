@@ -91,7 +91,7 @@ try {
 - **Add a new service?** Use `@ydbjs/api` for gRPC definitions.
 - **Work with YDB types?** Use `@ydbjs/value`.
 - **Implement retries?** Use `@ydbjs/retry`.
-- **More examples?** See package docs and [GitHub Examples](https://github.com/yandex-cloud/ydb-js-sdk/tree/main/examples).
+- **More examples?** See package docs and [GitHub Examples](https://github.com/ydb-platform/ydb-js-sdk/tree/main/examples).
 
 ---
 
@@ -121,5 +121,5 @@ Licensed under [Apache 2.0](LICENSE).
 ## Links
 
 - [YDB Documentation](https://ydb.tech)
-- [GitHub Repository](https://github.com/yandex-cloud/ydb-js-sdk)
-- [Issues](https://github.com/yandex-cloud/ydb-js-sdk/issues)
+- [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
+- [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)
