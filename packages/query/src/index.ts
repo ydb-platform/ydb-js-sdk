@@ -10,10 +10,16 @@ import { type Value, fromJs } from '@ydbjs/value'
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
 
-type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
+export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
 	...values: P
 ) => Query<T>
+
+export type TX = SQL & {
+	nodeId: bigint
+	sessionId: string
+	transactionId: string
+}
 
 interface SessionContextCallback<T> {
 	(signal: AbortSignal): Promise<T>
@@ -25,7 +31,7 @@ interface TransactionExecuteOptions extends Abortable {
 }
 
 interface TransactionContextCallback<T> {
-	(tx: SQL, signal: AbortSignal): Promise<T>
+	(tx: TX, signal: AbortSignal): Promise<T>
 }
 
 export interface QueryClient extends SQL, AsyncDisposable {
@@ -178,7 +184,8 @@ export function query(driver: Driver): QueryClient {
 			store.transactionId = beginTransactionResult.txMeta?.id
 
 			try {
-				let result = await ctx.run(store, () => caller!(yql, signal))
+				let tx = Object.assign(yql, { nodeId: store.nodeId, sessionId: store.sessionId, transactionId: store.transactionId }) as TX
+				let result = await ctx.run(store, () => caller!(tx, signal))
 
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
