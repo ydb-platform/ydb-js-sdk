@@ -1,34 +1,72 @@
 # @ydbjs/core
 
-The `@ydbjs/core` package provides core utilities and foundational components for interacting with YDB services in JavaScript/TypeScript. It serves as the backbone for other YDB-related packages, offering shared functionality and abstractions.
+The `@ydbjs/core` package provides the core driver and connection management for YDB in JavaScript/TypeScript. It is the foundation for all YDB client operations, handling connection pooling, service client creation, authentication, and middleware.
 
 ## Features
 
-- Core utilities for YDB service interaction.
-- TypeScript support for type safety and autocompletion.
-- Lightweight and modular design.
-- Compatible with Node.js and modern JavaScript runtimes.
+- Connection pooling and load balancing for YDB endpoints
+- Service client creation for any YDB gRPC API
+- Pluggable authentication via `@ydbjs/auth` providers
+- Automatic endpoint discovery and failover
+- TypeScript support with type definitions
+- Compatible with Node.js and modern runtimes
 
 ## Installation
 
-Install the package using npm:
-
 ```sh
-npm install @ydbjs/core@6.0.0-alpha.2
+npm install @ydbjs/core@alpha
 ```
+
+## How It Works
+
+- **Driver**: The main entry point. Manages connections, endpoint discovery, and authentication.
+- **Connection Pool**: Maintains and balances gRPC channels to YDB endpoints.
+- **Service Clients**: Use `driver.createClient(ServiceDefinition)` to get a typed client for any YDB gRPC service (from `@ydbjs/api`).
+- **Authentication**: Pass a credentials provider from `@ydbjs/auth` to the driver for static, token, anonymous, or cloud metadata authentication.
+- **Middleware**: Internal middleware handles metadata, authentication, and debugging.
 
 ## Usage
 
-### Creating a gRPC Client
+### Basic Example
 
 ```ts
 import { Driver } from '@ydbjs/core';
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery';
 
-const driver = new Driver('grpc://localhost:2136');
+const driver = new Driver('grpc://localhost:2136/local');
 await driver.ready();
 
-const client = driver.createClient(/* gRPC Service Definitions */);
-client.invokeSomeMethod();
+const discovery = driver.createClient(DiscoveryServiceDefinition);
+const endpoints = await discovery.listEndpoints({ database: '/local' });
+console.log(endpoints);
+
+await driver.close();
+```
+
+### Using Authentication Providers
+
+```ts
+import { Driver } from '@ydbjs/core';
+import { StaticCredentialsProvider } from '@ydbjs/auth/static';
+
+const driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: new StaticCredentialsProvider({
+    username: 'user',
+    password: 'pass',
+  }),
+});
+await driver.ready();
+// ...
+```
+
+You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from `@ydbjs/auth`.
+
+### Closing the Driver
+
+Always close the driver when done to release resources:
+
+```ts
+driver.close();
 ```
 
 ## Development
