@@ -1,8 +1,0 @@
-/.turbo
-
-/src
-/tests
-/plugins
-
-/*.yaml
-/*.json
