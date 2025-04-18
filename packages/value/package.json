@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.0-alpha.5",
+	"version": "6.0.0-alpha.6",
 	"description": "YDB Value",
 	"license": "Apache-2.0",
 	"type": "module",
