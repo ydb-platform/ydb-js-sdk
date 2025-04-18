@@ -1,5 +1,12 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.8
+
+### Patch Changes
+
+- Enhanced authentication mechanisms and usage examples.
+- Improved documentation and structure.
+
 ## 6.0.0-alpha.7
 
 ### Patch Changes
