@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "6.0.0-alpha.10",
+	"version": "6.0.0-alpha.11",
 	"description": "YDB Query Client",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -41,7 +41,7 @@
 		"@ydbjs/core": "6.0.0-alpha.8",
 		"@ydbjs/error": "6.0.0-alpha.5",
 		"@ydbjs/retry": "6.0.0-alpha.7",
-		"@ydbjs/value": "6.0.0-alpha.5",
+		"@ydbjs/value": "6.0.0-alpha.6",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},

@@ -1,5 +1,11 @@
 # @ydbjs/value
 
+## 6.0.0-alpha.6
+
+### Patch Changes
+
+- Updated documentation with more conversion stage details and examples.
+
 ## 6.0.0-alpha.5
 
 ### Patch Changes
