@@ -1,0 +1,15 @@
+{
+	"type": "module",
+	"dependencies": {
+		"@opentelemetry/exporter-metrics-otlp-http": "^0.200.0",
+		"@opentelemetry/exporter-prometheus": "^0.200.0",
+		"@opentelemetry/sdk-metrics": "^2.0.0",
+		"@ydbjs/api": "../packages/api",
+		"@ydbjs/core": "../packages/core",
+		"@ydbjs/query": "../packages/query",
+		"@ydbjs/value": "../packages/value"
+	},
+	"overrides": {
+		"@grpc/proto-loader": "npm:dry-uninstall"
+	}
+}
