@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth",
-	"version": "6.0.0-alpha.7",
+	"version": "6.0.0-alpha.8",
 	"description": "YDB Auth",
 	"license": "Apache-2.0",
 	"type": "module",
