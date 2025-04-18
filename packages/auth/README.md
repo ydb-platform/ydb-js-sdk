@@ -1,39 +1,71 @@
 # @ydbjs/auth
 
-The `@ydbjs/auth` package provides authentication utilities for interacting with YDB services. It supports various authentication mechanisms, including static credentials, anonymous access, and token-based authentication.
+The `@ydbjs/auth` package provides authentication utilities for interacting with YDB services. It supports static credentials, token-based authentication, anonymous access, and VM metadata providers.
 
 ## Features
 
-- 🔒 Static credentials support
-- 🔑 Token-based authentication
-- 🕶️ Anonymous access for development and testing
-- ✅ TypeScript support with type definitions
+- Static credentials support
+- Token-based authentication
+- Anonymous access for development and testing
+- VM metadata authentication (Google Cloud, Yandex Cloud)
+- TypeScript support with type definitions
 
 ## Installation
 
+Install the package using npm:
+
 ```sh
-npm install @ydbjs/auth@6.0.0-alpha.2
+npm install @ydbjs/auth@6.0.0@alpha
 ```
+
+---
+
+## How Authentication Works with YDB
+
+YDB requires authentication for most operations. The credentials provider you choose attaches authentication data to each gRPC request:
+
+- **Static credentials**: The SDK sends your username and password to the YDB AuthService using a gRPC call. The server responds with a session token. This token is then sent as a header (`x-ydb-auth-ticket: <token>`) in all subsequent requests. The SDK automatically refreshes the token when it expires.
+- **Access token**: The SDK sends the provided token directly as a header (`x-ydb-auth-ticket: <token>`) with every request. No login call is made.
+- **Anonymous**: No authentication headers are sent. This is useful for local development or open databases.
+- **VM Metadata**: The SDK fetches a token from your cloud provider's metadata service (e.g., Google Cloud, Yandex Cloud) and sends it as a header (`x-ydb-auth-ticket: <token>`). The token is refreshed automatically as needed.
+
+> **Note:** The SDK handles all token management and header injection automatically when you pass a credentials provider to the YDB driver. You do not need to manually manage tokens or headers.
+
+---
 
 ## Usage
 
-### Anonymous Access
+### Using with YDB Driver
 
 ```ts
-import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
+import { Driver } from '@ydbjs/core';
+import { query } from '@ydbjs/query';
+import { StaticCredentialsProvider } from '@ydbjs/auth/static';
 
-const provider = new AnonymousCredentialsProvider();
+const driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: new StaticCredentialsProvider({
+    username: 'username',
+    password: 'password',
+  }),
+});
+await driver.ready();
+
+const sql = query(driver);
+const result = await sql`SELECT 1`;
 ```
 
-### Static Credentials
+### Static Credentials (Manual Usage)
 
 ```ts
 import { StaticCredentialsProvider } from '@ydbjs/auth/static';
 
 const provider = new StaticCredentialsProvider({
-    user: 'username',
-    password: 'password',
-});
+  username: 'username',
+  password: 'password',
+}, 'grpc://localhost:2136/local');
+
+const token = await provider.getToken();
+// The token can be used in custom gRPC calls if needed
 ```
 
 ### Token-Based Authentication
@@ -42,61 +74,61 @@ const provider = new StaticCredentialsProvider({
 import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token';
 
 const provider = new AccessTokenCredentialsProvider({
-    token: 'your-access-token',
+  token: 'your-access-token',
 });
+
+// Use with driver
+import { Driver } from '@ydbjs/core';
+const driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: provider,
+});
+await driver.ready();
 ```
 
-### VM Metadata Authentication
-[GoogleCloud](https://cloud.google.com/compute/docs/metadata/querying-metadata), [YandexCloud](https://yandex.cloud/ru/docs/compute/operations/vm-info/get-info)
+### Anonymous Access
+
+```ts
+import { Driver } from '@ydbjs/core';
+import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
+
+const driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: new AnonymousCredentialsProvider(),
+});
+await driver.ready();
+```
+
+### VM Metadata Authentication (Cloud)
 
 ```ts
 import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata';
 
-const provider = new MetadataCredentialsProvider();
+const provider = new MetadataCredentialsProvider({
+  // Optional: override endpoint or flavor for your cloud
+  // endpoint: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token',
+  // flavor: 'Google',
+});
+
+import { Driver } from '@ydbjs/core';
+const driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: provider,
+});
+await driver.ready();
 ```
 
-## API Reference
+---
 
-### `AnonymousCredentialsProvider`
+## What is Sent to YDB Server
 
-- **Constructor**: `new AnonymousCredentialsProvider()`
+- For **Static Credentials** and **VM Metadata**: The SDK first obtains a token (via login or metadata service), then sends `x-ydb-auth-ticket: <token>` in every gRPC request.
+- For **Access Token**: The SDK sends `x-ydb-auth-ticket: <token>` in every gRPC request.
+- For **Anonymous**: No authentication header is sent.
 
-### `StaticCredentialsProvider`
+You do not need to manually set headers; the SDK handles this for you.
 
-- **Constructor**: `new StaticCredentialsProvider(credendials: { user: string; password: string }, endpoint: string)`
-- **Credentials**:
-    - `user`: The username for authentication.
-    - `password`: The password for authentication.
-- **Endpoint**: The endpoint for the YDB service.
-- **ClientFactory**: A factory function to create a gRPC client instance.
+---
 
-### `AccessTokenCredentialsProvider`
+## See Also
 
-- **Constructor**: `new AccessTokenCredentialsProvider(credendials: { token: string })`
-- **Credentials**:
-    - `token`: The access token.
-
-### `MetadataCredentialsProvider`
-
-- **Constructor**: `new MetadataCredentialsProvider()`
-- **Credentials**:
-    - `endpoint`: The endpoint for the VM metadta service.
-    - `falvor`: The falvor of the metadata service. Typically `Google`.
-
-## Development
-
-To build the package:
-
-```sh
-npm run build
-```
-
-To run tests:
-
-```sh
-npm test
-```
-
-## License
-
-This project is licensed under the [Apache 2.0 License](https://www.apache.org/licenses/LICENSE-2.0).
+- [@ydbjs/core](https://www.npmjs.com/package/@ydbjs/core) – YDB driver
+- [@ydbjs/query](https://www.npmjs.com/package/@ydbjs/query) – SQL query builder for YDB
+- [YDB Documentation](https://ydb.tech/docs/en/)
