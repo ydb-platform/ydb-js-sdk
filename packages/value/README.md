@@ -1,17 +1,17 @@
 # @ydbjs/value
 
-The `@ydbjs/value` package provides utilities for working with YDB values and types in JavaScript/TypeScript.
-It includes classes and functions for encoding, decoding, and converting YDB values to and from native JavaScript types.
+The `@ydbjs/value` package provides utilities for working with YDB values and types in JavaScript/TypeScript. It includes classes and functions for encoding, decoding, and converting YDB values to and from native JavaScript types.
 
 ## Features
-- Support for all YDB primitive types (e.g., `BOOL`, `INT32`, `STRING`, etc.).
-- Support for complex types like `List`, `Tuple`, `Struct`, `Dict`, and `Optional`.
-- Conversion between YDB values and native JavaScript types.
-- Type-safe handling of YDB values with TypeScript.
+
+- Support for all YDB primitive types (e.g., BOOL, INT32, STRING, etc.)
+- Support for complex types like List, Tuple, Struct, Dict, and Optional
+- Conversion between YDB values and native JavaScript types
+- Type-safe handling of YDB values with TypeScript
 
 ## Installation
 
-Install the package via npm:
+Install the package using npm:
 
 ```sh
 npm install @ydbjs/value@6.0.0-alpha.2
@@ -23,37 +23,43 @@ npm install @ydbjs/value@6.0.0-alpha.2
 
 ```ts
 import { fromJs } from '@ydbjs/value';
-
-const ydbValue = fromJs({ key: 'value' }); // Converts a JavaScript object to a YDB Struct.
+const ydbValue = fromJs({ key: 'value' });
 ```
 
 ### Decoding YDB Values to JavaScript
 
 ```ts
 import { toJs } from '@ydbjs/value';
-
-const jsValue = toJs(ydbValue); // Converts a YDB value back to a native JavaScript object.
+const jsValue = toJs(ydbValue);
 ```
 
 ### Working with YDB Types
 
 ```ts
 import { Int32Type } from '@ydbjs/value/primitive';
-
 const intType = new Int32Type();
 ```
 
 ## Development
 
-- Build the package:
+### Building the Package
+
 ```sh
 npm run build
 ```
-- Run tests:
+
+### Running Tests
+
 ```sh
 npm test
 ```
 
 ## License
 
-This package is licensed under the Apache 2.0 License.
+This project is licensed under the [Apache 2.0 License](../../LICENSE).
+
+## Links
+
+- [YDB Documentation](https://ydb.tech)
+- [GitHub Repository](https://github.com/yandex-cloud/ydb-js-sdk)
+- [Issues](https://github.com/yandex-cloud/ydb-js-sdk/issues)

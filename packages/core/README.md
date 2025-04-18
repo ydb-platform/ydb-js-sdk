@@ -11,61 +11,45 @@ The `@ydbjs/core` package provides core utilities and foundational components fo
 
 ## Installation
 
-To install the package, use your preferred package manager:
+Install the package using npm:
 
-```bash
+```sh
 npm install @ydbjs/core@6.0.0-alpha.2
 ```
 
 ## Usage
 
-### Create generic gRPC Client
+### Creating a gRPC Client
 
 ```ts
 import { Driver } from '@ydbjs/core';
 
-// Example usage
-let driver = new Driver("grpc://localhost:2136");
-await driver.ready()
+const driver = new Driver('grpc://localhost:2136');
+await driver.ready();
 
-let client = driver.createClient(/* gRPC Service Defenitions */)
-client.invokeSomeMethod()
+const client = driver.createClient(/* gRPC Service Definitions */);
+client.invokeSomeMethod();
 ```
 
 ## Development
 
 ### Building the Package
 
-To build the package, run:
-
-```bash
+```sh
 npm run build
 ```
 
-This will generate both CommonJS and ES Module outputs in the `dist/` directory.
-
 ### Running Tests
 
-To run the tests, use:
-
-```bash
+```sh
 npm test
 ```
 
 For watch mode during development:
 
-```bash
+```sh
 npm run test:watch
 ```
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository.
-2. Create a new branch for your feature or bugfix.
-3. Commit your changes with clear messages.
-4. Submit a pull request.
 
 ## License
 
