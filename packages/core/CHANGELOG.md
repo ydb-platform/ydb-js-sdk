@@ -1,5 +1,13 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.8
+
+### Patch Changes
+
+- Refactored async functions and concurrency handling for better performance.
+- Expanded configuration options and documentation.
+- Updated README for clarity and structure.
+
 ## 6.0.0-alpha.7
 
 ### Patch Changes
