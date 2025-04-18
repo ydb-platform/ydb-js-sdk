@@ -8,6 +8,7 @@ import { exponential, fixed } from './strategy.js'
 
 export * from './config.js'
 export * from './context.js'
+export * as strategies from './strategy.js'
 
 export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R | Promise<R>): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)

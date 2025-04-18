@@ -66,6 +66,100 @@ The `retry` function accepts the following configuration options:
 - `strategy` (number | RetryStrategy): The strategy to calculate the delay between retries. This can be a fixed number or a custom strategy function.
 - `idempotent` (boolean): Indicates whether the operation is idempotent. If set to `true`, the retry logic will not consider the operation as failed if it is retried.
 
+## Advanced Usage
+
+### Custom Retry Strategy
+
+You can define your own retry strategy to control the delay between attempts:
+
+```ts
+import { retry } from '@ydbjs/retry';
+
+const customStrategy = (ctx, cfg) => {
+    // Exponential backoff with a cap
+    return Math.min(1000 * 2 ** ctx.attempt, 10000);
+};
+
+await retry({
+    strategy: customStrategy,
+    budget: 5,
+    retry: (error) => error instanceof Error,
+}, async () => {
+    // Your operation
+});
+```
+
+### Dynamic Retry Budget
+
+Budgets can be dynamic, based on error type or context:
+
+```ts
+const dynamicBudget = (ctx, cfg) => {
+    // Allow more attempts for network errors
+    if (ctx.error && ctx.error.message.includes('network')) {
+        return 10;
+    }
+    return 3;
+};
+
+await retry({
+    budget: dynamicBudget,
+    // ...other config
+}, async () => { /* ... */ });
+```
+
+### onRetry Hook
+
+You can use the `onRetry` hook to log or perform side effects on each retry:
+
+```ts
+await retry({
+    onRetry: (ctx) => {
+        console.log(`Retry attempt #${ctx.attempt} after error:`, ctx.error);
+    },
+    // ...other config
+}, async () => { /* ... */ });
+```
+
+### Combining Strategies
+
+You can compose multiple strategies for more advanced control:
+
+```ts
+import { strategies, retry } from '@ydbjs/retry';
+
+const combined = strategies.compose(
+    strategies.exponential(500),
+    strategies.jitter(100)
+);
+
+await retry({
+    strategy: combined,
+    budget: 5,
+}, async () => { /* ... */ });
+```
+
+### Using AbortSignal in Retry Callback
+
+You can use the `AbortSignal` provided to the retried function to support cancellation with custom clients (for example, a YDB driver from the core package):
+
+```ts
+import { retry } from '@ydbjs/retry';
+import { Driver } from '@ydbjs/core';
+
+const driver = new Driver('grpc://localhost:2135?database=/local');
+
+await retry({
+    budget: 5,
+}, async (signal) => {
+    // Pass the signal to a method that supports AbortSignal, e.g., driver.ready
+    await driver.ready(signal);
+    // Or, if using a generated client:
+    // const client = driver.createClient(SomeServiceDefinition);
+    // return await client.someMethod(request, { signal });
+});
+```
+
 ## Development
 
 To build the package:
