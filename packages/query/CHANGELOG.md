@@ -1,5 +1,14 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.8
+
+### Patch Changes
+
+- Improved resource management and cleanup methods.
+- Enhanced event emission and transaction handling.
+- Updated documentation with advanced usage and error handling examples.
+- Added support for more transaction isolation levels and statistics configuration.
+
 ## 6.0.0-alpha.7
 
 ### Patch Changes
