@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 source /usr/local/share/nvm/nvm.sh && nvm use --lts
 
