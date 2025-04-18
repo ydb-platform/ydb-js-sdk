@@ -1,5 +1,13 @@
 # @ydbjs/error
 
+## 6.0.0-alpha.7
+
+### Patch Changes
+
+- Update packages description
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.7
+
 ## 6.0.0-alpha.6
 
 ### Patch Changes
