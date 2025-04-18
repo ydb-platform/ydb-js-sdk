@@ -1,39 +1,38 @@
-# YDB JavaScript SDK (`ydb-sdk`)
+# YDB JavaScript SDK
 
-The `ydb-sdk` SDK provides a comprehensive set of tools for interacting with YDB in JavaScript/TypeScript. It is modular, allowing developers to use only the parts they need, and supports a wide range of YDB features, including query execution, value manipulation, error handling, and more.
-
-## Table of Contents
-
-- [Features](#features)
-- [Installation](#installation)
-- [Packages Overview](#packages-overview)
-    - [Core](#core)
-    - [Query](#query)
-    - [Value](#value)
-    - [API](#api)
-    - [Error](#error)
-- [Quick Start](#quick-start)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-- [Links](#links)
+A modular, modern SDK for working with YDB in JavaScript/TypeScript. Supports queries, transactions, types, error handling, authentication, and more.
 
 ---
 
-## Features
+## Packages
 
-- Modular design with multiple packages for specific use cases.
-- Support for YQL queries with parameterized and type-safe bindings.
-- Utilities for encoding/decoding YDB values.
-- Comprehensive error handling.
-- TypeScript support for type safety and autocompletion.
-- Integration with YDB features like transactions, scripting, and monitoring.
+- [`@ydbjs/core`](./packages/core): Core connection and utilities
+- [`@ydbjs/query`](./packages/query): YQL queries, transactions, parameters
+- [`@ydbjs/value`](./packages/value): YDB types and values
+- [`@ydbjs/api`](./packages/api): gRPC/Protobuf service definitions
+- [`@ydbjs/error`](./packages/error): YDB error handling
+- [`@ydbjs/auth`](./packages/auth): Authentication (tokens, anonymous, metadata)
+- [`@ydbjs/retry`](./packages/retry): Flexible retry policies
+
+---
+
+## Quick Start
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { query } from '@ydbjs/query'
+
+const driver = new Driver('grpc://localhost:2136/local')
+await driver.ready()
+
+const sql = query(driver)
+const resultSets = await sql`SELECT 1 + 1 AS sum`
+console.log(resultSets) // [ [ { sum: 2 } ] ]
+```
 
 ---
 
 ## Installation
-
-Install the required packages using npm:
 
 ```sh
 npm install @ydbjs/core @ydbjs/query @ydbjs/value @ydbjs/api @ydbjs/error
@@ -41,155 +40,81 @@ npm install @ydbjs/core @ydbjs/query @ydbjs/value @ydbjs/api @ydbjs/error
 
 ---
 
-## Packages Overview
+## Documentation
 
-### Core
-
-The `@ydbjs/core` package provides foundational utilities for interacting with YDB services. It includes the `Driver` class for managing connections and debugging utilities.
-
-#### Features:
-- Connection management.
-- Debugging utilities.
-
-#### Example:
-```ts
-import { Driver } from '@ydbjs/core';
-
-const driver = new Driver('grpc://localhost:2136/local');
-await driver.ready();
-```
+- [@ydbjs/core](./packages/core/README.md)
+- [@ydbjs/query](./packages/query/README.md)
+- [@ydbjs/value](./packages/value/README.md)
+- [@ydbjs/api](./packages/api/README.md)
+- [@ydbjs/error](./packages/error/README.md)
+- [@ydbjs/auth](./packages/auth/README.md)
+- [@ydbjs/retry](./packages/retry/README.md)
 
 ---
 
-### Query
+## Examples
 
-The `@ydbjs/query` package provides a client for executing YQL queries. It supports parameterized queries, transactions, and result handling.
+**Parameterized Query:**
 
-#### Features:
-- Tagged template syntax for queries.
-- Type-safe parameter binding.
-- Query statistics.
-
-#### Example:
 ```ts
-import { query } from '@ydbjs/query';
-
-const sql = query(driver);
-const resultSets = await sql`SELECT 1 + 1 AS sum`;
-console.log(resultSets); // [ [ { sum: 2 } ] ]
+import { Int64, Optional, PrimitiveType } from '@ydbjs/value'
+const sql = query(driver)
+await sql`SELECT ${new Optional(new Int64(100n), new PrimitiveType('INT64'))};`
 ```
 
----
+**Transactions:**
 
-### Value
-
-The `@ydbjs/value` package provides utilities for working with YDB values and types. It includes functions for encoding/decoding YDB values to/from JavaScript types.
-
-#### Features:
-- Encode JavaScript values to YDB types.
-- Decode YDB values to JavaScript types.
-
-#### Example:
 ```ts
-import { fromJs, toJs } from '@ydbjs/value';
-
-const ydbValue = fromJs({ key: 'value' });
-const jsValue = toJs(ydbValue);
+await sql.begin(async (tx, signal) => {
+  await tx`INSERT INTO users (id, name) VALUES (1, 'Alice')`
+  await tx`UPDATE users SET name = 'Bob' WHERE id = 1`
+})
 ```
 
----
+**Error Handling:**
 
-### API
-
-The `@ydbjs/api` package provides low-level access to YDB APIs, including table, query, scripting, and monitoring services.
-
-#### Features:
-- Direct access to YDB gRPC APIs.
-- Auto-generated TypeScript types for YDB messages.
-
-#### Example:
 ```ts
-import { TableServiceDefinition } from '@ydbjs/api/table';
-
-const tableService = driver.createClient(TableServiceDefinition);
-await tableService.createTable({ ... });
-```
-
----
-
-### Error
-
-The `@ydbjs/error` package provides utilities for handling YDB-specific errors.
-
-#### Features:
-- Error classification.
-- Detailed error messages.
-
-#### Example:
-```ts
-import { YdbError } from '@ydbjs/error';
-
+import { YdbError } from '@ydbjs/error'
 try {
-    await sql`SELECT * FROM non_existent_table`;
-} catch (error) {
-    if (error instanceof YdbError) {
-        console.error('YDB Error:', error.message);
-    }
+  await sql`SELECT * FROM non_existent_table`
+} catch (e) {
+  if (e instanceof YdbError) {
+    console.error('YDB Error:', e.message)
+  }
 }
 ```
 
 ---
 
-## Quick Start
+## FAQ
 
-```ts
-import { Driver } from '@ydbjs/core';
-import { query } from '@ydbjs/query';
-
-const driver = new Driver('grpc://localhost:2136/local');
-await driver.ready();
-
-const sql = query(driver);
-const resultSets = await sql`SELECT 1 + 1 AS sum`;
-console.log(resultSets); // [ [ { sum: 2 } ] ]
-```
+- **Add a new service?** Use `@ydbjs/api` for gRPC definitions.
+- **Work with YDB types?** Use `@ydbjs/value`.
+- **Implement retries?** Use `@ydbjs/retry`.
+- **More examples?** See package docs and [GitHub Examples](https://github.com/yandex-cloud/ydb-js-sdk/tree/main/examples).
 
 ---
 
-## Development
+## Developer Guide
 
-### Building
+- Build all packages: `npm run build`
+- Run all tests: `npm test`
+- Build a single package: `cd packages/query && npm run build`
+- Generate gRPC/protobuf files (for @ydbjs/api): `cd packages/api && npm run generate`
 
-To build the SDK:
-
-```sh
-npm run build
-```
-
-### Testing
-
-To run tests:
-
-```sh
-npm test
-```
+Devcontainer setup includes YDB and Prometheus for local development. See `.devcontainer/` for details.
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository.
-2. Create a new branch for your feature or bugfix.
-3. Commit your changes with clear messages.
-4. Submit a pull request.
+Contributions are welcome! Open issues, submit PRs, and discuss ideas.
 
 ---
 
 ## License
 
-This project is licensed under the [Apache 2.0 License](LICENSE).
+Licensed under [Apache 2.0](LICENSE).
 
 ---
 
