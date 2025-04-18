@@ -130,7 +130,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				sessionId = sessionResponse.sessionId
 
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
-				this.#cleanup.push(() => client.deleteSession({ sessionId }))
+				this.#cleanup.push(async () => await client.deleteSession({ sessionId }))
 
 				let attachSession = Promise.withResolvers<SessionState>()
 					; (async (stream: AsyncIterable<SessionState>) => {
@@ -259,11 +259,8 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				this.#active = false
 				this.#controller.abort('Query completed.')
 
-				void Promise
-					.all(this.#cleanup.map((fn) => fn()))
-					.finally(() => {
-						this.#cleanup = []
-					})
+				this.#cleanup.forEach((fn) => void fn())
+				this.#cleanup = []
 			})
 
 		return this.#promise
@@ -344,7 +341,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 	 *
 	 * Idempotent queries may be retried without side effects.
 	 */
-	idempotent(idempotent: boolean): Query<T> {
+	idempotent(idempotent: boolean = true): Query<T> {
 		this.#idempotent = idempotent
 
 		return this
