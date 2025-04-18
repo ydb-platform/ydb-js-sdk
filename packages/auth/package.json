@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth",
-	"version": "6.0.0-alpha.6",
+	"version": "6.0.0-alpha.7",
 	"description": "YDB Auth",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -60,7 +60,7 @@
 		"@bufbuild/protobuf": "^2.2.3",
 		"@ydbjs/api": "6.0.0-alpha.5",
 		"@ydbjs/error": "6.0.0-alpha.5",
-		"@ydbjs/retry": "6.0.0-alpha.6",
+		"@ydbjs/retry": "6.0.0-alpha.7",
 		"nice-grpc": "^2.1.12"
 	},
 	"publishConfig": {
