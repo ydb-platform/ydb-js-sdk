@@ -28,6 +28,7 @@ services:
 
     environment:
       - YDB_VERSION=24.3.11.13
+      - YDB_CLUSTER_MODE=1
       - YDB_CONNECTION_STRING=grpc://ydb:2136/Root/testdb
       - YDB_ANONYMOUS_CREDENTIALS=1
 

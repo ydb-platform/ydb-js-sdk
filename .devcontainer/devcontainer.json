@@ -28,7 +28,7 @@
 		9464
 	],
 	// Use 'initializeCommand' to run commands before the container is created.
-	"initializeCommand": "git config --local user.email \"$(git config user.email)\" && git config --local user.name \"$(git config user.name)\"",
+	"initializeCommand": "chmod +x .devcontainer/initialize.sh && .devcontainer/initialize.sh",
 	// Use 'postStartCommand' to run commands after the container is started.
 	"postStartCommand": "chmod +x .devcontainer/configure.sh && .devcontainer/configure.sh",
 	// Add postCreateCommand to set up SSH signing
