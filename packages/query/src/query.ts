@@ -433,6 +433,14 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		return this
 	}
 
+	[Symbol.dispose](): void {
+		this.#controller.abort('Query disposed.')
+		this.#cleanup.forEach((fn) => fn())
+		this.#cleanup = []
+		this.#promise = null
+		this.#disposed = true
+	}
+
 	async [Symbol.asyncDispose](): Promise<void> {
 		this.#controller.abort('Query disposed.')
 		await Promise.all(this.#cleanup.map((fn) => fn()))
