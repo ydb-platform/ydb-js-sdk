@@ -1,0 +1,12 @@
+{
+    "type": "module",
+    "dependencies": {
+        "@ydbjs/api": "alpha",
+        "@ydbjs/auth": "alpha",
+        "@ydbjs/core": "alpha",
+        "@ydbjs/error": "alpha",
+        "@ydbjs/query": "alpha",
+        "@ydbjs/retry": "alpha",
+        "@ydbjs/value": "alpha"
+    }
+}
