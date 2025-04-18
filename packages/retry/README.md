@@ -51,20 +51,30 @@ fetchData().then(data => {
 The `retry` function accepts the following configuration options:
 
 ```ts
-	/** Predicate to determine if an error is retryable */
-	retry?: boolean | ((error: RetryContext['error']) => boolean);
-	/** Budget for retry attempts */
-	budget?: number | RetryBudget;
-	/** Strategy to calculate delay */
-	strategy?: number | RetryStrategy;
-	/** Idempotent operation */
-	idempotent?: boolean;
+import type { RetryConfig } from '@ydbjs/retry';
+
+const options: RetryConfig = {
+    /** Predicate to determine if an error is retryable */
+    retry?: boolean | ((error: RetryContext['error'], idempotent: boolean) => boolean),
+    /** Budget for retry attempts */
+    budget?: number | RetryBudget,
+    /** Strategy to calculate delay */
+    strategy?: number | RetryStrategy,
+    /** Idempotent operation */
+    idempotent?: boolean,
+    /** Hook to be called before retrying */
+    onRetry?: (ctx: RetryContext) => void,
+    /** Optional AbortSignal (from Abortable) */
+    signal?: AbortSignal,
+};
 ```
 
-- `retry` (boolean | ((error: RetryContext['error'])): boolean): A predicate function that determines if an error is retryable. If set to `true`, all errors are considered retryable.
-- `budget` (number | RetryBudget): The budget for retry attempts. This can be a fixed number or a custom budget object.
-- `strategy` (number | RetryStrategy): The strategy to calculate the delay between retries. This can be a fixed number or a custom strategy function.
-- `idempotent` (boolean): Indicates whether the operation is idempotent. If set to `true`, the retry logic will not consider the operation as failed if it is retried.
+- `retry` (boolean | (error, idempotent) => boolean): Predicate to determine if an error is retryable. Receives both the error and the idempotent flag.
+- `budget` (number | RetryBudget): The budget for retry attempts. Can be a fixed number or a custom function.
+- `strategy` (number | RetryStrategy): Strategy to calculate delay between retries. Can be a fixed number or a custom function.
+- `idempotent` (boolean): Indicates if the operation is idempotent.
+- `onRetry` ((ctx) => void): Hook called before each retry attempt.
+- `signal` (AbortSignal): Optional signal to support cancellation.
 
 ## Advanced Usage
 
