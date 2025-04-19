@@ -37,16 +37,17 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"mikestead.dotenv",
-				"dbaeumer.vscode-eslint",
-				"VisualStudioExptTeam.vscodeintellicode",
-				"oxc.oxc-vscode",
-				"esbenp.prettier-vscode",
-				"redhat.vscode-yaml",
-				"qufiwefefwoyn.inline-sql-syntax",
 				"connor4312.nodejs-testing",
+				"dbaeumer.vscode-eslint",
+				"esbenp.prettier-vscode",
+				"GitHub.copilot-chat",
 				"github.vscode-github-actions",
-				"GitHub.copilot-chat"
+				"mikestead.dotenv",
+				"oven.bun-vscode",
+				"oxc.oxc-vscode",
+				"qufiwefefwoyn.inline-sql-syntax",
+				"redhat.vscode-yaml",
+				"VisualStudioExptTeam.vscodeintellicode"
 			]
 		}
 	},
