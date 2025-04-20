@@ -96,19 +96,6 @@ services:
       ydb-storage-init:
         condition: service_completed_successfully
 
-  ydb-user-init:
-    <<: *ydb-node
-    restart: no
-    command:
-      - /bin/sh
-      - -c
-      - "/opt/ydb/bin/ydbd -s 'grpc://ydb:2136' sql user create --name 'testuser' --password 'testpass' || exit 0"
-    depends_on:
-      ydb-storage:
-        condition: service_healthy
-      ydb-database-init:
-        condition: service_completed_successfully
-
   ydb-database:
     <<: *ydb-node
     command:
