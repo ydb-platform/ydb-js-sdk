@@ -26,6 +26,10 @@ runs:
         restore-keys: |
           ${{ inputs.node-version }}-turbo-
 
+    - name: Install global dependencies
+      shell: bash
+      run: npm i -g turbo prettier typescript @changesets/cli @arethetypeswrong/cli
+
     - name: Install dependencies
       shell: bash
       run: npm ci

@@ -9,7 +9,7 @@ RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=iron"
 RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=jod"
 
 # [Optional] Uncomment if you want to install more global node modules
-ARG NODE_MODULES="turbo prettier typescript @changesets/cli"
+ARG NODE_MODULES="turbo prettier typescript @changesets/cli @arethetypeswrong/cli"
 RUN su node -c "npm install -g ${NODE_MODULES}" \
     && npm cache clean --force > /dev/null 2>&1
 

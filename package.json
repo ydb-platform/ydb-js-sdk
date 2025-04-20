@@ -15,7 +15,6 @@
 		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
 	},
 	"devDependencies": {
-		"@arethetypeswrong/cli": "^0.17.4",
 		"@types/node": "^22.13.10",
 		"oxlint": "^0.16.4",
 		"prettier": "^3.5.3",
