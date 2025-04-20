@@ -21,3 +21,8 @@ if which ydb > /dev/null 2>&1; then
 
 	ydb config profile activate local
 fi
+
+if [ -f ~/.ssh/id_ed25519_signing ]; then
+	git config --global gpg.format ssh
+	git config --global commit.gpgsign true
+fi
