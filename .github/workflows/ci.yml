@@ -55,6 +55,8 @@ jobs:
         options: '-h localhost'
 
     env:
+      YDB_CREDENTIALS_USER: root
+      YDB_CREDENTIALS_PASSWORD: 1234
       YDB_CONNECTION_STRING: grpc://localhost:2136/local
       YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
       YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
