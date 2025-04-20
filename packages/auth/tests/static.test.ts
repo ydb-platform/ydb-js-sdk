@@ -4,14 +4,10 @@ import { mock, test } from 'node:test'
 
 import { StaticCredentialsProvider } from '../dist/esm/static.js'
 
-let ydbClusterMode = process.env.YDB_CLUSTER_MODE === "1" || process.env.YDB_CLUSTER_MODE === "true" || process.env.YDB_CLUSTER_MODE === "yes"
+let username = process.env.YDB_CREDENTIALS_USER || "root"
+let password = process.env.YDB_CREDENTIALS_PASSWORD || ""
 
 await test('BasicCredentialsProvider', async (tc) => {
-	if (ydbClusterMode) {
-		tc.skip('In cluster mode the user does not exsist.')
-		return
-	}
-
 	let calls = 0
 	let cs = new URL(process.env.YDB_CONNECTION_STRING!.replace(/^grpc/, 'http'))
 	let cf = createClientFactory().use((call, options) => {
@@ -25,14 +21,14 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('valid token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		assert.ok(token, 'Token is not empty')
 	})
 
 	await tc.test('reuse token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		let token2 = await provider.getToken(false, tc.signal)
@@ -42,7 +38,7 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('force refresh token', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		let token2 = await provider.getToken(true, tc.signal)
@@ -57,7 +53,7 @@ await test('BasicCredentialsProvider', async (tc) => {
 			return
 		}
 
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let token = await provider.getToken(false, tc.signal)
 		mock.timers.enable({ apis: ['Date'], now: new Date(2100, 0, 1) })
@@ -68,7 +64,7 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('multiple token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let tokens = await Promise.all([
 			provider.getToken(false, tc.signal),
@@ -84,7 +80,7 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('abort token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let controller = new AbortController()
 		setTimeout(() => controller.abort(), 0)
@@ -94,7 +90,7 @@ await test('BasicCredentialsProvider', async (tc) => {
 	})
 
 	await tc.test('timeout token aquisition', async (tc) => {
-		let provider = new StaticCredentialsProvider({ username: 'root', password: '1234' }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
 
 		let token = provider.getToken(false, AbortSignal.any([AbortSignal.timeout(0), tc.signal]))
 

@@ -29,8 +29,9 @@ services:
     environment:
       - YDB_VERSION=24.3.11.13
       - YDB_CLUSTER_MODE=1
+      - YDB_CREDENTIALS_USER=root
+      - YDB_CREDENTIALS_PASSWORD=
       - YDB_CONNECTION_STRING=grpc://ydb:2136/Root/testdb
-      - YDB_ANONYMOUS_CREDENTIALS=1
 
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
@@ -75,15 +76,9 @@ services:
     <<: *ydb-node
     restart: no
     command:
-      - /opt/ydb/bin/ydbd
-      - -s
-      - 'grpc://ydb:2136'
-      - admin
-      - blobstorage
-      - config
-      - init
-      - --yaml-file
-      - /opt/ydb/cfg/config.yaml
+      - /bin/sh
+      - -c
+      - "/opt/ydb/bin/ydbd -s 'grpc://ydb:2136' admin blobstorage config init --yaml-file /opt/ydb/cfg/config.yaml || exit 0"
     depends_on:
       ydb-storage:
         condition: service_healthy
@@ -92,18 +87,26 @@ services:
     <<: *ydb-node
     restart: no
     command:
-      - /opt/ydb/bin/ydbd
-      - -s
-      - 'grpc://ydb:2136'
-      - admin
-      - database
-      - '/Root/testdb'
-      - create
-      - ssd:1
+      - /bin/sh
+      - -c
+      - "/opt/ydb/bin/ydbd -s 'grpc://ydb:2136' admin database '/Root/testdb' create ssd:1 || exit 0"
     depends_on:
       ydb-storage:
         condition: service_healthy
       ydb-storage-init:
+        condition: service_completed_successfully
+
+  ydb-user-init:
+    <<: *ydb-node
+    restart: no
+    command:
+      - /bin/sh
+      - -c
+      - "/opt/ydb/bin/ydbd -s 'grpc://ydb:2136' sql user create --name 'testuser' --password 'testpass' || exit 0"
+    depends_on:
+      ydb-storage:
+        condition: service_healthy
+      ydb-database-init:
         condition: service_completed_successfully
 
   ydb-database:
