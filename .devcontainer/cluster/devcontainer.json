@@ -15,6 +15,9 @@
 		"ghcr.io/devcontainers/features/common-utils": {},
 		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
+	"containerEnv": {
+		"GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [
 		2136,
