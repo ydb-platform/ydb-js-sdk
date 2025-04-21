@@ -20,9 +20,9 @@
 			"require": "./dist/cjs/index.js",
 			"import": "./dist/esm/index.js"
 		},
-		"./query": {
-			"require": "./dist/cjs/query.js",
-			"import": "./dist/esm/query.js"
+		"./yql": {
+			"require": "./dist/cjs/yql.js",
+			"import": "./dist/esm/yql.js"
 		}
 	},
 	"types": "dist/esm/index.d.ts",
@@ -31,8 +31,8 @@
 			".": [
 				"./dist/cjs/index.d.ts"
 			],
-			"query": [
-				"./dist/cjs/query.d.ts"
+			"yql": [
+				"./dist/cjs/yql.d.ts"
 			]
 		}
 	},
