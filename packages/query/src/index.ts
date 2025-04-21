@@ -5,10 +5,10 @@ import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
-import { type Value, fromJs } from '@ydbjs/value'
 
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
+import { yql } from './yql.js'
 
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -80,31 +80,10 @@ const doImpl = function <T = unknown>(): Promise<T> {
  * @see {@link QueryClient}
  */
 export function query(driver: Driver): QueryClient {
-	function yql<T extends any[] = unknown[], P extends any[] = unknown[]>(
-		strings: string | TemplateStringsArray,
-		...values: P
-	): Query<T> {
-		let text = ''
-		let params: Record<string, Value> = Object.assign({}, null)
+	function yqlQuery<P extends any[] = unknown[], T extends any[] = unknown[]>(strings: string | TemplateStringsArray, ...values: P): Query<T> {
+		let { text, params } = yql(strings, ...values)
 
-		if (Array.isArray(values)) {
-			values.forEach((value, i) => {
-				let isObject = typeof value === 'object' && value !== null && !Array.isArray(value)
-				let ydbValue = isObject && 'type' in value && 'kind' in value['type'] ? value : fromJs(value)
-
-				params[`$p${i}`] = ydbValue
-			})
-		}
-
-		if (typeof strings === 'string') {
-			text += strings
-		}
-
-		if (Array.isArray(strings)) {
-			text += strings.reduce((prev, curr, i) => prev + curr + (values[i] ? `$p${i}` : ''), '')
-		}
-
-		return ctx.run(ctx.getStore() ?? {}, () => new Query(driver, text, params))
+		return ctx.run(ctx.getStore() ?? {}, () => new Query<T>(driver, text, params))
 	}
 
 	function txIml<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
@@ -184,7 +163,7 @@ export function query(driver: Driver): QueryClient {
 			store.transactionId = beginTransactionResult.txMeta?.id
 
 			try {
-				let tx = Object.assign(yql, { nodeId: store.nodeId, sessionId: store.sessionId, transactionId: store.transactionId }) as TX
+				let tx = Object.assign(yqlQuery, { nodeId: store.nodeId, sessionId: store.sessionId, transactionId: store.transactionId }) as TX
 				let result = await ctx.run(store, () => caller!(tx, signal))
 
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
@@ -207,7 +186,7 @@ export function query(driver: Driver): QueryClient {
 		})
 	}
 
-	return Object.assign(yql,
+	return Object.assign(yqlQuery,
 		{
 			do: doImpl,
 			begin: txIml,
