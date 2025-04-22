@@ -36,9 +36,6 @@ services:
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
 
-    # Use "forwardPorts" in **devcontainer.json** to forward an app port locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
-
   ydb-storage:
     <<: *ydb-node
     hostname: ydb
@@ -57,18 +54,23 @@ services:
       - static
       - --label
       - deployment=docker
+
     ports:
-      - "8765:8765"
+      - 2136:2136
+      - 8765:8765
+
     volumes:
       - ydb-data:/ydb_data
       - ydb-certs:/ydb_certs
       - ./ydb.yaml:/opt/ydb/cfg/config.yaml
+
     healthcheck:
       test: bash -c "exec 6<> /dev/tcp/ydb/2136"
       interval: 10s
       timeout: 1s
       retries: 3
       start_period: 30s
+
     deploy:
       replicas: 1
 
@@ -131,9 +133,9 @@ services:
     hostname: prometheus
     platform: linux/amd64
 
+    ports:
+      - 9090:9090
+
     volumes:
       - ../prometheus.yml:/etc/prometheus/prometheus.yml
       - ydb-certs:/ydb_certs
-
-    ports:
-      - "9090:9090"
