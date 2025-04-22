@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-git config --local user.email "$(git config user.email)"
+git config --local format.signoff true
 git config --local user.name "$(git config user.name)"
+git config --local user.email "$(git config user.email)"
 
 if [ -n "${GITHUB_TOKEN}" ]; then
     echo "GITHUB_TOKEN is set and gh is authenticated."
