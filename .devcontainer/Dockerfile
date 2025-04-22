@@ -13,8 +13,8 @@ ARG NODE_MODULES="turbo prettier typescript @changesets/cli @arethetypeswrong/cl
 RUN su node -c "npm install -g ${NODE_MODULES}" \
     && npm cache clean --force > /dev/null 2>&1
 
-# [Optional] Uncomment if you want to install ydb cli
-RUN curl -fsSL https://install.ydb.tech/cli | bash
-
 # [Optional] Uncomment if you want to install bun
 RUN curl -fsSL https://bun.sh/install | bash
+
+# [Optional] Uncomment if you want to install ydb cli
+RUN curl -sSL https://raw.githubusercontent.com/ydb-platform/ydb/refs/heads/main/ydb/apps/ydb/install/install.sh | bash

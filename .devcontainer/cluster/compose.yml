@@ -58,7 +58,7 @@ services:
       - --label
       - deployment=docker
     ports:
-      - 8765:8765
+      - "8765:8765"
     volumes:
       - ydb-data:/ydb_data
       - ydb-certs:/ydb_certs
@@ -136,7 +136,4 @@ services:
       - ydb-certs:/ydb_certs
 
     ports:
-      - 9090:9090
-
-    # Add "forwardPorts": [9090] to **devcontainer.json** to forward YDB locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
+      - "9090:9090"
