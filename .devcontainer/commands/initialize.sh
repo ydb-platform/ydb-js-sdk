@@ -4,13 +4,3 @@ set -e
 git config --local format.signoff true
 git config --local user.name "$(git config user.name)"
 git config --local user.email "$(git config user.email)"
-
-if [ -n "${GITHUB_TOKEN}" ]; then
-    echo "GITHUB_TOKEN is set and gh is authenticated."
-else
-    export GITHUB_TOKEN="$(gh auth token)"
-    if [ -z "${GITHUB_TOKEN}" ]; then
-        echo "GITHUB_TOKEN is not set and gh is not authenticated. Please authenticate gh."
-        exit 0
-    fi
-fi
