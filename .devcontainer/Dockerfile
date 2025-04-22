@@ -17,4 +17,4 @@ RUN su node -c "npm install -g ${NODE_MODULES}" \
 RUN curl -fsSL https://bun.sh/install | bash
 
 # [Optional] Uncomment if you want to install ydb cli
-RUN curl -sSL https://raw.githubusercontent.com/ydb-platform/ydb/refs/heads/main/ydb/apps/ydb/install/install.sh | bash
+RUN curl -fsSL https://raw.githubusercontent.com/ydb-platform/ydb/refs/heads/main/ydb/apps/ydb/install/install.sh | bash

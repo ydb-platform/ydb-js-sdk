@@ -25,6 +25,8 @@
 	],
 	// Use 'initializeCommand' to run commands before the container is created.
 	"initializeCommand": "chmod +x .devcontainer/commands/initialize.sh && .devcontainer/commands/initialize.sh",
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "chmod +x .devcontainer/commands/postCreate.sh && .devcontainer/commands/postCreate.sh",
 	// Use 'postStartCommand' to run commands after the container is started.
 	"postStartCommand": "chmod +x .devcontainer/commands/postStart.sh && .devcontainer/commands/postStart.sh",
 	// Configure tool-specific properties.
