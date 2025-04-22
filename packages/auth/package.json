@@ -58,7 +58,7 @@
 		}
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.2.3",
+		"@bufbuild/protobuf": "^2.2.5",
 		"@ydbjs/api": "6.0.0-alpha.7",
 		"@ydbjs/error": "6.0.0-alpha.7",
 		"@ydbjs/retry": "6.0.0-alpha.9",
