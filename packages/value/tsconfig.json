@@ -4,6 +4,7 @@
 		"rootDir": "./src"
 	},
 	"exclude": [
+		"vitest.config.ts",
 		"**/*.test.ts",
 		"dist/**/*"
 	]
