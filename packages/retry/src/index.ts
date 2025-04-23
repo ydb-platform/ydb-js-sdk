@@ -32,9 +32,14 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 				throw error
 			}
 
+			if (error instanceof Error && error.name === 'TimeoutError') {
+				// TimeoutError is not retryable
+				throw error
+			}
+
 			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
 			if (!retry || ctx.attempt >= budget) {
-				throw new Error('Retry budget exceeded', { cause: error })
+				break
 			}
 
 			let delay = typeof config.strategy === 'number' ? config.strategy : config.strategy!(ctx, config)
@@ -65,7 +70,7 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 		}
 	}
 
-	throw new Error('Retry budget exceeded')
+	throw ctx.error
 }
 
 export function isRetryableError(error: unknown, idempotent = false): boolean {
