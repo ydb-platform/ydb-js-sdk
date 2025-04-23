@@ -1,24 +1,24 @@
 import { test } from 'vitest'
 import { fromJs, toJs } from '../dist/esm/index.js'
 
-test('fromJs with primitives', async (tc) => {
-	const boolVal = fromJs(true)
-	const numVal = fromJs(42)
-	const strVal = fromJs('hello')
+test('fromJs with primitives', async (t) => {
+	let boolVal = fromJs(true)
+	let numVal = fromJs(42)
+	let strVal = fromJs('hello')
 
-	tc.expect(boolVal).toMatchInlineSnapshot(`
+	t.expect(boolVal).toMatchInlineSnapshot(`
 		Bool {
 		  "type": BoolType {},
 		  "value": true,
 		}
 	`)
-	tc.expect(numVal).toMatchInlineSnapshot(`
+	t.expect(numVal).toMatchInlineSnapshot(`
 		Int32 {
 		  "type": Int32Type {},
 		  "value": 42,
 		}
 	`)
-	tc.expect(strVal).toMatchInlineSnapshot(`
+	t.expect(strVal).toMatchInlineSnapshot(`
 		Text {
 		  "type": TextType {},
 		  "value": "hello",
@@ -26,9 +26,10 @@ test('fromJs with primitives', async (tc) => {
 	`)
 })
 
-test('fromJs with arrays', async (tc) => {
-	const arrVal = fromJs([1, 2, 3])
-	tc.expect(arrVal).toMatchInlineSnapshot(`
+test('fromJs with arrays', async (t) => {
+	let arrVal = fromJs([1, 2, 3])
+
+	t.expect(arrVal).toMatchInlineSnapshot(`
 		List {
 		  "items": [
 		    Int32 {
@@ -51,9 +52,10 @@ test('fromJs with arrays', async (tc) => {
 	`)
 })
 
-test('fromJs with objects', async (tc) => {
-	const objVal = fromJs({ a: 1, b: 'test' })
-	tc.expect(objVal).toMatchInlineSnapshot(`
+test('fromJs with objects', async (t) => {
+	let objVal = fromJs({ a: 1, b: 'test' })
+
+	t.expect(objVal).toMatchInlineSnapshot(`
 		Struct {
 		  "items": [
 		    Int32 {
@@ -79,28 +81,30 @@ test('fromJs with objects', async (tc) => {
 	`)
 })
 
-test('fromJs with null', async (tc) => {
-	const nullVal = fromJs(null)
-	tc.expect(nullVal).toMatchInlineSnapshot(`
+test('fromJs with null', async (t) => {
+	let nullVal = fromJs(null)
+
+	t.expect(nullVal).toMatchInlineSnapshot(`
 		Null {
 		  "type": NullType {},
 		}
 	`)
 })
 
-test('toJs with primitives', async (tc) => {
-	const boolVal = toJs(fromJs(true))
-	const numVal = toJs(fromJs(42))
-	const strVal = toJs(fromJs('hello'))
+test('toJs with primitives', async (t) => {
+	let boolVal = toJs(fromJs(true))
+	let numVal = toJs(fromJs(42))
+	let strVal = toJs(fromJs('hello'))
 
-	tc.expect(boolVal).toMatchInlineSnapshot(`true`)
-	tc.expect(numVal).toMatchInlineSnapshot(`42`)
-	tc.expect(strVal).toMatchInlineSnapshot(`"hello"`)
+	t.expect(boolVal).toMatchInlineSnapshot(`true`)
+	t.expect(numVal).toMatchInlineSnapshot(`42`)
+	t.expect(strVal).toMatchInlineSnapshot(`"hello"`)
 })
 
-test('toJs with arrays', async (tc) => {
-	const arrVal = toJs(fromJs([1, 2, 3]))
-	tc.expect(arrVal).toMatchInlineSnapshot(`
+test('toJs with arrays', async (t) => {
+	let arrVal = toJs(fromJs([1, 2, 3]))
+
+	t.expect(arrVal).toMatchInlineSnapshot(`
 		[
 		  1,
 		  2,
@@ -109,9 +113,10 @@ test('toJs with arrays', async (tc) => {
 	`)
 })
 
-test('toJs with objects', async (tc) => {
-	const objVal = toJs(fromJs({ a: 1, b: 'test' }))
-	tc.expect(objVal).toMatchInlineSnapshot(`
+test('toJs with objects', async (t) => {
+	let objVal = toJs(fromJs({ a: 1, b: 'test' }))
+
+	t.expect(objVal).toMatchInlineSnapshot(`
 		{
 		  "a": 1,
 		  "b": "test",
@@ -119,14 +124,16 @@ test('toJs with objects', async (tc) => {
 	`)
 })
 
-test('toJs with null', async (tc) => {
-	const nullVal = toJs(fromJs(null))
-	tc.expect(nullVal).toMatchInlineSnapshot(`null`)
+test('toJs with null', async (t) => {
+	let nullVal = toJs(fromJs(null))
+
+	t.expect(nullVal).toMatchInlineSnapshot(`null`)
 })
 
-test('fromJs with array of objects with different fields', async (tc) => {
-	const arrVal = fromJs([{ name: 'Test' }, { age: 99 }])
-	tc.expect(arrVal).toMatchInlineSnapshot(`
+test('fromJs with array of objects with different fields', async (t) => {
+	let arrVal = fromJs([{ name: 'Test' }, { age: 99 }])
+
+	t.expect(arrVal).toMatchInlineSnapshot(`
 		List {
 		  "items": [
 		    Struct {
@@ -234,9 +241,10 @@ test('fromJs with array of objects with different fields', async (tc) => {
 	`)
 })
 
-test('toJs with array of objects with different fields', async (tc) => {
-	const arrVal = toJs(fromJs([{ name: 'Test' }, { age: 99 }]))
-	tc.expect(arrVal).toMatchInlineSnapshot(`
+test('toJs with array of objects with different fields', async (t) => {
+	let arrVal = toJs(fromJs([{ name: 'Test' }, { age: 99 }]))
+
+	t.expect(arrVal).toMatchInlineSnapshot(`
 		[
 		  {
 		    "age": null,

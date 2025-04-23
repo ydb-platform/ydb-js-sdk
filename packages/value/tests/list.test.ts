@@ -3,10 +3,10 @@ import { test } from 'vitest'
 import { List } from '../dist/esm/list.js'
 import { Uint32 } from '../dist/esm/primitive.js'
 
-test('empty list', async (tc) => {
+test('empty list', async (t) => {
 	let list = new List()
 
-	tc.expect(list).toMatchInlineSnapshot(`
+	t.expect(list).toMatchInlineSnapshot(`
 		List {
 		  "items": [],
 		  "type": ListType {
@@ -16,10 +16,10 @@ test('empty list', async (tc) => {
 	`)
 })
 
-test('list of values', async (tc) => {
+test('list of values', async (t) => {
 	let list = new List(new Uint32(1), new Uint32(2))
 
-	tc.expect(list).toMatchInlineSnapshot(`
+	t.expect(list).toMatchInlineSnapshot(`
 		List {
 		  "items": [
 		    Uint32 {

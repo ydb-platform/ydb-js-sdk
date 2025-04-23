@@ -1,56 +1,56 @@
-import * as assert from "node:assert";
-import test from "node:test";
+import { expect, test } from 'vitest'
 
-import { retry } from "@ydbjs/retry";
+import { retry } from '@ydbjs/retry'
 
 let isError = (error: unknown) => error instanceof Error
 
-await test("retry", async (tc) => {
-	await tc.test("do retry", async (tc) => {
-		let attempts = 0
+test('do retry', async () => {
+	let attempts = 0
 
-		await retry({ retry: isError, signal: tc.signal }, async () => {
-			if (attempts > 2) {
-				return
-			}
+	let result = retry({ retry: isError, budget: Infinity }, async () => {
+		if (attempts > 2) {
+			return
+		}
 
-			attempts++
-			throw new Error("DO_RETRY")
-		})
-
-		assert.strictEqual(attempts, 3)
+		attempts++
+		throw new Error()
 	})
 
-	await tc.test("budget exhausted", async (tc) => {
-		let attempts = 0
+	await expect(result).resolves.eq(void 0)
+	expect(attempts).eq(3)
+})
 
-		let result = retry({ retry: isError, budget: 0, signal: tc.signal }, async () => {
-			if (attempts > 2) {
-				return
-			}
+test('budget exceeded', async () => {
+	let attempts = 0
 
-			attempts++
-			throw new Error("DO_NOT_RETRY")
-		})
+	let result = retry({ retry: isError, budget: 0 }, async () => {
+		if (attempts > 2) {
+			return
+		}
 
-		await assert.rejects(result)
+		attempts++
+		throw new Error()
 	})
 
-	await tc.test("retry with signal", async (tc) => {
-		let attempts = 0
-		let controller = new AbortController()
+	await expect(result).rejects.toThrow('Retry budget exceeded')
+	expect(attempts).eq(0)
+})
 
-		controller.abort()
+test('retry with signal', async () => {
+	let attempts = 0
+	let controller = new AbortController()
 
-		let result = retry({ retry: isError, signal: AbortSignal.any([tc.signal, controller.signal]) }, async () => {
-			if (attempts > 2) {
-				return
-			}
+	controller.abort()
 
-			attempts++
-			throw new Error("DO_RETRY")
-		})
+	let result = retry({ retry: isError, signal: controller.signal }, async () => {
+		if (attempts > 2) {
+			return
+		}
 
-		await assert.rejects(result)
+		attempts++
+		throw new Error()
 	})
+
+	await expect(result).rejects.toThrow('This operation was aborted')
+	expect(attempts).eq(0)
 })

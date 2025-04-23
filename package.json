@@ -9,13 +9,17 @@
 	],
 	"scripts": {
 		"build": "turbo run build",
-		"test": "turbo run test",
 		"attw": "turbo run attw",
 		"lint": "oxlint",
+		"test": "vitest --run --project !e2e",
+		"test:watch": "vitest --watch --project !e2e",
+		"test:e2e": "vitest --run --project e2e",
+		"test:e2e:watch": "vitest --watch --project e2e",
 		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
 	},
 	"dependencies": {
-		"@types/node": "^22.13.10"
+		"@types/node": "^22.13.10",
+		"zx": "^8.5.3"
 	},
 	"devDependencies": {
 		"oxlint": "^0.16.4",
@@ -35,7 +39,7 @@
 	},
 	"packageManager": "npm@11.2.0",
 	"prettier": {
-		"printWidth": 160,
+		"printWidth": 120,
 		"tabWidth": 4,
 		"useTabs": true,
 		"semi": false,

@@ -19,7 +19,7 @@ import {
 	Status,
 	composeClientMiddleware,
 	createClientFactory,
-	waitForChannelReady
+	waitForChannelReady,
 } from 'nice-grpc'
 
 import { type Connection, LazyConnection } from './conn.js'
@@ -47,15 +47,19 @@ const defaultOptions: DriverOptions = {
 } as const satisfies DriverOptions
 
 if (!Promise.withResolvers) {
-	Promise.withResolvers = function <T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason?: any) => void } {
-		let resolve: (value: T | PromiseLike<T>) => void;
-		let reject: (reason?: any) => void;
+	Promise.withResolvers = function <T>(): {
+		promise: Promise<T>
+		resolve: (value: T | PromiseLike<T>) => void
+		reject: (reason?: any) => void
+	} {
+		let resolve: (value: T | PromiseLike<T>) => void
+		let reject: (reason?: any) => void
 		const promise = new Promise<T>((res, rej) => {
-			resolve = res;
-			reject = rej;
-		});
-		return { promise, resolve: resolve!, reject: reject! };
-	};
+			resolve = res
+			reject = rej
+		})
+		return { promise, resolve: resolve!, reject: reject! }
+	}
 }
 
 export class Driver implements Disposable {
@@ -74,6 +78,10 @@ export class Driver implements Disposable {
 
 	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
 		dbg.extend('driver')('Driver(connectionString: %s, options: %o)', connectionString, options)
+
+		if (!connectionString) {
+			throw new Error('Invalid connection string. Must be a non-empty string')
+		}
 
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
 
@@ -95,8 +103,10 @@ export class Driver implements Disposable {
 			this.options['ydb.sdk.application'] ??= this.cs.searchParams.get('application') || ''
 		}
 
-		const discoveryInterval = this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!
-		const discoveryTimeout = this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!
+		const discoveryInterval =
+			this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!
+		const discoveryTimeout =
+			this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!
 		if (discoveryInterval < discoveryTimeout) {
 			throw new Error('Discovery interval must be greater than discovery timeout.')
 		}
@@ -228,19 +238,24 @@ export class Driver implements Disposable {
 		this.#connection.close()
 	}
 
-	createClient<Service extends CompatServiceDefinition>(
-		service: Service,
-		preferNodeId?: bigint
-	): Client<Service> {
-		return createClientFactory().use(this.#middleware).create(service, new Proxy(this.#connection.channel, {
-			get: (target, propertyKey) => {
-				let channel = this.options['ydb.sdk.enable_discovery'] ? this.#pool.aquire(preferNodeId).channel : target
+	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
+		return createClientFactory()
+			.use(this.#middleware)
+			.create(
+				service,
+				new Proxy(this.#connection.channel, {
+					get: (target, propertyKey) => {
+						let channel = this.options['ydb.sdk.enable_discovery']
+							? this.#pool.aquire(preferNodeId).channel
+							: target
 
-				return Reflect.get(channel, propertyKey, channel)
-			},
-		}), {
-			'*': this.options,
-		})
+						return Reflect.get(channel, propertyKey, channel)
+					},
+				}),
+				{
+					'*': this.options,
+				}
+			)
 	}
 
 	[Symbol.dispose](): void {

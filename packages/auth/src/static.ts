@@ -58,7 +58,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
-		this.#promise = retry({ ...defaultRetryConfig, signal }, async () => {
+		this.#promise = retry({ ...defaultRetryConfig, signal, idempotent: true }, async () => {
 			let response = await this.#client.login({ user: this.#username, password: this.#password }, { signal })
 
 			if (!response.operation) {

@@ -1,39 +1,32 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, inject, test, vi } from 'vitest'
 import { createClientFactory } from 'nice-grpc'
 
 import { StaticCredentialsProvider } from '../dist/esm/static.js'
 
-let username = process.env.YDB_CREDENTIALS_USER || 'root'
-let password = process.env.YDB_CREDENTIALS_PASSWORD || ''
+let username = inject('credentialsUsername')
+let password = inject('credentialsPassword')
+let endpoint = inject('credentialsEndpoint')
 
 describe('StaticCredentialsProvider', async () => {
 	let calls = 0
-	let cs = new URL(process.env.YDB_CONNECTION_STRING!.replace(/^grpc/, 'http'))
-	let cf = createClientFactory().use((call, options) => {
+	let clientFactory = createClientFactory().use((call, options) => {
 		calls++
 		return call.next(call.request, options)
 	})
 
-	beforeEach(() => {
-		// tell vitest we use mocked time
-		vi.useFakeTimers()
-	})
-
 	afterEach(() => {
 		calls = 0
-		// restoring date after each test run
-		vi.useRealTimers()
 	})
 
 	test('valid token', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let token = await provider.getToken(false)
 		expect(token, 'Token is not empty').not.empty
 	})
 
 	test('reuse token', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let token = await provider.getToken(false)
 		let token2 = await provider.getToken(false)
@@ -43,7 +36,7 @@ describe('StaticCredentialsProvider', async () => {
 	})
 
 	test('force refresh token', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let token = await provider.getToken(false)
 		let token2 = await provider.getToken(true)
@@ -53,18 +46,19 @@ describe('StaticCredentialsProvider', async () => {
 	})
 
 	test('auto refresh expired token', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let token = await provider.getToken(false)
-		vi.setSystemTime(new Date(2100, 0, 1))
+		vi.useFakeTimers({ now: new Date(2100, 0, 1) })
 		let token2 = await provider.getToken(false)
+		vi.useRealTimers()
 
 		expect(token, 'Token is different').not.eq(token2)
 		expect(calls, 'Two calls were made').eq(2)
 	})
 
 	test('multiple token aquisition', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let tokens = await Promise.all([provider.getToken(false), provider.getToken(false), provider.getToken(false)])
 
@@ -73,7 +67,7 @@ describe('StaticCredentialsProvider', async () => {
 	})
 
 	test('abort token aquisition', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let controller = new AbortController()
 		controller.abort()
@@ -83,7 +77,7 @@ describe('StaticCredentialsProvider', async () => {
 	})
 
 	test('timeout token aquisition', async () => {
-		let provider = new StaticCredentialsProvider({ username, password }, cs.origin, cf)
+		let provider = new StaticCredentialsProvider({ username, password }, endpoint, clientFactory)
 
 		let token = provider.getToken(false, AbortSignal.timeout(0))
 
