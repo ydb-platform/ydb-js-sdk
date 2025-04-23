@@ -12,6 +12,7 @@
     "@ydbjs/value": "6.0.0-alpha.2"
   },
   "changesets": [
+    "angry-bags-fail",
     "common-facts-kneel",
     "cuddly-cougars-cough",
     "easy-lands-cut",
@@ -19,6 +20,7 @@
     "moody-houses-divide",
     "polite-eggs-fetch",
     "pretty-zebras-enter",
+    "quick-bananas-sip",
     "small-pigs-divide",
     "sweet-carpets-talk",
     "tall-colts-follow",

@@ -11,15 +11,14 @@
 		"build": "turbo run build",
 		"attw": "turbo run attw",
 		"lint": "oxlint",
-		"test": "vitest --run --project !e2e",
+		"test": "vitest run --project !e2e",
 		"test:watch": "vitest --watch --project !e2e",
 		"test:e2e": "vitest --run --project e2e",
 		"test:e2e:watch": "vitest --watch --project e2e",
 		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
 	},
 	"dependencies": {
-		"@types/node": "^22.13.10",
-		"zx": "^8.5.3"
+		"@types/node": "^22.13.10"
 	},
 	"devDependencies": {
 		"oxlint": "^0.16.4",
@@ -27,7 +26,8 @@
 		"tsx": "^4.19.3",
 		"turbo": "^2.5.0",
 		"typescript": "^5.8.3",
-		"vitest": "^3.1.2"
+		"vitest": "^3.1.2",
+		"zx": "^8.5.3"
 	},
 	"engineStrict": true,
 	"engines": {

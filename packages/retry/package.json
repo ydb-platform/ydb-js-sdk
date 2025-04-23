@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.0.0-alpha.9",
+	"version": "6.0.0-alpha.10",
 	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
 	"license": "Apache-2.0",
 	"type": "module",

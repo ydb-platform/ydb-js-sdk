@@ -1,5 +1,11 @@
 # @ydbjs/retry
 
+## 6.0.0-alpha.10
+
+### Patch Changes
+
+- Return original error when budget exceeded
+
 ## 6.0.0-alpha.9
 
 ### Patch Changes

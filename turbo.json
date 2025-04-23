@@ -58,23 +58,6 @@
 				"build:cjs"
 			]
 		},
-		"test": {
-			"env": [
-				"DEBUG",
-				"GRPC_TRACE",
-				"GRPC_VERBOSITY",
-				"YDB_CLUSTER_MODE",
-				"YDB_CREDENTIALS_USER",
-				"YDB_CREDENTIALS_PASSWORD",
-				"YDB_CONNECTION_STRING",
-				"YDB_CONNECTION_STRING_SECURE",
-				"YDB_SSL_ROOT_CERTIFICATES_FILE"
-			],
-			"dependsOn": [
-				"^test",
-				"build:esm"
-			]
-		},
 		"attw": {
 			"dependsOn": [
 				"^attw",
@@ -83,6 +66,22 @@
 			"inputs": [
 				"./dist/**",
 				"package.json"
+			]
+		},
+		"//#test": {
+			"env": [
+				"DEBUG",
+				"GRPC_TRACE",
+				"GRPC_VERBOSITY",
+				"YDB_STATIC_CREDENTIALS_USER",
+				"YDB_STATIC_CREDENTIALS_PASSWORD",
+				"YDB_STATIC_CREDENTIALS_ENDPOINT",
+				"YDB_CONNECTION_STRING",
+				"YDB_CONNECTION_STRING_SECURE",
+				"YDB_SSL_ROOT_CERTIFICATES_FILE"
+			],
+			"outputs": [
+				"coverage/**"
 			]
 		}
 	}

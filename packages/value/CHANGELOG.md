@@ -1,5 +1,11 @@
 # @ydbjs/value
 
+## 6.0.0-alpha.9
+
+### Patch Changes
+
+- Export primitive types
+
 ## 6.0.0-alpha.8
 
 ### Patch Changes
