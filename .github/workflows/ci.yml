@@ -55,11 +55,12 @@ jobs:
         options: '-h localhost'
 
     env:
-      YDB_CREDENTIALS_USER: root
-      YDB_CREDENTIALS_PASSWORD: 1234
+      YDB_STATIC_CREDENTIALS_USER: root
+      YDB_STATIC_CREDENTIALS_PASSWORD: 1234
+      YDB_STATIC_CREDENTIALS_ENDPOINT: grpc://localhost:2136
       YDB_CONNECTION_STRING: grpc://localhost:2136/local
       YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
-      YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
+      YDB_SSL_ROOT_CERTIFICATES_FILE: /ydb_certs/ca.pem
 
     steps:
       # Checkout the repository
@@ -68,6 +69,6 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      # Run tests
-      - name: Run tests
-        run: npm run test
+      - run: npm run build
+      - run: npm run test
+      - run: npm run test:e2e
