@@ -1,37 +1,39 @@
-import * as assert from "node:assert";
-import test from "node:test";
+import { test } from 'vitest'
 
-import { create } from "@bufbuild/protobuf";
-import { ValueSchema } from "@ydbjs/api/value";
+import { List } from '../dist/esm/list.js'
+import { Uint32 } from '../dist/esm/primitive.js'
 
-import { List } from "../dist/esm/list.js";
-import { Uint32 } from "../dist/esm/primitive.js";
+test('empty list', async (tc) => {
+	let list = new List()
 
-test('List', async (tc) => {
-	await tc.test('empty', () => {
-		let list = new List()
+	tc.expect(list).toMatchInlineSnapshot(`
+		List {
+		  "items": [],
+		  "type": ListType {
+		    "item": NullType {},
+		  },
+		}
+	`)
+})
 
-		assert.deepStrictEqual(list.encode(), create(ValueSchema, {
-			items: [],
-			pairs: [],
-			value: {
-				case: undefined
-			}
-		}))
-	})
+test('list of values', async (tc) => {
+	let list = new List(new Uint32(1), new Uint32(2))
 
-	await tc.test('value', () => {
-		let list = new List(new Uint32(1), new Uint32(2))
-
-		assert.deepStrictEqual(list.encode(), create(ValueSchema, {
-			items: [
-				{
-					value: { case: 'uint32Value', value: 1 },
-				},
-				{
-					value: { case: 'uint32Value', value: 2 },
-				}
-			],
-		}))
-	})
+	tc.expect(list).toMatchInlineSnapshot(`
+		List {
+		  "items": [
+		    Uint32 {
+		      "type": Uint32Type {},
+		      "value": 1,
+		    },
+		    Uint32 {
+		      "type": Uint32Type {},
+		      "value": 2,
+		    },
+		  ],
+		  "type": ListType {
+		    "item": Uint32Type {},
+		  },
+		}
+	`)
 })

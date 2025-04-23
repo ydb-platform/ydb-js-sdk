@@ -5,19 +5,7 @@ import { Dict } from './dict.js'
 import { List } from './list.js'
 import { Null } from './null.js'
 import { Optional } from './optional.js'
-import {
-	Bool,
-	Bytes,
-	Datetime,
-	Double,
-	Int32,
-	Int64,
-	Primitive,
-	PrimitiveType,
-	Text,
-	TzDatetime,
-	Uuid,
-} from './primitive.js'
+import { Bool, Bytes, Datetime, Double, Int32, Int64, Primitive, PrimitiveType, Text, TzDatetime, Uuid } from './primitive.js'
 import { Struct, StructType } from './struct.js'
 import { Tuple } from './tuple.js'
 import { type Type, TypeKind } from './type.js'
@@ -40,7 +28,7 @@ export type JSValue =
 export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 	switch (type.type.case) {
 		case 'typeId':
-			return new Primitive({ value: value.value }, type.type.value)
+			return new Primitive({ value: value.value }, new PrimitiveType(type.type.value))
 		case 'listType':
 			return new List(...value.items.map((v) => fromYdb(v, (type.type.value as unknown as Ydb.ListType).item!)))
 		case 'tupleType':
