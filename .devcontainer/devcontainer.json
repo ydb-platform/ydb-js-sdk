@@ -37,16 +37,14 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"connor4312.nodejs-testing",
 				"dbaeumer.vscode-eslint",
 				"esbenp.prettier-vscode",
-				"GitHub.copilot-chat",
 				"github.vscode-github-actions",
 				"mikestead.dotenv",
 				"oven.bun-vscode",
 				"oxc.oxc-vscode",
 				"redhat.vscode-yaml",
-				"VisualStudioExptTeam.vscodeintellicode"
+				"vitest.explorer"
 			]
 		}
 	},
