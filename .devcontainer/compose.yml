@@ -20,8 +20,9 @@ services:
 
     environment:
       - YDB_VERSION=25.1.1.3
-      - YDB_CREDENTIALS_USER=root
-      - YDB_CREDENTIALS_PASSWORD=1234
+      - YDB_STATIC_CREDENTIALS_USER=root
+      - YDB_STATIC_CREDENTIALS_PASSWORD=1234
+      - YDB_STATIC_CREDENTIALS_ENDPOINT=grpc://ydb:2136
       - YDB_CONNECTION_STRING=grpc://ydb:2136/local
       - YDB_CONNECTION_STRING_SECURE=grpcs://ydb:2135/local
       - YDB_SSL_ROOT_CERTIFICATES_FILE=/ydb_certs/ca.pem
@@ -60,5 +61,5 @@ services:
       - 9090:9090
 
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ydb-certs:/ydb_certs
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
