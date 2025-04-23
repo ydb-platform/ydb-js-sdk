@@ -6,6 +6,12 @@ export type AccessTokenCredentials = {
 	token: string
 }
 
+/**
+ * Provides access token-based authentication credentials.
+ *
+ * @class AccessTokenCredentialsProvider
+ * @extends CredentialsProvider
+ */
 export class AccessTokenCredentialsProvider extends CredentialsProvider {
 	#token: string
 

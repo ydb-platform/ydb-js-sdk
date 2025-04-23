@@ -22,6 +22,12 @@ export type StaticCredentials = {
 	password: string
 }
 
+/**
+ * A credentials provider that uses static username and password to authenticate.
+ * It fetches and caches a token from the specified authentication service.
+ *
+ * @extends CredentialsProvider
+ */
 export class StaticCredentialsProvider extends CredentialsProvider {
 	#client: Client<typeof AuthServiceDefinition>
 	#promise: Promise<string> | null = null
