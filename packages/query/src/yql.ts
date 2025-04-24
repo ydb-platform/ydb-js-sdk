@@ -18,14 +18,16 @@ export function yql<P extends any[] = unknown[]>(
 	let params: Record<string, Value> = Object.assign({}, null)
 
 	if (Array.isArray(values)) {
+		let skip: number = 0
 		values.forEach((value, i) => {
 			if (value[SymbolUnsafe]) {
+				skip += 1
 				return
 			}
 
 			let ydbValue = isObject(value) && 'type' in value && 'kind' in value['type'] ? value : fromJs(value)
 
-			params[`$p${i}`] = ydbValue
+			params[`$p${i - skip}`] = ydbValue
 		})
 	}
 
@@ -34,10 +36,14 @@ export function yql<P extends any[] = unknown[]>(
 	}
 
 	if (Array.isArray(strings)) {
+		let skip: number = 0
 		text += strings.reduce((prev, curr, i) => {
 			let value = values[i]
+			if (value && value[SymbolUnsafe]) {
+				skip += 1
+			}
 
-			return prev + curr + (value ? value[SymbolUnsafe] ? value.toString() : `$p${i}` : '')
+			return prev + curr + (value ? value[SymbolUnsafe] ? value.toString() : `$p${i - skip}` : '')
 		}, '')
 	}
 
