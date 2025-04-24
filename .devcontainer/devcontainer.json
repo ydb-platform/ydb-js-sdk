@@ -40,13 +40,10 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"dbaeumer.vscode-eslint",
 				"esbenp.prettier-vscode",
-				"github.vscode-github-actions",
 				"mikestead.dotenv",
 				"oven.bun-vscode",
 				"oxc.oxc-vscode",
-				"redhat.vscode-yaml",
 				"vitest.explorer"
 			]
 		}
