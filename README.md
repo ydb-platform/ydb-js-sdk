@@ -23,6 +23,18 @@ A modular, modern SDK for working with YDB in JavaScript/TypeScript. Supports qu
 
 ## Quick Start
 
+### 1. Run YDB Locally
+
+Start a local YDB instance with Docker: https://ydb.tech/docs/en/quickstart
+
+### 2. Install Required Packages
+
+```sh
+npm install @ydbjs/core @ydbjs/query
+```
+
+### 3. Connect and Query
+
 ```ts
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
@@ -104,27 +116,3 @@ try {
 
 - Build all packages: `npm run build`
 - Run all tests: `npm test`
-- Build a single package: `cd packages/query && npm run build`
-- Generate gRPC/protobuf files (for @ydbjs/api): `cd packages/api && npm run generate`
-
-Devcontainer setup includes YDB and Prometheus for local development. See `.devcontainer/` for details.
-
----
-
-## Contributing
-
-Contributions are welcome! Open issues, submit PRs, and discuss ideas.
-
----
-
-## License
-
-Licensed under [Apache 2.0](LICENSE).
-
----
-
-## Links
-
-- [YDB Documentation](https://ydb.tech)
-- [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
-- [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)
