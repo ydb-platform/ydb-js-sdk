@@ -8,7 +8,7 @@ import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
 
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
-import { yql } from './yql.js'
+import { UnsafeString, identifier, yql } from './yql.js'
 
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -48,6 +48,20 @@ export interface QueryClient extends SQL, AsyncDisposable {
 
 	transaction<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
 	transaction<T = unknown>(options: TransactionExecuteOptions, fn: TransactionContextCallback<T>): Promise<T>
+
+	/**
+	 * Create an UnsafeString that represents a DB identifier (table, column).
+	 * When used in a query, the identifier will be escaped.
+	 *
+	 * **WARNING: This function does not offer any protection against SQL injections,
+	 *            so you must validate any user input beforehand.**
+	 *
+	 * @example ```ts
+	 * const query = sql`SELECT * FROM ${sql.identifier('my-table')}`;
+	 * // 'SELECT * FROM `my-table`'
+	 * ```
+	 */
+	identifier(value: string | { toString(): string }): UnsafeString
 }
 
 const doImpl = function <T = unknown>(): Promise<T> {
@@ -191,6 +205,7 @@ export function query(driver: Driver): QueryClient {
 			do: doImpl,
 			begin: txIml,
 			transaction: txIml,
+			identifier: identifier,
 			async [Symbol.asyncDispose]() { },
 		}
 	)

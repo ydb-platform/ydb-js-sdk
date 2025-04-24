@@ -1,17 +1,13 @@
-import { fromJs, type Value } from "@ydbjs/value"
+import { type Value, fromJs } from "@ydbjs/value"
 
-const unsafe = Symbol("unsafe")
+const SymbolUnsafe = Symbol("unsafe")
 
 function isObject(value: unknown): boolean {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export class UnsafeString extends String {
-	constructor(public value: string) {
-		super(value)
-	}
-
-	[unsafe] = true
+	[SymbolUnsafe] = true
 }
 
 export function yql<P extends any[] = unknown[]>(
@@ -23,7 +19,7 @@ export function yql<P extends any[] = unknown[]>(
 
 	if (Array.isArray(values)) {
 		values.forEach((value, i) => {
-			if (value[unsafe]) {
+			if (value[SymbolUnsafe]) {
 				return
 			}
 
@@ -41,17 +37,17 @@ export function yql<P extends any[] = unknown[]>(
 		text += strings.reduce((prev, curr, i) => {
 			let value = values[i]
 
-			return prev + curr + (value ? value[unsafe] ? value.toString() : `$p${i}` : '')
+			return prev + curr + (value ? value[SymbolUnsafe] ? value.toString() : `$p${i}` : '')
 		}, '')
 	}
 
 	return { text, params }
 }
 
-export function usafe(value: string | { toString(): string }) {
+export function unsafe(value: string | { toString(): string }) {
 	return new UnsafeString(value.toString())
 }
 
-export function table(path: string) {
-	return usafe("`" + path + "`")
+export function identifier(path: string) {
+	return unsafe("`" + path + "`")
 }
