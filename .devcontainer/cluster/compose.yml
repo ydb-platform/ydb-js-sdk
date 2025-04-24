@@ -56,8 +56,8 @@ services:
       - deployment=docker
 
     ports:
-      - 2136:2136
-      - 8765:8765
+      - 2136
+      - 8765
 
     volumes:
       - ydb-data:/ydb_data
@@ -134,7 +134,7 @@ services:
     platform: linux/amd64
 
     ports:
-      - 9090:9090
+      - 9090
 
     volumes:
       - ../prometheus.yml:/etc/prometheus/prometheus.yml
