@@ -17,7 +17,8 @@
 	"features": {
 		"ghcr.io/devcontainers/features/git": {},
 		"ghcr.io/devcontainers/features/common-utils": {},
-		"ghcr.io/devcontainers/features/github-cli:1": {}
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [
@@ -26,6 +27,9 @@
 		"ydb:8765",
 		"prometheus:9090"
 	],
+	"otherPortsAttributes": {
+		"onAutoForward": "ignore"
+	},
 	// Use 'initializeCommand' to run commands before the container is created.
 	"initializeCommand": "chmod +x .devcontainer/commands/initialize.sh && .devcontainer/commands/initialize.sh",
 	// Use 'postCreateCommand' to run commands after the container is created.
