@@ -2,6 +2,11 @@
 
 A modular, modern SDK for working with YDB in JavaScript/TypeScript. Supports queries, transactions, types, error handling, authentication, and more.
 
+## Other versions
+
+- [v5](https://github.com/ydb-platform/ydb-js-sdk/tree/v5)
+- [v4](https://github.com/ydb-platform/ydb-js-sdk/tree/v4.7.0)
+
 ---
 
 ## Packages
