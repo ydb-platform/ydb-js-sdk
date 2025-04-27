@@ -7,6 +7,11 @@ volumes:
     #   o: size=80g
   ydb-certs:
 
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: true
+
 services:
   sdk:
     build:
