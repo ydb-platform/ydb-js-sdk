@@ -1,5 +1,13 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.12
+
+### Patch Changes
+
+- Fix metadata credentials provider
+- Updated dependencies
+  - @ydbjs/auth@6.0.0-alpha.12
+
 ## 6.0.0-alpha.11
 
 ### Patch Changes
