@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.16
+
+### Patch Changes
+
+- Support for database in querystring
+
 ## 6.0.0-alpha.15
 
 ### Patch Changes
