@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/core",
-	"version": "6.0.0-alpha.14",
+	"version": "6.0.0-alpha.15",
 	"description": "Core driver for YDB: manages connections, endpoint discovery, authentication, and service client creation. Foundation for all YDB client operations.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -13,7 +13,8 @@
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
-		"attw": "attw --pack"
+		"attw": "attw --pack",
+		"prepublishOnly": "npm run clean && npm run build:cjs && npm run build:esm"
 	},
 	"exports": {
 		".": {

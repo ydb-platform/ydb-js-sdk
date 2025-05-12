@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.15
+
+### Patch Changes
+
+- Fix build issues
+
 ## 6.0.0-alpha.14
 
 ### Patch Changes
