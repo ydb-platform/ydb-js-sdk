@@ -29,7 +29,7 @@ import { debug } from './middleware.js'
 
 export type DriverOptions = ChannelOptions & {
 	ssl?: tls.SecureContextOptions
-	credentialsProvier?: CredentialsProvider
+	credentialsProvider?: CredentialsProvider
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
