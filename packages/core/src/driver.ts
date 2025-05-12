@@ -135,8 +135,8 @@ export class Driver implements Disposable {
 			return call.next(call.request, Object.assign(options, { metadata }))
 		})
 
-		if (options.credentialsProvier) {
-			this.#credentialsProvider = options.credentialsProvier
+		if (options.credentialsProvider) {
+			this.#credentialsProvider = options.credentialsProvider
 			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
 		}
 
