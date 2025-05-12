@@ -36,8 +36,6 @@ export type DriverOptions = ChannelOptions & {
 	'ydb.sdk.enable_discovery'?: boolean
 	'ydb.sdk.discovery_timeout_ms'?: number
 	'ydb.sdk.discovery_interval_ms'?: number
-
-	[key: string]: any
 }
 
 const defaultOptions: DriverOptions = {
@@ -135,7 +133,7 @@ export class Driver implements Disposable {
 			return call.next(call.request, Object.assign(options, { metadata }))
 		})
 
-		if (options.credentialsProvier) {
+		if (options.credentialsProvider) {
 			this.#credentialsProvider = options.credentialsProvier
 			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
 		}
