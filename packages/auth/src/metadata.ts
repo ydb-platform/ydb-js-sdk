@@ -2,6 +2,7 @@ import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff } from "@ydbjs/retry/strategy";
 
 import { CredentialsProvider } from "./index.js";
+import { dbg } from "./dbg.js";
 
 export type MetadataCredentialsToken = {
 	access_token: string
@@ -62,8 +63,8 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 		let retryConfig: RetryConfig = {
 			retry: (err) => (err instanceof Error),
 			signal,
-			budget: 10,
-			strategy: backoff(100, 1000),
+			budget: 5,
+			strategy: backoff(10, 1000),
 		}
 
 		this.#promise = retry(retryConfig, async (signal) => {
@@ -73,6 +74,8 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				},
 				signal,
 			})
+
+			dbg('%s %s %s', this.#endpoint, response.status, response.headers.get('Content-Type'))
 
 			if (!response.ok) {
 				throw new Error(`Failed to fetch token: ${response.status} ${response.statusText}`)
