@@ -5,8 +5,8 @@ import { CredentialsProvider } from "./index.js";
 import { dbg } from "./dbg.js";
 
 export type MetadataCredentialsToken = {
-	access_token: string
-	expires_in: number
+	value: string
+	expired_at: number
 }
 
 export type MetadataCredentials = {
@@ -30,6 +30,13 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	#flavor: string = 'Google'
 	#endpoint: string = 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token'
 
+	/**
+	 * Creates an instance of `MetadataCredentialsProvider`.
+	 *
+	 * @param credentials - An optional object containing metadata credentials.
+	 * @param credentials.flavor - The metadata flavor (default: 'Google').
+	 * @param credentials.endpoint - The metadata endpoint URL (default: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token').
+	 */
 	constructor(credentials: MetadataCredentials = {}) {
 		super()
 		if (credentials.flavor) {
@@ -52,8 +59,8 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	 * @throws Will throw an error if the token fetch fails, the response is not OK, or the content type is incorrect.
 	 */
 	async getToken(force?: boolean, signal?: AbortSignal): Promise<string> {
-		if (!force && this.#token && this.#token.expires_in > Date.now() / 1000) {
-			return this.#token.access_token
+		if (!force && this.#token && this.#token.expired_at > Date.now()) {
+			return this.#token.value
 		}
 
 		if (this.#promise) {
@@ -81,14 +88,18 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				throw new Error(`Failed to fetch token: ${response.status} ${response.statusText}`)
 			}
 
-			this.#token = JSON.parse(await response.text())
-
-			if (!this.#token!.access_token) {
-				dbg('missing token in response, response=%O', this.#token)
+			let token = JSON.parse(await response.text()) as { access_token?: string, expires_in?: number }
+			if (!token.access_token) {
+				dbg('missing access token in response, response=%O', token)
 				throw new Error('No access token exists in response');
 			}
 
-			return this.#token!.access_token
+			this.#token = {
+				value: token.access_token,
+				expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
+			}
+
+			return this.#token.value
 		}).finally(() => {
 			this.#promise = null
 		})
