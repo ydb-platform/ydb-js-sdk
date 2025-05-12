@@ -30,7 +30,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	#flavor: string = 'Google'
 	#endpoint: string = 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token'
 
-	constructor(credentials: MetadataCredentials) {
+	constructor(credentials: MetadataCredentials = {}) {
 		super()
 		if (credentials.flavor) {
 			this.#flavor = credentials.flavor
