@@ -174,7 +174,15 @@ export class Driver implements Disposable {
 	}
 
 	get database(): string {
-		return this.cs.pathname || this.cs.searchParams.get('database') || ''
+		if (this.cs.pathname && this.cs.pathname !== '/') {
+			return this.cs.pathname
+		}
+
+		if (this.cs.searchParams.has('database')) {
+			return this.cs.searchParams.get('database') || ''
+		}
+
+		return ''
 	}
 
 	get isSecure(): boolean {
