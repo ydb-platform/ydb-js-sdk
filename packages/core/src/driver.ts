@@ -27,7 +27,7 @@ import { dbg } from './dbg.js'
 import { ConnectionPool } from './pool.js'
 import { debug } from './middleware.js'
 
-export type DriverOptions = ChannelOptions & {
+export type DriverOptions = Omit<ChannelOptions, keyof any> & {
 	ssl?: tls.SecureContextOptions
 	credentialsProvider?: CredentialsProvider
 
@@ -81,11 +81,8 @@ export class Driver implements Disposable {
 			throw new Error('Invalid connection string. Must be a non-empty string')
 		}
 
+		this.options = Object.assign({}, defaultOptions, options)
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
-
-		for (let key in defaultOptions) {
-			this.options[key] = options[key] ?? defaultOptions[key]
-		}
 
 		if (['grpc:', 'grpcs:', 'http:', 'https:'].includes(this.cs.protocol) === false) {
 			throw new Error('Invalid connection string protocol. Must be one of grpc, grpcs, http, https')
@@ -133,8 +130,8 @@ export class Driver implements Disposable {
 			return call.next(call.request, Object.assign(options, { metadata }))
 		})
 
-		if (options.credentialsProvider) {
-			this.#credentialsProvider = options.credentialsProvier
+		if (this.options.credentialsProvider) {
+			this.#credentialsProvider = this.options.credentialsProvider
 			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
 		}
 
