@@ -78,15 +78,12 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				throw new Error(`Failed to fetch token: ${response.status} ${response.statusText}`)
 			}
 
-			if (!response.headers.has('Content-Type')) {
-				throw new Error('No Content-Type header in response')
-			}
+			this.#token = JSON.parse(await response.text())
 
-			if (!response.headers.get('Content-Type')?.startsWith('application/json')) {
-				throw new Error('Content-Type header is not application/json')
+			if (!this.#token!.access_token) {
+				dbg('missing token in response, response=%O', this.#token)
+				throw new Error('No access token exists in response');
 			}
-
-			this.#token = await response.json()
 
 			return this.#token!.access_token
 		}).finally(() => {
