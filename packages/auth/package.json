@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth",
-	"version": "6.0.0-alpha.12",
+	"version": "6.0.0-alpha.13",
 	"description": "Authentication providers for YDB: static credentials, tokens, anonymous, and cloud metadata. Integrates with the core driver for secure access.",
 	"license": "Apache-2.0",
 	"type": "module",

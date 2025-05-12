@@ -1,5 +1,11 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.13
+
+### Patch Changes
+
+- Update metadata token refresh logic
+
 ## 6.0.0-alpha.12
 
 ### Patch Changes
