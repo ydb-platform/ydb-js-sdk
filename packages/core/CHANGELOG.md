@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.13
+
+### Patch Changes
+
+- correct typo in credentialsProvider assignment in Driver class
+
 ## 6.0.0-alpha.12
 
 ### Patch Changes
