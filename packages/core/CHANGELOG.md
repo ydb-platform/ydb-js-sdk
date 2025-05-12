@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.14
+
+### Patch Changes
+
+- Fix driver options parsing
+
 ## 6.0.0-alpha.13
 
 ### Patch Changes

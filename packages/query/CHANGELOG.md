@@ -1,5 +1,12 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.17
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/core@6.0.0-alpha.14
+
 ## 6.0.0-alpha.16
 
 ### Patch Changes
