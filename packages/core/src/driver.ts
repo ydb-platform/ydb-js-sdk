@@ -174,6 +174,10 @@ export class Driver implements Disposable {
 		}
 	}
 
+	get token(): Promise<string> {
+		return this.#credentialsProvider.getToken()
+	}
+
 	get database(): string {
 		return this.cs.pathname || this.cs.searchParams.get('database') || ''
 	}
