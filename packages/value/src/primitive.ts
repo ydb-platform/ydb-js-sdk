@@ -51,6 +51,7 @@ export class Primitive implements Value<PrimitiveType> {
 		this.type = type
 		this.value = value?.value?.value
 		this.#value = value
+		this.high128 = value.high128
 	}
 
 	encode(): Ydb.Value {
