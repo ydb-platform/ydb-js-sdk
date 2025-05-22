@@ -28,7 +28,7 @@ export type JSValue =
 export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 	switch (type.type.case) {
 		case 'typeId':
-			return new Primitive({ value: value.value }, new PrimitiveType(type.type.value))
+			return new Primitive({ value: value.value, high128: value.high128 }, new PrimitiveType(type.type.value))
 		case 'listType':
 			return new List(...value.items.map((v) => fromYdb(v, (type.type.value as unknown as Ydb.ListType).item!)))
 		case 'tupleType':
