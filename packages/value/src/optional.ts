@@ -35,7 +35,7 @@ export class Optional<T extends Type> implements Value<OptionalType> {
 	#valueInstance?: Ydb.Value;
 
 	constructor(item: Value<T> | null, itemType?: T) {
-		if (!itemType && !item?.type) {
+		if ((!itemType || itemType instanceof Null) && !item?.type) {
 			throw new Error("Missing item type for optional value. Please provide an item type. Or provide an item with a type.");
 		}
 
