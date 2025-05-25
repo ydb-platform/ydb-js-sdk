@@ -1,14 +1,8 @@
 volumes:
-  ydb-data:
-    # driver: local
-    # driver_opts:
-    #   type: tmpfs
-    #   device: tmpfs
-    #   o: size=80g
   ydb-certs:
 
 x-ydb-node: &ydb-node
-  image: cr.yandex/crptqonuodf51kdj7a7d/ydb:24.3.11.13
+  image: cr.yandex/crptqonuodf51kdj7a7d/ydb:24.4.4
   restart: always
   platform: linux/amd64
   privileged: true
@@ -27,10 +21,10 @@ services:
       - ../../:/workspaces/ydb-js-sdk:cached
 
     environment:
-      - YDB_VERSION=24.3.11.13
-      - YDB_CLUSTER_MODE=1
-      - YDB_CREDENTIALS_USER=root
-      - YDB_CREDENTIALS_PASSWORD=
+      - YDB_VERSION=24.4.4
+      - YDB_STATIC_CREDENTIALS_USER=root
+      - YDB_STATIC_CREDENTIALS_PASSWORD=
+      - YDB_STATIC_CREDENTIALS_ENDPOINT=grpc://ydb:2136
       - YDB_CONNECTION_STRING=grpc://ydb:2136/Root/testdb
 
     # Overrides default command so things don't shut down after the process ends.
@@ -60,7 +54,6 @@ services:
       - 8765
 
     volumes:
-      - ydb-data:/ydb_data
       - ydb-certs:/ydb_certs
       - ./ydb.yaml:/opt/ydb/cfg/config.yaml
 

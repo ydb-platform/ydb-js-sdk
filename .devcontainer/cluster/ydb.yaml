@@ -60,3 +60,7 @@ hosts:
       data_center: az-1
       rack: '0'
 static_erasure: none
+
+feature_flags:
+  enable_external_data_sources: true
+  enable_script_execution_operations: true

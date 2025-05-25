@@ -16,5 +16,8 @@ RUN su node -c "npm install -g ${NODE_MODULES}" \
 # [Optional] Uncomment if you want to install bun
 RUN curl -fsSL https://bun.sh/install | bash
 
+# [Optional] Uncomment if you want to install yc cli
+RUN curl -fsSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+
 # [Optional] Uncomment if you want to install ydb cli
 RUN curl -fsSL https://raw.githubusercontent.com/ydb-platform/ydb/refs/heads/main/ydb/apps/ydb/install/install.sh | bash

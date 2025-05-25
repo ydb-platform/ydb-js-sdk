@@ -44,7 +44,8 @@
 				"mikestead.dotenv",
 				"oven.bun-vscode",
 				"oxc.oxc-vscode",
-				"vitest.explorer"
+				"PeterSchmalfeldt.explorer-exclude",
+				"vitest.explorer",
 			]
 		}
 	},

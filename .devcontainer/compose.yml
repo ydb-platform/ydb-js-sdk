@@ -1,10 +1,4 @@
 volumes:
-  ydb-data:
-    # driver: local
-    # driver_opts:
-    #   type: tmpfs
-    #   device: tmpfs
-    #   o: size=80g
   ydb-certs:
 
 networks:
@@ -24,7 +18,7 @@ services:
       - ../:/workspaces/ydb-js-sdk:cached
 
     environment:
-      - YDB_VERSION=25.1
+      - YDB_VERSION=trunk
       - YDB_STATIC_CREDENTIALS_USER=root
       - YDB_STATIC_CREDENTIALS_PASSWORD=1234
       - YDB_STATIC_CREDENTIALS_ENDPOINT=grpc://ydb:2136
@@ -36,7 +30,7 @@ services:
     command: sleep infinity
 
   ydb:
-    image: ydbplatform/local-ydb:25.1
+    image: ydbplatform/local-ydb:trunk@sha256:74a086d193a117e911115a830e3f1f01816b9d85df1305b0bc923de14b1bcac5
     restart: unless-stopped
     hostname: ydb
     platform: linux/amd64
@@ -47,11 +41,11 @@ services:
       - 8765
 
     volumes:
-      - ydb-data:/ydb_data
       - ydb-certs:/ydb_certs
 
     environment:
       - YDB_USE_IN_MEMORY_PDISKS=true
+      - YDB_ENABLE_COLUMN_TABLES=true
       - GRPC_TLS_PORT=2135
       - GRPC_PORT=2136
       - MON_PORT=8765
