@@ -239,6 +239,18 @@ export class Text extends Primitive implements Value<TextType> {
 	}
 }
 
+export class Utf8Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.UTF8)
+	}
+}
+
+export class Utf8 extends Primitive implements Value<Utf8Type> {
+	constructor(value: string) {
+		super({ value: { case: 'textValue', value: value } }, new Utf8Type())
+	}
+}
+
 export class JsonType extends PrimitiveType {
 	constructor() {
 		super(Ydb.Type_PrimitiveTypeId.JSON)
