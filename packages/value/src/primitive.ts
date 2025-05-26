@@ -5,7 +5,7 @@ import * as Ydb from '@ydbjs/api/value'
 import { type GenericDateConstructor, formatISO9075 } from 'date-fns'
 
 import { type Type, TypeKind } from './type.js'
-import { bigIntsFromUuid } from './uuid.js'
+import { bigIntsFromUuid, uuidFromBigInts } from './uuid.js'
 import { type Value } from './value.js'
 
 export class PrimitiveType implements Type {
@@ -51,7 +51,6 @@ export class Primitive implements Value<PrimitiveType> {
 		this.type = type
 		this.value = value?.value?.value
 		this.#value = value
-		this.high128 = value.high128
 	}
 
 	encode(): Ydb.Value {
@@ -282,6 +281,7 @@ export class UuidType extends PrimitiveType {
 }
 
 export class Uuid extends Primitive implements Value<UuidType> {
+	low128: bigint = 0n
 	override high128: bigint = 0n
 
 	constructor(value: string) {
@@ -289,7 +289,12 @@ export class Uuid extends Primitive implements Value<UuidType> {
 
 		super({ value: { case: 'low128', value: low128 }, high128 }, new UuidType())
 
+		this.low128 = low128
 		this.high128 = high128
+	}
+
+	override toString(): string {
+		return uuidFromBigInts(this.low128, this.high128)
 	}
 }
 

@@ -11,6 +11,7 @@ import {
 	Timestamp,
 	Uint32,
 	Uint64,
+	Uuid,
 } from '../dist/esm/primitive.js'
 
 test('Bool primitive', async (t) => {
@@ -143,4 +144,19 @@ test('Timestamp primitive', async (t) => {
 		  "value": 1735689600000000n,
 		}
 	`)
+})
+
+test('UUID primitive', async (t) => {
+	const uuid = new Uuid('00112233-4455-6677-8899-aabbccddeeff')
+
+	t.expect(uuid).toMatchInlineSnapshot(`
+		Uuid {
+		  "high128": 18441921395520346504n,
+		  "low128": 7383445245961249331n,
+		  "type": UuidType {},
+		  "value": 7383445245961249331n,
+		}
+	`)
+
+	t.expect(uuid.toString()).toBe('00112233-4455-6677-8899-aabbccddeeff')
 })
