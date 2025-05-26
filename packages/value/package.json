@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.0-alpha.9",
+	"version": "6.0.0-alpha.10",
 	"description": "Type-safe conversion and manipulation of YDB values and types. Encode/decode between native JS and YDB, with full support for primitives and complex types.",
 	"license": "Apache-2.0",
 	"type": "module",

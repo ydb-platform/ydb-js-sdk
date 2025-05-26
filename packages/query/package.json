@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "6.0.0-alpha.19",
+	"version": "6.0.0-alpha.20",
 	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -42,7 +42,7 @@
 		"@ydbjs/core": "6.0.0-alpha.16",
 		"@ydbjs/error": "6.0.0-alpha.7",
 		"@ydbjs/retry": "6.0.0-alpha.10",
-		"@ydbjs/value": "6.0.0-alpha.9",
+		"@ydbjs/value": "6.0.0-alpha.10",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},

@@ -1,5 +1,11 @@
 # @ydbjs/value
 
+## 6.0.0-alpha.10
+
+### Patch Changes
+
+- Enhance handling UUID values from ydb proto repr
+
 ## 6.0.0-alpha.9
 
 ### Patch Changes
