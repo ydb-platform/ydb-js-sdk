@@ -1,4 +1,4 @@
-export function uuidFromBigInts(low128: bigint, high128: bigint): string {
+export function uuidFromBigInts(low128: bigint, high128: bigint = 0n): string {
 	// Create a 16-byte buffer
 	let bytes = Buffer.alloc(16);
 
