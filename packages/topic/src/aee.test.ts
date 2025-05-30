@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-import { AsyncEventEmitter } from '../src/aee.ts';
+import { AsyncEventEmitter } from './aee.ts';
 
 
 test('AsyncEventEmitter yields events as they are emitted', async () => {
