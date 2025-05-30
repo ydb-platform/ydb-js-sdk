@@ -1,22 +1,21 @@
 import * as assert from "node:assert";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 
-import { create, protoInt64 } from "@bufbuild/protobuf";
+import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
-import { type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
+import { type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
 import { retry } from "@ydbjs/retry";
 import type { StringValue } from "ms";
 import ms from "ms";
 
+import { nextTick } from "node:process";
 import { AsyncEventEmitter } from "./aee.js";
 import { dbg } from "./dbg.js";
 import { type TopicMessage } from "./message.js";
 import { TopicPartitionSession } from "./partition-session.js";
-import { nextTick } from "node:process";
-import { inspect } from "node:util";
 
 type FromClientEmitterMap = {
 	"message": [StreamReadMessage_FromClient]
@@ -157,13 +156,16 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		this.#updateTokenTicker.unref()
 
 		// Log all messages from client.
+		// This is useful for debugging purposes to see what messages are sent to the server.
+
+		let dbgrpc = dbg.extend('grpc')
 		this.#fromClientEmitter.on('message', (msg) => {
-			dbg('%s %o', msg.clientMessage.value?.$typeName, inspect(msg.clientMessage.value, { depth: 10 }))
+			dbgrpc('%s %o', msg.$typeName, toJson(StreamReadMessage_FromClientSchema, msg))
 		})
 
 		// Log all messages from server.
 		this.#fromServerEmitter.on('message', (msg) => {
-			dbg(`%s %o`, msg.serverMessage.value?.$typeName, inspect(msg.serverMessage.value, { depth: 10 }));
+			dbgrpc('%s %o', msg.$typeName, toJson(StreamReadMessage_FromServerSchema, msg))
 		})
 
 		// Handle messages from server.
@@ -176,14 +178,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			if (message.serverMessage.case === 'initResponse') {
 				dbg(`read session identifier: %s`, message.serverMessage.value.sessionId);
 
-				this.#fromClientEmitter.emit("message", create(StreamReadMessage_FromClientSchema, {
-					clientMessage: {
-						case: 'readRequest',
-						value: {
-							bytesSize: this.#freeBufferSize
-						}
-					}
-				}))
+				this.#readMore(this.#freeBufferSize)
 			}
 
 			if (message.serverMessage.case === 'startPartitionSessionRequest') {
@@ -201,7 +196,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				// save partition session.
 				this.#partitionSessions.set(partitionSession.partitionSessionId, partitionSession);
 
-
+				// Initialize offsets.
 				let readOffset = message.serverMessage.value.partitionOffsets.start;
 				let commitOffset = message.serverMessage.value.committedOffset;
 
@@ -254,6 +249,25 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					});
 				}
 
+				// If graceful stop is not requested, we can stop the partition session immediately.
+				if (!message.serverMessage.value.graceful) {
+					dbg('stop partition session %s without graceful stop', partitionSession.partitionSessionId);
+					partitionSession.stop();
+					this.#partitionSessions.delete(partitionSession.partitionSessionId);
+
+					for (let part of this.#buffer) {
+						// Remove all messages from the buffer that belong to this partition session.
+						let i = 0;
+						while (i < part.partitionData.length) {
+							if (part.partitionData[i].partitionSessionId === partitionSession.partitionSessionId) {
+								part.partitionData.splice(i, 1);
+							} else {
+								i++;
+							}
+						}
+					}
+				}
+
 				// Отсылать ответ после того, как прочитали все сообщения из внутреннего буфера по конкретной partition session.
 				// Чтение из внутреннего будфера происходит в функции read().
 
@@ -276,7 +290,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					return;
 				}
 
-				this.#partitionSessions.delete(partitionSession.partitionSessionId);
+				partitionSession.end();
 			}
 
 			if (message.serverMessage.case === 'commitOffsetResponse') {
@@ -320,6 +334,8 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					.streamRead(new AsyncEventEmitter(this.#fromClientEmitter, 'message'), { signal });
 
 				nextTick(() => {
+					dbg('start consuming topic stream for consumer %s with autoPartitioningSupport=%o', this.#options.consumer, false);
+
 					this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
 						clientMessage: {
 							case: 'initRequest',
@@ -433,21 +449,18 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 * This method emits a readRequest message to the server with the specified bytes size.
 	 * The default size is 1MB, but it can be overridden by the maxBufferBytes option.
 	 */
-	#readMore(): void {
+	#readMore(bytes: bigint): void {
 		if (this.#disposed) {
 			dbg('error: readMore called after dispose');
 			return;
 		}
 
-		if (this.#maxBufferSize - this.#freeBufferSize <= 0n) {
-			return; // No need to read more if the buffer is empty.
-		}
-
+		dbg('request read next %d bytes', bytes);
 		this.#fromClientEmitter.emit("message", create(StreamReadMessage_FromClientSchema, {
 			clientMessage: {
 				case: 'readRequest',
 				value: {
-					bytesSize: this.#maxBufferSize - this.#freeBufferSize
+					bytesSize: bytes
 				}
 			}
 		}))
@@ -472,11 +485,15 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 *
 	 * @param {Object} options - Options for reading messages.
 	 * @param {number} [options.limit=Infinity] - The maximum number of messages to read. Default is Infinity.
-	 * @param {number} [options.timeout] - The maximum time to wait for messages before timing out. If not provided, it will wait indefinitely.
+	 * @param {number} [options.waitMs=60_000] - The maximum time to wait for messages before timing out. If not provided, it will wait 1 minute.
 	 * @param {AbortSignal} [options.signal] - An AbortSignal to cancel the read operation. If provided, it will merge with the reader's controller signal.
 	 * @returns {AsyncIterable<TopicMessage[]>} An async iterable that yields TopicMessage[] objects.
 	 */
-	read({ limit, signal, timeout }: { limit?: number, timeout?: number, signal?: AbortSignal } = { limit: Infinity }): AsyncIterable<TopicMessage<Payload>[]> {
+	read(options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}): AsyncIterable<TopicMessage<Payload>[]> {
+		let limit = options.limit || Infinity,
+			signal = options.signal,
+			waitMs = options.waitMs || 60000;
+
 		// Check if the reader has been disposed, cannot read with disposed reader
 		if (this.#disposed) {
 			throw new Error('Reader is disposed');
@@ -497,7 +514,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		let active = true;
 		// Use a promise to await the next batch of messages.
 		// Each readResponse resolves the current promise and creates a new one.
-		let awaiting = Promise.withResolvers<void>();
+		let wait = Promise.withResolvers<void>();
 
 		let messageHandler = (message: StreamReadMessage_FromServer) => {
 			if (signal.aborted) {
@@ -508,12 +525,14 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				return;
 			}
 
-			awaiting.resolve();
+			wait.resolve();
+
+			dbg('reader received %d bytes', message.serverMessage.value.bytesSize);
 
 			this.#buffer.push(message.serverMessage.value);
 			this.#freeBufferSize -= message.serverMessage.value.bytesSize;
 
-			awaiting = Promise.withResolvers<void>();
+			wait = Promise.withResolvers<void>();
 		}
 
 		// On error or end, deactivate the iterator and clean up listeners.
@@ -525,7 +544,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			active = false;
 			cleanup();
 
-			awaiting.reject(err);
+			wait.reject(err);
 		}
 
 		let endHandler = () => {
@@ -538,7 +557,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		}
 
 		let abortHandler = async () => {
-			awaiting.reject(new Error('Read aborted', { cause: signal.reason }));
+			wait.reject(new Error('Read aborted', { cause: signal.reason }));
 
 			active = false;
 			cleanup();
@@ -561,7 +580,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				this.#fromServerEmitter.on('end', endHandler);
 				signal?.addEventListener('abort', abortHandler);
 
-				dbg('STREAM READ START', { limit, timeout, signal });
 				return {
 					next: async () => {
 						// If the reader is disposed, throw an error.
@@ -580,10 +598,18 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 						}
 
 						let messages: TopicMessage<Payload>[] = [];
-						let totalRead = 0;
 
-						// If limit is not provided, set it to Infinity.
-						limit = limit || Number.MAX_SAFE_INTEGER;
+						// Wait for the next readResponse or until the timeout expires.
+						if (!this.#buffer.length) {
+							await Promise.race([
+								wait.promise,
+								once(AbortSignal.timeout(waitMs), 'abort')
+							])
+
+							// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
+						}
+
+						let releasableBufferBytes = 0n;
 
 						while (this.#buffer.length) {
 							let fullRead = true;
@@ -594,7 +620,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							}
 
 							// If we have a limit and reached it, break the loop
-							if (totalRead >= limit) {
+							if (messages.length >= limit) {
 								this.#buffer.unshift(response); // Put the response back to the front of the buffer
 								break;
 							}
@@ -606,7 +632,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 								}
 
 								// If we have a limit and reached it, break the loop
-								if (totalRead >= limit) {
+								if (messages.length >= limit) {
 									response.partitionData.unshift(pd); // Put the partition data back to the front of the response
 									break;
 								}
@@ -618,7 +644,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 									}
 
 									// If we have a limit and reached it, break the loop
-									if (totalRead >= limit) {
+									if (messages.length >= limit) {
 										pd.batches.unshift(batch); // Put the batch back to the front of the partition data
 
 										break;
@@ -635,7 +661,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 										let msg = batch.messageData.shift()!; // Get the first message from the batch
 
 										// If we have a limit and reached it, break the loop
-										if (totalRead >= limit) {
+										if (messages.length >= limit) {
 											batch.messageData.unshift(msg); // Put the message back to the front of the batch
 											break;
 										}
@@ -654,7 +680,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 										}
 
 										messages.push(message);
-										totalRead++;
 									}
 
 									if (batch.messageData.length != 0) {
@@ -674,32 +699,22 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 								this.#buffer.unshift(response); // Put the response back to the front of the buffer
 							}
 
+							// If we have read all messages from the response, we can release its buffer allocation
 							if (response.partitionData.length === 0 && fullRead) {
-								// When a response is fully processed, we can release its buffer allocation
-								this.#freeBufferSize += response.bytesSize;
+								releasableBufferBytes += response.bytesSize;
 							}
 						}
 
-						// If we have a timeout and no messages were read, wait for more data.
-						if (timeout && !messages.length) {
-							let timeoutId: NodeJS.Timeout | undefined = undefined;
+						nextTick((releasableBufferBytes: bigint) => {
+							dbg('read %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
 
-							await Promise.race([
-								awaiting.promise,
-								new Promise((resolve) => {
-									timeoutId = setTimeout(resolve, timeout);
-								})
-							]).finally(() => {
-								if (timeoutId) {
-									clearTimeout(timeoutId);
-									timeoutId = undefined;
-								}
-							});
-						} else if (!messages.length) {
-							await awaiting.promise
-						}
+							if (releasableBufferBytes > 0n) {
+								dbg('releasing %d bytes from buffer', releasableBufferBytes);
+								this.#freeBufferSize += releasableBufferBytes;
+								this.#readMore(releasableBufferBytes);
+							}
+						}, releasableBufferBytes)
 
-						this.#readMore(); // Request more data if we haven't reached the limit and buffer size allows
 						return { value: messages, done: !active };
 					},
 					return: async (value) => {
@@ -760,7 +775,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			// Verify the partition session exists in our tracked sessions
 			let partitionSession = this.#partitionSessions.get(msg.partitionSessionId);
 			if (!partitionSession) {
-				throw new Error(`Partition session with id ${msg.partitionSessionId} not found`);
+				throw new Error(`Partition session with id ${msg.partitionSessionId} not found.`);
 			}
 
 			// Initialize empty array for this partition if it doesn't exist yet
