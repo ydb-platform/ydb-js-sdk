@@ -6,7 +6,6 @@ import {
 	ExecMode,
 	QueryServiceDefinition,
 	type QueryStats,
-	type SessionState,
 	StatsMode,
 	Syntax,
 } from '@ydbjs/api/query'
@@ -132,21 +131,10 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 				this.#cleanup.push(async () => await client.deleteSession({ sessionId }))
 
-				let attachSession = Promise.withResolvers<SessionState>()
-					; (async (stream: AsyncIterable<SessionState>) => {
-						try {
-							for await (let state of stream) {
-								signal.throwIfAborted()
-								attachSession.resolve(state)
-							}
-						} catch (err) {
-							attachSession.reject(err)
-						}
-					})(client.attachSession({ sessionId }, { signal }))
-
-				let attachSessionResult = await attachSession.promise
-				if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
-					throw new YDBError(attachSessionResult.status, attachSessionResult.issues)
+				let attachSession = client.attachSession({ sessionId })[Symbol.asyncIterator]()
+				let attachSessionResult = await attachSession.next()
+				if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
 				}
 			}
 

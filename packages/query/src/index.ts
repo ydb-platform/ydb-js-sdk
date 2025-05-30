@@ -1,7 +1,7 @@
 import type { Abortable } from 'node:events'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
+import { QueryServiceDefinition } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
@@ -149,21 +149,10 @@ export function query(driver: Driver): QueryClient {
 
 			client = driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
 
-			let attachSession = Promise.withResolvers<SessionState>()
-				; (async (stream: AsyncIterable<SessionState>) => {
-					try {
-						for await (let state of stream) {
-							signal.throwIfAborted()
-							attachSession.resolve(state)
-						}
-					} catch (err) {
-						attachSession.reject(err)
-					}
-				})(client.attachSession({ sessionId: store.sessionId }, { signal }))
-
-			let attachSessionResult = await attachSession.promise
-			if (attachSessionResult.status !== StatusIds_StatusCode.SUCCESS) {
-				throw new YDBError(attachSessionResult.status, attachSessionResult.issues)
+			let attachSession = client.attachSession({ sessionId: store.sessionId })[Symbol.asyncIterator]()
+			let attachSessionResult = await attachSession.next()
+			if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
+				throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
 			}
 
 			let beginTransactionResult = await client.beginTransaction({

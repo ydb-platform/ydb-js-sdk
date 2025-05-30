@@ -1,5 +1,19 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.22
+
+### Patch Changes
+
+- Fix issues when aborting session attach stream
+
+## 6.0.0-alpha.21
+
+### Patch Changes
+
+- Fix cjs bundle issues
+- Updated dependencies
+  - @ydbjs/value@6.0.0-alpha.11
+
 ## 6.0.0-alpha.20
 
 ### Patch Changes
