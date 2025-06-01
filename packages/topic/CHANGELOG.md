@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.9
+
+### Patch Changes
+
+- Add await for commit
+
 ## 6.0.0-alpha.8
 
 ### Patch Changes
