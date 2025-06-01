@@ -7,7 +7,8 @@ import { StatusIds_StatusCode } from "@ydbjs/api/operation";
 import { type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
-import { retry } from "@ydbjs/retry";
+import { type RetryConfig, retry } from "@ydbjs/retry";
+import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import type { StringValue } from "ms";
 import ms from "ms";
 
@@ -326,12 +327,24 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		let signal = this.#controller.signal
 		await this.#driver.ready(signal)
 
+		let retryConfig: RetryConfig = {
+			signal,
+			budget: Infinity,
+			strategy: combine(jitter(50), backoff(50, 5000)),
+			retry(error) {
+				dbg('retrying stream read due to %O', error);
+				return true;
+			},
+		}
+
 		try {
 			// TODO: handle user errors (for example tx errors). Ex: use abort signal
-			await retry({ signal, idempotent: true }, async () => {
+			await retry(retryConfig, async () => {
+				using outgoing = new AsyncEventEmitter<StreamReadMessage_FromClient>(this.#fromClientEmitter, 'message')
+
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
-					.streamRead(new AsyncEventEmitter(this.#fromClientEmitter, 'message'), { signal });
+					.streamRead(outgoing, { signal });
 
 				nextTick(() => {
 					dbg('start consuming topic stream for consumer %s with autoPartitioningSupport=%o', this.#options.consumer, false);
@@ -353,8 +366,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 					if (event.status !== StatusIds_StatusCode.SUCCESS) {
 						let error = new YDBError(event.status, event.issues)
-						this.#fromServerEmitter.emit('error', error);
-
+						dbg('received error from server: %s', error.message);
 						throw error;
 					}
 
@@ -362,6 +374,8 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				}
 			});
 		} catch (error) {
+			dbg('error: %O', error);
+
 			this.#fromServerEmitter.emit('error', error);
 		} finally {
 			this.#fromServerEmitter.emit('end');
