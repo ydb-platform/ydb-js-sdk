@@ -1,5 +1,6 @@
 import * as assert from "node:assert";
 import { EventEmitter, once } from "node:events";
+import { nextTick } from "node:process";
 
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
@@ -12,7 +13,6 @@ import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import type { StringValue } from "ms";
 import ms from "ms";
 
-import { nextTick } from "node:process";
 import { AsyncEventEmitter } from "./aee.js";
 import { dbg } from "./dbg.js";
 import { type TopicMessage } from "./message.js";
@@ -83,6 +83,13 @@ export type onCommittedOffsetCallback = (
 	committedOffset: bigint,
 ) => void
 
+type TopicCommitPromise = {
+	partitionSessionId: bigint
+	offset: bigint
+	resolve: () => void
+	reject: (reason?: any) => void
+}
+
 export type TopicReaderOptions<Payload = Uint8Array> = {
 	topic: string | TopicReaderSource | TopicReaderSource[]
 	consumer: string
@@ -111,9 +118,17 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	#fromClientEmitter = new EventEmitter<FromClientEmitterMap>();
 	#fromServerEmitter = new EventEmitter<FromServerEmitterMap>();
 
-	// partitionSessionId -> TopicPartitionSession
-	#partitionSessions: Map<bigint, TopicPartitionSession> = new Map();
+	// partition sessions that are currently active.
+	#partitionSessions: Map<bigint, TopicPartitionSession> = new Map(); // partitionSessionId -> TopicPartitionSession
 
+	// pending commits that are not yet resolved.
+	#pendingCommits: Map<bigint, TopicCommitPromise[]> = new Map(); // partitionSessionId -> TopicCommitPromise[]
+
+	/**
+	 * Creates a new TopicReader instance.
+	 * @param driver - The YDB driver instance to use for communication with the YDB server.
+	 * @param options - Options for the topic reader, including topic path, consumer name, and optional callbacks.
+	 */
 	constructor(driver: Driver, options: TopicReaderOptions<Payload>) {
 		this.#driver = driver;
 		this.#options = { ...options };
@@ -219,6 +234,22 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					}
 				}
 
+				let pendingCommits = this.#pendingCommits.get(partitionSession.partitionSessionId);
+				if (pendingCommits?.length) {
+					// If there are pending commits for this partition session, resolve them.
+					let i = 0;
+					while (i < pendingCommits.length) {
+						let commit = pendingCommits[i];
+						if (commit.offset <= commitOffset) {
+							// If the commit offset is less than or equal to the committed offset, resolve it.
+							commit.resolve();
+							pendingCommits.splice(i, 1); // Remove from pending commits
+						} else {
+							i++;
+						}
+					}
+				}
+
 				this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
 					clientMessage: {
 						case: 'startPartitionSessionResponse',
@@ -240,7 +271,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					return;
 				}
 
-
 				if (this.#options.onPartitionSessionStop) {
 					let committedOffset = message.serverMessage.value.committedOffset || 0n;
 
@@ -256,6 +286,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					partitionSession.stop();
 					this.#partitionSessions.delete(partitionSession.partitionSessionId);
 
+					// Remove all messages from the buffer that belong to this partition session.
 					for (let part of this.#buffer) {
 						// Remove all messages from the buffer that belong to this partition session.
 						let i = 0;
@@ -267,6 +298,18 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							}
 						}
 					}
+
+					let pendingCommits = this.#pendingCommits.get(partitionSession.partitionSessionId);
+					if (pendingCommits) {
+						// If there are pending commits for this partition session, reject them.
+						for (let commit of pendingCommits) {
+							commit.reject('Partition session stopped without graceful stop');
+						}
+
+						this.#pendingCommits.delete(partitionSession.partitionSessionId);
+					}
+
+					return;
 				}
 
 				// Отсылать ответ после того, как прочитали все сообщения из внутреннего буфера по конкретной partition session.
@@ -306,6 +349,33 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 						}
 
 						this.#options.onCommittedOffset(partitionSession, part.committedOffset)
+					}
+				}
+
+				// Resolve all pending commits for the partition sessions.
+				for (let part of message.serverMessage.value.partitionsCommittedOffsets) {
+					let partitionSessionId = part.partitionSessionId;
+					let committedOffset = part.committedOffset;
+
+					// Resolve all pending commits for this partition session.
+					let pendingCommits = this.#pendingCommits.get(partitionSessionId);
+					if (pendingCommits) {
+						let i = 0;
+						while (i < pendingCommits.length) {
+							let commit = pendingCommits[i];
+							if (commit.offset <= committedOffset) {
+								// If the commit offset is less than or equal to the committed offset, resolve it.
+								commit.resolve();
+								pendingCommits.splice(i, 1); // Remove from pending commits
+							} else {
+								i++;
+							}
+						}
+					}
+
+					// If there are no pending commits for this partition session, remove it from the map.
+					if (pendingCommits && pendingCommits.length === 0) {
+						this.#pendingCommits.delete(partitionSessionId);
 					}
 				}
 			}
@@ -720,7 +790,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 						}
 
 						nextTick((releasableBufferBytes: bigint) => {
-							dbg('read %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
+							dbg('return %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
 
 							if (releasableBufferBytes > 0n) {
 								dbg('releasing %d bytes from buffer', releasableBufferBytes);
@@ -754,10 +824,10 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 *
 	 * Throws if the reader is disposed or if any message lacks a partitionSessionId.
 	 *
-	 * @param input - TopicMessage, TopicMessage[], or TopicMessage[] to commit.
-	 * @returns PromiseLike<void> that resolves when the commit is acknowledged.
+	 * @param input - TopicMessage or TopicMessage[] to commit.
+	 * @returns Promise<void> that resolves when the commit is acknowledged.
 	 */
-	commit(input: TopicMessage | TopicMessage[]): void {
+	commit(input: TopicMessage | TopicMessage[]): Promise<void> {
 		// Check if the reader has been disposed, cannot commit with disposed reader
 		if (this.#disposed) {
 			throw new Error('Reader is disposed');
@@ -771,7 +841,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 		// If input is empty, resolve immediately.
 		if (input.length === 0) {
-			return;
+			return Promise.resolve();
 		}
 
 		// Arrays to hold the final commit request structure
@@ -805,26 +875,28 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			if (partOffsets.length > 0) {
 				let last = partOffsets[partOffsets.length - 1];
 
-				if (offset === last.end + 1n) {
+				if (offset === last.end) {
 					// If the new offset is consecutive to the last range, extend the range
 					// This creates a continuous range (e.g. 1-5 instead of 1-4, 5)
-					last.end = offset;
-				} else if (offset > last.end + 1n) {
+					last.end = offset + 1n;
+				} else if (offset > last.end) {
 					// If there's a gap between offsets, create a new range
 					// This handles non-consecutive offsets properly
-					partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset }));
+					partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }));
 				} else {
 					// If offset <= last.end, it's either out of order or a duplicate.
 					throw new Error(`Message with offset ${offset} is out of order or duplicate for partition session ${partitionSession.partitionSessionId}`);
 				}
 			} else {
 				// First offset for this partition, create initial range
-				partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset }));
+				partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }));
 			}
 		}
 
 		// Convert our optimized Map structure into the API's expected format
 		for (let [partitionSessionId, partOffsets] of offsets.entries()) {
+			dbg('committing offsets for partition session %s: %o', partitionSessionId, partOffsets);
+
 			commitOffsets.push(create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
 				partitionSessionId,
 				offsets: partOffsets
@@ -839,106 +911,28 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 					commitOffsets
 				}
 			}
-		}))
+		}));
 
-		// // Lazily initialized promise - only created when someone calls .then() on the returned thenable
-		// let lazyPromise: Promise<void> | undefined = undefined;
+		// Create a promise that resolves when the commit is acknowledged by the server.
+		return new Promise((resolve, reject) => {
+			for (let [partitionSessionId, partOffsets] of offsets.entries()) {
+				// Create a commit promise for each partition session
+				let commitPromise: TopicCommitPromise = {
+					partitionSessionId,
+					offset: partOffsets[partOffsets.length - 1].end, // Use the last offset in the range
+					resolve,
+					reject
+				};
 
-		// // Return a "thenable" object (has a then method) rather than a real Promise
-		// // This design allows for lazy promise initialization only when needed
-		// // Return a thenable object that resolves when the server acknowledges the commit.
-		// return {
-		// 	// The then method is called when someone awaits or chains .then() on the returned object.
-		// 	// eslint-disable-next-line no-thenable
-		// 	then: (onFulfilled: (value: void) => any, onRejected?: (reason: any) => any) => {
-		// 		// If an AbortSignal is provided and already aborted, reject immediately.
-		// 		if (signal?.aborted) {
-		// 			return Promise.reject(new Error('Commit aborted', { cause: signal.reason })).then(onFulfilled, onRejected);
-		// 		}
+				// Add to pending commits map
+				if (!this.#pendingCommits.has(partitionSessionId)) {
+					this.#pendingCommits.set(partitionSessionId, []);
+				}
 
-		// 		// If the promise was already created (multiple .then() calls), reuse it.
-		// 		if (lazyPromise) {
-		// 			return lazyPromise.then(onFulfilled, onRejected);
-		// 		}
-
-		// 		// Create a new promise and store its resolve/reject functions.
-		// 		let { promise, resolve, reject } = Promise.withResolvers<void>();
-		// 		lazyPromise = promise;
-
-		// 		// Map to track which partition sessions and offsets we are waiting to be committed.
-		// 		let waitingCommits: Map<bigint, bigint> = new Map();
-		// 		for (let [partitionSessionId, partOffsets] of offsets.entries()) {
-		// 			// Store the highest offset for each partition session.
-		// 			waitingCommits.set(partitionSessionId, partOffsets[partOffsets.length - 1].end);
-		// 		}
-
-		// 		// Handler for server messages: checks if the commitOffsetResponse covers all requested offsets.
-		// 		let handle = (message: StreamReadMessage_FromServer) => {
-		// 			if (message.serverMessage.case === 'commitOffsetResponse') {
-		// 				for (let part of message.serverMessage.value.partitionsCommittedOffsets) {
-		// 					if (!waitingCommits.has(part.partitionSessionId)) {
-		// 						continue;
-		// 					}
-		// 					let committedOffset = waitingCommits.get(part.partitionSessionId)!
-		// 					// If the server committed at least up to the requested offset, remove from waiting.
-		// 					if (part.committedOffset >= committedOffset) {
-		// 						waitingCommits.delete(part.partitionSessionId);
-		// 					}
-		// 				}
-		// 				// If all partitions are committed, resolve the promise and cleanup listeners.
-		// 				if (waitingCommits.size > 0) {
-		// 					return;
-		// 				}
-		// 				resolve();
-		// 				cleanup();
-		// 			}
-		// 		};
-
-		// 		// Handler for errors: reject the promise and cleanup listeners.
-		// 		let handleError = (err: unknown) => {
-		// 			reject(err);
-		// 			cleanup();
-		// 		};
-
-		// 		// Handler for stream end: reject the promise and cleanup listeners.
-		// 		let handleEnd = () => {
-		// 			reject(new Error('Stream closed'));
-		// 			cleanup();
-		// 		};
-
-		// 		// Handler for abort signal: reject the promise and cleanup listeners.
-		// 		let handleAbort: (() => void) | undefined;
-		// 		if (signal) {
-		// 			handleAbort = () => {
-		// 				reject(new Error('Commit aborted', { cause: signal.reason }));
-		// 				cleanup();
-		// 			};
-		// 			if (signal.aborted) {
-		// 				handleAbort();
-		// 				return promise.then(onFulfilled, onRejected);
-		// 			}
-		// 			signal.addEventListener('abort', handleAbort);
-		// 		}
-
-		// 		// Cleanup function to remove all listeners after resolution or rejection.
-		// 		let cleanup = () => {
-		// 			this.#fromServerEmitter.removeListener('message', handle);
-		// 			this.#fromServerEmitter.removeListener('error', handleError);
-		// 			this.#fromServerEmitter.removeListener('end', handleEnd);
-		// 			if (signal && handleAbort) {
-		// 				signal.removeEventListener('abort', handleAbort);
-		// 			}
-		// 		};
-
-		// 		// Register listeners for commit responses, errors, and stream end.
-		// 		this.#fromServerEmitter.on('message', handle);
-		// 		this.#fromServerEmitter.once('error', handleError);
-		// 		this.#fromServerEmitter.once('end', handleEnd);
-
-		// 		// Return the promise, so .then() or await will work as expected.
-		// 		return promise.then(onFulfilled, onRejected);
-		// 	}
-		// };
+				// Push the commit promise to the pending commits for this partition session
+				this.#pendingCommits.get(partitionSessionId)!.push(commitPromise);
+			}
+		});
 	}
 
 	/**
@@ -946,7 +940,29 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 * This method should be called when the reader is no longer needed to prevent memory leaks.
 	 */
 	dispose() {
+		dbg('disposing TopicReader for consumer %s', this.#options.consumer)
+
 		this.#disposed = true
+		this.#buffer.length = 0 // Clear the buffer to release memory
+
+		for (let partitionSession of this.#partitionSessions.values()) {
+			// Stop all partition sessions gracefully
+			partitionSession.stop();
+		}
+
+		this.#partitionSessions.clear() // Clear partition sessions to release memory
+
+		for (let [partitionSessionId, pendingCommits] of this.#pendingCommits.entries()) {
+			// Reject all pending commits for this partition session
+			for (let commit of pendingCommits) {
+				commit.reject(new Error(`Reader disposed, commit for partition session ${partitionSessionId} rejected`));
+			}
+
+			this.#pendingCommits.delete(partitionSessionId); // Remove from pending commits
+		}
+
+		this.#pendingCommits.clear() // Clear pending commits to release memory
+
 		this.#controller.abort()
 		this.#fromClientEmitter.removeAllListeners()
 		this.#fromServerEmitter.removeAllListeners()
