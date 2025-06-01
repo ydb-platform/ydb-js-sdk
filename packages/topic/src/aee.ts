@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 
-export class AsyncEventEmitter<T> {
+export class AsyncEventEmitter<T> implements Disposable, AsyncIterable<T> {
 	private emitter: EventEmitter;
 	private eventName: string;
 	private queue: Array<T> = [];
@@ -43,10 +43,6 @@ export class AsyncEventEmitter<T> {
 		});
 	}
 
-	[Symbol.asyncIterator]() {
-		return this;
-	}
-
 	next(): Promise<IteratorResult<T>> {
 		if (this.error) {
 			return Promise.reject(this.error);
@@ -83,5 +79,24 @@ export class AsyncEventEmitter<T> {
 			if (reject) reject(err);
 		}
 		return Promise.resolve({ value: undefined, done: true });
+	}
+
+	[Symbol.asyncIterator]() {
+		return this;
+	}
+
+	dispose(): void {
+		this.emitter.removeAllListeners(this.eventName);
+		this.emitter.removeAllListeners('end');
+		this.emitter.removeAllListeners('error');
+		this.resolvers.length = 0;
+		this.rejecters.length = 0;
+		this.queue.length = 0;
+		this.ended = true;
+		this.error = null;
+	}
+
+	[Symbol.dispose](): void {
+		this.dispose();
 	}
 }
