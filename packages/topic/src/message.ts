@@ -6,6 +6,7 @@ export interface TopicMessage<Payload = Uint8Array> {
 	seqNo: bigint;
 	offset?: bigint;
 	payload: Payload;
+	uncompressedSize?: bigint;
 
 	createdAt?: Date;
 	writtenAt?: Date;
