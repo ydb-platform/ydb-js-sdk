@@ -403,6 +403,11 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				}
 			}
 		});
+
+		process.once('SIGINT', () => {
+			dbg('SIGINT received, disposing reader');
+			this.dispose()
+		})
 	}
 
 	/**
@@ -449,6 +454,57 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 								consumer: this.#options.consumer,
 								topicsReadSettings: this.#topicsReadSettings,
 								autoPartitioningSupport: false
+							}
+						}
+					}))
+				})
+
+				nextTick(() => {
+					if (this.#pendingCommits.size === 0) {
+						return;
+					}
+
+					dbg('has pending commits, after reconnecting will try to commit them');
+
+					let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] = [];
+
+					for (let [partitionSessionId, pendingCommits] of this.#pendingCommits) {
+						let offsets: OffsetsRange[] = [];
+
+						// Optimize storage by merging consecutive offsets into ranges
+						// This reduces network traffic and improves performance
+						let currentRange: OffsetsRange | null = null;
+						for (let pendingCommit of pendingCommits) {
+							if (!currentRange || currentRange.end + 1n < pendingCommit.offset) {
+								// If current range is null or the next offset is not consecutive, create a new range
+								if (currentRange) {
+									offsets.push(currentRange);
+								}
+								currentRange = create(OffsetsRangeSchema, {
+									start: pendingCommit.offset,
+									end: pendingCommit.offset
+								});
+							} else {
+								// Extend the current range
+								currentRange.end = pendingCommit.offset;
+							}
+						}
+
+						if (currentRange) {
+							offsets.push(currentRange);
+						}
+
+						commitOffsets.push(create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
+							partitionSessionId,
+							offsets
+						}));
+					}
+
+					this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
+						clientMessage: {
+							case: 'commitOffsetRequest',
+							value: {
+								commitOffsets
 							}
 						}
 					}))
@@ -619,10 +675,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		}
 
 		let active = true;
-		// Use a promise to await the next batch of messages.
-		// Each readResponse resolves the current promise and creates a new one.
-		let wait = Promise.withResolvers<void>();
-
 		let messageHandler = (message: StreamReadMessage_FromServer) => {
 			if (signal.aborted) {
 				return;
@@ -632,26 +684,20 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				return;
 			}
 
-			wait.resolve();
-
 			dbg('reader received %d bytes', message.serverMessage.value.bytesSize);
 
 			this.#buffer.push(message.serverMessage.value);
 			this.#freeBufferSize -= message.serverMessage.value.bytesSize;
-
-			wait = Promise.withResolvers<void>();
 		}
 
 		// On error or end, deactivate the iterator and clean up listeners.
-		let errorHandler = (err: unknown) => {
+		let errorHandler = () => {
 			if (signal.aborted) {
 				return; // Ignore errors if the signal is already aborted
 			}
 
 			active = false;
 			cleanup();
-
-			wait.reject(err);
 		}
 
 		let endHandler = () => {
@@ -664,8 +710,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		}
 
 		let abortHandler = async () => {
-			wait.reject(new Error('Read aborted', { cause: signal.reason }));
-
 			active = false;
 			cleanup();
 		}
@@ -706,21 +750,33 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 						let messages: TopicMessage<Payload>[] = [];
 
-						// Wait for the next readResponse or until the timeout expires.
 						if (!this.#buffer.length) {
-							await Promise.race([
-								wait.promise,
-								once(AbortSignal.timeout(waitMs), 'abort')
-							])
+							// Wait for the next readResponse or until the timeout expires.
+							if (!this.#buffer.length) {
+								await Promise.race([
+									once(signal, 'abort'),
+									once(AbortSignal.timeout(waitMs), 'abort'),
+									once(this.#fromServerEmitter, 'message'),
+								])
 
-							// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
+								// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
+
+								// If the signal is already aborted, throw an error immediately.
+								if (signal.aborted) {
+									throw new Error('Read aborted', { cause: signal.reason });
+								}
+
+								// If the reader is disposed, throw an error.
+								if (this.#disposed) {
+									throw new Error('Reader is disposed');
+								}
+							}
 						}
 
 						let releasableBufferBytes = 0n;
 
 						while (this.#buffer.length) {
 							let fullRead = true;
-
 							let response = this.#buffer.shift()!; // Get the first response from the buffer
 							if (response.partitionData.length === 0) {
 								continue; // Skip empty responses
@@ -832,15 +888,13 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							}
 						}
 
-						nextTick((releasableBufferBytes: bigint) => {
-							dbg('return %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
+						dbg('return %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
 
-							if (releasableBufferBytes > 0n) {
-								dbg('releasing %d bytes from buffer', releasableBufferBytes);
-								this.#freeBufferSize += releasableBufferBytes;
-								this.#readMore(releasableBufferBytes);
-							}
-						}, releasableBufferBytes)
+						if (releasableBufferBytes > 0n) {
+							dbg('releasing %d bytes from buffer', releasableBufferBytes);
+							this.#freeBufferSize += releasableBufferBytes;
+							this.#readMore(releasableBufferBytes);
+						}
 
 						return { value: messages, done: !active };
 					},
