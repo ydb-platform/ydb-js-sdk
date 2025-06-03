@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.13
+
+### Patch Changes
+
+- Prevent memory leacks
+
 ## 6.0.0-alpha.12
 
 ### Patch Changes
