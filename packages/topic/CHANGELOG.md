@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.11
+
+### Patch Changes
+
+- Enhance TopicWriter and TopicReader with compression options
+
 ## 6.0.0-alpha.10
 
 ### Patch Changes

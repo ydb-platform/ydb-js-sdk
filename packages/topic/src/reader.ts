@@ -5,7 +5,7 @@ import { nextTick } from "node:process";
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
-import { type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
+import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
@@ -91,15 +91,33 @@ type TopicCommitPromise = {
 }
 
 export type TopicReaderOptions<Payload = Uint8Array> = {
+	// Topic path or an array of topic sources.
 	topic: string | TopicReaderSource | TopicReaderSource[]
+	// Consumer name.
 	consumer: string
+	// Maximum size of the internal buffer in bytes.
+	// If not provided, the default is 1MB.
 	maxBufferBytes?: bigint
+	// How often to update the token in milliseconds.
 	updateTokenIntervalMs?: number
-
+	// Compression options for the payload.
+	compression?: {
+		// Custom decompression function that can be used to decompress the payload before emitting it.
+		decompress?(codec: Codec, payload: Uint8Array): Uint8Array | Promise<Uint8Array>
+	}
+	// Custom decode function to decode the payload.
+	// If not provided, the payload will be returned as is.
+	// Decode function calls after decompression, if compression is used.
 	decode?(payload: Uint8Array): Payload
-
+	// Hooks for partition session events.
+	// Called when a partition session is started.
+	// It can be used to initialize the partition session, for example, to set the read offset.
 	onPartitionSessionStart?: onPartitionSessionStartCallback
+	// Called when a partition session is stopped.
+	// It can be used to commit the offsets for the partition session.
 	onPartitionSessionStop?: onPartitionSessionStopCallback
+	// Called when receive commit offset response from server.
+	// This callback is called after the offsets are committed to the server.
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
@@ -248,6 +266,11 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							i++;
 						}
 					}
+				}
+
+				// If there are no pending commits for this partition session, remove it from the map.
+				if (pendingCommits && pendingCommits.length === 0) {
+					this.#pendingCommits.delete(partitionSession.partitionSessionId);
 				}
 
 				this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
@@ -576,7 +599,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	read(options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}): AsyncIterable<TopicMessage<Payload>[]> {
 		let limit = options.limit || Infinity,
 			signal = options.signal,
-			waitMs = options.waitMs || 60000;
+			waitMs = options.waitMs || 60_000;
 
 		// Check if the reader has been disposed, cannot read with disposed reader
 		if (this.#disposed) {
@@ -750,6 +773,25 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 											break;
 										}
 
+										let data = msg.data;
+										if (batch.codec !== Codec.UNSPECIFIED) {
+											if (!this.#options.compression || !this.#options.compression.decompress) {
+												dbg('error: cannot decompress message with codec %s, no decompression function provided', batch.codec);
+
+												throw new Error(`Cannot decompress message with codec ${batch.codec}, no decompression function provided`);
+											}
+
+											// Decompress the message data using the provided decompress function
+											try {
+												// eslint-disable-next-line no-await-in-loop
+												data = await this.#options.compression.decompress(batch.codec, msg.data);
+											} catch (err) {
+												dbg('error: decompression failed for message with codec %s: %O', batch.codec, err);
+
+												throw new Error(`Decompression failed for message with codec ${batch.codec}`, { cause: err });
+											}
+										}
+
 										// Process the message
 										let message: TopicMessage<Payload> = {
 											partitionSessionId: partitionSession.partitionSessionId,
@@ -757,7 +799,8 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 											producerId: batch.producerId,
 											seqNo: msg.seqNo,
 											offset: msg.offset,
-											payload: this.#options.decode!(msg.data),
+											payload: this.#options.decode?.(data) || data as Payload,
+											uncompressedSize: msg.uncompressedSize,
 											createdAt: msg.createdAt ? timestampDate(msg.createdAt) : undefined,
 											writtenAt: batch.writtenAt ? timestampDate(batch.writtenAt) : undefined,
 											metadataItems: msg.metadataItems ? Object.fromEntries(msg.metadataItems.map(item => [item.key, item.value])) : undefined,
@@ -940,10 +983,14 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 * This method should be called when the reader is no longer needed to prevent memory leaks.
 	 */
 	dispose() {
-		dbg('disposing TopicReader for consumer %s', this.#options.consumer)
+		if (this.#disposed) {
+			return; // Already disposed, nothing to do
+		}
+		this.#disposed = true;
+		dbg('disposing TopicReader for consumer %s', this.#options.consumer);
 
-		this.#disposed = true
 		this.#buffer.length = 0 // Clear the buffer to release memory
+		this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size to max buffer size
 
 		for (let partitionSession of this.#partitionSessions.values()) {
 			// Stop all partition sessions gracefully
@@ -963,11 +1010,11 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 		this.#pendingCommits.clear() // Clear pending commits to release memory
 
-		this.#controller.abort()
 		this.#fromClientEmitter.removeAllListeners()
 		this.#fromServerEmitter.removeAllListeners()
 
 		clearInterval(this.#updateTokenTicker)
+		this.#controller.abort()
 	}
 
 	[Symbol.dispose]() {

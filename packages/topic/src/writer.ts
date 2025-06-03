@@ -90,7 +90,6 @@ export type TopicWriterOptions<Payload = Uint8Array> = {
 	// Compression options for the payload.
 	compression?: {
 		codec: Codec,
-		// TODO: Codec options, like compression level, etc.
 		// Minimum raw size to compress, if the payload is smaller than this size, it will not be compressed.
 		// This is useful to avoid compressing small payloads that do not benefit from compression.
 		// Default is 1024 bytes.
@@ -100,7 +99,7 @@ export type TopicWriterOptions<Payload = Uint8Array> = {
 		// If not provided, the default compression function will be used.
 		// The default compression function will use the codec specified in the options.
 		// If the codec is Codec.RAW, the payload will not be compressed.
-		compress?(payload: Uint8Array): Uint8Array
+		compress?(payload: Uint8Array): Uint8Array | Promise<Uint8Array>
 	}
 	// Custom encoding function that can be used to transform the payload before compressing or sending it to the topic.
 	encode?(payload: Payload): Uint8Array
@@ -484,7 +483,7 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 			if (this.#options.compression.codec !== Codec.RAW && data.length >= (this.#options.compression.minRawSize || MIN_RAW_SIZE)) {
 				// Use custom compression function if provided, otherwise use default compression
 				data = this.#options.compression.compress
-					? this.#options.compression.compress(data)
+					? await this.#options.compression.compress(data)
 					: data; // Default to raw if no compression is applied
 			} else {
 				// If the payload is smaller than the minimum size, do not compress it

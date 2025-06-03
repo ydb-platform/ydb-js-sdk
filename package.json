@@ -18,7 +18,7 @@
 		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
 	},
 	"dependencies": {
-		"@types/node": "^22.13.10"
+		"@types/node": "^22.15.29"
 	},
 	"devDependencies": {
 		"oxlint": "^0.16.4",
