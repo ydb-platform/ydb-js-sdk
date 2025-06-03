@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.12
+
+### Patch Changes
+
+- Resend commit offsets after retry
+
 ## 6.0.0-alpha.11
 
 ### Patch Changes
