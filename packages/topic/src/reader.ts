@@ -750,26 +750,29 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 						let messages: TopicMessage<Payload>[] = [];
 
+						// Wait for the next readResponse or until the timeout expires.
 						if (!this.#buffer.length) {
-							// Wait for the next readResponse or until the timeout expires.
-							if (!this.#buffer.length) {
-								await Promise.race([
-									once(signal, 'abort'),
-									once(AbortSignal.timeout(waitMs), 'abort'),
-									once(this.#fromServerEmitter, 'message'),
-								])
+							let waiter = Promise.withResolvers()
+							this.#fromServerEmitter.once('message', waiter.resolve)
 
-								// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
+							await Promise.race([
+								waiter.promise,
+								once(signal, 'abort'),
+								once(AbortSignal.timeout(waitMs), 'abort'),
+							])
 
-								// If the signal is already aborted, throw an error immediately.
-								if (signal.aborted) {
-									throw new Error('Read aborted', { cause: signal.reason });
-								}
+							this.#fromServerEmitter.removeListener('message', waiter.resolve)
 
-								// If the reader is disposed, throw an error.
-								if (this.#disposed) {
-									throw new Error('Reader is disposed');
-								}
+							// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
+
+							// If the signal is already aborted, throw an error immediately.
+							if (signal.aborted) {
+								throw new Error('Read aborted', { cause: signal.reason });
+							}
+
+							// If the reader is disposed, throw an error.
+							if (this.#disposed) {
+								throw new Error('Reader is disposed');
 							}
 						}
 
