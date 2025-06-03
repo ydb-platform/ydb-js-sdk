@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.10
+
+### Patch Changes
+
+- Add TopicWriter
+
 ## 6.0.0-alpha.9
 
 ### Patch Changes
