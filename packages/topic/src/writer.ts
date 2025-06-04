@@ -229,8 +229,63 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 				this.#initialized.resolve(); // Mark the writer as initialized
 
 				// Store the last sequence number from the server.
-				this.#lastSeqNo = message.serverMessage.value.lastSeqNo;
-				dbg('updating last sequence number to %s', this.#lastSeqNo);
+				if (!this.#lastSeqNo) {
+					dbg('setting last sequence number to %s from server response', message.serverMessage.value.lastSeqNo);
+					this.#lastSeqNo = message.serverMessage.value.lastSeqNo;
+				}
+
+				let messagesToSend: StreamWriteMessage_WriteRequest_MessageData[] = [];
+				for (let seqNo of this.#inflight) {
+					let message = this.#buffer.get(seqNo);
+					if (!message) {
+						dbg('message with seqNo %s not found in buffer, skipping', seqNo);
+						continue; // Skip if the message is not found in the buffer
+					}
+
+					messagesToSend.push(message); // Add the message to the list of messages to send
+				}
+
+				// If inflight messages exist, send them.
+				if (messagesToSend.length > 0) {
+					dbg('sending %d in-flight messages after initialization', messagesToSend.length);
+
+					let batch: StreamWriteMessage_WriteRequest_MessageData[] = [];
+					let batchSize = 0n;
+
+					// Build batch until size limit or no more messages
+					while (messagesToSend.length > 0) {
+						const message = messagesToSend[0];
+
+						// Check if adding this message would exceed the batch size limit
+						if (batchSize + BigInt(message.data.length) > MAX_BATCH_SIZE) {
+							// If the batch already has messages, send it
+							if (batch.length > 0) break;
+
+							// If this is a single message exceeding the limit, we still need to send it
+							dbg('large message of size %d bytes exceeds threshold, sending in its own batch', message.data.length);
+							batch.push(messagesToSend.shift()!);
+							break;
+						}
+
+						// Add message to current batch
+						batch.push(messagesToSend.shift()!);
+						batchSize += BigInt(message.data.length);
+					}
+
+					// Send the batch
+					if (batch.length > 0) {
+						dbg('sending batch of %d messages (%d bytes)', batch.length, batchSize);
+						this.#fromClientEmitter.emit('message', create(StreamWriteMessage_FromClientSchema, {
+							clientMessage: {
+								case: 'writeRequest',
+								value: {
+									messages: batch,
+									codec: this.#options.compression?.codec || Codec.RAW,
+								}
+							}
+						}));
+					}
+				}
 			}
 
 			if (message.serverMessage.case === 'writeResponse') {
