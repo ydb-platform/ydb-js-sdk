@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.14
+
+### Patch Changes
+
+- Update cleanup logic on retries
+
 ## 6.0.0-alpha.13
 
 ### Patch Changes
