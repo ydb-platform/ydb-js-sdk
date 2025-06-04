@@ -385,17 +385,45 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 			return; // No messages to send, exit early.
 		}
 
-		this.#fromClientEmitter.emit('message', create(StreamWriteMessage_FromClientSchema, {
-			clientMessage: {
-				case: 'writeRequest',
-				value: {
-					messages: messagesToSend,
-					codec: this.#options.compression?.codec || Codec.RAW,
-				}
-			}
-		}));
+		// Send the buffered messages in batches to prevent hitting YDB message size limits
+		while (messagesToSend.length > 0) {
+			let batch: StreamWriteMessage_WriteRequest_MessageData[] = [];
+			let batchSize = 0n;
 
-		dbg('sent %d messages from buffer, in-flight count: %d', messagesToSend.length, this.#inflight.size);
+			// Build batch until size limit or no more messages
+			while (messagesToSend.length > 0) {
+				const message = messagesToSend[0];
+
+				// Check if adding this message would exceed the batch size limit
+				if (batchSize + BigInt(message.data.length) > MAX_BATCH_SIZE) {
+					// If the batch already has messages, send it
+					if (batch.length > 0) break;
+
+					// If this is a single message exceeding the limit, we still need to send it
+					dbg('large message of size %d bytes exceeds threshold, sending in its own batch', message.data.length);
+					batch.push(messagesToSend.shift()!);
+					break;
+				}
+
+				// Add message to current batch
+				batch.push(messagesToSend.shift()!);
+				batchSize += BigInt(message.data.length);
+			}
+
+			// Send the batch
+			if (batch.length > 0) {
+				dbg('sending batch of %d messages (%d bytes)', batch.length, batchSize);
+				this.#fromClientEmitter.emit('message', create(StreamWriteMessage_FromClientSchema, {
+					clientMessage: {
+						case: 'writeRequest',
+						value: {
+							messages: batch,
+							codec: this.#options.compression?.codec || Codec.RAW,
+						}
+					}
+				}));
+			}
+		}
 	}
 
 	/**
