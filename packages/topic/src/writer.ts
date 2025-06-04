@@ -10,9 +10,8 @@ import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 
-import { AsyncEventEmitter } from "./aee.ts";
-import { dbg } from "./dbg.ts";
-import { TopicPartitionSession } from "./partition-session.js";
+import { AsyncEventEmitter } from "./aee.js";
+import { dbg } from "./dbg.js";
 
 const UPDATE_TOKEN_INTERVAL_MS = 60 * 1000; // Default update token interval in milliseconds
 const FLUSH_INTERVAL_MS = 1000; // Default flush interval in milliseconds
@@ -33,24 +32,6 @@ type FromServerEmitterMap = {
 	"error": [unknown]
 	"end": []
 }
-
-export type onPartitionSessionStartCallback = (
-	partitionSession: TopicPartitionSession,
-	committedOffset: bigint,
-	partitionOffsets: {
-		start: bigint,
-		end: bigint
-	}
-) => Promise<void | undefined | { readOffset?: bigint, commitOffset?: bigint }>
-
-export type onPartitionSessionStopCallback = (
-	partitionSession: TopicPartitionSession,
-	committedOffset: bigint,
-) => Promise<void>
-
-export type onPartitionSessionEndCallback = (partition: {
-	partitionSession: TopicPartitionSession,
-}) => void
 
 export type onAcknowledgeCallback = (
 	committedOffset: bigint,
@@ -123,8 +104,6 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 	// Last sequence number of the topic,
 	// used to ensure that the writer starts writing messages after the last message in the topic.
 	#lastSeqNo: bigint = 0n;
-	// Partition ID for the writer, used to identify the partition in the topic.
-	#partitionId: bigint = 0n;
 	// Flag to indicate if the sequence number is provided by the user.
 	#isSeqNoProvided: boolean = false;
 
@@ -248,9 +227,6 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 				);
 
 				this.#initialized.resolve(); // Mark the writer as initialized
-
-				// Set partition ID from the server response.
-				this.#partitionId = message.serverMessage.value.partitionId;
 
 				// Store the last sequence number from the server.
 				this.#lastSeqNo = message.serverMessage.value.lastSeqNo;
@@ -504,10 +480,6 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 			seqNo,
 			createdAt,
 			uncompressedSize,
-			partitioning: {
-				case: 'partitionId',
-				value: this.#partitionId,
-			},
 			metadataItems: Object.entries(metadataItems).map(([key, value]) => ({ key, value }))
 		});
 
