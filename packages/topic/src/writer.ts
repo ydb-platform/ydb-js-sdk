@@ -17,7 +17,9 @@ import { TopicPartitionSession } from "./partition-session.js";
 const UPDATE_TOKEN_INTERVAL_MS = 60 * 1000; // Default update token interval in milliseconds
 const FLUSH_INTERVAL_MS = 1000; // Default flush interval in milliseconds
 const MAX_INFLIGHT_COUNT = 1000n; // Default maximum in-flight messages count
-const MAX_BUFFER_BYTES = 1024n * 1024n; // Maximum buffer size in bytes, default is 1MB
+const MAX_BUFFER_BYTES = 256n * 1024n * 1024n; // Maximum buffer size in bytes, default is 256MiB
+const MAX_PAYLOAD_SIZE = 8n * 1024n * 1024n; // Maximum compressed (if compression is enabled) payload size, default is 8MiB
+const MAX_BATCH_SIZE = 48n * 1024n * 1024n; // Maximum batch size in bytes, default is 48MiB
 const MIN_RAW_SIZE = 1024n; // Minimum raw size for compression
 
 type FromClientEmitterMap = {
@@ -76,7 +78,7 @@ export type TopicWriterOptions<Payload = Uint8Array> = {
 	// Maximum size of the buffer in bytes.
 	// If the buffer exceeds this size, the writer will flush the buffer and send the messages to the topic.
 	// This is useful to avoid memory leaks and to ensure that the writer does not hold too many messages in memory.
-	// If not provided, the default buffer size is 1MB.
+	// If not provided, the default buffer size is 256MiB.
 	maxBufferBytes?: bigint
 	// Maximum number of messages that can be in flight at the same time.
 	// If the number of messages in flight exceeds this number, the writer will wait for some messages to be acknowledged before sending new messages.
@@ -489,6 +491,12 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 				// If the payload is smaller than the minimum size, do not compress it
 				this.#options.compression.codec = Codec.RAW;
 			}
+		}
+
+		// Validate the payload size, it should not exceed MAX_PAYLOAD_SIZE
+		// This is a YDB limitation for single message size.
+		if (data.length > MAX_PAYLOAD_SIZE) {
+			throw new Error(`Payload size exceeds ${Number(MAX_PAYLOAD_SIZE / (1024n * 1024n))}MiB limit.`);
 		}
 
 		let message = create(StreamWriteMessage_WriteRequest_MessageDataSchema, {
