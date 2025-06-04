@@ -425,6 +425,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 		let signal = this.#controller.signal
 		await this.#driver.ready(signal)
 
+		// Configure retry strategy for stream consumption
 		let retryConfig: RetryConfig = {
 			signal,
 			budget: Infinity,
@@ -440,13 +441,33 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			await retry(retryConfig, async () => {
 				using outgoing = new AsyncEventEmitter<StreamReadMessage_FromClient>(this.#fromClientEmitter, 'message')
 
+				dbg('connecting to the stream with consumer %s', this.#options.consumer);
+
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
 					.streamRead(outgoing, { signal });
 
-				nextTick(() => {
-					dbg('start consuming topic stream for consumer %s with autoPartitioningSupport=%o', this.#options.consumer, false);
+				// If we have pending commits, we need to reject and drop them before connecting to the stream.
+				if (this.#pendingCommits.size) {
+					dbg('has pending commits, before connecting to the stream, rejecting them');
 
+					for (let [partitionSessionId, pendingCommits] of this.#pendingCommits) {
+						for (let commit of pendingCommits) {
+							commit.reject(new Error(`Pending commit for partition session ${partitionSessionId} rejected before connecting to the stream`));
+						}
+					}
+
+					this.#pendingCommits.clear();
+				}
+
+				// If we have buffered messages, we need to clear them before connecting to the stream.
+				if (this.#buffer.length) {
+					dbg('has %d messages in the buffer before connecting to the stream, clearing it', this.#buffer.length);
+					this.#buffer.length = 0; // Clear the buffer before connecting to the stream
+					this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size
+				}
+
+				nextTick(() => {
 					this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
 						clientMessage: {
 							case: 'initRequest',
@@ -454,57 +475,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 								consumer: this.#options.consumer,
 								topicsReadSettings: this.#topicsReadSettings,
 								autoPartitioningSupport: false
-							}
-						}
-					}))
-				})
-
-				nextTick(() => {
-					if (this.#pendingCommits.size === 0) {
-						return;
-					}
-
-					dbg('has pending commits, after reconnecting will try to commit them');
-
-					let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] = [];
-
-					for (let [partitionSessionId, pendingCommits] of this.#pendingCommits) {
-						let offsets: OffsetsRange[] = [];
-
-						// Optimize storage by merging consecutive offsets into ranges
-						// This reduces network traffic and improves performance
-						let currentRange: OffsetsRange | null = null;
-						for (let pendingCommit of pendingCommits) {
-							if (!currentRange || currentRange.end + 1n < pendingCommit.offset) {
-								// If current range is null or the next offset is not consecutive, create a new range
-								if (currentRange) {
-									offsets.push(currentRange);
-								}
-								currentRange = create(OffsetsRangeSchema, {
-									start: pendingCommit.offset,
-									end: pendingCommit.offset
-								});
-							} else {
-								// Extend the current range
-								currentRange.end = pendingCommit.offset;
-							}
-						}
-
-						if (currentRange) {
-							offsets.push(currentRange);
-						}
-
-						commitOffsets.push(create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
-							partitionSessionId,
-							offsets
-						}));
-					}
-
-					this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
-						clientMessage: {
-							case: 'commitOffsetRequest',
-							value: {
-								commitOffsets
 							}
 						}
 					}))
@@ -763,8 +733,6 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 							this.#fromServerEmitter.removeListener('message', waiter.resolve)
 
-							// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
-
 							// If the signal is already aborted, throw an error immediately.
 							if (signal.aborted) {
 								throw new Error('Read aborted', { cause: signal.reason });
@@ -774,6 +742,8 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							if (this.#disposed) {
 								throw new Error('Reader is disposed');
 							}
+
+							// NB: DO NOT break the loop here, we need to process the buffer even if it is empty.
 						}
 
 						let releasableBufferBytes = 0n;
