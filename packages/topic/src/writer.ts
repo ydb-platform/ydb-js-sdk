@@ -298,7 +298,7 @@ export class TopicWriter<Payload = Uint8Array> implements Disposable, AsyncDispo
 		try {
 			// TODO: handle user errors (for example tx errors). Ex: use abort signal
 			await retry(retryConfig, async () => {
-				this.#inflight.clear(); // Clear in-flight messages at the start of the stream
+				this.#initialized = Promise.withResolvers<void>();
 
 				using outgoing = new AsyncEventEmitter<StreamWriteMessage_FromClient>(this.#fromClientEmitter, 'message')
 
