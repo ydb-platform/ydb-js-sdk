@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.15
+
+### Patch Changes
+
+- Refactor writer: split single class into small parts for better testing
+
 ## 6.0.0-alpha.14
 
 ### Patch Changes
