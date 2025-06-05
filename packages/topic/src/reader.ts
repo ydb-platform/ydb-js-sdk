@@ -823,6 +823,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 
 										// Process the message
 										let message: TopicMessage<Payload> = {
+											codec: batch.codec,
 											partitionSessionId: partitionSession.partitionSessionId,
 											partitionId: partitionSession.partitionId,
 											producerId: batch.producerId,
