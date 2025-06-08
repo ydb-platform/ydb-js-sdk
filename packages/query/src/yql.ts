@@ -20,6 +20,10 @@ export function yql<P extends any[] = unknown[]>(
 	if (Array.isArray(values)) {
 		let skip: number = 0
 		values.forEach((value, i) => {
+			if (value === undefined || value === null) {
+				throw new Error(`Undefined or null value passed to yql. For null use YDB Optional type.`);
+			}
+
 			if (value[SymbolUnsafe]) {
 				skip += 1
 				return
@@ -39,11 +43,15 @@ export function yql<P extends any[] = unknown[]>(
 		let skip: number = 0
 		text += strings.reduce((prev, curr, i) => {
 			let value = values[i]
-			if (value && value[SymbolUnsafe]) {
+			if (value === undefined || value === null) {
+				return prev + curr
+			}
+
+			if (value[SymbolUnsafe]) {
 				skip += 1
 			}
 
-			return prev + curr + (value ? value[SymbolUnsafe] ? value.toString() : `$p${i - skip}` : '')
+			return prev + curr + (value[SymbolUnsafe] ? value.toString() : `$p${i - skip}`)
 		}, '')
 	}
 

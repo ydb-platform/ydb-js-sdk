@@ -1,5 +1,11 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.25
+
+### Patch Changes
+
+- Encode falsy values in yql template string
+
 ## 6.0.0-alpha.24
 
 ### Patch Changes

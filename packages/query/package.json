@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "6.0.0-alpha.24",
+	"version": "6.0.0-alpha.25",
 	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
 	"license": "Apache-2.0",
 	"type": "module",
