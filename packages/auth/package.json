@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth",
-	"version": "6.0.0-alpha.13",
+	"version": "6.0.0-alpha.14",
 	"description": "Authentication providers for YDB: static credentials, tokens, anonymous, and cloud metadata. Integrates with the core driver for secure access.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -58,10 +58,10 @@
 		}
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.2.5",
-		"@ydbjs/api": "6.0.0-alpha.7",
-		"@ydbjs/error": "6.0.0-alpha.7",
-		"@ydbjs/retry": "6.0.0-alpha.10",
+		"@bufbuild/protobuf": "^2.5.2",
+		"@ydbjs/api": "6.0.0-alpha.8",
+		"@ydbjs/error": "6.0.0-alpha.8",
+		"@ydbjs/retry": "6.0.0-alpha.12",
 		"nice-grpc": "^2.1.12"
 	},
 	"publishConfig": {

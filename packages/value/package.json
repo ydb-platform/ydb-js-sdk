@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.0-alpha.11",
+	"version": "6.0.0-alpha.12",
 	"description": "Type-safe conversion and manipulation of YDB values and types. Encode/decode between native JS and YDB, with full support for primitives and complex types.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -13,8 +13,7 @@
 		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
 		"test": "vitest --run",
 		"test:watch": "vitest --watch",
-		"attw": "attw --pack",
-		"prepublishOnly": "npm run clean && npm run build:cjs && npm run build:esm && npm run attw"
+		"attw": "attw --pack"
 	},
 	"exports": {
 		".": {
@@ -94,12 +93,12 @@
 		}
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.2.5",
+		"@bufbuild/protobuf": "^2.5.2",
 		"@date-fns/tz": "^1.2.0",
-		"@ydbjs/api": "6.0.0-alpha.7",
+		"@ydbjs/api": "6.0.0-alpha.8",
 		"date-fns": "^4.1.0",
 		"debug": "^4.4.0",
-		"proposal-decimal": "^20240325.0.0"
+		"proposal-decimal": "^20250528.1.0"
 	},
 	"publishConfig": {
 		"tag": "alpha",

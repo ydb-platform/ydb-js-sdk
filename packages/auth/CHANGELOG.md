@@ -1,5 +1,15 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.14
+
+### Patch Changes
+
+- Fix build cjs issues
+- Updated dependencies
+  - @ydbjs/error@6.0.0-alpha.8
+  - @ydbjs/retry@6.0.0-alpha.12
+  - @ydbjs/api@6.0.0-alpha.8
+
 ## 6.0.0-alpha.13
 
 ### Patch Changes

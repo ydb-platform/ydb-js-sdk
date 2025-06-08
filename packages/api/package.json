@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/api",
-	"version": "6.0.0-alpha.7",
+	"version": "6.0.0-alpha.8",
 	"description": "TypeScript gRPC service definitions and protobuf types for all YDB APIs. Enables strongly-typed client generation and low-level protocol access.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -134,12 +134,12 @@
 		}
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.2.5",
+		"@bufbuild/protobuf": "^2.5.2",
 		"nice-grpc": "^2.1.12"
 	},
 	"devDependencies": {
-		"@bufbuild/buf": "^1.53.0",
-		"@bufbuild/protoc-gen-es": "^2.2.5"
+		"@bufbuild/buf": "^1.54.0",
+		"@bufbuild/protoc-gen-es": "^2.5.2"
 	},
 	"publishConfig": {
 		"tag": "alpha",

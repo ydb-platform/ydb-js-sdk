@@ -1,5 +1,12 @@
 # @ydbjs/value
 
+## 6.0.0-alpha.12
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.8
+
 ## 6.0.0-alpha.11
 
 ### Patch Changes

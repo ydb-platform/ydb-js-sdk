@@ -1,5 +1,13 @@
 # @ydbjs/error
 
+## 6.0.0-alpha.8
+
+### Patch Changes
+
+- Fix build cjs issues
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.8
+
 ## 6.0.0-alpha.7
 
 ### Patch Changes
