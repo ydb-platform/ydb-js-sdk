@@ -54,3 +54,25 @@ test('string with parameters and identifiers', () => {
 		}
 	`)
 })
+
+test(`string with falsy parameters`, () => {
+	let { text, params } = yql`SELECT * FROM table WHERE str = ${""} AND int = ${0} AND bool = ${false};`
+
+	expect(text).eq('SELECT * FROM table WHERE str = $p0 AND int = $p1 AND bool = $p2;')
+	expect(params).toMatchInlineSnapshot(`
+		{
+		  "$p0": Text {
+		    "type": TextType {},
+		    "value": "",
+		  },
+		  "$p1": Int32 {
+		    "type": Int32Type {},
+		    "value": 0,
+		  },
+		  "$p2": Bool {
+		    "type": BoolType {},
+		    "value": false,
+		  },
+		}
+	`)
+})
