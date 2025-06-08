@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-import { MetadataCredentialsProvider } from "../dist/esm/metadata.js";
+import { MetadataCredentialsProvider } from "./metadata.ts";
 
 afterEach(() => {
 	vi.restoreAllMocks()

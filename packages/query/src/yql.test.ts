@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 
 import { Int32 } from '@ydbjs/value/primitive'
-import { identifier, yql } from '../dist/esm/yql.js'
+import { identifier, yql } from './yql.ts'
 
 test('string', () => {
 	let { text } = yql`SELECT 1;`

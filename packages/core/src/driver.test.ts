@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { Driver } from '../dist/esm/driver.js'
+import { Driver } from './driver.ts'
 
 test('database in pathname', async () => {
 	let driver = new Driver('grpc://localhost:1234/path', {

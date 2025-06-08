@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 
-import { defaultRetryConfig } from '@ydbjs/retry'
-import * as strategies from '@ydbjs/retry/strategy'
+import { defaultRetryConfig } from './index.ts'
+import * as strategies from './strategy.ts'
 
 test('fixed', async () => {
 	let strategy = strategies.fixed(1000)

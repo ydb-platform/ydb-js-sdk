@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-import { AccessTokenCredentialsProvider } from "../dist/esm/access-token.js";
+import { AccessTokenCredentialsProvider } from "./access-token.ts";
 
 test('valid token', async () => {
 	let provider = new AccessTokenCredentialsProvider({ token: 'test-token' });

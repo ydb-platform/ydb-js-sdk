@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { retry } from '@ydbjs/retry'
+import { retry } from './index.ts'
 
 let isError = (error: unknown) => error instanceof Error
 
