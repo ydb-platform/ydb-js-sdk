@@ -1,5 +1,12 @@
 # @ydbjs/retry
 
+## 6.0.0-alpha.13
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/error@6.0.0-alpha.9
+
 ## 6.0.0-alpha.12
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.15
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/error@6.0.0-alpha.9
+  - @ydbjs/retry@6.0.0-alpha.13
+
 ## 6.0.0-alpha.14
 
 ### Patch Changes

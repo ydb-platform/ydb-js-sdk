@@ -1,5 +1,11 @@
 # @ydbjs/error
 
+## 6.0.0-alpha.9
+
+### Patch Changes
+
+- Print ydb error issues
+
 ## 6.0.0-alpha.8
 
 ### Patch Changes

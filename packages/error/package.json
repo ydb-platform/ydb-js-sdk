@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/error",
-	"version": "6.0.0-alpha.8",
+	"version": "6.0.0-alpha.9",
 	"description": "Error utilities for YDB: error classification, rich messages, and TypeScript support for robust error handling in YDB applications.",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -23,6 +23,7 @@
 	},
 	"types": "dist/esm/index.d.ts",
 	"dependencies": {
+		"@bufbuild/protobuf": "^2.5.2",
 		"@ydbjs/api": "6.0.0-alpha.8"
 	},
 	"publishConfig": {

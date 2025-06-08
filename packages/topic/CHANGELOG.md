@@ -1,5 +1,14 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.17
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/error@6.0.0-alpha.9
+  - @ydbjs/core@6.0.0-alpha.18
+  - @ydbjs/retry@6.0.0-alpha.13
+
 ## 6.0.0-alpha.16
 
 ### Patch Changes
