@@ -31,15 +31,16 @@ export async function setup(project: TestProject) {
 		return
 	}
 
-	await $`docker run --rm --detach --publish 2135 --publish 2136 --publish 8765 --publish 9092 --hostname localhost --platform linux/amd64 --name ydb ydbplatform/local-ydb:25.1.1.3`
+	let containerID = await $`docker run --rm --detach --publish 2135 --publish 2136 --publish 8765 --publish 9092 --hostname localhost --platform linux/amd64 ydbplatform/local-ydb:25.1.1.3`.text()
+	containerID = containerID.trim()
 
 	let signal = AbortSignal.timeout(30 * 1000)
-	while ((await $`docker inspect -f {{.State.Health.Status}} ydb`.text()).trim() !== 'healthy') {
+	while ((await $`docker inspect -f {{.State.Health.Status}} ${containerID}`.text()).trim() !== 'healthy') {
 		signal.throwIfAborted()
 		await $`sleep 1`
 	}
 
-	let [ipv4, _ipv6] = await $`docker port ydb 2136/tcp`.lines()
+	let [ipv4, _ipv6] = await $`docker port ${containerID} 2136/tcp`.lines()
 
 	project.provide('connectionString', `grpc://${ipv4}/local`)
 	project.provide('credentialsUsername', 'root')
