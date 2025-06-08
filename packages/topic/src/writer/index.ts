@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { nextTick } from "node:process";
 
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
@@ -9,15 +8,15 @@ import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import debug from "debug";
 
-import { _flush } from "./_flush.ts";
-import { _get_producer_id } from "./_gen_producer_id.ts";
-import { _on_init_response } from "./_init_reponse.ts";
-import { _send_init_request } from "./_init_request.ts";
-import { _write } from "./_write.ts";
-import { _on_write_response } from "./_write_response.ts";
-import { MAX_BUFFER_SIZE, MIN_RAW_SIZE } from "./constants.ts";
-import type { OutgoingEventMap } from "./types.ts";
-import { _send_update_token_request } from "./_update_token.ts";
+import { PQueue } from "../queue.js";
+import { _flush } from "./_flush.js";
+import { _get_producer_id } from "./_gen_producer_id.js";
+import { _on_init_response } from "./_init_reponse.js";
+import { _send_init_request } from "./_init_request.js";
+import { _send_update_token_request } from "./_update_token.js";
+import { _write } from "./_write.js";
+import { _on_write_response } from "./_write_response.js";
+import { MAX_BUFFER_SIZE, MIN_RAW_SIZE } from "./constants.js";
 
 export type TopicWriterOptions<Payload = Uint8Array> = {
 	// Path to the topic to write to.
@@ -170,7 +169,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 
 		for (const item of qq) {
 			_write({
-				ee: outgoing.emitter,
+				queue: outgoing,
 				codec: options.compression?.codec || Codec.RAW,
 				lastSeqNo: (lastSeqNo || item.extra.seqNo)!,
 				buffer,
@@ -195,18 +194,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 	}
 
 	// Create an outgoing stream that will be used to send messages to the topic service.
-	let outgoing = {
-		emitter: new EventEmitter<OutgoingEventMap>(),
-		[Symbol.asyncIterator]: async function* (): AsyncGenerator<StreamWriteMessage_FromClient, void, unknown> {
-			dbg('starting outgoing stream');
-
-			for await (let [event] of EventEmitter.on(this.emitter, 'message', { signal, close: ['close'] })) {
-				yield event;
-			}
-
-			dbg('outgoing stream closed');
-		}
-	}
+	let outgoing = new PQueue<StreamWriteMessage_FromClient>();
 
 	// Flush the buffer periodically to ensure that messages are sent to the topic.
 	// This is useful to avoid holding too many messages in memory and to ensure that the writer does not leak memory.
@@ -215,7 +203,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		await driver.ready(signal);
 
 		_flush({
-			ee: outgoing.emitter,
+			queue: outgoing,
 			codec: options.compression?.codec || Codec.RAW,
 			buffer,
 			inflight,
@@ -230,7 +218,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		await driver.ready(signal);
 
 		_send_update_token_request({
-			ee: outgoing.emitter,
+			queue: outgoing,
 			token: await driver.token,
 		})
 	}, options.updateTokenIntervalMs, { signal });
@@ -279,7 +267,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 					dbg('sending init request to server, producer: %s', options.producer);
 
 					_send_init_request({
-						ee: outgoing.emitter,
+						queue: outgoing,
 						topic: options.topic,
 						producer: options.producer,
 						getLastSeqNo: options.getLastSeqNo
@@ -287,7 +275,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 				})
 
 				for await (const chunk of stream) {
-					dbg('receive message from server: %s, status: %d', chunk.serverMessage.value?.$typeName, chunk.status);
+					dbg('receive message from server: %s, status: %d, payload: %o', chunk.$typeName, chunk.status, chunk.serverMessage.value);
 
 					if (chunk.status !== StatusIds_StatusCode.SUCCESS) {
 						let error = new YDBError(chunk.status || StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED, chunk.issues || [])
@@ -297,7 +285,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 					switch (chunk.serverMessage.case) {
 						case 'initResponse':
 							_on_init_response({
-								ee: outgoing.emitter,
+								queue: outgoing,
 								codec: options.compression?.codec || Codec.RAW,
 								buffer,
 								inflight,
@@ -312,7 +300,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 							break
 						case 'writeResponse':
 							_on_write_response({
-								ee: outgoing.emitter,
+								queue: outgoing,
 								codec: options.compression?.codec || Codec.RAW,
 								buffer,
 								inflight,
@@ -328,7 +316,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 			dbg('error occurred while streaming: %O', err);
 		} finally {
 			dbg('stream closed');
-			outgoing.emitter.emit('close', undefined);
+			outgoing.close()
 			ac.abort();
 		}
 	})()
@@ -343,21 +331,11 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		}
 
 		while (buffer.size > 0) {
-			_flush({
-				ee: outgoing.emitter,
-				codec: options.compression?.codec || Codec.RAW,
-				buffer,
-				inflight,
-				updateBufferSize,
-			})
+			dbg('waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d', inflight.size, buffer.size);
 
-			while (inflight.size > 0) {
-				dbg('waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d', inflight.size, buffer.size);
-
-				// Wait for all pending acks to be resolved before flushing.
-				// eslint-disable-next-line no-await-in-loop
-				await Promise.all(Array.from(pendingAcks.values()).map(pendingAck => pendingAck.promise))
-			}
+			// Wait for all pending acks to be resolved before flushing.
+			// eslint-disable-next-line no-await-in-loop
+			await Promise.all(Array.from(pendingAcks.values()).map(pendingAck => pendingAck.promise))
 		}
 
 		return lastSeqNo;
@@ -396,7 +374,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		}
 
 		return _write({
-			ee: outgoing.emitter,
+			queue: outgoing,
 			codec: options.compression?.codec || Codec.RAW,
 			lastSeqNo: (lastSeqNo || extra.seqNo)!,
 			buffer,
@@ -422,6 +400,8 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 			return;
 		}
 
+		dbg('closing writer, reason: %O, lastSeqNo: %O', reason, lastSeqNo);
+
 		ac.abort();
 
 		// Clear the buffer and inflight messages.
@@ -429,6 +409,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		bufferSize = 0n;
 
 		inflight.clear();
+		outgoing.close();
 
 		for (const pendingAck of pendingAcks.values()) {
 			pendingAck.reject(reason || new Error('Writer closed'));
@@ -456,10 +437,12 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		close,
 		[Symbol.dispose]: () => {
 			close(new Error('Writer disposed'));
+			outgoing[Symbol.dispose]();
 		},
 		[Symbol.asyncDispose]: async () => {
 			await flush();
 			close(new Error('Writer disposed'));
+			outgoing[Symbol.dispose]();
 		}
 	}
 }

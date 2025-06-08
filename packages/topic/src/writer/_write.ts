@@ -1,13 +1,12 @@
-import { EventEmitter } from "node:events";
-
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { Codec, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
-import { _flush } from "./_flush.ts";
-import { MAX_PAYLOAD_SIZE, MIN_RAW_SIZE } from "./constants.ts";
+import { Codec, type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
+import type { PQueue } from "../queue.js";
+import { _flush } from "./_flush.js";
+import { MAX_PAYLOAD_SIZE, MIN_RAW_SIZE } from "./constants.js";
 
 export function _write<Payload = Uint8Array>(ctx: {
-	readonly ee: EventEmitter<{ message: [StreamWriteMessage_WriteRequest_MessageData] } | { close: [void] }>, // Event emitter for sending messages
+	readonly queue: PQueue<StreamWriteMessage_FromClient>,
 
 	readonly codec: Codec, // Codec to use for compression
 	readonly lastSeqNo: bigint, // Last sequence number used
@@ -59,7 +58,7 @@ export function _write<Payload = Uint8Array>(ctx: {
 		_flush(ctx); // Flush the buffer if it exceeds the maximum size.
 	}
 
-	let seqNo = msg.seqNo ?? (ctx.lastSeqNo + 1n);
+	let seqNo = msg.seqNo ?? ((ctx.lastSeqNo ?? 0n) + 1n);
 	let createdAt = timestampFromDate(msg.createdAt ?? new Date());
 	let metadataItems = Object.entries(msg.metadataItems || {}).map(([key, value]) => ({ key, value }));
 	let uncompressedSize = BigInt(data.length);

@@ -1,16 +1,14 @@
-import { EventEmitter } from "node:events";
-
 import { create } from "@bufbuild/protobuf";
-import { StreamWriteMessage_FromClientSchema } from "@ydbjs/api/topic";
-import type { OutgoingEventMap } from "./types.ts";
+import { type StreamWriteMessage_FromClient, StreamWriteMessage_FromClientSchema } from "@ydbjs/api/topic";
+import type { PQueue } from "../queue.js";
 
 export function _send_init_request(ctx: {
-	readonly ee: EventEmitter<OutgoingEventMap>;
+	readonly queue: PQueue<StreamWriteMessage_FromClient>,
 	readonly topic: string;
 	readonly producer?: string;
 	readonly getLastSeqNo?: boolean;
 }) {
-	return ctx.ee.emit('message', create(StreamWriteMessage_FromClientSchema, {
+	return ctx.queue.push(create(StreamWriteMessage_FromClientSchema, {
 		clientMessage: {
 			case: 'initRequest',
 			value: {
@@ -19,5 +17,5 @@ export function _send_init_request(ctx: {
 				getLastSeqNo: ctx.getLastSeqNo,
 			}
 		}
-	}));
+	}), 100);
 }

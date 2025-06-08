@@ -1,11 +1,9 @@
-import { EventEmitter } from "node:events";
-
-import type { Codec, StreamWriteMessage_InitResponse, StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
-import { _flush } from "./_flush.ts";
-import type { OutgoingEventMap } from "./types.ts";
+import type { Codec, StreamWriteMessage_FromClient, StreamWriteMessage_InitResponse, StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
+import type { PQueue } from "../queue.js";
+import { _flush } from "./_flush.js";
 
 export function _on_init_response(ctx: {
-	readonly ee: EventEmitter<OutgoingEventMap>,
+	readonly queue: PQueue<StreamWriteMessage_FromClient>,
 	readonly codec: Codec,
 	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
 	readonly inflight: Set<bigint>; // Set of sequence numbers that are currently in-flight

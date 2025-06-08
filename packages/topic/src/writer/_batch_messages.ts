@@ -1,5 +1,5 @@
 import type { StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
-import { MAX_BATCH_SIZE } from "./constants.ts";
+import { MAX_BATCH_SIZE } from "./constants.js";
 
 export function _batch_messages(
 	messages: StreamWriteMessage_WriteRequest_MessageData[]
