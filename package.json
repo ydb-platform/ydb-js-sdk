@@ -15,7 +15,7 @@
 		"test:watch": "vitest --watch --project !e2e",
 		"test:e2e": "vitest --run --project e2e",
 		"test:e2e:watch": "vitest --watch --project e2e",
-		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
+		"publish-packages": "turbo run test && turbo run clean build attw && changeset version && changeset publish"
 	},
 	"dependencies": {
 		"@types/node": "^22.15.30"
