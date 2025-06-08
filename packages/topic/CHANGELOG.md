@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.18
+
+### Patch Changes
+
+- Migrate to PQueue for storing end sending message from client
+
 ## 6.0.0-alpha.17
 
 ### Patch Changes
