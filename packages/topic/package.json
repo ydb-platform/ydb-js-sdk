@@ -23,6 +23,10 @@
 		"./reader": {
 			"require": "./dist/cjs/reader.js",
 			"import": "./dist/esm/reader.js"
+		},
+		"./writer": {
+			"require": "./dist/cjs/writer/index.js",
+			"import": "./dist/esm/writer/index.js"
 		}
 	},
 	"types": "dist/esm/index.d.ts",
@@ -33,6 +37,9 @@
 			],
 			"reader": [
 				"./dist/cjs/reader.d.ts"
+			],
+			"writer": [
+				"./dist/cjs/writer/index.d.ts"
 			]
 		}
 	},
