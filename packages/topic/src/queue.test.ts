@@ -52,4 +52,20 @@ describe('PQueue', () => {
 
 		await expect(queue.shift()).rejects.toThrow('Queue closed');
 	});
+
+	it('should keep unconsumed messages after consumer restart', async () => {
+		const queue = new PQueue<number>();
+
+		const shiftPromise = queue.shift();
+		queue.restartConsumer();
+		queue.push(1, 1);
+		queue.push(2, 2);
+
+		await expect(shiftPromise).rejects.toThrow('Consumer restarted');
+
+		expect(queue.size).toBe(2);
+		expect(await queue.shift()).toBe(2);
+		expect(await queue.shift()).toBe(1);
+		expect(queue.size).toBe(0);
+	});
 });
