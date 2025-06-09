@@ -3,7 +3,7 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { Codec, type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
 import type { PQueue } from "../queue.js";
 import { _flush } from "./_flush.js";
-import { MAX_PAYLOAD_SIZE, MIN_RAW_SIZE } from "./constants.js";
+import { MAX_PAYLOAD_SIZE } from "./constants.js";
 
 export function _write<Payload = Uint8Array>(ctx: {
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
@@ -15,7 +15,6 @@ export function _write<Payload = Uint8Array>(ctx: {
 	readonly inflight: Set<bigint>; // Set of sequence numbers that are currently in-flight
 	readonly pendingAcks: Map<bigint, { resolve: (seqNo: bigint) => void }>; // Map of sequence numbers to pending ack resolvers
 
-	readonly minRawSize: bigint, // Minimum size for the payload before compression is applied
 	readonly bufferSize: bigint, // Current size of the buffer in bytes
 	readonly maxBufferSize: bigint, // Maximum size of the buffer in bytes
 
@@ -37,7 +36,7 @@ export function _write<Payload = Uint8Array>(ctx: {
 	let data = ctx.encode(msg.data);
 
 	// If compression is enabled, check if the payload should be compressed
-	if (ctx.codec !== Codec.RAW && data.length >= (ctx.minRawSize || MIN_RAW_SIZE)) {
+	if (ctx.codec !== Codec.RAW) {
 		if (!ctx.compress) {
 			throw new Error('Compression function is required when codec is not RAW');
 		}

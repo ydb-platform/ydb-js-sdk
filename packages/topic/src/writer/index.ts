@@ -16,7 +16,7 @@ import { _send_init_request } from "./_init_request.js";
 import { _send_update_token_request } from "./_update_token.js";
 import { _write } from "./_write.js";
 import { _on_write_response } from "./_write_response.js";
-import { MAX_BUFFER_SIZE, MIN_RAW_SIZE } from "./constants.js";
+import { MAX_BUFFER_SIZE } from "./constants.js";
 
 export type TopicWriterOptions<Payload = Uint8Array> = {
 	// Path to the topic to write to.
@@ -102,7 +102,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 	options.flushIntervalMs ??= 60_000; // Default is 60 seconds.
 	options.updateTokenIntervalMs ??= 60_000; // Default is 60 seconds.
 
-	let dbg = debug('ydbjs').extend('topic').extend('writer').extend(options.topic.replace(/\//g, '-'));
+	let dbg = debug('ydbjs').extend('topic').extend('writer')
 
 	// Last sequence number of the topic.
 	// Automatically get the last sequence number of the topic before starting to write messages.
@@ -175,7 +175,6 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 				buffer,
 				inflight,
 				pendingAcks,
-				minRawSize: options.compression?.minRawSize || MIN_RAW_SIZE,
 				bufferSize,
 				maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
 				encode: options.encode || ((data: Payload) => data as Uint8Array),
@@ -380,7 +379,6 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 			buffer,
 			inflight,
 			pendingAcks,
-			minRawSize: options.compression?.minRawSize || MIN_RAW_SIZE,
 			bufferSize,
 			maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
 			encode: options.encode || ((data: Payload) => data as Uint8Array),
