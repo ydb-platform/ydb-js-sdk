@@ -12,11 +12,13 @@ import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import type { StringValue } from "ms";
 import ms from "ms";
+import debug from "debug";
 
 import { AsyncEventEmitter } from "./aee.js";
-import { dbg } from "./dbg.js";
 import { type TopicMessage } from "./message.js";
 import { TopicPartitionSession } from "./partition-session.js";
+
+const dbg = debug('ydbjs').extend('topic').extend('reader')
 
 type FromClientEmitterMap = {
 	"message": [StreamReadMessage_FromClient]
@@ -103,7 +105,7 @@ export type TopicReaderOptions<Payload = Uint8Array> = {
 	// Compression options for the payload.
 	compression?: {
 		// Custom decompression function that can be used to decompress the payload before emitting it.
-		decompress?(codec: Codec, payload: Uint8Array): Uint8Array | Promise<Uint8Array>
+		decompress?(codec: Codec, payload: Uint8Array, uncompressedSize: bigint): Uint8Array | Promise<Uint8Array>
 	}
 	// Custom decode function to decode the payload.
 	// If not provided, the payload will be returned as is.
@@ -813,7 +815,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 											// Decompress the message data using the provided decompress function
 											try {
 												// eslint-disable-next-line no-await-in-loop
-												data = await this.#options.compression.decompress(batch.codec, msg.data);
+												data = await this.#options.compression.decompress(batch.codec, msg.data, msg.uncompressedSize);
 											} catch (err) {
 												dbg('error: decompression failed for message with codec %s: %O', batch.codec, err);
 
