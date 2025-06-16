@@ -1,14 +1,15 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { Codec, type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
+import { type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
+import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
 import { _flush } from "./_flush.js";
 import { MAX_PAYLOAD_SIZE } from "./constants.js";
 
-export function _write<Payload = Uint8Array>(ctx: {
+export function _write(ctx: {
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
 
-	readonly codec: Codec, // Codec to use for compression
+	readonly codec?: CompressionCodec, // Codec to use for compression
 	readonly lastSeqNo: bigint, // Last sequence number used
 
 	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
@@ -18,31 +19,15 @@ export function _write<Payload = Uint8Array>(ctx: {
 	readonly bufferSize: bigint, // Current size of the buffer in bytes
 	readonly maxBufferSize: bigint, // Maximum size of the buffer in bytes
 
-	encode: (data: Payload) => Uint8Array, // Optional encoding function for the payload
-	compress: (data: Uint8Array) => Uint8Array // Compression function if codec is not RAW
-
 	updateLastSeqNo: (seqNo: bigint) => void;
 	updateBufferSize: (bytes: bigint) => void; // Function to update the buffer size
 }, msg: {
-	data: Payload,
+	data: Uint8Array,
 	seqNo?: bigint,
 	createdAt?: Date,
 	metadataItems?: Record<string, Uint8Array>
 }): Promise<bigint> {
-	if (ctx.codec === Codec.UNSPECIFIED) {
-		throw new Error('Codec must be specified.');
-	}
-
-	let data = ctx.encode(msg.data);
-
-	// If compression is enabled, check if the payload should be compressed
-	if (ctx.codec !== Codec.RAW) {
-		if (!ctx.compress) {
-			throw new Error('Compression function is required when codec is not RAW');
-		}
-
-		data = ctx.compress(data)
-	}
+	let data = ctx.codec ? ctx.codec.compress(msg.data) : msg.data;
 
 	// Validate the payload size, it should not exceed MAX_PAYLOAD_SIZE
 	// This is a YDB limitation for single message size.

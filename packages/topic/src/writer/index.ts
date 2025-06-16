@@ -8,6 +8,7 @@ import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import debug from "debug";
 
+import { type CompressionCodec, defaultCodecMap } from "../codec.js";
 import { PQueue } from "../queue.js";
 import { _flush } from "./_flush.js";
 import { _get_producer_id } from "./_gen_producer_id.js";
@@ -18,10 +19,14 @@ import { _write } from "./_write.js";
 import { _on_write_response } from "./_write_response.js";
 import { MAX_BUFFER_SIZE } from "./constants.js";
 
-export type TopicWriterOptions<Payload = Uint8Array> = {
+export type TopicWriterOptions = {
 	// Path to the topic to write to.
 	// Example: "/Root/my-topic"
 	topic: string
+	// Compression codec to use for writing messages.
+	// If not provided, the RAW codec will be used by default.
+	// Default supported codecs: RAW_CODEC, GZIP_CODEC, ZSTD_CODEC.
+	codec?: CompressionCodec
 	// The producer name to use for writing messages.
 	// If not provided, a random producer name will be generated.
 	// If provided, the producer name will be used to identify the writer.
@@ -46,40 +51,21 @@ export type TopicWriterOptions<Payload = Uint8Array> = {
 	// If the number of messages in flight exceeds this number, the writer will wait for some messages to be acknowledged before sending new messages.
 	// This is useful to avoid overwhelming the topic with too many messages at once.
 	// If not provided, the default is 1000 messages.
-	maxInflightCount?: bigint
+	maxInflightCount?: number
 	// The Interval in milliseconds to flush the buffer automatically.
 	// If not provided, the writer will not flush the buffer automatically.
 	// This is useful to ensure that the writer does not hold too many messages in memory.
 	flushIntervalMs?: number
-	// Compression options for the payload.
-	compression?: {
-		codec: Codec,
-		// Minimum raw size to compress, if the payload is smaller than this size, it will not be compressed.
-		// This is useful to avoid compressing small payloads that do not benefit from compression.
-		// Default is 1024 bytes.
-		minRawSize?: bigint
-		// Custom compression function that can be used to compress the payload before sending it to the topic.
-		// This function should return a compressed Uint8Array payload.
-		// If not provided, the default compression function will be used.
-		// The default compression function will use the codec specified in the options.
-		// If the codec is Codec.RAW, the payload will not be compressed.
-		compress(payload: Uint8Array): Uint8Array
-	}
-	// Whether to handle SIGINT signal and close the writer gracefully.
-	// If true, the writer will listen for SIGINT signal and close the writer gracefully.
-	handleSIGINT?: boolean
 	// Retry configuration for the writer.
 	retryConfig?(signal: AbortSignal): RetryConfig
-	// Custom encoding function that can be used to transform the payload before compressing or sending it to the topic.
-	encode?(payload: Payload): Uint8Array
 	// Callback that is called when writer receives an acknowledgment for a message.
 	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
 }
 
-export interface TopicWriter<Payload = Uint8Array> extends Disposable, AsyncDisposable {
+export interface TopicWriter extends Disposable, AsyncDisposable {
 	// Write a message to the topic.
 	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
-	write(payload: Payload | Uint8Array, extra?: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> }): Promise<bigint>;
+	write(payload: Uint8Array, extra?: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> }): Promise<bigint>;
 	// Flush the buffer and send all messages to the topic.
 	// Returns a promise that resolves to the last sequence number of the topic after flushing.
 	flush(): Promise<bigint | undefined>;
@@ -88,7 +74,7 @@ export interface TopicWriter<Payload = Uint8Array> extends Disposable, AsyncDisp
 	close(reason?: Error): void;
 }
 
-export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options: TopicWriterOptions<Payload>): TopicWriter<Payload> {
+export function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
 	// Generate a random producer name if not provided.
 	options.producer ??= _get_producer_id();
 	// Automatically get the last sequence number of the topic before starting to write messages.
@@ -103,6 +89,9 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 	options.updateTokenIntervalMs ??= 60_000; // Default is 60 seconds.
 
 	let dbg = debug('ydbjs').extend('topic').extend('writer')
+
+	// If the user does not provide a compression codec, use the RAW codec by default.
+	let codec: CompressionCodec = options.codec ?? defaultCodecMap.get(Codec.RAW)!;
 
 	// Last sequence number of the topic.
 	// Automatically get the last sequence number of the topic before starting to write messages.
@@ -140,7 +129,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 	// Queue for messages to be written.
 	// This is used to store messages that are not yet sent to the topic service.
 	let queue: {
-		payload: Payload; extra: any;
+		payload: Uint8Array; extra: any;
 		resolve: (value: bigint) => void;
 		reject: (error: unknown) => void;
 	}[] = [];
@@ -170,15 +159,13 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 		for (const item of qq) {
 			_write({
 				queue: outgoing,
-				codec: options.compression?.codec || Codec.RAW,
+				codec: codec,
 				lastSeqNo: (lastSeqNo || item.extra.seqNo)!,
 				buffer,
 				inflight,
 				pendingAcks,
 				bufferSize,
 				maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
-				encode: options.encode || ((data: Payload) => data as Uint8Array),
-				compress: options.compression?.compress || ((data: Uint8Array) => data),
 				updateLastSeqNo,
 				updateBufferSize,
 			}, {
@@ -203,7 +190,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 
 		_flush({
 			queue: outgoing,
-			codec: options.compression?.codec || Codec.RAW,
+			codec: codec,
 			buffer,
 			inflight,
 			updateBufferSize,
@@ -269,7 +256,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 						queue: outgoing,
 						topic: options.topic,
 						producer: options.producer,
-						getLastSeqNo: options.getLastSeqNo
+						getLastSeqNo: true
 					});
 				})
 
@@ -285,7 +272,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 						case 'initResponse':
 							_on_init_response({
 								queue: outgoing,
-								codec: options.compression?.codec || Codec.RAW,
+								codec: codec,
 								buffer,
 								inflight,
 								lastSeqNo,
@@ -300,7 +287,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 						case 'writeResponse':
 							_on_write_response({
 								queue: outgoing,
-								codec: options.compression?.codec || Codec.RAW,
+								codec: codec,
 								buffer,
 								inflight,
 								pendingAcks,
@@ -346,7 +333,7 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 	// Promise will be resolved when the message is acknowledged by the topic service.
 	// Returns the sequence number of the message that was written to the topic.
 	// If the sequence number is not provided, it will use the last sequence number of the topic.
-	function write(payload: Payload, extra: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> } = {}): Promise<bigint> {
+	function write(payload: Uint8Array, extra: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> } = {}): Promise<bigint> {
 		if (isClosed) {
 			throw new Error('Writer is closed, cannot write messages');
 		}
@@ -374,15 +361,13 @@ export function createTopicWriter<Payload = Uint8Array>(driver: Driver, options:
 
 		return _write({
 			queue: outgoing,
-			codec: options.compression?.codec || Codec.RAW,
-			lastSeqNo: (lastSeqNo || extra.seqNo)!,
+			codec: codec,
 			buffer,
 			inflight,
+			lastSeqNo: (lastSeqNo || extra.seqNo)!,
 			pendingAcks,
 			bufferSize,
 			maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
-			encode: options.encode || ((data: Payload) => data as Uint8Array),
-			compress: options.compression?.compress || ((data: Uint8Array) => data),
 			updateLastSeqNo,
 			updateBufferSize,
 		}, { data: payload, seqNo: extra.seqNo, createdAt: extra.createdAt, metadataItems: extra.metadataItems });

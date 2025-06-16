@@ -1,10 +1,11 @@
-import type { Codec, StreamWriteMessage_FromClient, StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteResponse } from "@ydbjs/api/topic";
+import type { StreamWriteMessage_FromClient, StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteResponse } from "@ydbjs/api/topic";
+import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
 import { _flush } from "./_flush.js";
 
 export function _on_write_response(ctx: {
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
-	readonly codec: Codec,
+	readonly codec?: CompressionCodec, // Codec to use for compression
 	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
 	readonly inflight: Set<bigint>; // Set of sequence numbers that are currently in-flight
 	readonly pendingAcks: Map<bigint, { resolve: (seqNo: bigint) => void }>; // Map of sequence numbers to pending ack resolvers

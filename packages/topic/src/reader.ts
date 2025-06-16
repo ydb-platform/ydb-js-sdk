@@ -3,19 +3,20 @@ import { EventEmitter, once } from "node:events";
 import { nextTick } from "node:process";
 
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
-import { type Duration, DurationSchema, type Timestamp, timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { type Duration, DurationSchema, type Timestamp, timestampFromDate, timestampMs } from "@bufbuild/protobuf/wkt";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
 import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
+import debug from "debug";
 import type { StringValue } from "ms";
 import ms from "ms";
-import debug from "debug";
 
 import { AsyncEventEmitter } from "./aee.js";
-import { type TopicMessage } from "./message.js";
+import { type CodecMap, defaultCodecMap } from "./codec.js";
+import { TopicMessage } from "./message.js";
 import { TopicPartitionSession } from "./partition-session.js";
 
 const dbg = debug('ydbjs').extend('topic').extend('reader')
@@ -92,25 +93,18 @@ type TopicCommitPromise = {
 	reject: (reason?: any) => void
 }
 
-export type TopicReaderOptions<Payload = Uint8Array> = {
+export type TopicReaderOptions = {
 	// Topic path or an array of topic sources.
 	topic: string | TopicReaderSource | TopicReaderSource[]
 	// Consumer name.
 	consumer: string
+	// Compression codecs to use for reading messages.
+	codecMap?: CodecMap,
 	// Maximum size of the internal buffer in bytes.
 	// If not provided, the default is 1MB.
 	maxBufferBytes?: bigint
 	// How often to update the token in milliseconds.
 	updateTokenIntervalMs?: number
-	// Compression options for the payload.
-	compression?: {
-		// Custom decompression function that can be used to decompress the payload before emitting it.
-		decompress?(codec: Codec, payload: Uint8Array, uncompressedSize: bigint): Uint8Array | Promise<Uint8Array>
-	}
-	// Custom decode function to decode the payload.
-	// If not provided, the payload will be returned as is.
-	// Decode function calls after decompression, if compression is used.
-	decode?(payload: Uint8Array): Payload
 	// Hooks for partition session events.
 	// Called when a partition session is started.
 	// It can be used to initialize the partition session, for example, to set the read offset.
@@ -123,15 +117,17 @@ export type TopicReaderOptions<Payload = Uint8Array> = {
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
-export class TopicReader<Payload = Uint8Array> implements Disposable {
+export class TopicReader implements Disposable {
 	#driver: Driver;
-	#options: TopicReaderOptions<Payload>;
+	#options: TopicReaderOptions;
 	#disposed = false;
+
+	#codecs: CodecMap = defaultCodecMap;
 
 	#controller: AbortController = new AbortController();
 	#updateTokenTicker: NodeJS.Timeout
 
-	#buffer: StreamReadMessage_ReadResponse[] = [];
+	#buffer: StreamReadMessage_ReadResponse[] = []; // Internal buffer for incoming messages
 	#maxBufferSize: bigint = 1024n * 1024n; // Default buffer size is 1MB
 	#freeBufferSize: bigint = 1024n * 1024n; // Default buffer size is 1MB
 
@@ -149,7 +145,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 * @param driver - The YDB driver instance to use for communication with the YDB server.
 	 * @param options - Options for the topic reader, including topic path, consumer name, and optional callbacks.
 	 */
-	constructor(driver: Driver, options: TopicReaderOptions<Payload>) {
+	constructor(driver: Driver, options: TopicReaderOptions) {
 		this.#driver = driver;
 		this.#options = { ...options };
 
@@ -166,9 +162,11 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 			this.#freeBufferSize = this.#maxBufferSize; // Initialize buffer size to max buffer size
 		}
 
-		if (!options.decode) {
-			// Default decode function that returns the payload as is.
-			this.#options.decode = (payload: Uint8Array) => payload as Payload;
+		// Initialize codecs.
+		if (this.#options.codecMap) {
+			for (let [key, codec] of this.#options.codecMap) {
+				this.#codecs.set(key, codec);
+			}
 		}
 
 		// Start consuming the stream immediately.
@@ -624,7 +622,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 	 * @param {AbortSignal} [options.signal] - An AbortSignal to cancel the read operation. If provided, it will merge with the reader's controller signal.
 	 * @returns {AsyncIterable<TopicMessage[]>} An async iterable that yields TopicMessage[] objects.
 	 */
-	read(options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}): AsyncIterable<TopicMessage<Payload>[]> {
+	read(options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}): AsyncIterable<TopicMessage[]> {
 		let limit = options.limit || Infinity,
 			signal = options.signal,
 			waitMs = options.waitMs || 60_000;
@@ -720,7 +718,7 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 							return { value: [], done: true };
 						}
 
-						let messages: TopicMessage<Payload>[] = [];
+						let messages: TopicMessage[] = [];
 
 						// Wait for the next readResponse or until the timeout expires.
 						if (!this.#buffer.length) {
@@ -804,18 +802,17 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 											break;
 										}
 
-										let data = msg.data;
+										let payload = msg.data;
 										if (batch.codec !== Codec.UNSPECIFIED) {
-											if (!this.#options.compression || !this.#options.compression.decompress) {
-												dbg('error: cannot decompress message with codec %s, no decompression function provided', batch.codec);
-
-												throw new Error(`Cannot decompress message with codec ${batch.codec}, no decompression function provided`);
+											if (!this.#codecs.has(batch.codec)) {
+												dbg('error: codec %s is not supported', batch.codec);
+												throw new Error(`Codec ${batch.codec} is not supported`);
 											}
 
 											// Decompress the message data using the provided decompress function
 											try {
 												// eslint-disable-next-line no-await-in-loop
-												data = await this.#options.compression.decompress(batch.codec, msg.data, msg.uncompressedSize);
+												payload = await this.#codecs.get(batch.codec)!.decompress(msg.data);
 											} catch (err) {
 												dbg('error: decompression failed for message with codec %s: %O', batch.codec, err);
 
@@ -824,19 +821,18 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 										}
 
 										// Process the message
-										let message: TopicMessage<Payload> = {
+										let message: TopicMessage = new TopicMessage({
+											partitionSession: partitionSession,
+											producer: batch.producerId,
+											payload: payload,
 											codec: batch.codec,
-											partitionSessionId: partitionSession.partitionSessionId,
-											partitionId: partitionSession.partitionId,
-											producerId: batch.producerId,
 											seqNo: msg.seqNo,
 											offset: msg.offset,
-											payload: this.#options.decode?.(data) || data as Payload,
 											uncompressedSize: msg.uncompressedSize,
-											createdAt: msg.createdAt ? timestampDate(msg.createdAt) : undefined,
-											writtenAt: batch.writtenAt ? timestampDate(batch.writtenAt) : undefined,
+											createdAt: msg.createdAt ? timestampMs(msg.createdAt) : undefined,
+											writtenAt: batch.writtenAt ? timestampMs(batch.writtenAt) : undefined,
 											metadataItems: msg.metadataItems ? Object.fromEntries(msg.metadataItems.map(item => [item.key, item.value])) : undefined,
-										}
+										})
 
 										messages.push(message);
 									}
