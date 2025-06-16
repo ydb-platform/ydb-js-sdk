@@ -1,8 +1,8 @@
-export class PQueue<T> {
-	private heap: { value: T; priority: number }[] = [];
+export class PQueue<T> implements AsyncIterable<T>, Disposable {
 	private closed = false;
-	private pendingShifts: ((value: IteratorResult<T>) => void)[] = [];
-	private pendingRejects: ((reason?: any) => void)[] = [];
+	private readonly heap: { value: T; priority: number }[] = [];
+	private readonly pendingShifts: ((value: IteratorResult<T>) => void)[] = [];
+	private readonly pendingRejects: ((reason?: any) => void)[] = [];
 
 	get size(): number {
 		return this.heap.length;
@@ -95,5 +95,12 @@ export class PQueue<T> {
 			if (done) break;
 			yield value;
 		}
+	}
+
+	[Symbol.dispose]() {
+		this.close();
+		this.heap.length = 0;
+		this.pendingShifts.length = 0;
+		this.pendingRejects.length = 0;
 	}
 }
