@@ -219,8 +219,9 @@ export class TopicReader implements Disposable {
 				assert.ok(message.serverMessage.value.partitionSession, 'startPartitionSessionRequest must have partitionSession');
 				assert.ok(message.serverMessage.value.partitionOffsets, 'startPartitionSessionRequest must have partitionOffsets');
 
-				dbg('receive partition with id %s', message.serverMessage.value.partitionSession!.partitionId);
+				dbg('receive partition with id %s', message.serverMessage.value.partitionSession.partitionId);
 
+				// Create a new partition session.
 				let partitionSession: TopicPartitionSession = new TopicPartitionSession(
 					message.serverMessage.value.partitionSession.partitionSessionId,
 					message.serverMessage.value.partitionSession.partitionId,
@@ -250,27 +251,6 @@ export class TopicReader implements Disposable {
 						readOffset = response.readOffset || 0n;
 						commitOffset = response.commitOffset || 0n;
 					}
-				}
-
-				let pendingCommits = this.#pendingCommits.get(partitionSession.partitionSessionId);
-				if (pendingCommits?.length) {
-					// If there are pending commits for this partition session, resolve them.
-					let i = 0;
-					while (i < pendingCommits.length) {
-						let commit = pendingCommits[i];
-						if (commit.offset <= commitOffset) {
-							// If the commit offset is less than or equal to the committed offset, resolve it.
-							commit.resolve();
-							pendingCommits.splice(i, 1); // Remove from pending commits
-						} else {
-							i++;
-						}
-					}
-				}
-
-				// If there are no pending commits for this partition session, remove it from the map.
-				if (pendingCommits && pendingCommits.length === 0) {
-					this.#pendingCommits.delete(partitionSession.partitionSessionId);
 				}
 
 				this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
@@ -307,11 +287,9 @@ export class TopicReader implements Disposable {
 				if (!message.serverMessage.value.graceful) {
 					dbg('stop partition session %s without graceful stop', partitionSession.partitionSessionId);
 					partitionSession.stop();
-					this.#partitionSessions.delete(partitionSession.partitionSessionId);
 
 					// Remove all messages from the buffer that belong to this partition session.
 					for (let part of this.#buffer) {
-						// Remove all messages from the buffer that belong to this partition session.
 						let i = 0;
 						while (i < part.partitionData.length) {
 							if (part.partitionData[i].partitionSessionId === partitionSession.partitionSessionId) {
@@ -332,11 +310,31 @@ export class TopicReader implements Disposable {
 						this.#pendingCommits.delete(partitionSession.partitionSessionId);
 					}
 
+					this.#partitionSessions.delete(partitionSession.partitionSessionId);
+					partitionSession = undefined;
+
 					return;
 				}
 
-				// Отсылать ответ после того, как прочитали все сообщения из внутреннего буфера по конкретной partition session.
-				// Чтение из внутреннего будфера происходит в функции read().
+				if (this.#pendingCommits.has(partitionSession.partitionSessionId)) {
+					await Promise.race([
+						Promise.all(this.#pendingCommits.get(partitionSession.partitionSessionId)!),
+						once(AbortSignal.timeout(30_000), 'abort'),
+					])
+				}
+
+				if (this.#disposed) {
+					return;
+				}
+
+				if (this.#pendingCommits.has(partitionSession.partitionSessionId)) {
+					// If there are pending commits for this partition session, reject them.
+					for (let commit of this.#pendingCommits.get(partitionSession.partitionSessionId)!) {
+						commit.reject('Partition session stopped after timeout during graceful stop');
+					}
+
+					this.#pendingCommits.delete(partitionSession.partitionSessionId);
+				}
 
 				this.#fromClientEmitter.emit('message', create(StreamReadMessage_FromClientSchema, {
 					clientMessage: {
@@ -442,6 +440,24 @@ export class TopicReader implements Disposable {
 					.createClient(TopicServiceDefinition)
 					.streamRead(outgoing, { signal });
 
+				// If we have buffered messages, we need to clear them before connecting to the stream.
+				if (this.#buffer.length) {
+					dbg('has %d messages in the buffer before connecting to the stream, clearing it', this.#buffer.length);
+					this.#buffer.length = 0; // Clear the buffer before connecting to the stream
+					this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size
+				}
+
+				// Stop all partition sessions before connecting to the stream
+				if (this.#partitionSessions.size) {
+					dbg('has %d partition sessions before connecting to the stream, stopping them', this.#partitionSessions.size);
+
+					for (let partitionSession of this.#partitionSessions.values()) {
+						partitionSession.stop();
+					}
+
+					this.#partitionSessions.clear();
+				}
+
 				// If we have pending commits, we need to reject and drop them before connecting to the stream.
 				if (this.#pendingCommits.size) {
 					dbg('has pending commits, before connecting to the stream, rejecting them');
@@ -453,13 +469,6 @@ export class TopicReader implements Disposable {
 					}
 
 					this.#pendingCommits.clear();
-				}
-
-				// If we have buffered messages, we need to clear them before connecting to the stream.
-				if (this.#buffer.length) {
-					dbg('has %d messages in the buffer before connecting to the stream, clearing it', this.#buffer.length);
-					this.#buffer.length = 0; // Clear the buffer before connecting to the stream
-					this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size
 				}
 
 				nextTick(() => {
@@ -787,6 +796,11 @@ export class TopicReader implements Disposable {
 										continue;
 									}
 
+									if (partitionSession.isStopped) {
+										dbg('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId);
+										continue;
+									}
+
 									while (batch.messageData.length) {
 										// Process each message in the batch
 										let msg = batch.messageData.shift()!; // Get the first message from the batch
@@ -915,21 +929,21 @@ export class TopicReader implements Disposable {
 
 		// Process each message to be committed
 		for (let msg of input) {
-			// Each message must have a valid partition session ID
-			if (!msg.partitionSessionId) {
-				throw new Error(`Message with offset ${msg.offset} does not have partitionSessionId.`);
+			// Each message must be alive
+			if (!msg.alive) {
+				throw new Error(`Message with offset ${msg.offset} is not alive.`);
 			}
 
 			// Verify the partition session exists in our tracked sessions
-			let partitionSession = this.#partitionSessions.get(msg.partitionSessionId);
+			let partitionSession = msg.partitionSession.deref();
 			if (!partitionSession) {
-				throw new Error(`Partition session with id ${msg.partitionSessionId} not found.`);
+				throw new Error(`Partition session for message ${msg.seqNo} not found in reader.`);
 			}
 
 			// Ensure the message's partition ID matches the partition session's partition ID
 			// This is crucial for consistency, as messages must be committed to the correct partition
-			if (msg.partitionId !== partitionSession.partitionId) {
-				throw new Error(`Message partitionId ${msg.partitionId} does not match partition session partitionId ${partitionSession.partitionId}.`);
+			if (!this.#partitionSessions.has(partitionSession.partitionSessionId)) {
+				throw new Error(`Message with offset ${msg.offset} is not part of an active partition session.`);
 			}
 
 			// Initialize empty array for this partition if it doesn't exist yet
