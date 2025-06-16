@@ -209,17 +209,6 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		})
 	}, options.updateTokenIntervalMs, { signal });
 
-	// If the user requested to handle SIGINT signal, listen for it and close the writer gracefully.
-	// This is useful to ensure that the writer does not leak resources and to ensure that the writer can be closed gracefully.
-	// If the user does not want to handle SIGINT signal, the writer will not listen for it and will not close gracefully.
-	if (options.handleSIGINT) {
-		process.on('SIGINT', async () => {
-			dbg('received SIGINT signal, closing writer');
-			await flush();
-			close(new Error('SIGINT received'));
-		});
-	}
-
 	// Start the stream to the topic service.
 	// This is the main function that will handle the streaming of messages to the topic service.
 	// It will handle the initialization of the stream, sending messages to the topic service,

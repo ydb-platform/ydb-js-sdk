@@ -403,11 +403,6 @@ export class TopicReader implements Disposable {
 				}
 			}
 		});
-
-		process.once('SIGINT', () => {
-			dbg('SIGINT received, disposing reader');
-			this.dispose()
-		})
 	}
 
 	/**
