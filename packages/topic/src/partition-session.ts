@@ -1,11 +1,4 @@
-import { EventEmitter } from "node:stream"
-
-type TopicPartitionSessionEmitterMap = {
-	"stop": []
-	"end": []
-}
-
-export class TopicPartitionSession extends EventEmitter<TopicPartitionSessionEmitterMap> {
+export class TopicPartitionSession {
 	/**
 	 * Partition session identifier.
 	 */
@@ -42,8 +35,6 @@ export class TopicPartitionSession extends EventEmitter<TopicPartitionSessionEmi
 	 * @param topicPath - The path of the topic.
 	 */
 	constructor(partitionSessionId: bigint, partitionId: bigint, topicPath: string) {
-		super();
-
 		this.partitionSessionId = partitionSessionId;
 		this.partitionId = partitionId;
 		this.topicPath = topicPath;
@@ -58,12 +49,10 @@ export class TopicPartitionSession extends EventEmitter<TopicPartitionSessionEmi
 	}
 
 	stop(): void {
-		this.emit("stop");
 		this.#stopped = true;
 	}
 
 	end(): void {
-		this.emit("end");
 		this.#ended = true;
 	}
 }
