@@ -935,6 +935,12 @@ export class TopicReader<Payload = Uint8Array> implements Disposable {
 				throw new Error(`Partition session with id ${msg.partitionSessionId} not found.`);
 			}
 
+			// Ensure the message's partition ID matches the partition session's partition ID
+			// This is crucial for consistency, as messages must be committed to the correct partition
+			if (msg.partitionId !== partitionSession.partitionId) {
+				throw new Error(`Message partitionId ${msg.partitionId} does not match partition session partitionId ${partitionSession.partitionId}.`);
+			}
+
 			// Initialize empty array for this partition if it doesn't exist yet
 			if (!offsets.has(partitionSession.partitionSessionId)) {
 				offsets.set(partitionSession.partitionSessionId, []);
