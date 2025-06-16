@@ -31,14 +31,12 @@ export type TopicWriterOptions = {
 	// If not provided, a random producer name will be generated.
 	// If provided, the producer name will be used to identify the writer.
 	producer?: string
-	// Automatically get the last sequence number of the topic before starting to write messages.
-	// If not provided, the writer will not get the last sequence number.
-	// This is useful to ensure that the writer starts writing messages after the last message in the topic.
-	// If true, the writer will get the last sequence number of the topic before starting to write messages.
-	getLastSeqNo?: boolean
 	// Allow duplicates in the topic, default is false.
 	// If true, the writer will write messages without producerId.
 	allowDuplicates?: boolean
+	// Allow duplicates in the topic, default is false.
+	// If true, the writer will write messages without producerId.
+	withoutDeduplication?: boolean
 	// How often to update the token for the writer.
 	// Default is 60 seconds.
 	updateTokenIntervalMs?: number
@@ -77,12 +75,9 @@ export interface TopicWriter extends Disposable, AsyncDisposable {
 export function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
 	// Generate a random producer name if not provided.
 	options.producer ??= _get_producer_id();
-	// Automatically get the last sequence number of the topic before starting to write messages.
-	options.getLastSeqNo ??= true;
-	// Allow duplicates in the topic, default is false.
-	if (options.allowDuplicates) {
+	// If duplicates are not allowed, the producerId is used.
+	if (options.withoutDeduplication) {
 		options.producer = undefined; // If duplicates are allowed, producerId is not used.
-		options.getLastSeqNo = false; // If duplicates are allowed, we don't need to get the last sequence number.
 	}
 	// Default intervals
 	options.flushIntervalMs ??= 60_000; // Default is 60 seconds.
