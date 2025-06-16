@@ -1,5 +1,17 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.20
+
+### Patch Changes
+
+- Improve error handling for topic clients
+
+## 6.0.0-alpha.19
+
+### Patch Changes
+
+- Remove conditional compressing
+
 ## 6.0.0-alpha.18
 
 ### Patch Changes
