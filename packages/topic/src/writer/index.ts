@@ -18,8 +18,12 @@ import { _send_update_token_request } from "./_update_token.js";
 import { _write } from "./_write.js";
 import { _on_write_response } from "./_write_response.js";
 import { MAX_BUFFER_SIZE } from "./constants.js";
+import type { TX } from "./tx.js";
 
 export type TopicWriterOptions = {
+	// Transaction identity.
+	// If provided, the writer will use the transaction for writing messages.
+	tx?: TX
 	// Path to the topic to write to.
 	// Example: "/Root/my-topic"
 	topic: string
@@ -118,9 +122,13 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// When the writer stream is not ready, it will queue messages to be sent later.
 	let isReady = false;
 	// Flag to indicate if the writer is closed.
-	// When the writer is closed, it will not accept new messages and will reject all pending write requests.
-	// This is useful to ensure that the writer does not leak resources and can be closed gracefully.
+	// When the writer is closed, it will not accept new messages.
+	// The writer will still process and acknowledge any messages that were already sent.
 	let isClosed = false;
+	// Flag to indicate if the writer is disposed.
+	// When the writer is disposed, it will not accept new messages and will reject all pending write requests.
+	// This is useful to ensure that the writer does not leak resources and can be closed gracefully.
+	let isDisposed = false;
 	// Queue for messages to be written.
 	// This is used to store messages that are not yet sent to the topic service.
 	let queue: {
@@ -153,6 +161,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 
 		for (const item of qq) {
 			_write({
+				tx: options.tx,
 				queue: outgoing,
 				codec: codec,
 				lastSeqNo: (lastSeqNo || item.extra.seqNo)!,
@@ -184,6 +193,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		await driver.ready(signal);
 
 		_flush({
+			tx: options.tx,
 			queue: outgoing,
 			codec: codec,
 			buffer,
@@ -270,6 +280,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 							break
 						case 'writeResponse':
 							_on_write_response({
+								tx: options.tx,
 								queue: outgoing,
 								codec: codec,
 								buffer,
@@ -322,6 +333,10 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			throw new Error('Writer is closed, cannot write messages');
 		}
 
+		if (isDisposed) {
+			throw new Error('Writer is disposed, cannot write messages');
+		}
+
 		if (!extra.seqNo && isSeqNoProvided) {
 			throw new Error('Missing sequence number for message. Sequence number is provided by the user previously, so after that all messages must have seqNo provided');
 		}
@@ -344,6 +359,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		}
 
 		return _write({
+			tx: options.tx,
 			queue: outgoing,
 			codec: codec,
 			buffer,
@@ -363,7 +379,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// If a reason is provided, it will be used to reject all pending acks and write requests.
 	// If no reason is provided, it will use a default error message.
 	function close(reason?: Error) {
-		if (isClosed) {
+		if (isDisposed) {
 			return;
 		}
 
@@ -395,8 +411,17 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		}
 
 		isClosed = true;
+		isDisposed = true;
 		dbg('writer closed, reason: %O', reason);
 	}
+
+	// Before committing the transaction, require all messages to be written and acknowledged.
+	options.tx?.registerPrecommitHook(async () => {
+		// Close the writer. Do not accept new messages.
+		isClosed = true;
+		// Wait for all messages to be flushed.
+		await flush();
+	})
 
 	return {
 		flush,
@@ -412,4 +437,15 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			outgoing[Symbol.dispose]();
 		}
 	}
+}
+
+export function createTopicTxWriter(
+	driver: Driver,
+	tx: { registerPrecommitHook: (fn: () => Promise<void> | void) => void, sessionId: string, transactionId: string },
+	options: TopicWriterOptions
+): TopicWriter {
+	return createTopicWriter(driver, {
+		...options,
+		tx
+	})
 }

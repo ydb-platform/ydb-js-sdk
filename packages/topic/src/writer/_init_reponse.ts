@@ -2,8 +2,10 @@ import type { StreamWriteMessage_FromClient, StreamWriteMessage_InitResponse, St
 import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
 import { _flush } from "./_flush.js";
+import type { TX } from "./tx.js";
 
 export function _on_init_response(ctx: {
+	readonly tx?: TX
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
 	readonly codec?: CompressionCodec, // Codec to use for compression
 	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
