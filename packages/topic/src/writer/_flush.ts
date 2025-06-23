@@ -1,10 +1,10 @@
 import type { StreamWriteMessage_FromClient, StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
 import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
+import type { TX } from "../tx.js";
 import { _batch_messages } from "./_batch_messages.js";
 import { _emit_write_request } from "./_write_request.js";
 import { MAX_INFLIGHT_COUNT } from "./constants.js";
-import type { TX } from "./tx.js";
 
 export function _flush(ctx: {
 	readonly tx?: TX

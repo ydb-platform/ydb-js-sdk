@@ -1,8 +1,8 @@
 import type { StreamWriteMessage_FromClient, StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteResponse } from "@ydbjs/api/topic";
 import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
+import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
-import type { TX } from "./tx.js";
 
 export function _on_write_response(ctx: {
 	readonly tx?: TX

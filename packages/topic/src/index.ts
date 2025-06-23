@@ -1,8 +1,8 @@
 import { Driver } from "@ydbjs/core";
 
 import { TopicReader, type TopicReaderOptions } from "./reader.js";
+import type { TX } from "./tx.js";
 import { type TopicWriter, type TopicWriterOptions, createTopicTxWriter, createTopicWriter } from "./writer/index.js";
-import type { TX } from "./writer/tx.js";
 
 export interface TopicClient {
 	createReader(options: TopicReaderOptions): TopicReader;

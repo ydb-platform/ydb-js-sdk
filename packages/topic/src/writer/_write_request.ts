@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { Codec, type StreamWriteMessage_FromClient, StreamWriteMessage_FromClientSchema, type StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
 import { type CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
-import type { TX } from "./tx.js";
+import type { TX } from "../tx.js";
 
 export function _emit_write_request(ctx: {
 	readonly tx?: TX

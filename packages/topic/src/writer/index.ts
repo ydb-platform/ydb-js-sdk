@@ -10,6 +10,7 @@ import debug from "debug";
 
 import { type CompressionCodec, defaultCodecMap } from "../codec.js";
 import { PQueue } from "../queue.js";
+import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import { _get_producer_id } from "./_gen_producer_id.js";
 import { _on_init_response } from "./_init_reponse.js";
@@ -18,7 +19,6 @@ import { _send_update_token_request } from "./_update_token.js";
 import { _write } from "./_write.js";
 import { _on_write_response } from "./_write_response.js";
 import { MAX_BUFFER_SIZE } from "./constants.js";
-import type { TX } from "./tx.js";
 
 export type TopicWriterOptions = {
 	// Transaction identity.

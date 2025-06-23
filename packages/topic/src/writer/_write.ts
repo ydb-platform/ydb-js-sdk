@@ -3,9 +3,9 @@ import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, StreamWriteMessage_WriteRequest_MessageDataSchema } from "@ydbjs/api/topic";
 import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
+import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import { MAX_PAYLOAD_SIZE } from "./constants.js";
-import type { TX } from "./tx.js";
 
 export function _write(ctx: {
 	readonly tx?: TX
