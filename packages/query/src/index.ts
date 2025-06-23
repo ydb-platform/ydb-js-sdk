@@ -15,10 +15,13 @@ export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	...values: P
 ) => Query<T>
 
+export type RegisterPrecommitHook = (fn: () => Promise<void> | void) => void;
+
 export type TX = SQL & {
 	nodeId: bigint
 	sessionId: string
 	transactionId: string
+	registerPrecommitHook: RegisterPrecommitHook
 }
 
 interface SessionContextCallback<T> {
@@ -166,8 +169,23 @@ export function query(driver: Driver): QueryClient {
 			store.transactionId = beginTransactionResult.txMeta?.id
 
 			try {
-				let tx = Object.assign(yqlQuery, { nodeId: store.nodeId, sessionId: store.sessionId, transactionId: store.transactionId }) as TX
+				let tx = Object.assign(yqlQuery, {
+					nodeId: store.nodeId,
+					sessionId: store.sessionId,
+					transactionId: store.transactionId,
+					registerPrecommitHook: (fn: () => Promise<void> | void) => {
+						if (!store.precommitHooks) store.precommitHooks = [];
+						store.precommitHooks.push(fn);
+					},
+				}) as TX
 				let result = await ctx.run(store, () => caller!(tx, signal))
+
+				// --- precommit hooks: call before commit ---
+				if (store.precommitHooks && store.precommitHooks.length > 0) {
+					for (const hook of store.precommitHooks) {
+						await hook();
+					}
+				}
 
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
