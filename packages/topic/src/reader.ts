@@ -5,7 +5,7 @@ import { nextTick } from "node:process";
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampFromDate, timestampMs } from "@bufbuild/protobuf/wkt";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
-import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition } from "@ydbjs/api/topic";
+import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition, UpdateOffsetsInTransactionRequestSchema, TransactionIdentitySchema } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
@@ -18,6 +18,7 @@ import { AsyncEventEmitter } from "./aee.js";
 import { type CodecMap, defaultCodecMap } from "./codec.js";
 import { TopicMessage } from "./message.js";
 import { TopicPartitionSession } from "./partition-session.js";
+import type { TX } from "./tx.js";
 
 const dbg = debug('ydbjs').extend('topic').extend('reader')
 
@@ -139,6 +140,8 @@ export class TopicReader implements Disposable {
 
 	// pending commits that are not yet resolved.
 	#pendingCommits: Map<bigint, TopicCommitPromise[]> = new Map(); // partitionSessionId -> TopicCommitPromise[]
+
+	#txReadMessages = new Map(); // partitionSessionId -> TopicMessage[]
 
 	/**
 	 * Creates a new TopicReader instance.
@@ -887,6 +890,135 @@ export class TopicReader implements Disposable {
 					},
 				}
 			}
+		}
+	}
+
+	readInTx(
+		tx: TX,
+		options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}
+	): AsyncIterable<TopicMessage[]> {
+		let base = this.read(options);
+
+		tx.registerPrecommitHook(async () => {
+			let messages = this.#consumeTxReadMessages();
+			if (messages.length === 0) return;
+			await this.#commitTxOffsets(messages, { id: tx.transactionId, session: tx.sessionId });
+		});
+
+		return {
+			[Symbol.asyncIterator]: () => {
+				let it = base[Symbol.asyncIterator]();
+				return {
+					next: async (): Promise<IteratorResult<TopicMessage[]>> => {
+						let res = await it.next();
+						if (!res.done && res.value && res.value.length > 0) {
+							for (let msg of res.value) {
+								let partitionSession = msg.partitionSession.deref();
+								if (!partitionSession) continue;
+								let id = partitionSession.partitionSessionId;
+								if (!this.#txReadMessages.has(id)) {
+									this.#txReadMessages.set(id, []);
+								}
+								this.#txReadMessages.get(id)!.push(msg);
+							}
+						}
+						return res;
+					},
+					return: async (value?: any): Promise<IteratorResult<TopicMessage[]>> => {
+						if (typeof it.return === 'function') {
+							await it.return(value);
+						}
+						return { value, done: true };
+					}
+				};
+			}
+		};
+	}
+
+	#consumeTxReadMessages() {
+		let arr: TopicMessage[] = [];
+		for (let msgs of this.#txReadMessages.values()) arr.push(...msgs);
+		this.#txReadMessages = new Map();
+		return arr;
+	}
+
+	async #commitTxOffsets(
+		messages: TopicMessage[],
+		tx: { id: string, session: string }
+	): Promise<void> {
+		// Check if tx is valid
+		if (!tx.id || !tx.session) return;
+
+		// Map to group and organize offsets by partition session ID
+		let offsets: Map<bigint, OffsetsRange[]> = new Map();
+		// Map to store topic/partition info for each partition session
+		let topicPartitionInfo: Map<bigint, { topicPath: string, partitionId: bigint }> = new Map();
+
+		// Process each message to be committed
+		for (let msg of messages) {
+			// Each message must be alive
+			if (!msg.alive) continue;
+
+			let partitionSession = msg.partitionSession.deref();
+			if (!partitionSession) continue;
+
+			let id = partitionSession.partitionSessionId;
+			let topicPath = partitionSession.topicPath;
+			let partitionId = partitionSession.partitionId;
+			topicPartitionInfo.set(id, { topicPath, partitionId });
+			let offset = msg.offset!;
+
+			// Initialize empty array for this partition if it doesn't exist yet
+			if (!offsets.has(id)) {
+				offsets.set(id, []);
+			}
+
+			let partOffsets = offsets.get(id)!;
+
+			// Optimize storage by merging consecutive offsets into ranges
+			if (partOffsets.length > 0) {
+				let last = partOffsets[partOffsets.length - 1];
+				if (offset === last.end) {
+					// If the new offset is consecutive to the last range, extend the range
+					last.end = offset + 1n;
+				} else if (offset > last.end) {
+					// If there's a gap between offsets, create a new range
+					partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }));
+				} else {
+					// If offset <= last.end, it's either out of order or a duplicate.
+					throw new Error(`Message with offset ${offset} is out of order or duplicate for partition session ${id}`);
+				}
+			} else {
+				// First offset for this partition, create initial range
+				partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }));
+			}
+		}
+
+		// Convert our optimized Map structure into the API's expected format in a single pass
+		let topics: { path: string, partitions: { partitionId: bigint, partitionOffsets: OffsetsRange[] }[] }[] = [];
+		let topicMap = new Map<string, typeof topics[number]>();
+
+		for (let [id, partOffsets] of offsets.entries()) {
+			let { topicPath, partitionId } = topicPartitionInfo.get(id)!;
+			let topicEntry = topicMap.get(topicPath);
+			if (!topicEntry) {
+				topicEntry = { path: topicPath, partitions: [] };
+				topicMap.set(topicPath, topicEntry);
+				topics.push(topicEntry);
+			}
+			topicEntry.partitions.push({ partitionId, partitionOffsets: partOffsets });
+		}
+
+		// Build and send the request
+		let req = create(UpdateOffsetsInTransactionRequestSchema, {
+			tx: create(TransactionIdentitySchema, tx),
+			topics,
+			consumer: this.#options.consumer,
+		});
+		let client = this.#driver.createClient(TopicServiceDefinition);
+		let resp = await client.updateOffsetsInTransaction(req);
+		if (resp.operation!.status !== StatusIds_StatusCode.SUCCESS) {
+			throw new YDBError(resp.operation!.status, resp.operation!.issues);
 		}
 	}
 
