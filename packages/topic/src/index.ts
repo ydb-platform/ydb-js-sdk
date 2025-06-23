@@ -1,11 +1,13 @@
 import { Driver } from "@ydbjs/core";
 
 import { TopicReader, type TopicReaderOptions } from "./reader.js";
-import { type TopicWriter, type TopicWriterOptions, createTopicWriter } from "./writer/index.ts";
+import { type TopicWriter, type TopicWriterOptions, createTopicTxWriter, createTopicWriter } from "./writer/index.js";
+import type { TX } from "./writer/tx.js";
 
 export interface TopicClient {
 	createReader(options: TopicReaderOptions): TopicReader;
 	createWriter(options: TopicWriterOptions): TopicWriter;
+	createTxWriter(tx: TX, options: TopicWriterOptions): TopicWriter;
 }
 
 export function topic(driver: Driver): TopicClient {
@@ -15,6 +17,9 @@ export function topic(driver: Driver): TopicClient {
 		},
 		createWriter(options: TopicWriterOptions) {
 			return createTopicWriter(driver, options);
+		},
+		createTxWriter(tx: TX, options: TopicWriterOptions) {
+			return createTopicTxWriter(driver, tx, options);
 		},
 	} as TopicClient
 }
