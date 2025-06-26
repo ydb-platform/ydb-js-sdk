@@ -18,7 +18,7 @@ import { _send_init_request } from "./_init_request.js";
 import { _send_update_token_request } from "./_update_token.js";
 import { _write } from "./_write.js";
 import { _on_write_response } from "./_write_response.js";
-import { MAX_BUFFER_SIZE } from "./constants.js";
+import type { ThroughputSettings } from "./types.js";
 
 export type TopicWriterOptions = {
 	// Transaction identity.
@@ -35,12 +35,6 @@ export type TopicWriterOptions = {
 	// If not provided, a random producer name will be generated.
 	// If provided, the producer name will be used to identify the writer.
 	producer?: string
-	// Allow duplicates in the topic, default is false.
-	// If true, the writer will write messages without producerId.
-	allowDuplicates?: boolean
-	// Allow duplicates in the topic, default is false.
-	// If true, the writer will write messages without producerId.
-	withoutDeduplication?: boolean
 	// How often to update the token for the writer.
 	// Default is 60 seconds.
 	updateTokenIntervalMs?: number
@@ -67,7 +61,7 @@ export type TopicWriterOptions = {
 export interface TopicWriter extends Disposable, AsyncDisposable {
 	// Write a message to the topic.
 	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
-	write(payload: Uint8Array, extra?: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> }): Promise<bigint>;
+	write(payload: Uint8Array, extra?: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> }): bigint;
 	// Flush the buffer and send all messages to the topic.
 	// Returns a promise that resolves to the last sequence number of the topic after flushing.
 	flush(): Promise<bigint | undefined>;
@@ -77,15 +71,15 @@ export interface TopicWriter extends Disposable, AsyncDisposable {
 }
 
 export function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
-	// Generate a random producer name if not provided.
 	options.producer ??= _get_producer_id();
-	// If duplicates are not allowed, the producerId is used.
-	if (options.withoutDeduplication) {
-		options.producer = undefined; // If duplicates are allowed, producerId is not used.
-	}
-	// Default intervals
-	options.flushIntervalMs ??= 60_000; // Default is 60 seconds.
 	options.updateTokenIntervalMs ??= 60_000; // Default is 60 seconds.
+
+	// Throughput options
+	let throughputSettings: ThroughputSettings = {
+		maxBufferBytes: options.maxBufferBytes ??= 1024n * 1024n * 1024n, // Default is 1GB.
+		flushIntervalMs: options.flushIntervalMs ??= 1_000, // Default is 1 second.
+		maxInflightCount: options.maxInflightCount ??= 1_000, // Default is 1000 messages.
+	};
 
 	let dbg = debug('ydbjs').extend('topic').extend('writer')
 
@@ -100,19 +94,16 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// If the user provides a sequence number, all subsequent messages must have a sequence number provided.
 	let isSeqNoProvided: boolean = false;
 
-	// Map of sequence numbers to messages that are currently in the buffer.
+	// Array of messages that are currently in the buffer.
 	// This is used to keep track of messages that are not yet sent to the server.
-	let buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData> = new Map(); // seqNo -> message
-	let bufferSize: bigint = 0n;
-
+	let buffer: StreamWriteMessage_WriteRequest_MessageData[] = [];
 	// In-flight messages that are not yet acknowledged.
 	// This is used to keep track of messages that are currently being sent to the server.
-	let inflight: Set<bigint> = new Set(); // seqNo
+	let inflight: StreamWriteMessage_WriteRequest_MessageData[] = [];
 
-	// Map of pending acknowledgments.
-	// This is used to keep track of messages that are waiting for acknowledgment from the server.
-	// The key is the sequence number of the message, and the value is a promise that will be resolved when the acknowledgment is received.
-	let pendingAcks: Map<bigint, PromiseWithResolvers<bigint>> = new Map(); // seqNo -> PromiseWithResolvers
+	// Current size of buffers in bytes.
+	// This is used to keep track of the amount of data in buffers.
+	let bufferSize: bigint = 0n;
 
 	// Abort controller for cancelling requests.
 	let ac = new AbortController();
@@ -129,13 +120,6 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// When the writer is disposed, it will not accept new messages and will reject all pending write requests.
 	// This is useful to ensure that the writer does not leak resources and can be closed gracefully.
 	let isDisposed = false;
-	// Queue for messages to be written.
-	// This is used to store messages that are not yet sent to the topic service.
-	let queue: {
-		payload: Uint8Array; extra: any;
-		resolve: (value: bigint) => void;
-		reject: (error: unknown) => void;
-	}[] = [];
 
 	// This function is used to update the last sequence number of the topic.
 	function updateLastSeqNo(seqNo: bigint) {
@@ -147,42 +131,6 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		bufferSize += bytes;
 	}
 
-	// This function is used to process the write queue when the writer is ready.
-	// It will take all messages from the queue and write them to the buffer.
-	function processQueue() {
-		if (!isReady) return;
-
-		// Copy the write queue to process it.
-		// This is necessary to avoid modifying the queue while processing it.
-		const qq = [...queue];
-		queue = [];
-
-		dbg('processing write queue, size: %d', qq.length);
-
-		for (const item of qq) {
-			_write({
-				tx: options.tx,
-				queue: outgoing,
-				codec: codec,
-				lastSeqNo: (lastSeqNo || item.extra.seqNo)!,
-				buffer,
-				inflight,
-				pendingAcks,
-				bufferSize,
-				maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
-				updateLastSeqNo,
-				updateBufferSize,
-			}, {
-				data: item.payload,
-				seqNo: item.extra.seqNo,
-				createdAt: item.extra.createdAt,
-				metadataItems: item.extra.metadataItems
-			})
-				.then(item.resolve)
-				.catch(item.reject);
-		}
-	}
-
 	// Create an outgoing stream that will be used to send messages to the topic service.
 	let outgoing = new PQueue<StreamWriteMessage_FromClient>();
 
@@ -190,14 +138,13 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// This is useful to avoid holding too many messages in memory and to ensure that the writer does not leak memory.
 	// The flush interval is configurable and defaults to 60 seconds.
 	let backgroundFlusher = setInterval(async () => {
-		await driver.ready(signal);
-
 		_flush({
 			tx: options.tx,
 			queue: outgoing,
 			codec: codec,
 			buffer,
 			inflight,
+			throughputSettings,
 			updateBufferSize,
 		});
 	}, options.flushIntervalMs, { signal });
@@ -206,8 +153,6 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// This is useful to avoid token expiration and to ensure that the writer can continue to write messages to the topic.
 	// The update token interval is configurable and defaults to 60 seconds.
 	let backgroundTokenRefresher = setInterval(async () => {
-		await driver.ready(signal);
-
 		_send_update_token_request({
 			queue: outgoing,
 			token: await driver.token,
@@ -223,7 +168,8 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	void (async function stream() {
 		await driver.ready(signal);
 
-		let retryConfig = options.retryConfig?.(signal) || {
+		let retryConfig = options.retryConfig?.(signal)
+		retryConfig ??= {
 			retry: true,
 			signal: signal,
 			budget: Infinity,
@@ -238,8 +184,6 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			// Retry the connection if it fails or receives an error.
 			await retry(retryConfig, async (signal) => {
 				isReady = false;
-				inflight.clear();
-
 				let stream = driver.createClient(TopicServiceDefinition).streamWrite(outgoing, { signal });
 
 				// Send the initial request to the server to initialize the stream.
@@ -255,9 +199,11 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 				})
 
 				for await (const chunk of stream) {
-					dbg('receive message from server: %s, status: %d, payload: %o', chunk.$typeName, chunk.status, chunk.serverMessage.value);
+					dbg('receive message from server: %s, status: %d, payload: %o', chunk.$typeName, chunk.status, chunk.serverMessage.value?.$typeName);
 
 					if (chunk.status !== StatusIds_StatusCode.SUCCESS) {
+						console.error('error occurred while streaming: %O', chunk.issues);
+
 						let error = new YDBError(chunk.status || StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED, chunk.issues || [])
 						throw error;
 					}
@@ -270,12 +216,12 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 								buffer,
 								inflight,
 								lastSeqNo,
+								throughputSettings,
 								updateLastSeqNo,
 								updateBufferSize,
 							}, chunk.serverMessage.value);
 
 							isReady = true;
-							processQueue();
 
 							break
 						case 'writeResponse':
@@ -285,7 +231,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 								codec: codec,
 								buffer,
 								inflight,
-								pendingAcks,
+								throughputSettings,
 								onAck: options.onAck,
 								updateBufferSize,
 							}, chunk.serverMessage.value);
@@ -307,16 +253,32 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// If the buffer is empty, it will return immediately.
 	// Returns the last sequence number of the topic after flushing.
 	async function flush(): Promise<bigint | undefined> {
-		if (!buffer.size) {
+		if (isDisposed) {
+			throw new Error('Writer is disposed');
+		}
+
+		if (!isReady) {
+			throw new Error('Writer is not ready');
+		}
+
+		if (!buffer.length && !inflight.length) {
 			return lastSeqNo;
 		}
 
-		while (buffer.size > 0) {
-			dbg('waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d', inflight.size, buffer.size);
+		while (buffer.length > 0 || inflight.length > 0) {
+			dbg('waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d', inflight.length, buffer.length);
 
-			// Wait for all pending acks to be resolved before flushing.
-			// eslint-disable-next-line no-await-in-loop
-			await Promise.all(Array.from(pendingAcks.values()).map(pendingAck => pendingAck.promise))
+			_flush({
+				tx: options.tx,
+				queue: outgoing,
+				codec: codec,
+				buffer,
+				inflight,
+				throughputSettings,
+				updateBufferSize,
+			});
+
+			await new Promise(resolve => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }));
 		}
 
 		return lastSeqNo;
@@ -328,7 +290,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// Promise will be resolved when the message is acknowledged by the topic service.
 	// Returns the sequence number of the message that was written to the topic.
 	// If the sequence number is not provided, it will use the last sequence number of the topic.
-	function write(payload: Uint8Array, extra: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> } = {}): Promise<bigint> {
+	function write(payload: Uint8Array, extra: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> } = {}): bigint {
 		if (isClosed) {
 			throw new Error('Writer is closed, cannot write messages');
 		}
@@ -346,69 +308,36 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			isSeqNoProvided = true;
 		}
 
-		if (!isReady) {
-			dbg('adding write request to queue, queue size: %d', queue.length + 1);
-			return new Promise<bigint>((resolve, reject) => {
-				queue.push({
-					payload,
-					extra,
-					resolve,
-					reject
-				});
-			});
-		}
-
 		return _write({
-			tx: options.tx,
-			queue: outgoing,
 			codec: codec,
 			buffer,
 			inflight,
 			lastSeqNo: (lastSeqNo || extra.seqNo)!,
-			pendingAcks,
-			bufferSize,
-			maxBufferSize: options.maxBufferBytes || MAX_BUFFER_SIZE,
 			updateLastSeqNo,
 			updateBufferSize,
 		}, { data: payload, seqNo: extra.seqNo, createdAt: extra.createdAt, metadataItems: extra.metadataItems });
 	}
 
 	// This function is used to close the writer and release all resources.
-	// It will clear the buffer, inflight messages, and pending acks.
+	// It will clear the buffer, inflight messages.
 	// It will also clear the write queue and close the outgoing stream.
-	// If a reason is provided, it will be used to reject all pending acks and write requests.
 	// If no reason is provided, it will use a default error message.
 	function close(reason?: Error) {
 		if (isDisposed) {
 			return;
 		}
 
-		dbg('closing writer, reason: %O, lastSeqNo: %O', reason, lastSeqNo);
-
 		ac.abort();
 
 		// Clear the buffer and inflight messages.
-		buffer.clear();
+		buffer.length = 0;
 		bufferSize = 0n;
 
-		inflight.clear();
+		inflight.length = 0;
 		outgoing.close();
-
-		for (const pendingAck of pendingAcks.values()) {
-			pendingAck.reject(reason || new Error('Writer closed'));
-		}
-		pendingAcks.clear();
 
 		clearInterval(backgroundFlusher);
 		clearInterval(backgroundTokenRefresher);
-
-		// Clear the write queue.
-		let qq = [...queue];
-		queue = [];
-
-		for (const item of qq) {
-			item.reject(reason || new Error('Writer closed'));
-		}
 
 		isClosed = true;
 		isDisposed = true;

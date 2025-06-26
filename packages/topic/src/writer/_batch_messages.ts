@@ -2,7 +2,7 @@ import type { StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/top
 import { MAX_BATCH_SIZE } from "./constants.js";
 
 export function _batch_messages(
-	messages: StreamWriteMessage_WriteRequest_MessageData[]
+	messages: StreamWriteMessage_WriteRequest_MessageData[],
 ): StreamWriteMessage_WriteRequest_MessageData[][] {
 	let batches: StreamWriteMessage_WriteRequest_MessageData[][] = [];
 

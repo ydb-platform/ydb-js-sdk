@@ -4,36 +4,31 @@ import type { PQueue } from "../queue.js";
 import type { TX } from "../tx.js";
 import { _batch_messages } from "./_batch_messages.js";
 import { _emit_write_request } from "./_write_request.js";
-import { MAX_INFLIGHT_COUNT } from "./constants.js";
+import type { ThroughputSettings } from "./types.js";
 
 export function _flush(ctx: {
 	readonly tx?: TX
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
-	readonly codec?: CompressionCodec, // Codec to use for compression
-	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
-	readonly inflight: Set<bigint>; // Set of sequence numbers that are currently in-flight
+	readonly codec: CompressionCodec, // Codec to use for compression
+	readonly buffer: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages in the buffer
+	readonly inflight: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages that are currently in-flight
+	readonly throughputSettings: ThroughputSettings;
 	updateBufferSize: (bytes: bigint) => void; // Function to update the buffer size
 }) {
-	if (!ctx.buffer.size) {
+	if (!ctx.buffer.length) {
 		return; // Nothing to flush
 	}
 
-	let iterator = ctx.buffer.values()
 	let messagesToSend: StreamWriteMessage_WriteRequest_MessageData[] = [];
 
-	while (ctx.inflight.size < MAX_INFLIGHT_COUNT) {
-		let next = iterator.next();
-		if (next.done) {
+	while (ctx.inflight.length < ctx.throughputSettings.maxInflightCount) {
+		let message = ctx.buffer.shift();
+		if (!message) {
 			break; // No more messages to send
 		}
 
-		let message = next.value;
+		ctx.inflight.push(message);
 		messagesToSend.push(message);
-		ctx.inflight.add(message.seqNo);
-	}
-
-	if (!messagesToSend.length) {
-		return; // No messages to send
 	}
 
 	for (let batch of _batch_messages(messagesToSend)) {

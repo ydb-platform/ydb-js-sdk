@@ -3,39 +3,36 @@ import type { CompressionCodec } from "../codec.js";
 import type { PQueue } from "../queue.js";
 import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
+import type { ThroughputSettings } from "./types.js";
 
 export function _on_write_response(ctx: {
 	readonly tx?: TX
 	readonly queue: PQueue<StreamWriteMessage_FromClient>,
-	readonly codec?: CompressionCodec, // Codec to use for compression
-	readonly buffer: Map<bigint, StreamWriteMessage_WriteRequest_MessageData>; // Map of sequence numbers to messages in the buffer
-	readonly inflight: Set<bigint>; // Set of sequence numbers that are currently in-flight
-	readonly pendingAcks: Map<bigint, { resolve: (seqNo: bigint) => void }>; // Map of sequence numbers to pending ack resolvers
+	readonly codec: CompressionCodec, // Codec to use for compression
+	readonly buffer: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages that are currently in-flight
+	readonly inflight: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages that are currently in-flight
+	readonly throughputSettings: ThroughputSettings; // Current throughput settings for the writer
 	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void // Callback for handling acknowledgments
 	updateBufferSize: (bytes: bigint) => void; // Function to update the buffer size
 }, input: StreamWriteMessage_WriteResponse) {
 	// Process each acknowledgment in the response.
-	// This will resolve the pending ack promises and remove the messages from the buffer.
+
+	let acks = new Map<bigint, 'skipped' | 'written' | 'writtenInTx'>();
 	for (let ack of input.acks) {
-		ctx.onAck?.(ack.seqNo, ack.messageWriteStatus.case);
+		acks.set(ack.seqNo, ack.messageWriteStatus.case!);
+	}
 
-		// Remove the acknowledged message from the buffer.
-		let message = ctx.buffer.get(ack.seqNo);
-		if (message) {
-			ctx.buffer.delete(ack.seqNo);
-			ctx.updateBufferSize(-BigInt(message.data.length));
-
-			// Resolve the pending ack promise for this sequence number.
-			let pendingAck = ctx.pendingAcks.get(ack.seqNo);
-			if (pendingAck) {
-				pendingAck.resolve(ack.seqNo);
-				ctx.pendingAcks.delete(ack.seqNo);
-			}
-
-			// Decrease the in-flight count.
-			ctx.inflight.delete(ack.seqNo);
+	// Acknowledge messages that have been processed.
+	for (let i = ctx.inflight.length - 1; i >= 0; i--) {
+		const message = ctx.inflight[i];
+		if (acks.has(message.seqNo)) {
+			ctx.onAck?.(message.seqNo, acks.get(message.seqNo));
+			ctx.inflight.splice(i, 1);
 		}
 	}
+
+	// Clear the acknowledgment map.
+	acks.clear();
 
 	// If there are still messages in the buffer, flush them.
 	_flush(ctx)
