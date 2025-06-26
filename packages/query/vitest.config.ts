@@ -2,6 +2,8 @@ import { defineProject } from 'vitest/config'
 
 export default defineProject({
 	test: {
-		exclude: ['**/*.e2e.test.ts'],
+		name: 'query',
+		include: ['src/**/*.test.ts'],
+		environment: 'node',
 	},
 })

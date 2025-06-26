@@ -1,0 +1,7 @@
+{
+	"recommendations": [
+		"vitest.explorer",
+		"ms-vscode.vscode-typescript-next",
+		"esbenp.prettier-vscode"
+	]
+}

@@ -15,8 +15,8 @@ import {
 } from '../dist/esm/primitive.js'
 
 test('Bool primitive', async (t) => {
-	const boolTrue = new Bool(true)
-	const boolFalse = new Bool(false)
+	let boolTrue = new Bool(true)
+	let boolFalse = new Bool(false)
 
 	t.expect(boolTrue).toMatchInlineSnapshot(`
 		Bool {
@@ -33,7 +33,7 @@ test('Bool primitive', async (t) => {
 })
 
 test('Int32 primitive', async (t) => {
-	const int = new Int32(42)
+	let int = new Int32(42)
 
 	t.expect(int).toMatchInlineSnapshot(`
 		Int32 {
@@ -44,7 +44,7 @@ test('Int32 primitive', async (t) => {
 })
 
 test('Uint32 primitive', async (t) => {
-	const uint = new Uint32(42)
+	let uint = new Uint32(42)
 
 	t.expect(uint).toMatchInlineSnapshot(`
 		Uint32 {
@@ -55,7 +55,7 @@ test('Uint32 primitive', async (t) => {
 })
 
 test('Text primitive', async (t) => {
-	const text = new Text('hello')
+	let text = new Text('hello')
 
 	t.expect(text).toMatchInlineSnapshot(`
 		Text {
@@ -66,7 +66,7 @@ test('Text primitive', async (t) => {
 })
 
 test('Double primitive', async (t) => {
-	const double = new Double(3.14)
+	let double = new Double(3.14)
 
 	t.expect(double).toMatchInlineSnapshot(`
 		Double {
@@ -77,7 +77,7 @@ test('Double primitive', async (t) => {
 })
 
 test('Bytes primitive', async (t) => {
-	const bytes = new Bytes(new Uint8Array([0x01, 0x02, 0x03]))
+	let bytes = new Bytes(new Uint8Array([0x01, 0x02, 0x03]))
 
 	t.expect(bytes).toMatchInlineSnapshot(`
 		Bytes {
@@ -92,7 +92,7 @@ test('Bytes primitive', async (t) => {
 })
 
 test('Int64 primitive', async (t) => {
-	const int64 = new Int64(9007199254740991n)
+	let int64 = new Int64(9007199254740991n)
 
 	t.expect(int64).toMatchInlineSnapshot(`
 		Int64 {
@@ -103,7 +103,7 @@ test('Int64 primitive', async (t) => {
 })
 
 test('Uint64 primitive', async (t) => {
-	const uint64 = new Uint64(9007199254740991n)
+	let uint64 = new Uint64(9007199254740991n)
 
 	t.expect(uint64).toMatchInlineSnapshot(`
 		Uint64 {
@@ -114,7 +114,7 @@ test('Uint64 primitive', async (t) => {
 })
 
 test('Date primitive', async (t) => {
-	const date = new Date(new globalThis.Date('2025-01-01'))
+	let date = new Date(new globalThis.Date('2025-01-01'))
 
 	t.expect(date).toMatchInlineSnapshot(`
 		Date {
@@ -125,7 +125,7 @@ test('Date primitive', async (t) => {
 })
 
 test('Datetime primitive', async (t) => {
-	const datetime = new Datetime(new globalThis.Date('2025-01-01T00:00:00Z'))
+	let datetime = new Datetime(new globalThis.Date('2025-01-01T00:00:00Z'))
 
 	t.expect(datetime).toMatchInlineSnapshot(`
 		Datetime {
@@ -136,7 +136,7 @@ test('Datetime primitive', async (t) => {
 })
 
 test('Timestamp primitive', async (t) => {
-	const timestamp = new Timestamp(new globalThis.Date('2025-01-01T00:00:00Z'))
+	let timestamp = new Timestamp(new globalThis.Date('2025-01-01T00:00:00Z'))
 
 	t.expect(timestamp).toMatchInlineSnapshot(`
 		Timestamp {
@@ -147,7 +147,7 @@ test('Timestamp primitive', async (t) => {
 })
 
 test('UUID primitive', async (t) => {
-	const uuid = new Uuid('00112233-4455-6677-8899-aabbccddeeff')
+	let uuid = new Uuid('00112233-4455-6677-8899-aabbccddeeff')
 
 	t.expect(uuid).toMatchInlineSnapshot(`
 		Uuid {

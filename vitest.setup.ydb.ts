@@ -12,6 +12,7 @@ declare module 'vitest' {
 }
 
 let configured = false
+let containerID: string | null = null
 
 /**
  * Sets up the test project by providing necessary environment variables for YDB connection.
@@ -31,8 +32,8 @@ export async function setup(project: TestProject) {
 		return
 	}
 
-	let containerID = await $`docker run --rm --detach --publish 2135 --publish 2136 --publish 8765 --publish 9092 --hostname localhost --platform linux/amd64 ydbplatform/local-ydb:25.1.1.3`.text()
-	containerID = containerID.trim()
+	let container = await $`docker run --rm --detach --publish 2135 --publish 2136 --publish 8765 --publish 9092 --hostname localhost --platform linux/amd64 ydbplatform/local-ydb:25.1.1.3`.text()
+	containerID = container.trim()
 
 	let signal = AbortSignal.timeout(30 * 1000)
 	while ((await $`docker inspect -f {{.State.Health.Status}} ${containerID}`.text()).trim() !== 'healthy') {
@@ -57,9 +58,9 @@ export async function setup(project: TestProject) {
  * If configured, it removes the YDB Docker container forcefully.
  */
 export async function teardown() {
-	if (!configured) {
+	if (!configured || !containerID) {
 		return
 	}
 
-	await $`docker rm -f ydb`
+	await $`docker rm -f ${containerID}`
 }
