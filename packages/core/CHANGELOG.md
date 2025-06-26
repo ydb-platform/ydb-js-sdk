@@ -1,5 +1,13 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.19
+
+### Patch Changes
+
+- cf1e3a6: Move gprc channelOptions to separate field
+- Updated dependencies [799cd13]
+  - @ydbjs/auth@6.0.0-alpha.16
+
 ## 6.0.0-alpha.18
 
 ### Patch Changes

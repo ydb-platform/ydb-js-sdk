@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "6.0.0-alpha.20",
+	"version": "6.0.0-alpha.21",
 	"description": "",
 	"license": "Apache-2.0",
 	"type": "module",
@@ -46,7 +46,7 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.5.2",
 		"@ydbjs/api": "6.0.0-alpha.8",
-		"@ydbjs/core": "6.0.0-alpha.18",
+		"@ydbjs/core": "6.0.0-alpha.19",
 		"@ydbjs/error": "6.0.0-alpha.9",
 		"@ydbjs/retry": "6.0.0-alpha.13",
 		"@ydbjs/value": "6.0.0-alpha.12",

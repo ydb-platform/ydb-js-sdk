@@ -1,5 +1,13 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.21
+
+### Patch Changes
+
+- Add topic-table tx support
+- Updated dependencies [cf1e3a6]
+  - @ydbjs/core@6.0.0-alpha.19
+
 ## 6.0.0-alpha.20
 
 ### Patch Changes

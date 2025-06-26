@@ -1,5 +1,11 @@
 # @ydbjs/auth
 
+## 6.0.0-alpha.16
+
+### Patch Changes
+
+- 799cd13: Support secure options for static credentials provider
+
 ## 6.0.0-alpha.15
 
 ### Patch Changes
