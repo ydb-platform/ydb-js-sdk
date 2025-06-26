@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.22
+
+### Patch Changes
+
+- Enhance TopicWriter throughput
+
 ## 6.0.0-alpha.21
 
 ### Patch Changes
