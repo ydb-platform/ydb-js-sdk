@@ -1,11 +1,14 @@
+import * as tls from 'node:tls'
+
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
+import { type ChannelOptions, credentials } from '@grpc/grpc-js'
 import { AuthServiceDefinition, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { type Client, ClientError, type ClientFactory, Status, createChannel, createClientFactory } from 'nice-grpc'
+import { YDBError } from '@ydbjs/error'
+import { defaultRetryConfig, retry } from '@ydbjs/retry'
+import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
-import { defaultRetryConfig, retry } from '@ydbjs/retry'
-import { YDBError } from '@ydbjs/error'
 
 export type StaticCredentialsToken = {
 	value: string
@@ -37,16 +40,28 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 	#password: string
 
 	constructor(
-		credentials: StaticCredentials,
+		{ username, password }: StaticCredentials,
 		endpoint: string,
-		clientFactory: ClientFactory = createClientFactory()
+		secureOptions?: tls.SecureContextOptions | undefined,
+		channelOptions?: ChannelOptions
 	) {
 		super()
-		this.#username = credentials.username
-		this.#password = credentials.password
+		this.#username = username
+		this.#password = password
 
-		let cs = new URL(endpoint.replace(/^grpc/, 'http'))
-		this.#client = clientFactory.create(AuthServiceDefinition, createChannel(cs.origin))
+		let cs = new URL(endpoint)
+
+		if (['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(cs.protocol) === false) {
+			throw new Error('Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https')
+		}
+
+		let address = `${cs.protocol}//${cs.host}${cs.pathname}`
+
+		let channelCredentials = secureOptions ?
+			credentials.createFromSecureContext(tls.createSecureContext(secureOptions)) :
+			credentials.createInsecure()
+
+		this.#client = createClient(AuthServiceDefinition, createChannel(address, channelCredentials, channelOptions))
 	}
 
 	/**
@@ -66,7 +81,6 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 
 		this.#promise = retry({ ...defaultRetryConfig, signal, idempotent: true }, async () => {
 			let response = await this.#client.login({ user: this.#username, password: this.#password }, { signal })
-
 			if (!response.operation) {
 				throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No operation in response')
 			}
@@ -80,13 +94,25 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 				throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No result in operation')
 			}
 
-			// Parse the JWT token to extract expiration time
-			const [, payload] = result.token.split('.')
-			const decodedPayload = JSON.parse(Buffer.from(payload, 'base64').toString())
+			// The result.token is a JWT in the format header.payload.signature.
+			// We attempt to decode the payload to extract token metadata (aud, exp, iat, sub).
+			// If the token is not in the expected format, we fallback to default values.
+			let [header, payload, signature] = result.token.split('.')
+			if (header && payload && signature) {
+				let decodedPayload = JSON.parse(Buffer.from(payload, 'base64').toString())
 
-			this.#token = {
-				value: result.token,
-				...decodedPayload,
+				this.#token = {
+					value: result.token,
+					...decodedPayload,
+				}
+			} else {
+				this.#token = {
+					value: result.token,
+					aud: [],
+					exp: Math.floor(Date.now() / 1000) + 5 * 60, // fallback: 5 minutes from now
+					iat: Math.floor(Date.now() / 1000),
+					sub: '',
+				}
 			}
 
 			return this.#token!.value!
