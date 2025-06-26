@@ -1,18 +1,18 @@
 import { type EndpointInfo } from '@ydbjs/api/discovery';
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc';
 
-import { type Connection, LazyConnection } from './conn.ts';
+import { type Connection, LazyConnection } from './conn.js';
 import { dbg } from './dbg.js';
 
 export class ConnectionPool implements Disposable {
 	protected connections: Set<Connection> = new Set();
 	protected pessimized: Set<Connection> = new Set();
 
-	#pessimizationTimeoutMs = 60000;
+	#channelOptions?: ChannelOptions;
 	#channelCredentials: ChannelCredentials;
-	#channelOptions: ChannelOptions;
+	#pessimizationTimeoutMs = 60000;
 
-	constructor(channelCredentials: ChannelCredentials, channelOptions: ChannelOptions) {
+	constructor(channelCredentials: ChannelCredentials, channelOptions?: ChannelOptions) {
 		this.#channelCredentials = channelCredentials
 		this.#channelOptions = channelOptions
 	}

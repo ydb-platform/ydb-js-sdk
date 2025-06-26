@@ -27,8 +27,15 @@ import { dbg } from './dbg.js'
 import { ConnectionPool } from './pool.js'
 import { debug } from './middleware.js'
 
-export type DriverOptions = Omit<ChannelOptions, keyof any> & {
+export type DriverOptions = {
+	/**
+	 * SSL/TLS options for secure connections.
+	 *
+	 * @deprecated Use `secureOptions` instead.
+	 */
 	ssl?: tls.SecureContextOptions
+	secureOptions?: tls.SecureContextOptions | undefined
+	channelOptions?: ChannelOptions
 	credentialsProvider?: CredentialsProvider
 
 	'ydb.sdk.application'?: string
@@ -81,8 +88,9 @@ export class Driver implements Disposable {
 			throw new Error('Invalid connection string. Must be a non-empty string')
 		}
 
-		this.options = Object.assign({}, defaultOptions, options)
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
+		this.options = Object.assign({}, defaultOptions, options)
+		this.options.secureOptions ??= this.options.ssl
 
 		if (['grpc:', 'grpcs:', 'http:', 'https:'].includes(this.cs.protocol) === false) {
 			throw new Error('Invalid connection string protocol. Must be one of grpc, grpcs, http, https')
@@ -113,13 +121,13 @@ export class Driver implements Disposable {
 			ssl: this.isSecure,
 		})
 
-		let channelCredentials = this.options.ssl
-			? credentials.createFromSecureContext(tls.createSecureContext(this.options.ssl))
+		let channelCredentials = this.options.secureOptions
+			? credentials.createFromSecureContext(tls.createSecureContext(this.options.secureOptions))
 			: this.isSecure
 				? credentials.createSsl()
 				: credentials.createInsecure()
 
-		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options)
+		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options.channelOptions)
 
 		this.#middleware = debug
 		this.#middleware = composeClientMiddleware(this.#middleware, (call, options) => {
@@ -135,7 +143,7 @@ export class Driver implements Disposable {
 			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
 		}
 
-		this.#pool = new ConnectionPool(channelCredentials, this.options)
+		this.#pool = new ConnectionPool(channelCredentials, this.options.channelOptions)
 
 		this.#discoveryClient = createClientFactory()
 			.use(this.#middleware)
@@ -186,7 +194,7 @@ export class Driver implements Disposable {
 	}
 
 	get isSecure(): boolean {
-		return this.cs.protocol === 'https:'
+		return this.cs.protocol === 'https:' || this.cs.protocol === 'grpcs:'
 	}
 
 	async #discovery(signal?: AbortSignal): Promise<void> {
@@ -260,7 +268,7 @@ export class Driver implements Disposable {
 					},
 				}),
 				{
-					'*': this.options,
+					'*': this.options.channelOptions,
 				}
 			)
 	}

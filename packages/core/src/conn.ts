@@ -6,7 +6,7 @@ import {
 	createChannel,
 } from 'nice-grpc'
 
-import { dbg } from './dbg.ts'
+import { dbg } from './dbg.js'
 
 export interface Connection {
 	readonly nodeId: bigint
