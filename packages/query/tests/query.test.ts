@@ -10,7 +10,7 @@ import { query } from '../dist/esm/index.js'
 let driver = new Driver(inject('connectionString'), { 'ydb.sdk.enable_discovery': false })
 await driver.ready()
 
-test('Simple query', async () => {
+test('executes simple query', async () => {
 	let sql = query(driver)
 
 	expect(await sql`SELECT 1 AS id`).toMatchInlineSnapshot(`
@@ -24,7 +24,7 @@ test('Simple query', async () => {
 	`)
 })
 
-test('Query with parameters', async () => {
+test('executes query with parameters', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT ${1} AS id`
@@ -39,7 +39,7 @@ test('Query with parameters', async () => {
 	`)
 })
 
-test('Query with named parameters', async () => {
+test('executes query with named parameters', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT $param1 as id`.parameter('param1', fromJs(1))
@@ -54,7 +54,7 @@ test('Query with named parameters', async () => {
 	`)
 })
 
-test('Query with named parameters and types', async () => {
+test('executes query with named parameters and types', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT $param1 as id`.parameter('param1', new Uint64(1n))
@@ -69,7 +69,7 @@ test('Query with named parameters and types', async () => {
 	`)
 })
 
-test('Query with multiple parameters', async () => {
+test('executes query with multiple parameters', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT $param1 as id, ${'Neo'} as name`.parameter('param1', fromJs(1))
@@ -85,7 +85,7 @@ test('Query with multiple parameters', async () => {
 	`)
 })
 
-test('Query with multiple result sets', async () => {
+test('executes query with multiple result sets', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT 1 AS id; SELECT 2 AS id`
@@ -105,7 +105,7 @@ test('Query with multiple result sets', async () => {
 	`)
 })
 
-test('Query with multiple result sets and parameters', async () => {
+test('executes query with multiple result sets and parameters', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT $param1 AS id; SELECT $param2 AS id`
@@ -128,7 +128,7 @@ test('Query with multiple result sets and parameters', async () => {
 	`)
 })
 
-test('Query with CAST', async () => {
+test('executes query with CAST', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT CAST($param1 as Uint64) AS id`.parameter('param1', fromJs(1))
@@ -144,7 +144,7 @@ test('Query with CAST', async () => {
 	`)
 })
 
-test('Query with typed value', async () => {
+test('executes query with typed value', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT ${new Uint64(1n)} AS id`
@@ -159,7 +159,7 @@ test('Query with typed value', async () => {
 	`)
 })
 
-test('Query with optional value', async () => {
+test('executes query with optional value', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT CAST(${new Optional(null, new Uint64Type())} AS Uint64?) AS id`
@@ -174,7 +174,7 @@ test('Query with optional value', async () => {
 	`)
 })
 
-test('Query with table parameter using AS_TABLE', async () => {
+test('executes query with table parameter using AS_TABLE', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT * FROM AS_TABLE(${[{ id: 1, name: 'Neo' }]})`
@@ -190,7 +190,7 @@ test('Query with table parameter using AS_TABLE', async () => {
 	`)
 })
 
-test('Query with list of structs', async () => {
+test('executes query with list of structs', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql`SELECT * FROM AS_TABLE(${[
@@ -215,7 +215,7 @@ test('Query with list of structs', async () => {
 	`)
 })
 
-test('Simple transaction', async () => {
+test('executes simple transaction', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql.begin(async (tx) => {
@@ -233,7 +233,7 @@ test('Simple transaction', async () => {
 	`)
 })
 
-test('Transaction with parameters', async () => {
+test('executes transaction with parameters', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql.begin(async (tx) => {
@@ -251,7 +251,7 @@ test('Transaction with parameters', async () => {
 	`)
 })
 
-test('Transaction with multiple queries', async () => {
+test('executes transaction with multiple queries', async () => {
 	let sql = query(driver)
 
 	let resultSets = await sql.begin(async (tx) => {
@@ -271,7 +271,7 @@ test('Transaction with multiple queries', async () => {
 	`)
 })
 
-test('Parallel transactions and queries', async () => {
+test('executes parallel transactions and queries', async () => {
 	let sql = query(driver)
 
 	let results = await Promise.all([

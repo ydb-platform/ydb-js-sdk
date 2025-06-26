@@ -6,7 +6,7 @@ afterEach(() => {
 	vi.restoreAllMocks()
 })
 
-test('valid token', async () => {
+test('extracts valid token', async () => {
 	global.fetch = vi.fn(async () => {
 		let response = new Response(JSON.stringify({ access_token: 'test-token' }))
 		response.headers.set('Content-Type', 'application/json')
@@ -20,7 +20,7 @@ test('valid token', async () => {
 	expect(token, 'Token is not empty').eq('test-token')
 })
 
-test('invalid response', async () => {
+test('handles invalid response', async () => {
 	global.fetch = vi.fn(async () => {
 		let response = new Response('404 Not Found', { status: 404 })
 

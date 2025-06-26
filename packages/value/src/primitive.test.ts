@@ -14,7 +14,7 @@ import {
 	Uuid,
 } from '../dist/esm/primitive.js'
 
-test('Bool primitive', async (t) => {
+test('creates Bool primitive', async (t) => {
 	let boolTrue = new Bool(true)
 	let boolFalse = new Bool(false)
 
@@ -32,7 +32,7 @@ test('Bool primitive', async (t) => {
 	`)
 })
 
-test('Int32 primitive', async (t) => {
+test('creates Int32 primitive', async (t) => {
 	let int = new Int32(42)
 
 	t.expect(int).toMatchInlineSnapshot(`
@@ -43,7 +43,7 @@ test('Int32 primitive', async (t) => {
 	`)
 })
 
-test('Uint32 primitive', async (t) => {
+test('creates Uint32 primitive', async (t) => {
 	let uint = new Uint32(42)
 
 	t.expect(uint).toMatchInlineSnapshot(`
@@ -54,7 +54,7 @@ test('Uint32 primitive', async (t) => {
 	`)
 })
 
-test('Text primitive', async (t) => {
+test('creates Text primitive', async (t) => {
 	let text = new Text('hello')
 
 	t.expect(text).toMatchInlineSnapshot(`
@@ -65,7 +65,7 @@ test('Text primitive', async (t) => {
 	`)
 })
 
-test('Double primitive', async (t) => {
+test('creates Double primitive', async (t) => {
 	let double = new Double(3.14)
 
 	t.expect(double).toMatchInlineSnapshot(`
@@ -76,7 +76,7 @@ test('Double primitive', async (t) => {
 	`)
 })
 
-test('Bytes primitive', async (t) => {
+test('creates Bytes primitive', async (t) => {
 	let bytes = new Bytes(new Uint8Array([0x01, 0x02, 0x03]))
 
 	t.expect(bytes).toMatchInlineSnapshot(`
@@ -91,7 +91,7 @@ test('Bytes primitive', async (t) => {
 	`)
 })
 
-test('Int64 primitive', async (t) => {
+test('creates Int64 primitive', async (t) => {
 	let int64 = new Int64(9007199254740991n)
 
 	t.expect(int64).toMatchInlineSnapshot(`
@@ -102,7 +102,7 @@ test('Int64 primitive', async (t) => {
 	`)
 })
 
-test('Uint64 primitive', async (t) => {
+test('creates Uint64 primitive', async (t) => {
 	let uint64 = new Uint64(9007199254740991n)
 
 	t.expect(uint64).toMatchInlineSnapshot(`
@@ -113,7 +113,7 @@ test('Uint64 primitive', async (t) => {
 	`)
 })
 
-test('Date primitive', async (t) => {
+test('creates Date primitive', async (t) => {
 	let date = new Date(new globalThis.Date('2025-01-01'))
 
 	t.expect(date).toMatchInlineSnapshot(`
@@ -124,7 +124,7 @@ test('Date primitive', async (t) => {
 	`)
 })
 
-test('Datetime primitive', async (t) => {
+test('creates Datetime primitive', async (t) => {
 	let datetime = new Datetime(new globalThis.Date('2025-01-01T00:00:00Z'))
 
 	t.expect(datetime).toMatchInlineSnapshot(`
@@ -135,7 +135,7 @@ test('Datetime primitive', async (t) => {
 	`)
 })
 
-test('Timestamp primitive', async (t) => {
+test('creates Timestamp primitive', async (t) => {
 	let timestamp = new Timestamp(new globalThis.Date('2025-01-01T00:00:00Z'))
 
 	t.expect(timestamp).toMatchInlineSnapshot(`
@@ -146,7 +146,7 @@ test('Timestamp primitive', async (t) => {
 	`)
 })
 
-test('UUID primitive', async (t) => {
+test('creates UUID primitive', async (t) => {
 	let uuid = new Uuid('00112233-4455-6677-8899-aabbccddeeff')
 
 	t.expect(uuid).toMatchInlineSnapshot(`

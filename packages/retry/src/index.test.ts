@@ -4,7 +4,7 @@ import { retry } from './index.ts'
 
 let isError = (error: unknown) => error instanceof Error
 
-test('do retry', async () => {
+test('retries operation successfully', async () => {
 	let attempts = 0
 
 	let result = retry({ retry: isError, budget: Infinity }, async () => {
@@ -20,7 +20,7 @@ test('do retry', async () => {
 	expect(attempts).eq(3)
 })
 
-test('budget exceeded', async () => {
+test('stops when budget exceeded', async () => {
 	let attempts = 0
 
 	let result = retry({ retry: isError, budget: 0 }, async () => {

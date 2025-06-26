@@ -34,7 +34,7 @@ import { StructType } from '../dist/esm/struct.js'
 import { OptionalType } from '../dist/esm/optional.js'
 import { NullType } from '../dist/esm/null.js'
 
-test('primitive types', (t) => {
+test('prints primitive types', (t) => {
 	t.expect(typeToString(new BoolType())).toMatchInlineSnapshot(`"Bool"`)
 	t.expect(typeToString(new Int8Type())).toMatchInlineSnapshot(`"Int8"`)
 	t.expect(typeToString(new Uint8Type())).toMatchInlineSnapshot(`"Uint8"`)
@@ -61,7 +61,7 @@ test('primitive types', (t) => {
 	t.expect(typeToString(new TzTimestampType())).toMatchInlineSnapshot(`"TzTimestamp"`)
 })
 
-test('List type', (t) => {
+test('prints List type', (t) => {
 	const intList = new ListType(new Int32Type())
 	t.expect(typeToString(intList)).toMatchInlineSnapshot(`"List<Int32>"`)
 
@@ -69,7 +69,7 @@ test('List type', (t) => {
 	t.expect(typeToString(nestedList)).toMatchInlineSnapshot(`"List<List<Bool>>"`)
 })
 
-test('Dict type', (t) => {
+test('prints Dict type', (t) => {
 	const stringToInt = new DictType(new TextType(), new Int32Type())
 	t.expect(typeToString(stringToInt)).toMatchInlineSnapshot(`"Dict<Utf8,Int32>"`)
 
@@ -77,7 +77,7 @@ test('Dict type', (t) => {
 	t.expect(typeToString(nestedDict)).toMatchInlineSnapshot(`"Dict<String,List<Double>>"`)
 })
 
-test('Tuple type', (t) => {
+test('prints Tuple type', (t) => {
 	const simpleTuple = new TupleType([new BoolType(), new Int32Type()])
 	t.expect(typeToString(simpleTuple)).toMatchInlineSnapshot(`"Tuple<Bool,Int32>"`)
 
@@ -89,7 +89,7 @@ test('Tuple type', (t) => {
 	t.expect(typeToString(complexTuple)).toMatchInlineSnapshot(`"Tuple<String,List<Double>,Dict<Utf8,Int32>>"`)
 })
 
-test('Struct type', (t) => {
+test('prints Struct type', (t) => {
 	const simpleStruct = new StructType(['id', 'name'], [new Int32Type(), new BytesType()])
 	t.expect(typeToString(simpleStruct)).eq('Struct<id:Int32,name:String>')
 
@@ -100,7 +100,7 @@ test('Struct type', (t) => {
 	t.expect(typeToString(nestedStruct)).toMatchInlineSnapshot(`"Struct<person:Struct<age:Int32,name:String>,scores:List<Double>>"`)
 })
 
-test('Optional type', (t) => {
+test('prints Optional type', (t) => {
 	const optionalInt = new OptionalType(new Int32Type())
 	t.expect(typeToString(optionalInt)).toMatchInlineSnapshot(`"Optional<Int32>"`)
 
@@ -108,6 +108,6 @@ test('Optional type', (t) => {
 	t.expect(typeToString(optionalList)).toMatchInlineSnapshot(`"Optional<List<Bool>>"`)
 })
 
-test('Null type', (t) => {
+test('prints Null type', (t) => {
 	t.expect(typeToString(new NullType())).toMatchInlineSnapshot(`"Null"`)
 })

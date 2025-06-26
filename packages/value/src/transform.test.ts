@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 import { fromJs, toJs } from '../dist/esm/index.js'
 
-test('fromJs with primitives', async (t) => {
+test('transforms fromJs with primitives', async (t) => {
 	let boolVal = fromJs(true)
 	let numVal = fromJs(42)
 	let strVal = fromJs('hello')
@@ -91,7 +91,7 @@ test('fromJs with null', async (t) => {
 	`)
 })
 
-test('toJs with primitives', async (t) => {
+test('transforms toJs with primitives', async (t) => {
 	let boolVal = toJs(fromJs(true))
 	let numVal = toJs(fromJs(42))
 	let strVal = toJs(fromJs('hello'))

@@ -3,7 +3,7 @@ import { test } from 'vitest'
 import { List } from '../dist/esm/list.js'
 import { Uint32 } from '../dist/esm/primitive.js'
 
-test('empty list', async (t) => {
+test('creates empty list', async (t) => {
 	let list = new List()
 
 	t.expect(list).toMatchInlineSnapshot(`
@@ -16,7 +16,7 @@ test('empty list', async (t) => {
 	`)
 })
 
-test('list of values', async (t) => {
+test('creates list of values', async (t) => {
 	let list = new List(new Uint32(1), new Uint32(2))
 
 	t.expect(list).toMatchInlineSnapshot(`

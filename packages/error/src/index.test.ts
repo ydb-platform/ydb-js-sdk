@@ -4,7 +4,7 @@ import { create } from '@bufbuild/protobuf'
 import { IssueMessageSchema, StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { CommitError, YDBError } from './index.ts'
 
-test('single issue', () => {
+test('handles single issue', () => {
 	let error = new YDBError(StatusIds_StatusCode.ABORTED, [
 		create(IssueMessageSchema, {
 			severity: 1,
@@ -36,7 +36,7 @@ test('single issue', () => {
 	expect(error.message).eq('ABORTED, Issues: ERROR(1030): Type annotation')
 })
 
-test('multiple issues', () => {
+test('handles multiple issues', () => {
 	let error = new YDBError(StatusIds_StatusCode.ABORTED, [
 		create(IssueMessageSchema, {
 			severity: 0,
@@ -54,7 +54,7 @@ test('multiple issues', () => {
 	expect(error.message).eq('ABORTED, Issues: FATAL(14): Some error message; ERROR(15): Another error message')
 })
 
-test('commit error', () => {
+test('creates commit error', () => {
 	let error = new CommitError('Commit failed', new YDBError(StatusIds_StatusCode.ABORTED, []))
 
 	expect(error.message).eq('Commit failed')

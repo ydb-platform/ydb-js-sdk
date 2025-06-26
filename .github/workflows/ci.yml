@@ -56,5 +56,4 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - run: npm run build
-      - run: npm run test -- --no-color
-      - run: npm run test:e2e -- --no-color
+      - run: npm run test:all

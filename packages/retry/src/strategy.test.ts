@@ -3,14 +3,14 @@ import { expect, test } from 'vitest'
 import { defaultRetryConfig } from './index.ts'
 import * as strategies from './strategy.ts'
 
-test('fixed', async () => {
+test('applies fixed delay strategy', async () => {
 	let strategy = strategies.fixed(1000)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
 	expect(delay).eq(1000)
 })
 
-test('linear', async () => {
+test('applies linear backoff strategy', async () => {
 	let strategy = strategies.linear(1000)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -26,7 +26,7 @@ test('linear', async () => {
 	expect(delay).eq(3000)
 })
 
-test('exponential', async () => {
+test('applies exponential backoff strategy', async () => {
 	let strategy = strategies.exponential(1000)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -39,7 +39,7 @@ test('exponential', async () => {
 	expect(delay).eq(4000)
 })
 
-test('jitter', async () => {
+test('applies jitter to delay strategy', async () => {
 	let strategy = strategies.jitter(10)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -52,7 +52,7 @@ test('jitter', async () => {
 	expect(delay3 <= 30).eq(true)
 })
 
-test('random', async () => {
+test('applies random delay strategy', async () => {
 	let strategy = strategies.random(10, 20)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -65,7 +65,7 @@ test('random', async () => {
 	expect(delay >= 10 && delay <= 20).eq(true)
 })
 
-test('backoff', async () => {
+test('applies backoff delay strategy', async () => {
 	let strategy = strategies.backoff(1000, 10000)
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -84,7 +84,7 @@ test('backoff', async () => {
 	expect(delay).eq(10000)
 })
 
-test('combine', async () => {
+test('combines multiple strategies', async () => {
 	let strategy = strategies.combine(strategies.exponential(1000), strategies.jitter(10))
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
@@ -97,7 +97,7 @@ test('combine', async () => {
 	expect(delay >= 4000 && delay <= 4030).eq(true)
 })
 
-test('compose', async () => {
+test('composes strategy functions', async () => {
 	let strategy = strategies.compose(strategies.exponential(1000), strategies.jitter(10))
 
 	let delay = strategy({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
