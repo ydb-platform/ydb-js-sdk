@@ -8,6 +8,9 @@ export default defineConfig({
 					name: 'uni',
 					include: ['packages/*/src/**/*.test.ts'],
 					environment: 'node',
+					benchmark: {
+						include: ['packages/*/src/**/*.bench.ts']
+					}
 				},
 			},
 			{
@@ -16,6 +19,9 @@ export default defineConfig({
 					include: ['packages/*/tests/**/*.test.ts'],
 					environment: 'node',
 					globalSetup: './vitest.setup.ydb.ts',
+					benchmark: {
+						include: ['packages/*/tests/**/*.bench.ts'],
+					}
 				},
 			},
 			{
@@ -26,9 +32,20 @@ export default defineConfig({
 					globalSetup: './vitest.setup.ydb.ts',
 					testTimeout: 60000,
 					hookTimeout: 30000,
+					benchmark: {
+						include: ['e2e/**/*.bench.ts']
+					}
 				},
 			},
 		],
 		passWithNoTests: true,
+		coverage: {
+			exclude: [
+				'packages/api/**',
+				'examples/**',
+				'**/dist/**',
+				'**/vitest.*',
+			]
+		}
 	},
 })
