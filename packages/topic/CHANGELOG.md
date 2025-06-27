@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.0.0-alpha.23
+
+### Patch Changes
+
+- Prevent sending write requests before session ready
+
 ## 6.0.0-alpha.22
 
 ### Patch Changes
