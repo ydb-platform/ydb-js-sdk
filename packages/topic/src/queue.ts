@@ -1,8 +1,9 @@
-export class PQueue<T> implements AsyncIterable<T>, Disposable {
+export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
+	private paused = false;
 	private closed = false;
 	private readonly heap: { value: T; priority: number }[] = [];
-	private readonly pendingShifts: ((value: IteratorResult<T>) => void)[] = [];
-	private readonly pendingRejects: ((reason?: any) => void)[] = [];
+	private pendingShift?: (value: IteratorResult<T>) => void;
+	private pendingResume?: () => void;
 
 	get size(): number {
 		return this.heap.length;
@@ -23,56 +24,25 @@ export class PQueue<T> implements AsyncIterable<T>, Disposable {
 				left = mid + 1;
 			}
 		}
+
 		this.heap.splice(left, 0, { value, priority });
 
-		if (this.pendingShifts.length > 0) {
-			this.pendingRejects.shift()!;
-			let next = this.heap.shift()!;
-			let resolve = this.pendingShifts.shift()!;
+		if (this.pendingShift && this.heap.length > 0) {
+			const next = this.heap.shift()!;
+			const resolve = this.pendingShift;
+			this.pendingShift = undefined;
 			resolve({ value: next.value, done: false });
 		}
 	}
 
-	async shift(): Promise<T> {
-		if (this.closed && this.heap.length === 0) {
-			throw new Error('Queue closed');
-		}
-
-		if (this.heap.length > 0) {
-			let next = this.heap.shift()!;
-			return next.value;
-		}
-
-		return new Promise<T>((resolve, reject) => {
-			this.pendingRejects.push(reject);
-			this.pendingShifts.push(({ value, done }) => {
-				if (done) {
-					reject(new Error('Queue closed'));
-				} else {
-					resolve(value);
-				}
+	private async next(): Promise<IteratorResult<T>> {
+		if (this.paused) {
+			await new Promise<void>(resolve => {
+				this.pendingResume = resolve;
 			});
-		});
-	}
-
-	close() {
-		this.closed = true;
-		while (this.pendingShifts.length > 0) {
-			this.pendingRejects.shift()!;
-			let resolve = this.pendingShifts.shift()!;
-			resolve({ value: undefined as any, done: true });
 		}
-	}
 
-	restartConsumer() {
-		while (this.pendingShifts.length > 0) {
-			this.pendingShifts.shift()!;
-			let reject = this.pendingRejects.shift()!;
-			reject(new Error('Consumer restarted'));
-		}
-	}
-
-	async next(): Promise<IteratorResult<T>> {
+		// Return done if closed and no items to process
 		if (this.closed && this.heap.length === 0) {
 			return { value: undefined as any, done: true };
 		}
@@ -82,10 +52,45 @@ export class PQueue<T> implements AsyncIterable<T>, Disposable {
 			return { value: next.value, done: false };
 		}
 
-		return new Promise<IteratorResult<T>>((resolve, reject) => {
-			this.pendingShifts.push(resolve);
-			this.pendingRejects.push(reject);
+		// If we reach here: not closed and no items in heap
+		// Create pending operation to wait for new items
+		return new Promise<IteratorResult<T>>((resolve) => {
+			this.pendingShift = resolve;
 		});
+	}
+
+	pause() {
+		this.paused = true;
+	}
+
+	resume() {
+		if (!this.paused) return;
+		this.paused = false;
+		if (this.pendingResume) {
+			const resolve = this.pendingResume;
+			this.pendingResume = undefined;
+			resolve();
+		}
+	}
+
+	close() {
+		this.closed = true;
+		// Resolve any pending operations with done: true
+		if (this.pendingShift) {
+			this.pendingShift({ value: undefined as any, done: true });
+			this.pendingShift = undefined;
+		}
+		if (this.pendingResume) {
+			this.pendingResume();
+			this.pendingResume = undefined;
+		}
+	}
+
+	dispose() {
+		// Clear the heap to prevent memory leaks
+		this.heap.length = 0;
+		// Close and resolve pending operations
+		this.close();
 	}
 
 	async *[Symbol.asyncIterator]() {
@@ -98,9 +103,6 @@ export class PQueue<T> implements AsyncIterable<T>, Disposable {
 	}
 
 	[Symbol.dispose]() {
-		this.close();
-		this.heap.length = 0;
-		this.pendingShifts.length = 0;
-		this.pendingRejects.length = 0;
+		this.dispose();
 	}
 }
