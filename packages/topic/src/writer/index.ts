@@ -1,5 +1,3 @@
-import { nextTick } from "node:process";
-
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
 import { Codec, type StreamWriteMessage_FromClient, type StreamWriteMessage_WriteRequest_MessageData, TopicServiceDefinition } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
@@ -9,7 +7,7 @@ import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
 import debug from "debug";
 
 import { type CompressionCodec, defaultCodecMap } from "../codec.js";
-import { PQueue } from "../queue.js";
+import { AsyncPriorityQueue } from "../queue.js";
 import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import { _get_producer_id } from "./_gen_producer_id.js";
@@ -33,7 +31,6 @@ export type TopicWriterOptions = {
 	codec?: CompressionCodec
 	// The producer name to use for writing messages.
 	// If not provided, a random producer name will be generated.
-	// If provided, the producer name will be used to identify the writer.
 	producer?: string
 	// How often to update the token for the writer.
 	// Default is 60 seconds.
@@ -46,11 +43,12 @@ export type TopicWriterOptions = {
 	// Maximum number of messages that can be in flight at the same time.
 	// If the number of messages in flight exceeds this number, the writer will wait for some messages to be acknowledged before sending new messages.
 	// This is useful to avoid overwhelming the topic with too many messages at once.
-	// If not provided, the default is 1000 messages.
-	maxInflightCount?: number
+	// Default is 1000 messages.
+	maxInflightCount?: number,
 	// The Interval in milliseconds to flush the buffer automatically.
 	// If not provided, the writer will not flush the buffer automatically.
 	// This is useful to ensure that the writer does not hold too many messages in memory.
+	// Default is 10ms.
 	flushIntervalMs?: number
 	// Retry configuration for the writer.
 	retryConfig?(signal: AbortSignal): RetryConfig
@@ -65,9 +63,11 @@ export interface TopicWriter extends Disposable, AsyncDisposable {
 	// Flush the buffer and send all messages to the topic.
 	// Returns a promise that resolves to the last sequence number of the topic after flushing.
 	flush(): Promise<bigint | undefined>;
-	// Close the writer and release all resources.
-	// If a reason is provided, it will be used to reject all pending acknowledgments.
-	close(reason?: Error): void;
+	// Gracefully close the writer. Stop accepting new messages and wait for existing ones to be sent.
+	close(): Promise<void>;
+	// Immediately destroy the writer and release all resources.
+	// This will stop all operations immediately without waiting for pending messages.
+	destroy(reason?: Error): void;
 }
 
 export function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
@@ -76,9 +76,9 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 
 	// Throughput options
 	let throughputSettings: ThroughputSettings = {
-		maxBufferBytes: options.maxBufferBytes ??= 1024n * 1024n * 1024n, // Default is 1GB.
-		flushIntervalMs: options.flushIntervalMs ??= 1_000, // Default is 1 second.
-		maxInflightCount: options.maxInflightCount ??= 1_000, // Default is 1000 messages.
+		maxBufferBytes: options.maxBufferBytes ??= 1024n * 1024n * 256n, // Default is 256MiB.
+		flushIntervalMs: options.flushIntervalMs ??= 10, // Default is 10ms.
+		maxInflightCount: options.maxInflightCount ??= 1000, // Default is 1000 messages.
 	};
 
 	let dbg = debug('ydbjs').extend('topic').extend('writer')
@@ -109,13 +109,13 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	let ac = new AbortController();
 	let signal = ac.signal;
 
-	// Flag to indicate if the writer is ready to send messages.
-	// When the writer stream is not ready, it will queue messages to be sent later.
-	let isReady = false;
 	// Flag to indicate if the writer is closed.
 	// When the writer is closed, it will not accept new messages.
 	// The writer will still process and acknowledge any messages that were already sent.
 	let isClosed = false;
+	// Flag to indicate if the writer is currently flushing.
+	// When flushing, new messages are temporarily blocked to ensure flush completes.
+	let isFlushing = false;
 	// Flag to indicate if the writer is disposed.
 	// When the writer is disposed, it will not accept new messages and will reject all pending write requests.
 	// This is useful to ensure that the writer does not leak resources and can be closed gracefully.
@@ -132,12 +132,15 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	}
 
 	// Create an outgoing stream that will be used to send messages to the topic service.
-	let outgoing = new PQueue<StreamWriteMessage_FromClient>();
+	// Queue starts paused initially since we haven't sent init request yet
+	let outgoing = new AsyncPriorityQueue<StreamWriteMessage_FromClient>();
+	// Note: Will be paused after init request is sent
 
 	// Flush the buffer periodically to ensure that messages are sent to the topic.
 	// This is useful to avoid holding too many messages in memory and to ensure that the writer does not leak memory.
 	// The flush interval is configurable and defaults to 60 seconds.
 	let backgroundFlusher = setInterval(async () => {
+		if (isDisposed) return; // Early exit if disposed
 		_flush({
 			tx: options.tx,
 			queue: outgoing,
@@ -147,17 +150,18 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			throughputSettings,
 			updateBufferSize,
 		});
-	}, options.flushIntervalMs, { signal });
+	}, options.flushIntervalMs);
 
 	// Update the token periodically to ensure that the writer has a valid token.
 	// This is useful to avoid token expiration and to ensure that the writer can continue to write messages to the topic.
 	// The update token interval is configurable and defaults to 60 seconds.
 	let backgroundTokenRefresher = setInterval(async () => {
+		if (isDisposed) return; // Early exit if disposed
 		_send_update_token_request({
 			queue: outgoing,
 			token: await driver.token,
 		})
-	}, options.updateTokenIntervalMs, { signal });
+	}, options.updateTokenIntervalMs);
 
 	// Start the stream to the topic service.
 	// This is the main function that will handle the streaming of messages to the topic service.
@@ -183,20 +187,26 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			// Start the stream to the topic service.
 			// Retry the connection if it fails or receives an error.
 			await retry(retryConfig, async (signal) => {
-				isReady = false;
+				// Close old queue and create new empty one for retry
+				outgoing.dispose();
+				outgoing = new AsyncPriorityQueue<StreamWriteMessage_FromClient>();
+
 				let stream = driver.createClient(TopicServiceDefinition).streamWrite(outgoing, { signal });
 
 				// Send the initial request to the server to initialize the stream.
-				nextTick(() => {
-					dbg('sending init request to server, producer: %s', options.producer);
+				dbg('sending init request to server, producer: %s', options.producer);
 
-					_send_init_request({
-						queue: outgoing,
-						topic: options.topic,
-						producer: options.producer,
-						getLastSeqNo: true
-					});
-				})
+				_send_init_request({
+					queue: outgoing,
+					topic: options.topic,
+					producer: options.producer,
+					getLastSeqNo: true
+				});
+
+				// Pause after next tick to allow init request to be consumed first
+				process.nextTick(() => {
+					outgoing.pause();
+				});
 
 				for await (const chunk of stream) {
 					dbg('receive message from server: %s, status: %d, payload: %o', chunk.$typeName, chunk.status, chunk.serverMessage.value?.$typeName);
@@ -221,7 +231,7 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 								updateBufferSize,
 							}, chunk.serverMessage.value);
 
-							isReady = true;
+							outgoing.resume(); // Now we can start sending messages
 
 							break
 						case 'writeResponse':
@@ -243,10 +253,10 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 			dbg('error occurred while streaming: %O', err);
 		} finally {
 			dbg('stream closed');
-			outgoing.close()
+			outgoing.dispose();
 			ac.abort();
 		}
-	})()
+	})();
 
 	// This function is used to flush the buffer and send the messages to the topic.
 	// It will send all messages in the buffer to the topic service and wait for them to be acknowledged.
@@ -254,34 +264,43 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// Returns the last sequence number of the topic after flushing.
 	async function flush(): Promise<bigint | undefined> {
 		if (isDisposed) {
-			throw new Error('Writer is disposed');
-		}
-
-		if (!isReady) {
-			throw new Error('Writer is not ready');
+			throw new Error('Writer is destroyed');
 		}
 
 		if (!buffer.length && !inflight.length) {
 			return lastSeqNo;
 		}
 
-		while (buffer.length > 0 || inflight.length > 0) {
-			dbg('waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d', inflight.length, buffer.length);
+		// Set flushing flag to temporarily block new messages
+		isFlushing = true;
 
-			_flush({
-				tx: options.tx,
-				queue: outgoing,
-				codec: codec,
-				buffer,
-				inflight,
-				throughputSettings,
-				updateBufferSize,
-			});
+		try {
+			while (buffer.length > 0 || inflight.length > 0) {
+				// Check if writer was destroyed during flush (destroy should stop immediately)
+				if (isDisposed) {
+					throw new Error('Writer was destroyed during flush');
+				}
+				// Note: isClosed is OK here - we want to flush existing messages even if closed
 
-			await new Promise(resolve => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }));
+				_flush({
+					tx: options.tx,
+					queue: outgoing,
+					codec: codec,
+					buffer,
+					inflight,
+					throughputSettings,
+					updateBufferSize,
+				});
+
+				// eslint-disable-next-line no-await-in-loop
+				await new Promise(resolve => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }));
+			}
+
+			return lastSeqNo;
+		} finally {
+			// Always reset flushing flag, even if error occurred
+			isFlushing = false;
 		}
-
-		return lastSeqNo;
 	}
 
 	// This function is used to write a message to the topic.
@@ -291,12 +310,16 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 	// Returns the sequence number of the message that was written to the topic.
 	// If the sequence number is not provided, it will use the last sequence number of the topic.
 	function write(payload: Uint8Array, extra: { seqNo?: bigint, createdAt?: Date, metadataItems?: Record<string, Uint8Array> } = {}): bigint {
-		if (isClosed) {
-			throw new Error('Writer is closed, cannot write messages');
+		if (isDisposed) {
+			throw new Error('Writer is destroyed, cannot write messages');
 		}
 
-		if (isDisposed) {
-			throw new Error('Writer is disposed, cannot write messages');
+		if (isFlushing) {
+			throw new Error('Writer is flushing, cannot write messages during flush');
+		}
+
+		if (isClosed) {
+			throw new Error('Writer is closed, cannot write messages');
 		}
 
 		if (!extra.seqNo && isSeqNoProvided) {
@@ -318,30 +341,57 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		}, { data: payload, seqNo: extra.seqNo, createdAt: extra.createdAt, metadataItems: extra.metadataItems });
 	}
 
-	// This function is used to close the writer and release all resources.
-	// It will clear the buffer, inflight messages.
-	// It will also clear the write queue and close the outgoing stream.
-	// If no reason is provided, it will use a default error message.
-	function close(reason?: Error) {
+	// Gracefully close the writer - stop accepting new messages and wait for existing ones
+	async function close(): Promise<void> {
+		if (isDisposed) {
+			throw new Error('Writer is already destroyed');
+		}
+
+		if (isClosed) {
+			return; // Already closed
+		}
+
+		// Stop accepting new messages
+		isClosed = true;
+
+		try {
+			// Wait for existing messages to be sent
+			await flush();
+		} catch (err) {
+			dbg('Error during close flush: %O', err);
+			throw err;
+		}
+
+		dbg('writer closed gracefully');
+	}
+
+	// Immediate destruction - stop everything immediately
+	function destroy(reason?: Error) {
 		if (isDisposed) {
 			return;
 		}
 
-		ac.abort();
+		// Set disposed flag first to prevent further operations
+		isDisposed = true;
+		isClosed = true;
+		isFlushing = false; // Reset flushing flag
 
-		// Clear the buffer and inflight messages.
-		buffer.length = 0;
-		bufferSize = 0n;
-
-		inflight.length = 0;
-		outgoing.close();
-
+		// Clear intervals first (before abort to avoid race conditions)
 		clearInterval(backgroundFlusher);
 		clearInterval(backgroundTokenRefresher);
 
-		isClosed = true;
-		isDisposed = true;
-		dbg('writer closed, reason: %O', reason);
+		// Abort all operations
+		ac.abort();
+
+		// Clear the buffer and inflight messages
+		buffer.length = 0;
+		bufferSize = 0n;
+		inflight.length = 0;
+
+		// Dispose the outgoing queue
+		outgoing.dispose();
+
+		dbg('writer destroyed, reason: %O', reason);
 	}
 
 	// Before committing the transaction, require all messages to be written and acknowledged.
@@ -356,14 +406,20 @@ export function createTopicWriter(driver: Driver, options: TopicWriterOptions): 
 		flush,
 		write,
 		close,
+		destroy,
 		[Symbol.dispose]: () => {
-			close(new Error('Writer disposed'));
-			outgoing[Symbol.dispose]();
+			destroy(new Error('Writer disposed'));
 		},
 		[Symbol.asyncDispose]: async () => {
-			await flush();
-			close(new Error('Writer disposed'));
-			outgoing[Symbol.dispose]();
+			// Graceful async disposal: wait for existing messages to be sent
+			if (!isClosed && !isDisposed) {
+				try {
+					await close(); // Use graceful close
+				} catch (err) {
+					dbg('Error during async dispose close: %O', err);
+				}
+			}
+			destroy(new Error('Writer async disposed'));
 		}
 	}
 }

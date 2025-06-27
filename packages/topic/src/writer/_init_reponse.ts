@@ -1,13 +1,13 @@
 import type { StreamWriteMessage_FromClient, StreamWriteMessage_InitResponse, StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
 import type { CompressionCodec } from "../codec.js";
-import type { PQueue } from "../queue.js";
+import type { AsyncPriorityQueue } from "../queue.js";
 import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import type { ThroughputSettings } from "./types.js";
 
 export function _on_init_response(ctx: {
 	readonly tx?: TX
-	readonly queue: PQueue<StreamWriteMessage_FromClient>,
+	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly codec: CompressionCodec, // Codec to use for compression
 	readonly buffer: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages in the buffer
 	readonly inflight: StreamWriteMessage_WriteRequest_MessageData[]; // Array of messages that are currently in-flight
