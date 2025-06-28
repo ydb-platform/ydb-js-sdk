@@ -4,25 +4,31 @@ import type { ChannelCredentials, ChannelOptions } from 'nice-grpc';
 import { type Connection, LazyConnection } from './conn.js';
 import { dbg } from './dbg.js';
 
+const PESSIMIZATION_TIMEOUT_MS = 60_000;
+
 export class ConnectionPool implements Disposable {
 	protected connections: Set<Connection> = new Set();
 	protected pessimized: Set<Connection> = new Set();
 
 	#channelOptions?: ChannelOptions;
 	#channelCredentials: ChannelCredentials;
-	#pessimizationTimeoutMs = 60000;
 
 	constructor(channelCredentials: ChannelCredentials, channelOptions?: ChannelOptions) {
 		this.#channelCredentials = channelCredentials
-		this.#channelOptions = channelOptions
+
+		if (channelOptions) {
+			this.#channelOptions = channelOptions
+		}
 	}
 
 	/**
 	 * Get a channel based on load balancing rules
+	 * @param preferNodeId The preferred node id to use
+	 * @returns A connection from the pool
 	 */
-	aquire(preferNodeId?: Connection["nodeId"]): Connection {
+	acquire(preferNodeId?: Connection["nodeId"]): Connection {
 		let candidate: Connection | null = null;
-		this.refreshPessimizedChannels();
+		this.#refreshPessimizedChannels();
 
 		for (let connection of this.connections) {
 			candidate ??= connection;
@@ -57,6 +63,11 @@ export class ConnectionPool implements Disposable {
 		throw new Error('No connection available');
 	}
 
+	/**
+	 * Release a connection back to the pool
+	 * @param conn The connection to release
+	 * @returns The connection pool instance
+	 */
 	release(conn: Connection) {
 		this.connections.delete(conn);
 		this.connections.add(conn);
@@ -70,6 +81,7 @@ export class ConnectionPool implements Disposable {
 
 	/**
 	 * Add a new connection to the pool
+	 * @param endpoint The endpoint information for the new connection
 	 */
 	add(endpoint: EndpointInfo) {
 		let connection = this.findByNodeId(BigInt(endpoint.nodeId))
@@ -88,6 +100,8 @@ export class ConnectionPool implements Disposable {
 
 	/**
 	 * Find a connection by node id
+	 * @param nodeId The node id to search for
+	 * @returns The connection if found, undefined otherwise
 	 */
 	findByNodeId(nodeId: Connection["nodeId"]): Connection | undefined {
 		for (let connection of this.connections) {
@@ -107,6 +121,7 @@ export class ConnectionPool implements Disposable {
 
 	/**
 	 * Remove a connection from the pool
+	 * @param connection The connection to remove
 	 */
 	remove(connection: Connection) {
 		this.connections.delete(connection);
@@ -119,9 +134,10 @@ export class ConnectionPool implements Disposable {
 
 	/**
 	 * Pessimize a connection for a set amount of time
+	 * @param connection The connection to pessimize
 	 */
 	pessimize(connection: Connection) {
-		connection.pessimizedUntil = Date.now() + this.#pessimizationTimeoutMs;
+		connection.pessimizedUntil = Date.now() + PESSIMIZATION_TIMEOUT_MS;
 		this.pessimized.add(connection);
 		this.connections.delete(connection);
 
@@ -133,7 +149,7 @@ export class ConnectionPool implements Disposable {
 	/**
 	 * Check pessimized channels and restore them if the timeout has elapsed
 	 */
-	private refreshPessimizedChannels(): void {
+	#refreshPessimizedChannels(): void {
 		let now = Date.now();
 
 		for (let connection of this.pessimized) {
@@ -146,6 +162,9 @@ export class ConnectionPool implements Disposable {
 		}
 	}
 
+	/**
+	 * Close all connections in the pool
+	 */
 	close() {
 		for (let connection of this.connections) {
 			connection.close();
@@ -161,7 +180,14 @@ export class ConnectionPool implements Disposable {
 		dbg.extend("pool")('close pool');
 	}
 
+	/**
+	 * Destroy the connection pool.
+	 */
+	destroy() {
+		this.close();
+	}
+
 	[Symbol.dispose]() {
-		return this.close();
+		return this.destroy();
 	}
 }
