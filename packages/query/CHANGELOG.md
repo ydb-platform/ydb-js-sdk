@@ -1,5 +1,20 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.27
+
+### Major Changes
+
+- Migrate to ESM-only package
+
+### Patch Changes
+
+- Updated dependencies
+  - @ydbjs/error@6.0.0-alpha.27
+  - @ydbjs/retry@6.0.0-alpha.27
+  - @ydbjs/value@6.0.0-alpha.27
+  - @ydbjs/core@6.0.0-alpha.27
+  - @ydbjs/api@6.0.0-alpha.27
+
 ## 6.0.0-alpha.26
 
 ### Patch Changes

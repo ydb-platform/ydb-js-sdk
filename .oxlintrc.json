@@ -9,18 +9,16 @@
 				"ignoreCase": false
 			}
 		],
-		"unicorn/require-post-message-target-origin": "off"
+		"unicorn/require-post-message-target-origin": "off",
+		"yoda": "deny"
 	},
-	// Enable all rules in the `correctness` and `suspicious` categories
 	"ignorePatterns": [
-		"node_modules",
 		"**/node_modules/**",
-		"**/dist/**",
-		"**/*.test.ts"
+		"**/dist/**"
 	],
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn",
-		"perf": "warn"
+		"perf": "error"
 	}
 }

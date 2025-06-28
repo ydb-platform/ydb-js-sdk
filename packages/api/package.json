@@ -1,148 +1,73 @@
 {
 	"name": "@ydbjs/api",
-	"version": "6.0.0-alpha.8",
+	"version": "6.0.0-alpha.27",
 	"description": "TypeScript gRPC service definitions and protobuf types for all YDB APIs. Enables strongly-typed client generation and low-level protocol access.",
+	"keywords": [
+		"ydb",
+		"database",
+		"grpc",
+		"protobuf",
+		"api",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/api"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
-	"module": "dist/esm/index.js",
-	"main": "dist/cjs/index.js",
-	"scripts": {
-		"clean": "rm -rf dist",
-		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
-		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
-		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
-		"attw": "attw --pack"
-	},
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
 	"exports": {
-		"./auth": {
-			"require": "./dist/cjs/auth.js",
-			"import": "./dist/esm/auth.js"
-		},
-		"./cms": {
-			"require": "./dist/cjs/cms.js",
-			"import": "./dist/esm/cms.js"
-		},
-		"./coordination": {
-			"require": "./dist/cjs/coordination.js",
-			"import": "./dist/esm/coordination.js"
-		},
-		"./discovery": {
-			"require": "./dist/cjs/discovery.js",
-			"import": "./dist/esm/discovery.js"
-		},
-		"./export": {
-			"require": "./dist/cjs/export.js",
-			"import": "./dist/esm/export.js"
-		},
-		"./federation-discovery": {
-			"require": "./dist/cjs/federation_discovery.js",
-			"import": "./dist/esm/federation_discovery.js"
-		},
-		"./import": {
-			"require": "./dist/cjs/import.js",
-			"import": "./dist/esm/import.js"
-		},
-		"./monitoring": {
-			"require": "./dist/cjs/monitoring.js",
-			"import": "./dist/esm/monitoring.js"
-		},
-		"./operation": {
-			"require": "./dist/cjs/operation.js",
-			"import": "./dist/esm/operation.js"
-		},
-		"./query": {
-			"require": "./dist/cjs/query.js",
-			"import": "./dist/esm/query.js"
-		},
-		"./rate-limiter": {
-			"require": "./dist/cjs/rate_limiter.js",
-			"import": "./dist/esm/rate_limiter.js"
-		},
-		"./scheme": {
-			"require": "./dist/cjs/scheme.js",
-			"import": "./dist/esm/scheme.js"
-		},
-		"./scripting": {
-			"require": "./dist/cjs/scripting.js",
-			"import": "./dist/esm/scripting.js"
-		},
-		"./table": {
-			"require": "./dist/cjs/table.js",
-			"import": "./dist/esm/table.js"
-		},
-		"./topic": {
-			"require": "./dist/cjs/topic.js",
-			"import": "./dist/esm/topic.js"
-		},
-		"./value": {
-			"require": "./dist/cjs/value.js",
-			"import": "./dist/esm/value.js"
-		}
+		"./auth": "./dist/auth.js",
+		"./cms": "./dist/cms.js",
+		"./coordination": "./dist/coordination.js",
+		"./discovery": "./dist/discovery.js",
+		"./export": "./dist/export.js",
+		"./federation-discovery": "./dist/federation_discovery.js",
+		"./import": "./dist/import.js",
+		"./monitoring": "./dist/monitoring.js",
+		"./operation": "./dist/operation.js",
+		"./query": "./dist/query.js",
+		"./rate-limiter": "./dist/rate_limiter.js",
+		"./scheme": "./dist/scheme.js",
+		"./scripting": "./dist/scripting.js",
+		"./table": "./dist/table.js",
+		"./topic": "./dist/topic.js",
+		"./value": "./dist/value.js"
 	},
-	"types": "dist/esm/index.d.ts",
-	"typesVersions": {
-		"*": {
-			"auth": [
-				"./dist/cjs/auth.d.ts"
-			],
-			"cms": [
-				"./dist/cjs/cms.d.ts"
-			],
-			"coordination": [
-				"./dist/cjs/coordination.d.ts"
-			],
-			"discovery": [
-				"./dist/cjs/discovery.d.ts"
-			],
-			"export": [
-				"./dist/cjs/export.d.ts"
-			],
-			"federation-discovery": [
-				"./dist/cjs/federation_discovery.d.ts"
-			],
-			"import": [
-				"./dist/cjs/import.d.ts"
-			],
-			"monitoring": [
-				"./dist/cjs/monitoring.d.ts"
-			],
-			"operation": [
-				"./dist/cjs/operation.d.ts"
-			],
-			"query": [
-				"./dist/cjs/query.d.ts"
-			],
-			"rate-limiter": [
-				"./dist/cjs/rate_limiter.d.ts"
-			],
-			"scheme": [
-				"./dist/cjs/scheme.d.ts"
-			],
-			"scripting": [
-				"./dist/cjs/scripting.d.ts"
-			],
-			"table": [
-				"./dist/cjs/table.d.ts"
-			],
-			"topic": [
-				"./dist/cjs/topic.d.ts"
-			],
-			"value": [
-				"./dist/cjs/value.d.ts"
-			]
-		}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.5.2",
+		"@bufbuild/protobuf": "2.6.0",
 		"nice-grpc": "^2.1.12"
 	},
 	"devDependencies": {
-		"@bufbuild/buf": "^1.54.0",
-		"@bufbuild/protoc-gen-es": "^2.5.2"
+		"@bufbuild/buf": "^1.55.1",
+		"@bufbuild/protoc-gen-es": "^2.6.0"
 	},
 	"publishConfig": {
 		"tag": "alpha",
-		"access": "public"
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	}
 }

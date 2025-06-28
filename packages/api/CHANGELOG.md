@@ -1,5 +1,11 @@
 # @ydbjs/api
 
+## 6.0.0-alpha.27
+
+### Major Changes
+
+- Migrate to ESM-only package
+
 ## 6.0.0-alpha.8
 
 ### Patch Changes

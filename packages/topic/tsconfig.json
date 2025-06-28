@@ -1,11 +1,14 @@
 {
 	"extends": "../../tsconfig.json",
 	"compilerOptions": {
-		"rootDir": "./src"
+		"rootDir": "./src",
+		"outDir": "./dist"
 	},
 	"exclude": [
 		"dist/**/*",
 		"**/*.test.ts",
-		"vitest.config.ts"
+		"**/*.bench.ts",
+		"vitest.config.ts",
+		"src/writer/actors/**"
 	]
 }

@@ -1,53 +1,57 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.0.0-alpha.13",
+	"version": "6.0.0-alpha.27",
 	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
+	"keywords": [
+		"ydb",
+		"database",
+		"retry",
+		"resilience",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/retry"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
-	"module": "dist/esm/index.js",
-	"main": "dist/cjs/index.js",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js",
+		"./budget": "./dist/budget.js",
+		"./strategy": "./dist/strategy.js"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
-		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
-		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"build": "tsc",
 		"test": "vitest --run",
-		"test:watch": "vitest --watch",
-		"attw": "attw --pack"
-	},
-	"exports": {
-		".": {
-			"require": "./dist/cjs/index.js",
-			"import": "./dist/esm/index.js"
-		},
-		"./budget": {
-			"require": "./dist/cjs/budget.js",
-			"import": "./dist/esm/budget.js"
-		},
-		"./strategy": {
-			"require": "./dist/cjs/strategy.js",
-			"import": "./dist/esm/strategy.js"
-		}
-	},
-	"types": "dist/esm/index.d.ts",
-	"typesVersions": {
-		"*": {
-			"budget": [
-				"./dist/cjs/budget.d.ts"
-			],
-			"strategy": [
-				"./dist/cjs/strategy.d.ts"
-			]
-		}
+		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@ydbjs/api": "6.0.0-alpha.8",
-		"@ydbjs/error": "6.0.0-alpha.9",
+		"@ydbjs/api": "6.0.0-alpha.27",
+		"@ydbjs/error": "6.0.0-alpha.27",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
 	"publishConfig": {
 		"tag": "alpha",
-		"access": "public"
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	}
 }

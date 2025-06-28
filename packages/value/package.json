@@ -1,107 +1,67 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.0-alpha.12",
+	"version": "6.0.0-alpha.27",
 	"description": "Type-safe conversion and manipulation of YDB values and types. Encode/decode between native JS and YDB, with full support for primitives and complex types.",
+	"keywords": [
+		"ydb",
+		"database",
+		"value",
+		"types",
+		"conversion",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/value"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
-	"module": "dist/esm/index.js",
-	"main": "dist/cjs/index.js",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js",
+		"./primitive": "./dist/primitive.js",
+		"./optional": "./dist/optional.js",
+		"./struct": "./dist/struct.js",
+		"./dict": "./dist/dict.js",
+		"./tuple": "./dist/tuple.js",
+		"./list": "./dist/list.js",
+		"./null": "./dist/null.js",
+		"./uuid": "./dist/uuid.js",
+		"./print": "./dist/print.js"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
-		"build:cjs": "tsc --project tsconfig.json --module commonjs --verbatimModuleSyntax false --moduleResolution node10 --outDir ./dist/cjs && echo >./dist/cjs/package.json '{\"type\":\"commonjs\"}'",
-		"build:esm": "tsc --project tsconfig.json --outDir ./dist/esm",
+		"build": "tsc",
 		"test": "vitest --run",
-		"test:watch": "vitest --watch",
-		"attw": "attw --pack"
-	},
-	"exports": {
-		".": {
-			"require": "./dist/cjs/index.js",
-			"import": "./dist/esm/index.js"
-		},
-		"./primitive": {
-			"require": "./dist/cjs/primitive.js",
-			"import": "./dist/esm/primitive.js"
-		},
-		"./optional": {
-			"require": "./dist/cjs/optional.js",
-			"import": "./dist/esm/optional.js"
-		},
-		"./struct": {
-			"require": "./dist/cjs/struct.js",
-			"import": "./dist/esm/struct.js"
-		},
-		"./dict": {
-			"require": "./dist/cjs/dict.js",
-			"import": "./dist/esm/dict.js"
-		},
-		"./tuple": {
-			"require": "./dist/cjs/tuple.js",
-			"import": "./dist/esm/tuple.js"
-		},
-		"./list": {
-			"require": "./dist/cjs/list.js",
-			"import": "./dist/esm/list.js"
-		},
-		"./null": {
-			"require": "./dist/cjs/null.js",
-			"import": "./dist/esm/null.js"
-		},
-		"./uuid": {
-			"require": "./dist/cjs/uuid.js",
-			"import": "./dist/esm/uuid.js"
-		},
-		"./print": {
-			"require": "./dist/cjs/print.js",
-			"import": "./dist/esm/print.js"
-		}
-	},
-	"types": "dist/esm/index.d.ts",
-	"typesVersions": {
-		"*": {
-			".": [
-				"./dist/cjs/index.d.ts"
-			],
-			"primitive": [
-				"./dist/cjs/primitive.d.ts"
-			],
-			"optional": [
-				"./dist/cjs/optional.d.ts"
-			],
-			"struct": [
-				"./dist/cjs/struct.d.ts"
-			],
-			"dict": [
-				"./dist/cjs/dict.d.ts"
-			],
-			"tuple": [
-				"./dist/cjs/tuple.d.ts"
-			],
-			"list": [
-				"./dist/cjs/list.d.ts"
-			],
-			"null": [
-				"./dist/cjs/null.d.ts"
-			],
-			"uuid": [
-				"./dist/cjs/uuid.d.ts"
-			],
-			"print": [
-				"./dist/cjs/print.d.ts"
-			]
-		}
+		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.5.2",
+		"@bufbuild/protobuf": "2.6.0",
 		"@date-fns/tz": "^1.2.0",
-		"@ydbjs/api": "6.0.0-alpha.8",
+		"@ydbjs/api": "6.0.0-alpha.27",
 		"date-fns": "^4.1.0",
 		"debug": "^4.4.0",
-		"proposal-decimal": "^20250528.1.0"
+		"proposal-decimal": "^20250613.0.0"
 	},
 	"publishConfig": {
 		"tag": "alpha",
-		"access": "public"
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	}
 }
