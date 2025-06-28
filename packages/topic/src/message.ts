@@ -30,11 +30,17 @@ export class TopicMessage {
 	constructor(options: TopicMessageOptions) {
 		this.partitionSession = new WeakRef(options.partitionSession);
 		this.producer = options.producer;
+		this.payload = options.payload;
 		this.codec = options.codec;
 		this.seqNo = options.seqNo;
-		this.offset = options.offset;
-		this.payload = options.payload;
-		this.uncompressedSize = options.uncompressedSize;
+
+		if (options.offset) {
+			this.offset = options.offset;
+		}
+
+		if (options.uncompressedSize) {
+			this.uncompressedSize = options.uncompressedSize;
+		}
 	}
 
 	get alive(): boolean {
