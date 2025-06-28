@@ -1,21 +1,19 @@
 {
 	"compilerOptions": {
-		// We target ES2020, but require the Text Encoding API, BigInt and AsyncIterable, see below.
-		"target": "ES2020",
+		"target": "ES2022",
 		"lib": [
-			// DOM for the HeadersInit type.
-			"DOM",
-			"ES2021",
-			"ES2022.Error",
+			"ES2022",
 			// ES2024.Promise for the Promise.withResolvers().
 			"ES2024.Promise",
+			"ESNext.Disposable"
 		],
-		"rewriteRelativeImportExtensions": true,
+		"sourceMap": true,
 		"declaration": true,
+		"declarationMap": true,
+		"rewriteRelativeImportExtensions": true,
 		"types": [
 			"node"
 		],
-		// We don't have dependencies that require interop
 		"esModuleInterop": false,
 		// As strict as possible
 		"strict": true,
@@ -29,13 +27,20 @@
 		"noImplicitThis": true,
 		"useUnknownInCatchVariables": true,
 		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"exactOptionalPropertyTypes": true,
 		"noImplicitReturns": true,
 		"noFallthroughCasesInSwitch": true,
+		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
-		// We're building with Node16 module resolution
-		"moduleResolution": "Node16",
-		"module": "Node16",
+		"allowUnusedLabels": false,
+		"allowUnreachableCode": false,
 		"verbatimModuleSyntax": true,
+		// We're building with modern Node.js resolution for Node.js 20+
+		"moduleResolution": "NodeNext",
+		"module": "NodeNext",
+		// Better error reporting
+		"pretty": true,
 	},
 	"exclude": [
 		"node_modules"
