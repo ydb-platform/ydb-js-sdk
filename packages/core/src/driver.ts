@@ -203,7 +203,7 @@ export class Driver implements Disposable {
 			signal,
 		}
 
-		let result = await retry(retryConfig, async () => {
+		let result = await retry(retryConfig, async (signal) => {
 			let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
 			if (!response.operation) {
 				throw new ClientError(
@@ -261,7 +261,7 @@ export class Driver implements Disposable {
 				new Proxy(this.#connection.channel, {
 					get: (target, propertyKey) => {
 						let channel = this.options['ydb.sdk.enable_discovery']
-							? this.#pool.aquire(preferNodeId).channel
+							? this.#pool.acquire(preferNodeId).channel
 							: target
 
 						return Reflect.get(channel, propertyKey, channel)
