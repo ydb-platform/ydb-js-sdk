@@ -166,26 +166,22 @@ export function query(driver: Driver): QueryClient {
 				throw new YDBError(beginTransactionResult.status, beginTransactionResult.issues)
 			}
 
-			store.transactionId = beginTransactionResult.txMeta?.id
+			store.transactionId = beginTransactionResult.txMeta!.id
 
 			try {
+				let precommitHooks: Array<() => Promise<void> | void> = []
+
 				let tx = Object.assign(yqlQuery, {
 					nodeId: store.nodeId,
 					sessionId: store.sessionId,
 					transactionId: store.transactionId,
 					registerPrecommitHook: (fn: () => Promise<void> | void) => {
-						if (!store.precommitHooks) store.precommitHooks = [];
-						store.precommitHooks.push(fn);
+						precommitHooks.push(fn);
 					},
 				}) as TX
 				let result = await ctx.run(store, () => caller!(tx, signal))
 
-				// --- precommit hooks: call before commit ---
-				if (store.precommitHooks && store.precommitHooks.length > 0) {
-					for (const hook of store.precommitHooks) {
-						await hook();
-					}
-				}
+				await Promise.all(precommitHooks.map(hook => hook()))
 
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
@@ -193,14 +189,14 @@ export function query(driver: Driver): QueryClient {
 				}
 
 				return result
-			} catch (err) {
+			} catch (error) {
 				void client.rollbackTransaction({ sessionId: store.sessionId, txId: store.transactionId })
 
-				if (!isRetryableError(err, options.idempotent)) {
-					throw new Error("Transaction failed.", { cause: err })
+				if (!isRetryableError(error, options.idempotent)) {
+					throw new Error("Transaction failed.", { cause: error })
 				}
 
-				throw err
+				throw error
 			} finally {
 				void client.deleteSession({ sessionId: sessionResponse.sessionId })
 			}
