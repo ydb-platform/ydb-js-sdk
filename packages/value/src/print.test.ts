@@ -1,6 +1,6 @@
 import { test } from 'vitest'
 
-import { typeToString } from '../dist/esm/print.js'
+import { typeToString } from './print.js'
 import {
 	BoolType,
 	BytesType,
@@ -26,13 +26,13 @@ import {
 	Uint8Type,
 	UuidType,
 	YsonType,
-} from '../dist/esm/primitive.js'
-import { ListType } from '../dist/esm/list.js'
-import { DictType } from '../dist/esm/dict.js'
-import { TupleType } from '../dist/esm/tuple.js'
-import { StructType } from '../dist/esm/struct.js'
-import { OptionalType } from '../dist/esm/optional.js'
-import { NullType } from '../dist/esm/null.js'
+} from './primitive.js'
+import { ListType } from './list.js'
+import { DictType } from './dict.js'
+import { TupleType } from './tuple.js'
+import { StructType } from './struct.js'
+import { OptionalType } from './optional.js'
+import { NullType } from './null.js'
 
 test('prints primitive types', (t) => {
 	t.expect(typeToString(new BoolType())).toMatchInlineSnapshot(`"Bool"`)

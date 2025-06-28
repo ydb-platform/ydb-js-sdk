@@ -12,7 +12,7 @@ import {
 	Uint32,
 	Uint64,
 	Uuid,
-} from '../dist/esm/primitive.js'
+} from './primitive.js'
 
 test('creates Bool primitive', async (t) => {
 	let boolTrue = new Bool(true)

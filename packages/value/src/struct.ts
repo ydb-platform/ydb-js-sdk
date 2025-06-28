@@ -19,11 +19,11 @@ export class StructType implements Type {
 		}
 
 		const indices = names.map((_, i) => i)
-		indices.sort((a, b) => names[a].localeCompare(names[b]))
+		indices.sort((a, b) => names[a]!.localeCompare(names[b]!))
 
 		for (let i of indices) {
-			this.names.push(names[i])
-			this.types.push(types[i])
+			this.names.push(names[i]!)
+			this.types.push(types[i]!)
 		}
 	}
 
@@ -35,7 +35,7 @@ export class StructType implements Type {
 		if (!this.#typeInstance) {
 			let members: { name: string; type: Ydb.Type }[] = []
 			for (let i = 0; i < this.names.length; i++) {
-				members.push({ name: this.names[i], type: this.types[i].encode() })
+				members.push({ name: this.names[i]!, type: this.types[i]!.encode() })
 			}
 
 			this.#typeInstance = create(Ydb.TypeSchema, { type: { case: 'structType', value: { members } } })
@@ -46,7 +46,7 @@ export class StructType implements Type {
 
 	*[Symbol.iterator](): Iterator<[string, Type]> {
 		for (let i = 0; i < this.names.length; i++) {
-			yield [this.names[i], this.types[i]]
+			yield [this.names[i]!, this.types[i]!]
 		}
 	}
 }
@@ -78,16 +78,17 @@ export class Struct<T extends Record<string, Value | null> = Record<string, Valu
 
 		// Sort both arrays based on names
 		const indices = keys.map((_, i) => i)
-		indices.sort((a, b) => keys[a].localeCompare(keys[b]))
+		indices.sort((a, b) => keys[a]!.localeCompare(keys[b]!))
 
 		for (let i of indices) {
-			if (obj[keys[i]] === null) {
-				throw new Error(`Invalid value for ${keys[i]}: expected a value, got null. Please provide a type definition.`)
+			let key = keys[i]!
+			if (obj[key] === null) {
+				throw new Error(`Invalid value for ${key}: expected a value, got null. Please provide a type definition.`)
 			}
 
-			names.push(keys[i])
-			types.push(obj[keys[i]]!.type)
-			this.items.push(obj[keys[i]]!)
+			names.push(key)
+			types.push(obj[key]!.type)
+			this.items.push(obj[key]!)
 		}
 
 		this.type = new StructType(names, types, true)

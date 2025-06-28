@@ -53,7 +53,7 @@ export class Tuple<T extends Value = Value> implements Value<TupleType> {
 
 	*[Symbol.iterator](): Iterator<T> {
 		for (let i = 0; i < this.items.length; i++) {
-			yield this.items[i]
+			yield this.items[i]!
 		}
 	}
 }

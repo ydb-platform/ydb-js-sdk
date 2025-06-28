@@ -8,23 +8,23 @@ export function uuidFromBigInts(low128: bigint, high128: bigint = 0n): string {
 
 	// Swap byte order for the first three fields of the UUID (little-endian to big-endian)
 	// First 4 bytes (indices 0-3)
-	bytes[0] ^= bytes[3];
-	bytes[3] ^= bytes[0];
-	bytes[0] ^= bytes[3];
+	bytes[0]! ^= bytes[3]!;
+	bytes[3]! ^= bytes[0]!;
+	bytes[0]! ^= bytes[3]!;
 
-	bytes[1] ^= bytes[2];
-	bytes[2] ^= bytes[1];
-	bytes[1] ^= bytes[2];
+	bytes[1]! ^= bytes[2]!;
+	bytes[2]! ^= bytes[1]!;
+	bytes[1]! ^= bytes[2]!;
 
 	// Next 2 bytes (indices 4-5)
-	bytes[4] ^= bytes[5];
-	bytes[5] ^= bytes[4];
-	bytes[4] ^= bytes[5];
+	bytes[4]! ^= bytes[5]!;
+	bytes[5]! ^= bytes[4]!;
+	bytes[4]! ^= bytes[5]!;
 
 	// Another 2 bytes (indices 6-7)
-	bytes[6] ^= bytes[7];
-	bytes[7] ^= bytes[6];
-	bytes[6] ^= bytes[7];
+	bytes[6]! ^= bytes[7]!;
+	bytes[7]! ^= bytes[6]!;
+	bytes[6]! ^= bytes[7]!;
 
 	// Convert the buffer to a hexadecimal string
 	let hex = bytes.toString('hex');
@@ -42,23 +42,23 @@ export function bigIntsFromUuid(uuid: string): { low128: bigint, high128: bigint
 
 	// Swap byte order for the first three fields of the UUID (big-endian to little-endian)
 	// First 4 bytes (indices 0-3)
-	bytes[0] ^= bytes[3];
-	bytes[3] ^= bytes[0];
-	bytes[0] ^= bytes[3];
+	bytes[0]! ^= bytes[3]!;
+	bytes[3]! ^= bytes[0]!;
+	bytes[0]! ^= bytes[3]!;
 
-	bytes[1] ^= bytes[2];
-	bytes[2] ^= bytes[1];
-	bytes[1] ^= bytes[2];
+	bytes[1]! ^= bytes[2]!;
+	bytes[2]! ^= bytes[1]!;
+	bytes[1]! ^= bytes[2]!;
 
 	// Next 2 bytes (indices 4-5)
-	bytes[4] ^= bytes[5];
-	bytes[5] ^= bytes[4];
-	bytes[4] ^= bytes[5];
+	bytes[4]! ^= bytes[5]!;
+	bytes[5]! ^= bytes[4]!;
+	bytes[4]! ^= bytes[5]!;
 
 	// Another 2 bytes (indices 6-7)
-	bytes[6] ^= bytes[7];
-	bytes[7] ^= bytes[6];
-	bytes[6] ^= bytes[7];
+	bytes[6]! ^= bytes[7]!;
+	bytes[7]! ^= bytes[6]!;
+	bytes[6]! ^= bytes[7]!;
 
 	// Read low128 and high128 values from the buffer in little-endian format
 	let low128 = bytes.readBigUInt64LE(0);

@@ -63,7 +63,7 @@ export class Dict<K extends Value = Value, V extends Value = Value> implements V
 
 	*[Symbol.iterator](): Iterator<[K, V]> {
 		for (let i = 0; i < this.pairs.length; i++) {
-			yield this.pairs[i];
+			yield this.pairs[i]!;
 		}
 	}
 }

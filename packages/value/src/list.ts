@@ -52,7 +52,7 @@ export class List<T extends Value = Value> implements Value<ListType> {
 
 	*[Symbol.iterator](): Iterator<T> {
 		for (let i = 0; i < this.items.length; i++) {
-			yield this.items[i];
+			yield this.items[i]!;
 		}
 	}
 }

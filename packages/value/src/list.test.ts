@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 
-import { List } from '../dist/esm/list.js'
-import { Uint32 } from '../dist/esm/primitive.js'
+import { List } from './list.js'
+import { Uint32 } from './primitive.js'
 
 test('creates empty list', async (t) => {
 	let list = new List()

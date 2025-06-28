@@ -41,7 +41,6 @@ export class PrimitiveType implements Type {
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
 	value: unknown
-	high128?: bigint
 
 	// oxlint-disable no-unused-private-class-members
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
@@ -282,7 +281,7 @@ export class UuidType extends PrimitiveType {
 
 export class Uuid extends Primitive implements Value<UuidType> {
 	low128: bigint = 0n
-	override high128: bigint = 0n
+	high128: bigint = 0n
 
 	constructor(value: string) {
 		let { low128, high128 } = bigIntsFromUuid(value)

@@ -78,7 +78,7 @@ export function typeToString(type: Type): string {
 		case TypeKind.TUPLE:
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(',')}>`
 		case TypeKind.STRUCT:
-			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index])}`).join(',')}>`
+			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
 		case TypeKind.NULL:

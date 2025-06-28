@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 
-import { bigIntsFromUuid, uuidFromBigInts } from "../dist/esm/uuid.js";
-import { Uuid } from "../dist/esm/primitive.js";
+import { bigIntsFromUuid, uuidFromBigInts } from "./uuid.js";
+import { Uuid } from "./primitive.js";
 
 test('creates UUID', () => {
 	let uuid = '123e4567-e89b-12d3-a456-426614174000';

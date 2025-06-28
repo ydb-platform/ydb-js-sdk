@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import { fromJs, toJs } from '../dist/esm/index.js'
+import { fromJs, toJs } from './index.ts'
 
 test('transforms fromJs with primitives', async (t) => {
 	let boolVal = fromJs(true)

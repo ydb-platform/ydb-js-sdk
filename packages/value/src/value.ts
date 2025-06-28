@@ -4,5 +4,6 @@ import type { Type } from "./type.js";
 
 export interface Value<T extends Type = Type> {
 	type: T;
+	high128?: bigint
 	encode(): Ydb.Value
 }
