@@ -8,6 +8,8 @@ import {
 	type QueryStats,
 	StatsMode,
 	Syntax,
+	type TransactionControl,
+	TransactionControlSchema,
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
@@ -71,7 +73,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 
 		for (let key in params) {
 			key.startsWith('$') || (key = '$' + key)
-			this.#parameters[key] = params[key]
+			this.#parameters[key] = params[key]!
 		}
 	}
 
@@ -129,7 +131,9 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				sessionId = sessionResponse.sessionId
 
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
-				this.#cleanup.push(async () => await client.deleteSession({ sessionId }))
+				this.#cleanup.push(async () => await client.deleteSession({
+					sessionId: sessionId!
+				}))
 
 				let attachSession = client.attachSession({ sessionId })[Symbol.asyncIterator]()
 				let attachSessionResult = await attachSession.next()
@@ -141,8 +145,33 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 			let parameters: Record<string, TypedValue> = {}
 			for (let key in this.#parameters) {
 				parameters[key] = create(TypedValueSchema, {
-					type: this.#parameters[key].type.encode(),
-					value: this.#parameters[key].encode(),
+					type: this.#parameters[key]!.type.encode(),
+					value: this.#parameters[key]!.encode(),
+				})
+			}
+
+			// If we have a transactionId, we should use it
+			// If we have an isolation level, we should use it
+			let txControl: TransactionControl | undefined
+			if (transactionId) {
+				txControl = create(TransactionControlSchema, {
+					txSelector: {
+						case: "txId",
+						value: transactionId,
+					},
+				})
+			} else if (this.#isolation !== "implicit") {
+				txControl = create(TransactionControlSchema, {
+					commitTx: true,
+					txSelector: {
+						case: "beginTx",
+						value: {
+							txMode: {
+								case: this.#isolation,
+								value: this.#isolationSettings as {},
+							}
+						}
+					}
 				})
 			}
 
@@ -150,25 +179,6 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				{
 					sessionId,
 					execMode: ExecMode.EXECUTE,
-					// If we have a transactionId, we should use it
-					// If we have an isolation level, we should use it
-					txControl: transactionId ? {
-						txSelector: {
-							case: "txId",
-							value: transactionId,
-						},
-					} : this.#isolation !== "implicit" ? {
-						commitTx: true,
-						txSelector: {
-							case: "beginTx",
-							value: {
-								txMode: {
-									case: this.#isolation,
-									value: this.#isolationSettings as {},
-								}
-							}
-						}
-					} : undefined,
 					query: {
 						case: 'queryContent',
 						value: {
@@ -178,7 +188,8 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 					},
 					parameters,
 					statsMode: this.#statsMode,
-					poolId: this.#poolId,
+					...(this.#poolId && { poolId: this.#poolId }),
+					...(txControl && { txControl }),
 				},
 				{
 					signal,
@@ -213,8 +224,8 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 					let result: any = this.#values ? [] : {}
 
 					for (let j = 0; j < part.resultSet.columns.length; j++) {
-						let column = part.resultSet.columns[j]
-						let value = part.resultSet.rows[i].items[j]
+						let column = part.resultSet.columns[j]!
+						let value = part.resultSet.rows[i]!.items[j]!
 
 						if (this.#values) {
 							result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
@@ -224,7 +235,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 						result[column.name] = this.#raw ? value : toJs(fromYdb(value, column.type!))
 					}
 
-					results[Number(part.resultSetIndex)].push(result)
+					results[Number(part.resultSetIndex)]!.push(result)
 				}
 			}
 
