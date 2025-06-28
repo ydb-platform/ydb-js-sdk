@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { type StreamWriteMessage_FromClient, StreamWriteMessage_FromClientSchema } from "@ydbjs/api/topic";
 import type { AsyncPriorityQueue } from "../queue.js";
 
-export function _send_init_request(ctx: {
+export const _send_init_request = function send_init_request(ctx: {
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly topic: string;
 	readonly producer?: string;
@@ -13,8 +13,8 @@ export function _send_init_request(ctx: {
 			case: 'initRequest',
 			value: {
 				path: ctx.topic,
-				producerId: ctx.producer,
-				getLastSeqNo: ctx.getLastSeqNo,
+				...(ctx.producer && { producerId: ctx.producer }),
+				...(ctx.getLastSeqNo && { getLastSeqNo: ctx.getLastSeqNo }),
 			}
 		}
 	}), 100);

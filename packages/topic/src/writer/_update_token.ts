@@ -2,7 +2,7 @@ import { create } from "@bufbuild/protobuf";
 import { type StreamWriteMessage_FromClient, StreamWriteMessage_FromClientSchema } from "@ydbjs/api/topic";
 import type { AsyncPriorityQueue } from "../queue.js";
 
-export function _send_update_token_request(ctx: {
+export const _send_update_token_request = function send_update_token_request(ctx: {
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly token: string
 }) {

@@ -5,7 +5,7 @@ import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import type { ThroughputSettings } from "./types.js";
 
-export function _on_write_response(ctx: {
+export const _on_write_response = function on_write_response(ctx: {
 	readonly tx?: TX
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly codec: CompressionCodec, // Codec to use for compression
@@ -24,7 +24,7 @@ export function _on_write_response(ctx: {
 
 	// Acknowledge messages that have been processed.
 	for (let i = ctx.inflight.length - 1; i >= 0; i--) {
-		const message = ctx.inflight[i];
+		const message = ctx.inflight[i]!;
 		if (acks.has(message.seqNo)) {
 			ctx.onAck?.(message.seqNo, acks.get(message.seqNo));
 			ctx.inflight.splice(i, 1);

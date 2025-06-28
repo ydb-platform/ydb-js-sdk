@@ -4,7 +4,7 @@ import { type CompressionCodec } from "../codec.js";
 import type { AsyncPriorityQueue } from "../queue.js";
 import type { TX } from "../tx.js";
 
-export function _emit_write_request(ctx: {
+export const _emit_write_request = function emit_write_request(ctx: {
 	readonly tx?: TX
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly codec: CompressionCodec, // Codec to use for compression
@@ -15,10 +15,12 @@ export function _emit_write_request(ctx: {
 			value: {
 				messages,
 				codec: ctx.codec.codec || Codec.RAW,
-				tx: ctx.tx ? {
-					id: ctx.tx.transactionId,
-					session: ctx.tx.sessionId
-				} : undefined
+				...(ctx.tx && {
+					tx: {
+						id: ctx.tx.transactionId,
+						session: ctx.tx.sessionId
+					}
+				})
 			}
 		}
 	}));

@@ -1,7 +1,7 @@
 import type { StreamWriteMessage_WriteRequest_MessageData } from "@ydbjs/api/topic";
 import { MAX_BATCH_SIZE } from "./constants.js";
 
-export function _batch_messages(
+export const _batch_messages = function batch_messages(
 	messages: StreamWriteMessage_WriteRequest_MessageData[],
 ): StreamWriteMessage_WriteRequest_MessageData[][] {
 	let batches: StreamWriteMessage_WriteRequest_MessageData[][] = [];
@@ -13,12 +13,14 @@ export function _batch_messages(
 
 		// Build batch until size limit or no more messages
 		while (messages.length > 0) {
-			let message = messages[0];
+			let message = messages[0]!;
 
 			// Check if adding this message would exceed the batch size limit
 			if (batchSize + BigInt(message.data.length) > MAX_BATCH_SIZE) {
 				// If the batch already has messages, send it
-				if (batch.length > 0) break;
+				if (batch.length > 0) {
+					break;
+				}
 
 				// If this is a single message exceeding the limit, we still need to send it
 				batch.push(messages.shift()!);

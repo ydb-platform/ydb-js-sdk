@@ -5,7 +5,7 @@ import type { TX } from "../tx.js";
 import { _flush } from "./_flush.js";
 import type { ThroughputSettings } from "./types.js";
 
-export function _on_init_response(ctx: {
+export const _on_init_response = function on_init_response(ctx: {
 	readonly tx?: TX
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly codec: CompressionCodec, // Codec to use for compression
@@ -23,7 +23,9 @@ export function _on_init_response(ctx: {
 
 	while (ctx.inflight.length > 0) {
 		const message = ctx.inflight.pop();
-		if (!message) continue;
+		if (!message) {
+			continue;
+		}
 
 		ctx.buffer.unshift(message);
 		ctx.updateBufferSize(BigInt(message.data.length));

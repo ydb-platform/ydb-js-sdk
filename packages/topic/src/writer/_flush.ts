@@ -6,7 +6,7 @@ import { _batch_messages } from "./_batch_messages.js";
 import { _emit_write_request } from "./_write_request.js";
 import type { ThroughputSettings } from "./types.js";
 
-export function _flush(ctx: {
+export const _flush = function flush(ctx: {
 	readonly tx?: TX
 	readonly queue: AsyncPriorityQueue<StreamWriteMessage_FromClient>,
 	readonly codec: CompressionCodec, // Codec to use for compression
