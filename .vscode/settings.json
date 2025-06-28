@@ -10,4 +10,5 @@
     },
     "vitest.rootConfig": "./vitest.config.ts",
     "vitest.workspaceConfig": "./vitest.config.ts",
+    "github.copilot.chat.codeGeneration.useInstructionFiles": true
 }
