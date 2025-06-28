@@ -9,53 +9,28 @@
 				"./src/gen/**"
 			]
 		},
-		"clean:esm": {
-			"outputs": [
-				"./dist/esm/**"
-			]
-		},
-		"build:esm": {
-			"dependsOn": [
-				"^build:esm",
-				"codegen",
-				"clean:esm"
-			],
-			"inputs": [
-				"./src/**"
-			],
-			"outputs": [
-				"./dist/esm/**"
-			]
-		},
-		"clean:cjs": {
-			"outputs": [
-				"./dist/cjs/**"
-			]
-		},
-		"build:cjs": {
-			"dependsOn": [
-				"^build:cjs",
-				"codegen",
-				"clean:cjs"
-			],
-			"inputs": [
-				"./src/**"
-			],
-			"outputs": [
-				"./dist/cjs/**"
-			]
-		},
 		"clean": {
-			"dependsOn": [
-				"clean:esm",
-				"clean:cjs"
+			"outputs": [
+				"./dist/**"
 			]
 		},
 		"build": {
 			"dependsOn": [
+				"^build",
 				"clean",
-				"build:esm",
-				"build:cjs"
+				"codegen"
+			],
+			"inputs": [
+				"./src/**"
+			],
+			"outputs": [
+				"./dist/**"
+			]
+		},
+		"test": {
+			"dependsOn": [
+				"^test",
+				"build"
 			]
 		},
 		"attw": {
@@ -68,7 +43,10 @@
 				"package.json"
 			]
 		},
-		"//#test": {
+		"//#test:root": {
+			"dependsOn": [
+				"build"
+			],
 			"env": [
 				"DEBUG",
 				"GRPC_TRACE",
