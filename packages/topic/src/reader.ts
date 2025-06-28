@@ -5,7 +5,7 @@ import { nextTick } from "node:process";
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampFromDate, timestampMs } from "@bufbuild/protobuf/wkt";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
-import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition, UpdateOffsetsInTransactionRequestSchema, TransactionIdentitySchema } from "@ydbjs/api/topic";
+import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition, TransactionIdentitySchema, UpdateOffsetsInTransactionRequestSchema } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
 import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
@@ -136,10 +136,10 @@ export class TopicReader implements Disposable {
 	#fromServerEmitter = new EventEmitter<FromServerEmitterMap>();
 
 	// partition sessions that are currently active.
-	#partitionSessions: Map<bigint, TopicPartitionSession> = new Map(); // partitionSessionId -> TopicPartitionSession
+	#partitionSessions = new Map<bigint, TopicPartitionSession>(); // partitionSessionId -> TopicPartitionSession
 
 	// pending commits that are not yet resolved.
-	#pendingCommits: Map<bigint, TopicCommitPromise[]> = new Map(); // partitionSessionId -> TopicCommitPromise[]
+	#pendingCommits = new Map<bigint, TopicCommitPromise[]>(); // partitionSessionId -> TopicCommitPromise[]
 
 	#txReadMessages = new Map(); // partitionSessionId -> TopicMessage[]
 
@@ -243,9 +243,9 @@ export class TopicReader implements Disposable {
 					let committedOffset = message.serverMessage.value.committedOffset;
 					let partitionOffsets = message.serverMessage.value.partitionOffsets;
 
-					let response = await this.#options.onPartitionSessionStart(partitionSession, committedOffset, partitionOffsets).catch((err) => {
-						dbg('error: onPartitionSessionStart error: %O', err);
-						this.#fromClientEmitter.emit('error', err);
+					let response = await this.#options.onPartitionSessionStart(partitionSession, committedOffset, partitionOffsets).catch((error) => {
+						dbg('error: onPartitionSessionStart error: %O', error);
+						this.#fromClientEmitter.emit('error', error);
 
 						return undefined;
 					});
@@ -295,7 +295,7 @@ export class TopicReader implements Disposable {
 					for (let part of this.#buffer) {
 						let i = 0;
 						while (i < part.partitionData.length) {
-							if (part.partitionData[i].partitionSessionId === partitionSession.partitionSessionId) {
+							if (part.partitionData[i]!.partitionSessionId === partitionSession.partitionSessionId) {
 								part.partitionData.splice(i, 1);
 							} else {
 								i++;
@@ -386,7 +386,7 @@ export class TopicReader implements Disposable {
 					if (pendingCommits) {
 						let i = 0;
 						while (i < pendingCommits.length) {
-							let commit = pendingCommits[i];
+							let commit = pendingCommits[i]!;
 							if (commit.offset <= committedOffset) {
 								// If the commit offset is less than or equal to the committed offset, resolve it.
 								commit.resolve();
@@ -521,11 +521,7 @@ export class TopicReader implements Disposable {
 	get #topicsReadSettings(): StreamReadMessage_InitRequest_TopicReadSettings[] {
 		let settings: StreamReadMessage_InitRequest_TopicReadSettings[] = []
 
-		function parseDuration(duration: number | StringValue | Duration | undefined): Duration | undefined {
-			if (duration === undefined) {
-				return undefined;
-			}
-
+		let parseDuration = function parseDuration(duration: number | StringValue | Duration): Duration {
 			if (typeof duration === 'string') {
 				duration = ms(duration);
 			}
@@ -535,18 +531,14 @@ export class TopicReader implements Disposable {
 
 				return create(DurationSchema, {
 					seconds: protoInt64.parse(seconds),
-					nanos: (duration - seconds * 1000) * 1000000,
+					nanos: (duration - seconds * 1000) * 1_000_000,
 				})
 			}
 
 			return duration;
 		}
 
-		function parseTimestamp(timestamp: number | Date | Timestamp | undefined): Timestamp | undefined {
-			if (timestamp === undefined) {
-				return undefined;
-			}
-
+		let parseTimestamp = function parseTimestamp(timestamp: number | Date | Timestamp): Timestamp {
 			if (typeof timestamp === 'number') {
 				timestamp = new Date(timestamp);
 			}
@@ -573,9 +565,9 @@ export class TopicReader implements Disposable {
 				settings.push(
 					create(StreamReadMessage_InitRequest_TopicReadSettingsSchema, {
 						path: topic.path,
-						partitionIds: topic.partitionIds,
-						maxLag: parseDuration(topic.maxLag),
-						readFrom: parseTimestamp(topic.readFrom)
+						...(topic.maxLag && { maxLag: parseDuration(topic.maxLag) }),
+						...(topic.readFrom && { readFrom: parseTimestamp(topic.readFrom) }),
+						...(topic.partitionIds && { partitionIds: topic.partitionIds }),
 					})
 				)
 			}
@@ -825,10 +817,10 @@ export class TopicReader implements Disposable {
 											try {
 												// eslint-disable-next-line no-await-in-loop
 												payload = await this.#codecs.get(batch.codec)!.decompress(msg.data);
-											} catch (err) {
-												dbg('error: decompression failed for message with codec %s: %O', batch.codec, err);
+											} catch (error) {
+												dbg('error: decompression failed for message with codec %s: %O', batch.codec, error);
 
-												throw new Error(`Decompression failed for message with codec ${batch.codec}`, { cause: err });
+												throw new Error(`Decompression failed for message with codec ${batch.codec}`, { cause: error });
 											}
 										}
 
@@ -841,9 +833,9 @@ export class TopicReader implements Disposable {
 											seqNo: msg.seqNo,
 											offset: msg.offset,
 											uncompressedSize: msg.uncompressedSize,
-											createdAt: msg.createdAt ? timestampMs(msg.createdAt) : undefined,
-											writtenAt: batch.writtenAt ? timestampMs(batch.writtenAt) : undefined,
-											metadataItems: msg.metadataItems ? Object.fromEntries(msg.metadataItems.map(item => [item.key, item.value])) : undefined,
+											...(msg.createdAt && { createdAt: timestampMs(msg.createdAt) }),
+											...(batch.writtenAt && { writtenAt: timestampMs(batch.writtenAt) }),
+											...(msg.metadataItems && { metadataItems: Object.fromEntries(msg.metadataItems.map(item => [item.key, item.value])) })
 										})
 
 										messages.push(message);
@@ -901,7 +893,10 @@ export class TopicReader implements Disposable {
 
 		tx.registerPrecommitHook(async () => {
 			let messages = this.#consumeTxReadMessages();
-			if (messages.length === 0) return;
+			if (messages.length === 0) {
+				return;
+			}
+
 			await this.#commitTxOffsets(messages, { id: tx.transactionId, session: tx.sessionId });
 		});
 
@@ -914,11 +909,15 @@ export class TopicReader implements Disposable {
 						if (!res.done && res.value && res.value.length > 0) {
 							for (let msg of res.value) {
 								let partitionSession = msg.partitionSession.deref();
-								if (!partitionSession) continue;
+								if (!partitionSession) {
+									continue;
+								}
+
 								let id = partitionSession.partitionSessionId;
 								if (!this.#txReadMessages.has(id)) {
 									this.#txReadMessages.set(id, []);
 								}
+
 								this.#txReadMessages.get(id)!.push(msg);
 							}
 						}
@@ -937,7 +936,10 @@ export class TopicReader implements Disposable {
 
 	#consumeTxReadMessages() {
 		let arr: TopicMessage[] = [];
-		for (let msgs of this.#txReadMessages.values()) arr.push(...msgs);
+		for (let msgs of this.#txReadMessages.values()) {
+			arr.push(...msgs);
+		}
+
 		this.#txReadMessages = new Map();
 		return arr;
 	}
@@ -947,20 +949,26 @@ export class TopicReader implements Disposable {
 		tx: { id: string, session: string }
 	): Promise<void> {
 		// Check if tx is valid
-		if (!tx.id || !tx.session) return;
+		if (!tx.id || !tx.session) {
+			return;
+		}
 
 		// Map to group and organize offsets by partition session ID
-		let offsets: Map<bigint, OffsetsRange[]> = new Map();
+		let offsets = new Map<bigint, OffsetsRange[]>();
 		// Map to store topic/partition info for each partition session
-		let topicPartitionInfo: Map<bigint, { topicPath: string, partitionId: bigint }> = new Map();
+		let topicPartitionInfo = new Map<bigint, { topicPath: string, partitionId: bigint }>();
 
 		// Process each message to be committed
 		for (let msg of messages) {
 			// Each message must be alive
-			if (!msg.alive) continue;
+			if (!msg.alive) {
+				continue;
+			}
 
 			let partitionSession = msg.partitionSession.deref();
-			if (!partitionSession) continue;
+			if (!partitionSession) {
+				continue;
+			}
 
 			let id = partitionSession.partitionSessionId;
 			let topicPath = partitionSession.topicPath;
@@ -977,7 +985,7 @@ export class TopicReader implements Disposable {
 
 			// Optimize storage by merging consecutive offsets into ranges
 			if (partOffsets.length > 0) {
-				let last = partOffsets[partOffsets.length - 1];
+				let last = partOffsets[partOffsets.length - 1]!;
 				if (offset === last.end) {
 					// If the new offset is consecutive to the last range, extend the range
 					last.end = offset + 1n;
@@ -1057,7 +1065,7 @@ export class TopicReader implements Disposable {
 		// Arrays to hold the final commit request structure
 		let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] = [];
 		// Map to group and organize offsets by partition session ID
-		let offsets: Map<bigint, OffsetsRange[]> = new Map();
+		let offsets = new Map<bigint, OffsetsRange[]>();
 
 		// Process each message to be committed
 		for (let msg of input) {
@@ -1089,7 +1097,7 @@ export class TopicReader implements Disposable {
 			// Optimize storage by merging consecutive offsets into ranges
 			// This reduces network traffic and improves performance
 			if (partOffsets.length > 0) {
-				let last = partOffsets[partOffsets.length - 1];
+				let last = partOffsets[partOffsets.length - 1]!;
 
 				if (offset === last.end) {
 					// If the new offset is consecutive to the last range, extend the range
@@ -1135,7 +1143,7 @@ export class TopicReader implements Disposable {
 				// Create a commit promise for each partition session
 				let commitPromise: TopicCommitPromise = {
 					partitionSessionId,
-					offset: partOffsets[partOffsets.length - 1].end, // Use the last offset in the range
+					offset: partOffsets[partOffsets.length - 1]!.end, // Use the last offset in the range
 					resolve,
 					reject
 				};
