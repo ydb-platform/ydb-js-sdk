@@ -1,4 +1,5 @@
 import type { EndpointInfo } from '@ydbjs/api/discovery'
+import { loggers } from '@ydbjs/debug'
 import {
 	type Channel,
 	type ChannelCredentials,
@@ -6,7 +7,7 @@ import {
 	createChannel,
 } from 'nice-grpc'
 
-import { dbg } from './dbg.js'
+let dbg = loggers.driver.extend('conn')
 
 export interface Connection {
 	readonly nodeId: bigint
@@ -44,7 +45,7 @@ export class LazyConnection implements Connection {
 
 	get channel(): Channel {
 		if (this.#channel === null) {
-			dbg.extend('conn')('create channel to node id=%d address=%s', this.nodeId, this.address)
+			dbg.log('create channel to node id=%d address=%s', this.nodeId, this.address)
 
 			this.#channel = createChannel(this.address, this.#channelCredentials, this.#channelOptions)
 		}
@@ -54,7 +55,7 @@ export class LazyConnection implements Connection {
 
 	close() {
 		if (this.#channel) {
-			dbg.extend('conn')('close channel to node id=%d address=%s', this.nodeId, this.address)
+			dbg.log('close channel to node id=%d address=%s', this.nodeId, this.address)
 			this.#channel.close()
 			this.#channel = null
 		}

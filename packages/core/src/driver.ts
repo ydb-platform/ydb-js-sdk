@@ -8,6 +8,7 @@ import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSche
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
+import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
@@ -22,11 +23,11 @@ import {
 	createClientFactory,
 	waitForChannelReady,
 } from 'nice-grpc'
-
 import { type Connection, LazyConnection } from './conn.js'
-import { dbg } from './dbg.js'
-import { ConnectionPool } from './pool.js'
 import { debug } from './middleware.js'
+import { ConnectionPool } from './pool.js'
+
+let dbg = loggers.driver
 
 export type DriverOptions = {
 	/**
@@ -86,7 +87,7 @@ export class Driver implements Disposable {
 	#rediscoverTimer?: NodeJS.Timeout
 
 	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
-		dbg.extend('driver')('Driver(connectionString: %s, options: %o)', connectionString, options)
+		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, options)
 
 		if (!connectionString) {
 			throw new Error('Invalid connection string. Must be a non-empty string')
@@ -154,25 +155,40 @@ export class Driver implements Disposable {
 			.create(DiscoveryServiceDefinition, this.#connection.channel)
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
-			dbg.extend('driver')('discovery disabled, using single endpoint')
+			dbg.log('discovery disabled, using single endpoint')
 			waitForChannelReady(
 				this.#connection.channel,
 				new Date(Date.now() + (this.options['ydb.sdk.ready_timeout_ms'] || 10000))
 			)
-				.then(this.#ready.resolve)
-				.catch(this.#ready.reject)
+				.then(() => {
+					dbg.log('single endpoint ready')
+					this.#ready.resolve()
+				})
+				.catch((error) => {
+					dbg.log('single endpoint failed to become ready: %O', error)
+					this.#ready.reject(error)
+				})
 		}
 
 		if (this.options['ydb.sdk.enable_discovery'] === true) {
-			dbg.extend('driver')('discovery enabled, using connection pool')
+			dbg.log('discovery enabled, using connection pool')
 
 			// Initial discovery
+			dbg.log('starting initial discovery with timeout %d ms', this.options['ydb.sdk.discovery_timeout_ms'])
 			this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
-				.then(this.#ready.resolve)
-				.catch(this.#ready.reject)
+				.then(() => {
+					dbg.log('initial discovery completed successfully')
+					this.#ready.resolve()
+				})
+				.catch((error) => {
+					dbg.log('initial discovery failed: %O', error)
+					this.#ready.reject(error)
+				})
 
 			// Periodic discovery
+			dbg.log('setting up periodic discovery every %d ms', this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!)
 			this.#rediscoverTimer = setInterval(() => {
+				dbg.log('starting periodic discovery')
 				void this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
 			}, this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!)
 
@@ -204,12 +220,18 @@ export class Driver implements Disposable {
 	}
 
 	async #discovery(signal: AbortSignal): Promise<void> {
+		dbg.log('starting discovery for database: %s', this.database)
+
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal,
+			onRetry: (ctx) => {
+				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
+			},
 		}
 
 		let result = await retry(retryConfig, async (signal) => {
+			dbg.log('attempting to list endpoints for database: %s', this.database)
 			let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
 			if (!response.operation) {
 				throw new ClientError(
@@ -232,29 +254,47 @@ export class Driver implements Disposable {
 				)
 			}
 
+			dbg.log('discovery successful, received %d endpoints', result.endpoints.length)
 			return result
 		})
 
+		dbg.log('updating connection pool with %d endpoints', result.endpoints.length)
 		for (let endpoint of result.endpoints) {
 			this.#pool.add(endpoint)
 		}
+		dbg.log('connection pool updated successfully')
 	}
 
 	async ready(signal?: AbortSignal): Promise<void> {
+		dbg.log('waiting for driver to become ready')
 		signal = signal
 			? AbortSignal.any([signal, AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)])
 			: AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)
 
-		return abortable(signal, this.#ready.promise);
+		try {
+			await abortable(signal, this.#ready.promise)
+			dbg.log('driver is ready')
+		} catch (error) {
+			dbg.log('driver failed to become ready: %O', error)
+			throw error
+		}
 	}
 
 	close(): void {
-		clearInterval(this.#rediscoverTimer)
+		dbg.log('closing driver')
+		if (this.#rediscoverTimer) {
+			dbg.log('clearing discovery timer')
+			clearInterval(this.#rediscoverTimer)
+		}
+		dbg.log('closing connection pool')
 		this.#pool.close()
+		dbg.log('closing primary connection')
 		this.#connection.close()
+		dbg.log('driver closed')
 	}
 
 	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
+		dbg.log('creating client %s', preferNodeId ? ` with preferNodeId: ${preferNodeId}` : '', service.name)
 		return createClientFactory()
 			.use(this.#middleware)
 			.create(

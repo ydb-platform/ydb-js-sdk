@@ -1,9 +1,8 @@
+import { loggers } from '@ydbjs/debug';
 import { isAbortError } from 'abort-controller-x';
-import { ClientError, type ClientMiddleware } from "nice-grpc"
+import { ClientError, type ClientMiddleware } from "nice-grpc";
 
-import { dbg } from "./dbg.js"
-
-let log = dbg.extend('grpc')
+let log = loggers.grpc
 
 export const debug: ClientMiddleware = async function* (call, options) {
 	let hasError = false
@@ -12,17 +11,17 @@ export const debug: ClientMiddleware = async function* (call, options) {
 	} catch (error) {
 		hasError = true
 		if (error instanceof ClientError) {
-			log('%s', error.message)
+			log.log('%s', error.message)
 		} else if (isAbortError(error)) {
-			log('%s %s: %s', call.method.path, 'CANCELLED', error.message)
+			log.log('%s %s: %s', call.method.path, 'CANCELLED', error.message)
 		} else {
-			log('%s %s: %s', call.method.path, 'UNKNOWN', error)
+			log.log('%s %s: %s', call.method.path, 'UNKNOWN', error)
 		}
 
 		throw error
 	} finally {
 		if (!hasError) {
-			log('%s %s', call.method.path, 'OK')
+			log.log('%s %s', call.method.path, 'OK')
 		}
 	}
 }

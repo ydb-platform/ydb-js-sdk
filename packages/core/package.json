@@ -47,6 +47,7 @@
 		"@ydbjs/abortable": "6.0.0-alpha.28",
 		"@ydbjs/api": "6.0.0-alpha.28",
 		"@ydbjs/auth": "^6.0.0-alpha.28",
+		"@ydbjs/debug": "6.0.0-alpha.28",
 		"@ydbjs/error": "6.0.0-alpha.28",
 		"@ydbjs/retry": "6.0.0-alpha.28",
 		"debug": "^4.4.0",
