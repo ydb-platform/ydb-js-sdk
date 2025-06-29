@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 
 import { Int32 } from '@ydbjs/value/primitive'
-import { identifier, yql } from './yql.ts'
+import { identifier, unsafe, yql } from './yql.ts'
 
 test('processes string template', () => {
 	let { text } = yql`SELECT 1;`
@@ -9,7 +9,21 @@ test('processes string template', () => {
 	expect(text).eq('SELECT 1;')
 })
 
-test('processes string with js value as parameter', () => {
+test('handles string input', () => {
+	let { text, params } = yql('SELECT 1;')
+
+	expect(text).eq('SELECT 1;')
+	expect(Object.keys(params)).toHaveLength(0)
+})
+
+test('handles empty template literal', () => {
+	let { text, params } = yql``
+
+	expect(text).eq('')
+	expect(Object.keys(params)).toHaveLength(0)
+})
+
+test('processes js values as parameters', () => {
 	let { text, params } = yql`SELECT ${1};`
 
 	expect(text).eq('SELECT $p0;')
@@ -23,7 +37,7 @@ test('processes string with js value as parameter', () => {
 	`)
 })
 
-test('processes string with ydb value as parameter', () => {
+test('processes ydb values as parameters', () => {
 	let { text, params } = yql`SELECT ${new Int32(1)};`
 
 	expect(text).eq('SELECT $p0;')
@@ -37,7 +51,7 @@ test('processes string with ydb value as parameter', () => {
 	`)
 })
 
-test('processes string with parameters and identifiers', () => {
+test('processes mixed parameters and identifiers', () => {
 	let { text, params } = yql`FROM ${identifier('my_table')}.${identifier('my_column')} SELECT ${1}, ${2};`
 
 	expect(text).eq('FROM `my_table`.`my_column` SELECT $p0, $p1;')
@@ -55,7 +69,7 @@ test('processes string with parameters and identifiers', () => {
 	`)
 })
 
-test(`string with falsy parameters`, () => {
+test('handles falsy values', () => {
 	let { text, params } = yql`SELECT * FROM table WHERE str = ${""} AND int = ${0} AND int64 = ${0n} AND bool = ${false};`
 
 	expect(text).eq('SELECT * FROM table WHERE str = $p0 AND int = $p1 AND int64 = $p2 AND bool = $p3;')
@@ -79,4 +93,113 @@ test(`string with falsy parameters`, () => {
 		  },
 		}
 	`)
+})
+
+test('throws detailed error for undefined value', () => {
+	try {
+		let undefinedVar: any
+		yql`SELECT ${undefinedVar};`
+		expect.fail('Should have thrown')
+	} catch (error: any) {
+		expect(error.message).toContain('position 0')
+		expect(error.message).toContain('Undefined value')
+		expect(error.message).toContain('variable wasn\'t initialized')
+		expect(error.message).toContain('YDB Optional type')
+	}
+})
+
+test('throws detailed error for null value', () => {
+	try {
+		yql`SELECT ${42}, ${null}, ${true};`
+		expect.fail('Should have thrown')
+	} catch (error: any) {
+		expect(error.message).toContain('position 1') // null is at position 1
+		expect(error.message).toContain('Null value')
+		expect(error.message).toContain('JavaScript null is not directly supported')
+		expect(error.message).toContain('YDB Optional type')
+	}
+})
+
+test('handles unsafe strings', () => {
+	let { text, params } = yql`SELECT * FROM ${identifier('table')} WHERE id = ${1};`
+
+	expect(text).eq('SELECT * FROM `table` WHERE id = $p0;')
+	expect(params).toHaveProperty('$p0')
+	expect(Object.keys(params)).toHaveLength(1)
+})
+
+test('handles multiple unsafe values', () => {
+	let { text, params } = yql`SELECT ${identifier('col1')}, ${identifier('col2')} FROM ${identifier('table')};`
+
+	expect(text).eq('SELECT `col1`, `col2` FROM `table`;')
+	expect(Object.keys(params)).toHaveLength(0)
+})
+
+test('handles mixed unsafe and safe values', () => {
+	let { text, params } = yql`SELECT ${identifier('name')}, ${42} FROM ${identifier('users')} WHERE id = ${1};`
+
+	expect(text).eq('SELECT `name`, $p0 FROM `users` WHERE id = $p1;')
+	expect(params).toHaveProperty('$p0')
+	expect(params).toHaveProperty('$p1')
+	expect(Object.keys(params)).toHaveLength(2)
+})
+
+test('creates identifier unsafe string', () => {
+	let id = identifier('my_table')
+
+	expect(id.toString()).eq('`my_table`')
+	expect(id).toBeInstanceOf(String)
+})
+
+test('creates unsafe string', () => {
+	let raw = unsafe('RAW SQL')
+
+	expect(raw.toString()).eq('RAW SQL')
+	expect(raw).toBeInstanceOf(String)
+})
+
+test('handles various data types', () => {
+	let { text, params } = yql`SELECT ${true}, ${'hello'}, ${123}, ${123n};`
+
+	expect(text).eq('SELECT $p0, $p1, $p2, $p3;')
+	expect(Object.keys(params)).toHaveLength(4)
+	expect(params).toHaveProperty('$p0')
+	expect(params).toHaveProperty('$p1')
+	expect(params).toHaveProperty('$p2')
+	expect(params).toHaveProperty('$p3')
+})
+
+test('handles complex parameter mixing', () => {
+	let { text, params } = yql`
+		SELECT ${identifier('name')}, ${42}
+		FROM ${identifier('users')}
+		WHERE ${identifier('age')} > ${18}
+		AND ${identifier('status')} = ${'active'}
+		ORDER BY ${identifier('created_at')}
+	`
+
+	// Should have correct parameter numbering
+	expect(text).toContain('$p0') // 42
+	expect(text).toContain('$p1') // 18
+	expect(text).toContain('$p2') // 'active'
+	expect(Object.keys(params)).toHaveLength(3)
+})
+
+test('handles unsafe values at boundaries', () => {
+	let { text, params } = yql`${identifier('SELECT')} ${1} ${identifier('FROM')} ${identifier('table')}`
+
+	expect(text).eq('`SELECT` $p0 `FROM` `table`')
+	expect(Object.keys(params)).toHaveLength(1)
+	expect(params).toHaveProperty('$p0')
+})
+
+test('validates all parameters and reports first error', () => {
+	try {
+		yql`SELECT ${undefined}, ${null};` // both are invalid
+		expect.fail('Should have thrown')
+	} catch (error: any) {
+		// Should catch the first error (undefined at position 0)
+		expect(error.message).toContain('position 0')
+		expect(error.message).toContain('Undefined value')
+	}
 })
