@@ -103,6 +103,21 @@ try {
 
 ---
 
+## AI Assistant Configuration
+
+For projects using YDB SDK, you can configure AI assistants (GitHub Copilot, Cursor, etc.) to generate secure YQL code.
+
+Multiple example configuration files are provided in `packages/query/ai-instructions/`:
+
+- `.cursorrules.example` - Cursor AI instructions
+- `.instructions.example.md` - General AI assistant guidelines
+- `.copilot-instructions.example.md` - GitHub Copilot specific
+- `.ai-instructions.example.md` - Alternative general format
+
+Copy the appropriate file to your project root to enable secure AI code generation that follows YDB security best practices.
+
+---
+
 ## FAQ
 
 - **Add a new service?** Use `@ydbjs/api` for gRPC definitions.

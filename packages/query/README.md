@@ -31,35 +31,34 @@ npm install @ydbjs/core@alpha @ydbjs/query@alpha
 ### Quick Start
 
 ```ts
-import { Driver } from '@ydbjs/core';
-import { query } from '@ydbjs/query';
+import { Driver } from '@ydbjs/core'
+import { query } from '@ydbjs/query'
 
-const driver = new Driver('grpc://localhost:2136/local');
-await driver.ready();
+const driver = new Driver('grpc://localhost:2136/local')
+await driver.ready()
 
-const sql = query(driver);
-const resultSets = await sql`SELECT 1 + 1 AS sum`;
-console.log(resultSets); // [ [ { sum: 2 } ] ]
+const sql = query(driver)
+const resultSets = await sql`SELECT 1 + 1 AS sum`
+console.log(resultSets) // [ [ { sum: 2 } ] ]
 ```
 
 ### Parameterized Queries
 
 ```ts
-const userId = 42n;
-const userName = "Alice";
+const userId = 42n
+const userName = 'Alice'
 await sql`
   SELECT * FROM users
   WHERE id = ${userId} AND name = ${userName}
-`;
+`
 ```
 
 #### Named Parameters and Custom Types
 
 ```ts
-import { Uint64 } from '@ydbjs/value/primitive';
-const id = new Uint64(123n);
-await sql`SELECT * FROM users WHERE id = $id`
-  .parameter('id', id);
+import { Uint64 } from '@ydbjs/value/primitive'
+const id = new Uint64(123n)
+await sql`SELECT * FROM users WHERE id = $id`.parameter('id', id)
 ```
 
 #### Arrays, Structs, and Table Parameters
@@ -68,8 +67,8 @@ await sql`SELECT * FROM users WHERE id = $id`
 const users = [
   { id: 1, name: 'Alice' },
   { id: 2, name: 'Bob' },
-];
-await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`;
+]
+await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 ```
 
 ### Transactions
@@ -77,39 +76,39 @@ await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`;
 ```ts
 // Serializable read-write transaction (default)
 const result = await sql.begin(async (tx) => {
-  await tx`UPDATE users SET active = false WHERE last_login < CurrentUtcTimestamp() - Interval('P1Y')`;
-  return await tx`SELECT * FROM users WHERE active = false`;
-});
+  await tx`UPDATE users SET active = false WHERE last_login < CurrentUtcTimestamp() - Interval('P1Y')`
+  return await tx`SELECT * FROM users WHERE active = false`
+})
 
 // With isolation and idempotency options
 await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) => {
-  return await tx`SELECT COUNT(*) FROM users`;
-});
+  return await tx`SELECT COUNT(*) FROM users`
+})
 ```
 
 ### Advanced: Multiple Result Sets, Streaming, and Events
 
 ```ts
 // Multiple result sets
-type Result = [[{ id: number }], [{ count: number }]];
-const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`;
+type Result = [[{ id: number }], [{ count: number }]]
+const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
 
 // Listen for query statistics and retries
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL);
-q.on('stats', (stats) => console.log('Query stats:', stats));
-q.on('retry', (ctx) => console.log('Retrying:', ctx));
-await q;
+const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+q.on('stats', (stats) => console.log('Query stats:', stats))
+q.on('retry', (ctx) => console.log('Retrying:', ctx))
+await q
 ```
 
 ### Error Handling
 
 ```ts
-import { YDBError } from '@ydbjs/error';
+import { YDBError } from '@ydbjs/error'
 try {
-  await sql`SELECT * FROM non_existent_table`;
+  await sql`SELECT * FROM non_existent_table`
 } catch (e) {
   if (e instanceof YDBError) {
-    console.error('YDB Error:', e.message);
+    console.error('YDB Error:', e.message)
   }
 }
 ```
@@ -121,7 +120,7 @@ await sql`SELECT * FROM users`
   .isolation('onlineReadOnly', { allowInconsistentReads: true })
   .idempotent(true)
   .timeout(5000)
-  .withStats(StatsMode.FULL);
+  .withStats(StatsMode.FULL)
 ```
 
 ### Value Conversion and Type Safety
@@ -129,8 +128,8 @@ await sql`SELECT * FROM users`
 All parameter values are converted using `@ydbjs/value`. See its documentation for details on supported types and conversion rules. You can pass native JS types, or use explicit YDB value classes for full control.
 
 ```ts
-import { fromJs } from '@ydbjs/value';
-await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`;
+import { fromJs } from '@ydbjs/value'
+await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
 ```
 
 ## Query Statistics
@@ -138,9 +137,9 @@ await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`;
 You can enable and access query execution statistics:
 
 ```ts
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL);
-await q;
-console.log(q.stats());
+const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+await q
+console.log(q.stats())
 ```
 
 ## Development
@@ -156,6 +155,29 @@ npm run build
 ```sh
 npm test
 ```
+
+## AI Assistant Configuration
+
+This package includes example configuration files for AI assistants to generate secure YQL code in the `ai-instructions/` directory:
+
+### Available Examples:
+
+- `ai-instructions/.cursorrules.example` - Cursor AI (legacy format)
+- `ai-instructions/.instructions.example.md` - General AI assistants
+- `ai-instructions/.ai-instructions.example.md` - Alternative general format
+- `ai-instructions/.copilot-instructions.example.md` - GitHub Copilot specific
+
+Copy the appropriate file to your project root (remove `.example` suffix) to ensure AI-generated code follows YDB security best practices.
+
+**Quick setup:**
+
+```bash
+# Choose the appropriate file for your AI assistant
+cp node_modules/@ydbjs/query/ai-instructions/.cursorrules.example .cursorrules
+cp node_modules/@ydbjs/query/ai-instructions/.instructions.example.md .instructions.md
+```
+
+See `SECURITY.md` for complete security guidelines.
 
 ## License
 
