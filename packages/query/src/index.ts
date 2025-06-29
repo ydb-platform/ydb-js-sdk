@@ -5,10 +5,13 @@ import { QueryServiceDefinition } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
+import { loggers } from '@ydbjs/debug'
 
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
 import { UnsafeString, identifier, yql } from './yql.js'
+
+let dbg = loggers.query
 
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -99,7 +102,7 @@ const doImpl = function <T = unknown>(): Promise<T> {
 export function query(driver: Driver): QueryClient {
 	function yqlQuery<P extends any[] = unknown[], T extends any[] = unknown[]>(strings: string | TemplateStringsArray, ...values: P): Query<T> {
 		let { text, params } = yql(strings, ...values)
-
+		dbg.log('creating query instance for text: %s', text)
 		return ctx.run(ctx.getStore() ?? {}, () => new Query<T>(driver, text, params))
 	}
 
@@ -131,6 +134,7 @@ export function query(driver: Driver): QueryClient {
 	 * - The function uses the driver's QueryServiceDefinition to interact with YDB.
 	 */
 	async function txIml<T = unknown>(optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>, fn?: TransactionContextCallback<T>): Promise<T> {
+		dbg.log('starting transaction')
 		await driver.ready()
 		let store = ctx.getStore() || {}
 		let client = driver.createClient(QueryServiceDefinition)
@@ -140,9 +144,18 @@ export function query(driver: Driver): QueryClient {
 		options.isolation ??= "serializableReadWrite"
 		options.idempotent = options.idempotent ?? false;
 
-		return retry({ ...defaultRetryConfig, signal: options.signal, idempotent: true }, async (signal) => {
+		return retry({
+			...defaultRetryConfig,
+			signal: options.signal,
+			idempotent: true,
+			onRetry: (ctx) => {
+				dbg.log('retrying transaction, attempt %d, error: %O', ctx.attempt, ctx.error)
+			}
+		}, async (signal) => {
+			dbg.log('creating session for transaction')
 			let sessionResponse = await client.createSession({}, { signal })
 			if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
+				dbg.log('failed to create session, status: %d', sessionResponse.status)
 				throw new YDBError(sessionResponse.status, sessionResponse.issues)
 			}
 
@@ -155,14 +168,18 @@ export function query(driver: Driver): QueryClient {
 			let attachSession = client.attachSession({ sessionId: store.sessionId }, { signal })[Symbol.asyncIterator]()
 			let attachSessionResult = await attachSession.next()
 			if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
+				dbg.log('failed to attach session, status: %d', attachSessionResult.value.status)
 				throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
 			}
+
+			dbg.log('session %s created and attached', store.sessionId)
 
 			let beginTransactionResult = await client.beginTransaction({
 				sessionId: store.sessionId,
 				txSettings: { txMode: { case: options.isolation!, value: {} } },
 			}, { signal })
 			if (beginTransactionResult.status !== StatusIds_StatusCode.SUCCESS) {
+				dbg.log('failed to begin transaction, status: %d', beginTransactionResult.status)
 				throw new YDBError(beginTransactionResult.status, beginTransactionResult.issues)
 			}
 
@@ -170,7 +187,6 @@ export function query(driver: Driver): QueryClient {
 
 			try {
 				let precommitHooks: Array<() => Promise<void> | void> = []
-
 				let tx = Object.assign(yqlQuery, {
 					nodeId: store.nodeId,
 					sessionId: store.sessionId,
@@ -179,25 +195,38 @@ export function query(driver: Driver): QueryClient {
 						precommitHooks.push(fn);
 					},
 				}) as TX
+
+				dbg.log('executing transaction body')
 				let result = await ctx.run(store, () => caller!(tx, signal))
 
-				await Promise.all(precommitHooks.map(hook => hook()))
+				dbg.log('executing %d precommit hooks', precommitHooks.length)
+				await Promise.all(precommitHooks.map(async (hook, i) => {
+					dbg.log('executing precommit hook #%d', i + 1)
+					await hook()
+					dbg.log('precommit hook #%d completed', i + 1)
+				}))
 
+				dbg.log('committing transaction')
 				let commitResult = await client.commitTransaction({ sessionId: store.sessionId, txId: store.transactionId }, { signal })
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
+					dbg.log('failed to commit transaction, status: %d', commitResult.status)
 					throw new CommitError("Transaction commit failed.", new YDBError(commitResult.status, commitResult.issues))
 				}
 
+				dbg.log('transaction committed successfully')
 				return result
 			} catch (error) {
+				dbg.log('transaction error: %O', error)
 				void client.rollbackTransaction({ sessionId: store.sessionId, txId: store.transactionId })
 
 				if (!isRetryableError(error, options.idempotent)) {
+					dbg.log('transaction not retryable, aborting')
 					throw new Error("Transaction failed.", { cause: error })
 				}
 
 				throw error
 			} finally {
+				dbg.log('deleting session %s', sessionResponse.sessionId)
 				void client.deleteSession({ sessionId: sessionResponse.sessionId })
 			}
 		})

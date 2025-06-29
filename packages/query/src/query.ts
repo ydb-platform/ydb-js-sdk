@@ -13,6 +13,7 @@ import {
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
+import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
@@ -20,6 +21,8 @@ import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
+
+let dbg = loggers.query
 
 // Utility type to convert a tuple of types to a tuple of arrays of those types
 type ArrayifyTuple<T extends any[]> = {
@@ -86,18 +89,22 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		let { nodeId, sessionId, transactionId, signal } = ctx.getStore() || {}
 
 		if (this.#disposed) {
+			dbg.log('query disposed, aborting execution')
 			throw new Error('Query has been disposed.')
 		}
 
 		// If we already have a promise, return it without executing the query again
 		if (this.#promise) {
+			dbg.log('query already has a promise, returning cached result')
 			return this.#promise
 		}
 
 		if (this.#active) {
+			dbg.log('query is already executing, aborting')
 			throw new Error('Query is already executing.')
 		}
 
+		dbg.log('starting query execution: %s', this.text)
 		this.#active = true
 
 		signal = signal ? AbortSignal.any([signal, this.#controller.signal]) : this.#controller.signal
@@ -112,6 +119,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 			signal,
 			idempotent: this.#idempotent,
 			onRetry: (retryCtx) => {
+				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)
 			}
 		}
@@ -119,11 +127,14 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		await this.#driver.ready(signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
+			dbg.log('creating query client for nodeId: %s', nodeId)
 			let client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 
 			if (!sessionId) {
+				dbg.log('creating new session')
 				let sessionResponse = await client.createSession({}, { signal })
 				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
+					dbg.log('failed to create session, status: %d', sessionResponse.status)
 					throw new YDBError(sessionResponse.status, sessionResponse.issues)
 				}
 
@@ -131,15 +142,18 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				sessionId = sessionResponse.sessionId
 
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
-				this.#cleanup.push(async () => await client.deleteSession({
-					sessionId: sessionId!
-				}))
+				this.#cleanup.push(async () => {
+					dbg.log('deleting session %s', sessionId)
+					await client.deleteSession({ sessionId: sessionId! })
+				})
 
 				let attachSession = client.attachSession({ sessionId }, { signal })[Symbol.asyncIterator]()
 				let attachSessionResult = await attachSession.next()
 				if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
+					dbg.log('failed to attach session, status: %d', attachSessionResult.value.status)
 					throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
 				}
+				dbg.log('session %s created and attached', sessionId)
 			}
 
 			let parameters: Record<string, TypedValue> = {}
@@ -205,10 +219,12 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				signal.throwIfAborted()
 
 				if (part.status !== StatusIds_StatusCode.SUCCESS) {
+					dbg.log('query part failed, status: %d', part.status)
 					throw new YDBError(part.status, part.issues)
 				}
 
 				if (part.execStats) {
+					dbg.log('received query stats')
 					this.#stats = part.execStats
 				}
 
@@ -239,6 +255,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 				}
 			}
 
+			dbg.log('query executed successfully')
 			return results
 		})
 			.then((results) => {
