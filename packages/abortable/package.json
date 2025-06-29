@@ -1,0 +1,46 @@
+{
+	"name": "@ydbjs/abortable",
+	"version": "6.0.0-alpha.28",
+	"description": "Utilities for working with AbortController and AbortSignal in YDB operations.",
+	"keywords": [
+		"ydb",
+		"database",
+		"abort",
+		"signal",
+		"abortable",
+		"cancellation",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/abortable"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	}
+}
