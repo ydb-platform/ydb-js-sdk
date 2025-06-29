@@ -9,11 +9,7 @@
 				"./src/gen/**"
 			]
 		},
-		"clean": {
-			"outputs": [
-				"./dist/**"
-			]
-		},
+		"clean": {},
 		"build": {
 			"dependsOn": [
 				"^build",
