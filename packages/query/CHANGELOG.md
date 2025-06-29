@@ -1,5 +1,17 @@
 # @ydbjs/query
 
+## 6.0.0-alpha.28
+
+### Patch Changes
+
+- Define engines for packages
+- Updated dependencies
+  - @ydbjs/api@6.0.0-alpha.28
+  - @ydbjs/core@6.0.0-alpha.28
+  - @ydbjs/error@6.0.0-alpha.28
+  - @ydbjs/retry@6.0.0-alpha.28
+  - @ydbjs/value@6.0.0-alpha.28
+
 ## 6.0.0-alpha.27
 
 ### Major Changes
