@@ -18,15 +18,15 @@ export class TopicPartitionSession {
 	/**
 	 * Offset of the last committed message from the partition.
 	 */
-	partitionCommittedOffset: bigint = 0n
+	partitionCommittedOffset = 0n
 	/**
 	 * Flag indicating whether the session is currently active.
 	 */
-	#stopped: boolean = false
+	#stopped = false
 	/**
 	 * Flag indicating whether the session has ended.
 	 */
-	#ended: boolean = false
+	#ended = false
 
 	/**
 	 * Creates a new instance of TopicPartitionSession.
