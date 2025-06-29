@@ -5,7 +5,7 @@ import { fromJs } from '@ydbjs/value'
 import { Optional } from '@ydbjs/value/optional'
 import { Uint64, Uint64Type } from '@ydbjs/value/primitive'
 
-import { query } from '../dist/esm/index.js'
+import { query } from '../src/index.js'
 
 let driver = new Driver(inject('connectionString'), { 'ydb.sdk.enable_discovery': false })
 await driver.ready()
