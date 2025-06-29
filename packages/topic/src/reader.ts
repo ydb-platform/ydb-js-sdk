@@ -647,15 +647,10 @@ export class TopicReader implements Disposable {
 			throw new Error('Read aborted', { cause: signal.reason });
 		}
 
-		let ready = false;
 		let active = true;
 		let messageHandler = (message: StreamReadMessage_FromServer) => {
 			if (signal.aborted) {
 				return;
-			}
-
-			if (message.serverMessage.case === 'initResponse' && message.status === StatusIds_StatusCode.SUCCESS) {
-				ready = true;
 			}
 
 			if (message.serverMessage.case != 'readResponse') {
@@ -734,13 +729,10 @@ export class TopicReader implements Disposable {
 							this.#fromServerEmitter.once('message', waiter.resolve)
 
 							// TODO: process cases then waitMs aborted earlier when read session is ready
-							await Promise.race([
-								waiter.promise,
-								once(signal, 'abort'),
-								once(AbortSignal.timeout(waitMs), 'abort'),
-							])
-
-							this.#fromServerEmitter.removeListener('message', waiter.resolve)
+							await abortable(AbortSignal.any([signal, AbortSignal.timeout(waitMs)]), waiter.promise)
+								.finally(() => {
+									this.#fromServerEmitter.removeListener('message', waiter.resolve)
+								})
 
 							// If the signal is already aborted, throw an error immediately.
 							if (signal.aborted) {
