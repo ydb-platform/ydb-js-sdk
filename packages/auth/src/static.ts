@@ -62,13 +62,10 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			throw new Error('Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https')
 		}
 
-		// For unix sockets, keep the full URL, for everything else just use host:port
-		let address: string
+		let address = cs.host
+		// For unix sockets, keep the full URL
 		if (cs.protocol === 'unix:') {
 			address = `${cs.protocol}//${cs.host}${cs.pathname}`
-		} else {
-			// For http, https, grpc, grpcs - just use host:port
-			address = `${cs.host}${cs.pathname}`
 		}
 
 		let channelCredentials = secureOptions ? credentials.createFromSecureContext(tls.createSecureContext(secureOptions)) : credentials.createInsecure()
