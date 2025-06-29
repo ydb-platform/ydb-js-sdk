@@ -1,6 +1,5 @@
 {
 	"type": "module",
-	"main": "index.js",
 	"engines": {
 		"node": ">=20.19.0",
 		"npm": ">=10"
@@ -11,8 +10,9 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
+		"@bufbuild/protobuf": "^2.6.0",
+		"@ydbjs/api": "^6.0.0-alpha.28",
 		"@ydbjs/auth": "^6.0.0-alpha.28",
-		"@ydbjs/core": "^6.0.0-alpha.28",
-		"@ydbjs/query": "^6.0.0-alpha.28"
+		"@ydbjs/core": "^6.0.0-alpha.28"
 	}
 }

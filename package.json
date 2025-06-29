@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"workspaces": [
+		"examples/*",
 		"packages/*",
 		"third-party/*"
 	],
