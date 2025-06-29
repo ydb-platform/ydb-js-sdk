@@ -135,7 +135,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 					sessionId: sessionId!
 				}))
 
-				let attachSession = client.attachSession({ sessionId })[Symbol.asyncIterator]()
+				let attachSession = client.attachSession({ sessionId }, { signal })[Symbol.asyncIterator]()
 				let attachSessionResult = await attachSession.next()
 				if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
 					throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)

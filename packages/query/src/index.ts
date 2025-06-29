@@ -152,7 +152,7 @@ export function query(driver: Driver): QueryClient {
 
 			client = driver.createClient(QueryServiceDefinition, sessionResponse.nodeId)
 
-			let attachSession = client.attachSession({ sessionId: store.sessionId })[Symbol.asyncIterator]()
+			let attachSession = client.attachSession({ sessionId: store.sessionId }, { signal })[Symbol.asyncIterator]()
 			let attachSessionResult = await attachSession.next()
 			if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
 				throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
