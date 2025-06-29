@@ -4,13 +4,14 @@ import { nextTick } from "node:process";
 
 import { create, protoInt64, toJson } from "@bufbuild/protobuf";
 import { type Duration, DurationSchema, type Timestamp, timestampFromDate, timestampMs } from "@bufbuild/protobuf/wkt";
+import { abortable } from "@ydbjs/abortable";
 import { StatusIds_StatusCode } from "@ydbjs/api/operation";
 import { Codec, type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, type StreamReadMessage_FromClient, StreamReadMessage_FromClientSchema, type StreamReadMessage_FromServer, StreamReadMessage_FromServerSchema, type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema, type StreamReadMessage_ReadResponse, TopicServiceDefinition, TransactionIdentitySchema, UpdateOffsetsInTransactionRequestSchema } from "@ydbjs/api/topic";
 import type { Driver } from "@ydbjs/core";
+import { loggers } from "@ydbjs/debug";
 import { YDBError } from "@ydbjs/error";
 import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff, combine, jitter } from "@ydbjs/retry/strategy";
-import debug from "debug";
 import type { StringValue } from "ms";
 import ms from "ms";
 
@@ -20,7 +21,7 @@ import { TopicMessage } from "./message.js";
 import { TopicPartitionSession } from "./partition-session.js";
 import type { TX } from "./tx.js";
 
-const dbg = debug('ydbjs').extend('topic').extend('reader')
+let dbg = loggers.topic.extend('reader')
 
 type FromClientEmitterMap = {
 	"message": [StreamReadMessage_FromClient]
@@ -197,23 +198,23 @@ export class TopicReader implements Disposable {
 
 		let dbgrpc = dbg.extend('grpc')
 		this.#fromClientEmitter.on('message', (msg) => {
-			dbgrpc('%s %o', msg.$typeName, toJson(StreamReadMessage_FromClientSchema, msg))
+			dbgrpc.log('%s %o', msg.$typeName, toJson(StreamReadMessage_FromClientSchema, msg))
 		})
 
 		// Log all messages from server.
 		this.#fromServerEmitter.on('message', (msg) => {
-			dbgrpc('%s %o', msg.$typeName, toJson(StreamReadMessage_FromServerSchema, msg))
+			dbgrpc.log('%s %o', msg.$typeName, toJson(StreamReadMessage_FromServerSchema, msg))
 		})
 
 		// Handle messages from server.
 		this.#fromServerEmitter.on('message', async (message) => {
 			if (this.#disposed) {
-				dbg('error: receive "%s" after dispose', message.serverMessage.value?.$typeName)
+				dbg.log('error: receive "%s" after dispose', message.serverMessage.value?.$typeName)
 				return
 			}
 
 			if (message.serverMessage.case === 'initResponse') {
-				dbg(`read session identifier: %s`, message.serverMessage.value.sessionId);
+				dbg.log('read session identifier: %s', message.serverMessage.value.sessionId)
 
 				this.#readMore(this.#freeBufferSize)
 			}
@@ -222,7 +223,7 @@ export class TopicReader implements Disposable {
 				assert.ok(message.serverMessage.value.partitionSession, 'startPartitionSessionRequest must have partitionSession');
 				assert.ok(message.serverMessage.value.partitionOffsets, 'startPartitionSessionRequest must have partitionOffsets');
 
-				dbg('receive partition with id %s', message.serverMessage.value.partitionSession.partitionId);
+				dbg.log('receive partition with id %s', message.serverMessage.value.partitionSession.partitionId);
 
 				// Create a new partition session.
 				let partitionSession: TopicPartitionSession = new TopicPartitionSession(
@@ -244,7 +245,7 @@ export class TopicReader implements Disposable {
 					let partitionOffsets = message.serverMessage.value.partitionOffsets;
 
 					let response = await this.#options.onPartitionSessionStart(partitionSession, committedOffset, partitionOffsets).catch((error) => {
-						dbg('error: onPartitionSessionStart error: %O', error);
+						dbg.log('error: onPartitionSessionStart error: %O', error);
 						this.#fromClientEmitter.emit('error', error);
 
 						return undefined;
@@ -273,7 +274,7 @@ export class TopicReader implements Disposable {
 
 				let partitionSession = this.#partitionSessions.get(message.serverMessage.value.partitionSessionId);
 				if (!partitionSession) {
-					dbg('error: stopPartitionSessionRequest for unknown partitionSessionId=%s', message.serverMessage.value.partitionSessionId);
+					dbg.log('error: stopPartitionSessionRequest for unknown partitionSessionId=%s', message.serverMessage.value.partitionSessionId);
 					return;
 				}
 
@@ -281,14 +282,14 @@ export class TopicReader implements Disposable {
 					let committedOffset = message.serverMessage.value.committedOffset || 0n;
 
 					await this.#options.onPartitionSessionStop(partitionSession, committedOffset).catch((err) => {
-						dbg('error: onPartitionSessionStop error: %O', err);
+						dbg.log('error: onPartitionSessionStop error: %O', err);
 						this.#fromClientEmitter.emit('error', err);
 					});
 				}
 
 				// If graceful stop is not requested, we can stop the partition session immediately.
 				if (!message.serverMessage.value.graceful) {
-					dbg('stop partition session %s without graceful stop', partitionSession.partitionSessionId);
+					dbg.log('stop partition session %s without graceful stop', partitionSession.partitionSessionId);
 					partitionSession.stop();
 
 					// Remove all messages from the buffer that belong to this partition session.
@@ -354,7 +355,7 @@ export class TopicReader implements Disposable {
 
 				let partitionSession = this.#partitionSessions.get(message.serverMessage.value.partitionSessionId);
 				if (!partitionSession) {
-					dbg('error: endPartitionSession for unknown partitionSessionId=%s', message.serverMessage.value.partitionSessionId);
+					dbg.log('error: endPartitionSession for unknown partitionSessionId=%s', message.serverMessage.value.partitionSessionId);
 					return;
 				}
 
@@ -368,7 +369,7 @@ export class TopicReader implements Disposable {
 					for (let part of message.serverMessage.value.partitionsCommittedOffsets) {
 						let partitionSession = this.#partitionSessions.get(part.partitionSessionId);
 						if (!partitionSession) {
-							dbg('error: commitOffsetResponse for unknown partitionSessionId=%s', part.partitionSessionId);
+							dbg.log('error: commitOffsetResponse for unknown partitionSessionId=%s', part.partitionSessionId);
 							continue;
 						}
 
@@ -427,17 +428,17 @@ export class TopicReader implements Disposable {
 			budget: Infinity,
 			strategy: combine(jitter(50), backoff(50, 5000)),
 			retry(error) {
-				dbg('retrying stream read due to %O', error);
+				dbg.log('retrying stream read due to %O', error);
 				return true;
 			},
 		}
 
 		try {
 			// TODO: handle user errors (for example tx errors). Ex: use abort signal
-			await retry(retryConfig, async () => {
+			await retry(retryConfig, async (signal) => {
 				using outgoing = new AsyncEventEmitter<StreamReadMessage_FromClient>(this.#fromClientEmitter, 'message')
 
-				dbg('connecting to the stream with consumer %s', this.#options.consumer);
+				dbg.log('connecting to the stream with consumer %s', this.#options.consumer);
 
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
@@ -445,14 +446,14 @@ export class TopicReader implements Disposable {
 
 				// If we have buffered messages, we need to clear them before connecting to the stream.
 				if (this.#buffer.length) {
-					dbg('has %d messages in the buffer before connecting to the stream, clearing it', this.#buffer.length);
+					dbg.log('has %d messages in the buffer before connecting to the stream, clearing it', this.#buffer.length);
 					this.#buffer.length = 0; // Clear the buffer before connecting to the stream
 					this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size
 				}
 
 				// Stop all partition sessions before connecting to the stream
 				if (this.#partitionSessions.size) {
-					dbg('has %d partition sessions before connecting to the stream, stopping them', this.#partitionSessions.size);
+					dbg.log('has %d partition sessions before connecting to the stream, stopping them', this.#partitionSessions.size);
 
 					for (let partitionSession of this.#partitionSessions.values()) {
 						partitionSession.stop();
@@ -463,7 +464,7 @@ export class TopicReader implements Disposable {
 
 				// If we have pending commits, we need to reject and drop them before connecting to the stream.
 				if (this.#pendingCommits.size) {
-					dbg('has pending commits, before connecting to the stream, rejecting them');
+					dbg.log('has pending commits, before connecting to the stream, rejecting them');
 
 					for (let [partitionSessionId, pendingCommits] of this.#pendingCommits) {
 						for (let commit of pendingCommits) {
@@ -492,7 +493,7 @@ export class TopicReader implements Disposable {
 
 					if (event.status !== StatusIds_StatusCode.SUCCESS) {
 						let error = new YDBError(event.status, event.issues)
-						dbg('received error from server: %s', error.message);
+						dbg.log('received error from server: %s', error.message);
 						throw error;
 					}
 
@@ -500,8 +501,11 @@ export class TopicReader implements Disposable {
 				}
 			});
 		} catch (error) {
-			dbg('error: %O', error);
+			if (error instanceof Error && error.name === 'AbortError') {
+				return
+			}
 
+			dbg.log('error: %O', error);
 			this.#fromServerEmitter.emit('error', error);
 		} finally {
 			this.#fromServerEmitter.emit('end');
@@ -583,11 +587,11 @@ export class TopicReader implements Disposable {
 	 */
 	#readMore(bytes: bigint): void {
 		if (this.#disposed) {
-			dbg('error: readMore called after dispose');
+			dbg.log('error: readMore called after dispose');
 			return;
 		}
 
-		dbg('request read next %d bytes', bytes);
+		dbg.log('request read next %d bytes', bytes);
 		this.#fromClientEmitter.emit("message", create(StreamReadMessage_FromClientSchema, {
 			clientMessage: {
 				case: 'readRequest',
@@ -643,17 +647,22 @@ export class TopicReader implements Disposable {
 			throw new Error('Read aborted', { cause: signal.reason });
 		}
 
+		let ready = false;
 		let active = true;
 		let messageHandler = (message: StreamReadMessage_FromServer) => {
 			if (signal.aborted) {
 				return;
 			}
 
+			if (message.serverMessage.case === 'initResponse' && message.status === StatusIds_StatusCode.SUCCESS) {
+				ready = true;
+			}
+
 			if (message.serverMessage.case != 'readResponse') {
 				return;
 			}
 
-			dbg('reader received %d bytes', message.serverMessage.value.bytesSize);
+			dbg.log('reader received %d bytes', message.serverMessage.value.bytesSize);
 
 			this.#buffer.push(message.serverMessage.value);
 			this.#freeBufferSize -= message.serverMessage.value.bytesSize;
@@ -724,6 +733,7 @@ export class TopicReader implements Disposable {
 							let waiter = Promise.withResolvers()
 							this.#fromServerEmitter.once('message', waiter.resolve)
 
+							// TODO: process cases then waitMs aborted earlier when read session is ready
 							await Promise.race([
 								waiter.promise,
 								once(signal, 'abort'),
@@ -787,12 +797,12 @@ export class TopicReader implements Disposable {
 
 									let partitionSession = this.#partitionSessions.get(pd.partitionSessionId);
 									if (!partitionSession) {
-										dbg('error: readResponse for unknown partitionSessionId=%s', pd.partitionSessionId);
+										dbg.log('error: readResponse for unknown partitionSessionId=%s', pd.partitionSessionId);
 										continue;
 									}
 
 									if (partitionSession.isStopped) {
-										dbg('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId);
+										dbg.log('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId);
 										continue;
 									}
 
@@ -809,16 +819,16 @@ export class TopicReader implements Disposable {
 										let payload = msg.data;
 										if (batch.codec !== Codec.UNSPECIFIED) {
 											if (!this.#codecs.has(batch.codec)) {
-												dbg('error: codec %s is not supported', batch.codec);
+												dbg.log('error: codec %s is not supported', batch.codec);
 												throw new Error(`Codec ${batch.codec} is not supported`);
 											}
 
 											// Decompress the message data using the provided decompress function
 											try {
 												// eslint-disable-next-line no-await-in-loop
-												payload = await this.#codecs.get(batch.codec)!.decompress(msg.data);
+												payload = this.#codecs.get(batch.codec)!.decompress(msg.data);
 											} catch (error) {
-												dbg('error: decompression failed for message with codec %s: %O', batch.codec, error);
+												dbg.log('error: decompression failed for message with codec %s: %O', batch.codec, error);
 
 												throw new Error(`Decompression failed for message with codec ${batch.codec}`, { cause: error });
 											}
@@ -864,10 +874,10 @@ export class TopicReader implements Disposable {
 							}
 						}
 
-						dbg('return %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
+						dbg.log('return %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, this.#maxBufferSize - this.#freeBufferSize, this.#freeBufferSize);
 
 						if (releasableBufferBytes > 0n) {
-							dbg('releasing %d bytes from buffer', releasableBufferBytes);
+							dbg.log('releasing %d bytes from buffer', releasableBufferBytes);
 							this.#freeBufferSize += releasableBufferBytes;
 							this.#readMore(releasableBufferBytes);
 						}
@@ -1119,7 +1129,7 @@ export class TopicReader implements Disposable {
 
 		// Convert our optimized Map structure into the API's expected format
 		for (let [partitionSessionId, partOffsets] of offsets.entries()) {
-			dbg('committing offsets for partition session %s: %o', partitionSessionId, partOffsets);
+			dbg.log('committing offsets for partition session %s: %o', partitionSessionId, partOffsets);
 
 			commitOffsets.push(create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
 				partitionSessionId,
@@ -1168,7 +1178,7 @@ export class TopicReader implements Disposable {
 			return; // Already disposed, nothing to do
 		}
 		this.#disposed = true;
-		dbg('disposing TopicReader for consumer %s', this.#options.consumer);
+		dbg.log('disposing TopicReader for consumer %s', this.#options.consumer);
 
 		this.#buffer.length = 0 // Clear the buffer to release memory
 		this.#freeBufferSize = this.#maxBufferSize; // Reset free buffer size to max buffer size
