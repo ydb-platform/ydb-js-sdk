@@ -294,7 +294,7 @@ export class Driver implements Disposable {
 	}
 
 	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
-		dbg.log('creating client %s', preferNodeId ? ` with preferNodeId: ${preferNodeId}` : '', service.name)
+		dbg.log('creating client %s', preferNodeId ? ` with preferNodeId: ${preferNodeId}` : '', service.fullName)
 		return createClientFactory()
 			.use(this.#middleware)
 			.create(
