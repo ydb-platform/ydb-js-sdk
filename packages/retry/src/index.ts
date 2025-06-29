@@ -2,6 +2,7 @@ import { setTimeout } from 'timers/promises'
 
 import { abortable } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { loggers } from '@ydbjs/debug'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 
@@ -12,6 +13,8 @@ import { exponential, fixed } from './strategy.js'
 export * from './config.js'
 export * from './context.js'
 export * as strategies from './strategy.js'
+
+let dbg = loggers.retry
 
 export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R | Promise<R>): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
@@ -26,19 +29,22 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 
 		try {
 			signal.throwIfAborted()
+			dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
 			// oxlint-disable no-await-in-loop
-			return await abortable(signal, Promise.resolve(fn(signal)))
+			let result = await abortable(signal, Promise.resolve(fn(signal)))
+			dbg.log('attempt %d: success', ctx.attempt + 1)
+			return result
 		} catch (error) {
 			ctx.attempt += 1
 			ctx.error = error
 
 			if (error instanceof Error && error.name === 'AbortError') {
-				// AbortError is not retryable
+				dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
 				throw error
 			}
 
 			if (error instanceof Error && error.name === 'TimeoutError') {
-				// TimeoutError is not retryable
+				dbg.log('attempt %d: timeout error, not retryable', ctx.attempt)
 				throw error
 			}
 
@@ -50,6 +56,7 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 			}
 
 			if (!retry || ctx.attempt >= budget) {
+				dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
 				break
 			}
 
@@ -62,9 +69,11 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 
 			let remaining = Math.max(delay - (Date.now() - start), 0)
 			if (!remaining) {
+				dbg.log('attempt %d: no delay before next retry', ctx.attempt)
 				continue
 			}
 
+			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
 			// oxlint-disable no-await-in-loop
 			await setTimeout(remaining, void 0, { signal: cfg.signal })
 
@@ -76,6 +85,7 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 		}
 	}
 
+	dbg.log('retry failed after %d attempts, last error: %O', ctx.attempt, ctx.error)
 	throw ctx.error
 }
 
