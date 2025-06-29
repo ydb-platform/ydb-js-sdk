@@ -88,6 +88,13 @@ export function fromJs(native: JSValue): Value {
 				return new Null()
 			}
 
+			// Check if the object is already a YDB Value
+			if (typeof native === 'object' && native !== null &&
+				'type' in native && 'encode' in native &&
+				typeof (native as any).encode === 'function') {
+				return native as unknown as Value
+			}
+
 			if (native instanceof Date) {
 				return new Datetime(native)
 			}
