@@ -44,6 +44,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
+		"@ydbjs/abortable": "6.0.0-alpha.28",
 		"@ydbjs/api": "6.0.0-alpha.28",
 		"@ydbjs/error": "6.0.0-alpha.28",
 		"debug": "^4.4.0",

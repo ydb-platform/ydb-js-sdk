@@ -1,3 +1,6 @@
+import { setTimeout } from 'timers/promises'
+
+import { abortable } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
@@ -16,13 +19,15 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 
 	let budget: number
 	while (ctx.attempt < (budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))) {
+		let ac = new AbortController()
+		let signal = cfg.signal ? AbortSignal.any([cfg.signal, ac.signal]) : ac.signal
+
 		let start = Date.now()
-		let controller = new AbortController()
 
 		try {
-			cfg.signal?.throwIfAborted()
+			signal.throwIfAborted()
 			// oxlint-disable no-await-in-loop
-			return await fn(controller.signal)
+			return await abortable(signal, Promise.resolve(fn(signal)))
 		} catch (error) {
 			ctx.attempt += 1
 			ctx.error = error
@@ -37,36 +42,37 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 				throw error
 			}
 
-			let retry = typeof config.retry === 'function' ? config.retry(ctx.error, cfg.idempotent ?? false) : config.retry
+			let retry: boolean
+			if (typeof config.retry === 'boolean') {
+				retry = config.retry
+			} else {
+				retry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
+			}
+
 			if (!retry || ctx.attempt >= budget) {
 				break
 			}
 
-			let delay = typeof config.strategy === 'number' ? config.strategy : config.strategy!(ctx, config)
+			let delay: number
+			if (typeof config.strategy === 'number') {
+				delay = config.strategy
+			} else {
+				delay = config.strategy?.(ctx, config) ?? 0
+			}
+
 			let remaining = Math.max(delay - (Date.now() - start), 0)
 			if (!remaining) {
 				continue
 			}
 
 			// oxlint-disable no-await-in-loop
-			await Promise.race([
-				new Promise((resolve) => setTimeout(resolve, remaining)),
-				new Promise((_, reject) => {
-					let signal = cfg.signal
-					if (signal) {
-						signal.addEventListener('abort', function abortHandler() {
-							reject(signal.reason)
-							signal.removeEventListener('abort', abortHandler)
-						})
-					}
-				}),
-			])
+			await setTimeout(remaining, void 0, { signal: cfg.signal })
 
 			if (config.onRetry) {
 				config.onRetry(ctx)
 			}
 		} finally {
-			controller.abort('Retry cancelled')
+			ac.abort('Retry cancelled')
 		}
 	}
 
