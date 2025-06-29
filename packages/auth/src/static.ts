@@ -4,14 +4,14 @@ import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { type ChannelOptions, credentials } from '@grpc/grpc-js'
 import { AuthServiceDefinition, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
-import createDebug from 'debug'
 
 import { CredentialsProvider } from './index.js'
 
-const debug = createDebug('ydbjs:auth:static')
+let debug = loggers.auth.extend('static')
 
 // Token refresh strategy configuration
 const ACQUIRE_TOKEN_TIMEOUT_MS = 5_000 // 5 seconds timeout for token acquisition
@@ -57,6 +57,8 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		this.#username = username
 		this.#password = password
 
+		debug.log('creating static credentials provider for user: %s, endpoint: %s', username, endpoint)
+
 		let cs = new URL(endpoint)
 		if (['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(cs.protocol) === false) {
 			throw new Error('Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https')
@@ -83,8 +85,12 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 
 		// If token is still valid (hard buffer), return it
 		if (!force && this.#token && this.#token.exp > currentTimeSeconds + HARD_EXPIRY_BUFFER_SECONDS) {
+			let expiresInSeconds = this.#token.exp - currentTimeSeconds
+			debug.log('returning cached token, expires in %d seconds', Math.floor(expiresInSeconds))
+
 			// Start background refresh if approaching soft expiry
 			if (this.#token.exp <= currentTimeSeconds + SOFT_EXPIRY_BUFFER_SECONDS && !this.#promise && !this.#backgroundRefreshPromise) {
+				debug.log('token approaching soft expiry, starting background refresh')
 				// Fire and forget background refresh with timeout
 				this.#backgroundRefreshPromise = this.#refreshTokenInBackground(signal).finally(() => {
 					this.#backgroundRefreshPromise = undefined
@@ -95,9 +101,11 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		}
 
 		if (this.#promise) {
+			debug.log('token refresh already in progress, waiting for result')
 			return this.#promise
 		}
 
+		debug.log('fetching new token (force=%s, expired=%s)', force, this.#token ? 'true' : 'false')
 		return this.#refreshToken(signal)
 	}
 
@@ -107,9 +115,11 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 	 */
 	async #refreshTokenInBackground(signal: AbortSignal): Promise<void> {
 		if (this.#promise || this.#backgroundRefreshPromise) {
+			debug.log('background refresh skipped, already refreshing')
 			return // Already refreshing (either sync or background)
 		}
 
+		debug.log('starting background token refresh')
 		// Combine user signal with timeout signal
 		let combinedSignal = AbortSignal.any([signal, AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS)])
 
@@ -128,11 +138,11 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 				signal,
 				idempotent: true,
 				onRetry: (ctx) => {
-					debug('Retry attempt #%d after error: %s', ctx.attempt, ctx.error)
+					debug.log('retry attempt #%d after error: %s', ctx.attempt, ctx.error)
 				},
 			},
 			async () => {
-				debug('Attempting login with user=%s', this.#username)
+				debug.log('attempting login with user: %s', this.#username)
 
 				let response = await this.#client.login({ user: this.#username, password: this.#password }, { signal })
 				if (!response.operation) {
@@ -148,6 +158,8 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 					throw new ClientError(AuthServiceDefinition.login.path, Status.UNKNOWN, 'No result in operation')
 				}
 
+				debug.log('login successful, parsing JWT token')
+
 				// The result.token is a JWT in the format header.payload.signature.
 				// We attempt to decode the payload to extract token metadata (aud, exp, iat, sub).
 				// If the token is not in the expected format, we fallback to default values.
@@ -159,7 +171,9 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 						value: result.token,
 						...decodedPayload,
 					}
+					debug.log('token parsed successfully, expires at %s', new Date(decodedPayload.exp * 1000).toISOString())
 				} else {
+					debug.log('token not in JWT format, using fallback metadata')
 					this.#token = {
 						value: result.token,
 						aud: [],
@@ -167,6 +181,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 						iat: Math.floor(Date.now() / 1000),
 						sub: '',
 					}
+					debug.log('token created with fallback expiry: %s', new Date(this.#token.exp * 1000).toISOString())
 				}
 
 				return this.#token!.value!

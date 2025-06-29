@@ -1,8 +1,9 @@
+import { loggers } from '@ydbjs/debug';
 import { type RetryConfig, retry } from "@ydbjs/retry";
 import { backoff } from "@ydbjs/retry/strategy";
-
 import { CredentialsProvider } from "./index.js";
-import { dbg } from "./dbg.js";
+
+let dbg = loggers.auth.extend('metadata')
 
 export type MetadataCredentialsToken = {
 	value: string
@@ -46,6 +47,8 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 		if (credentials.endpoint) {
 			this.#endpoint = credentials.endpoint
 		}
+
+		dbg.log('creating metadata credentials provider with flavor: %s, endpoint: %s', this.#flavor, this.#endpoint)
 	}
 
 	/**
@@ -60,21 +63,29 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	 */
 	async getToken(force?: boolean, signal?: AbortSignal): Promise<string> {
 		if (!force && this.#token && this.#token.expired_at > Date.now()) {
+			dbg.log('returning cached token, expires in %d ms', this.#token.expired_at - Date.now())
 			return this.#token.value
 		}
 
 		if (this.#promise) {
+			dbg.log('token fetch already in progress, waiting for result')
 			return this.#promise
 		}
+
+		dbg.log('fetching new token from metadata service')
 
 		let retryConfig: RetryConfig = {
 			retry: (err) => (err instanceof Error),
 			signal,
 			budget: 5,
 			strategy: backoff(10, 1000),
+			onRetry: (ctx) => {
+				dbg.log('retrying token fetch, attempt %d, error: %O', ctx.attempt, ctx.error)
+			},
 		}
 
 		this.#promise = retry(retryConfig, async (signal) => {
+			dbg.log('attempting to fetch token from %s', this.#endpoint)
 			let response = await fetch(this.#endpoint, {
 				headers: {
 					'Metadata-Flavor': this.#flavor,
@@ -82,15 +93,17 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				signal,
 			})
 
-			dbg('%s %s %s', this.#endpoint, response.status, response.headers.get('Content-Type'))
+			dbg.log('%s %s %s', this.#endpoint, response.status, response.headers.get('Content-Type'))
 
 			if (!response.ok) {
-				throw new Error(`Failed to fetch token: ${response.status} ${response.statusText}`)
+				let error = new Error(`Failed to fetch token: ${response.status} ${response.statusText}`)
+				dbg.log('error fetching token: %O', error)
+				throw error
 			}
 
 			let token = JSON.parse(await response.text()) as { access_token?: string, expires_in?: number }
 			if (!token.access_token) {
-				dbg('missing access token in response, response=%O', token)
+				dbg.log('missing access token in response, response: %O', token)
 				throw new Error('No access token exists in response');
 			}
 
@@ -99,6 +112,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
 			}
 
+			dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
 			return this.#token.value
 		}).finally(() => {
 			this.#promise = null
