@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
+
 import { create } from '@bufbuild/protobuf'
-
-import { Driver } from '@ydbjs/core'
 import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
 
-import { createTopicWriter } from '../src/writer/index.ts'
+import { createTopicWriter } from '../src/writer/index.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false
@@ -44,10 +44,13 @@ afterEach(async () => {
 })
 
 test('writes single message to topic', async () => {
-	using writer = createTopicWriter(driver, { topic: testTopicName })
+	await using writer = createTopicWriter(driver, { topic: testTopicName })
 
-	writer.write(new TextEncoder().encode('Hallo, YDB!'))
+	let seqNo = writer.write(new TextEncoder().encode('Hallo, YDB!'))
+	expect(seqNo).toBeGreaterThan(0n)
 
 	let lastSeqNo = await writer.flush()
 	expect(lastSeqNo).toBeGreaterThan(0n)
+
+	expect(seqNo).toBe(lastSeqNo)
 })

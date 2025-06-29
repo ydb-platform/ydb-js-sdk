@@ -1,8 +1,9 @@
 import { bench, describe, inject } from 'vitest'
-import { Driver } from '@ydbjs/core'
-import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+
 import { create } from '@bufbuild/protobuf'
-import { type TopicWriter, createTopicWriter } from '../src/writer/index.ts'
+import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { type TopicWriter, createTopicWriter } from '../src/writer/index.js'
 
 // Total traffic to send in bytes (128 MiB - reduced to avoid rate limits)
 const TOTAL_TRAFFIC_BYTES = 128 * 1024 * 1024
