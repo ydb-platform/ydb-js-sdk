@@ -1,6 +1,6 @@
 import { expect, inject, test } from 'vitest'
 
-import { Driver } from '../dist/esm/driver.js'
+import { Driver } from '../src/driver.js'
 
 test('initializes driver ready', async () => {
 	let driver = new Driver(inject('connectionString'), {

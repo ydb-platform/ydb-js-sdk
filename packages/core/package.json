@@ -44,6 +44,7 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
+		"@ydbjs/abortable": "6.0.0-alpha.28",
 		"@ydbjs/api": "6.0.0-alpha.28",
 		"@ydbjs/auth": "^6.0.0-alpha.28",
 		"@ydbjs/error": "6.0.0-alpha.28",

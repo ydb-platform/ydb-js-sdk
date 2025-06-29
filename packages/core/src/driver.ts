@@ -3,6 +3,7 @@ import * as tls from 'node:tls'
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { credentials } from '@grpc/grpc-js'
+import { abortable } from '@ydbjs/abortable'
 import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSchema } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { CredentialsProvider } from '@ydbjs/auth'
@@ -40,12 +41,15 @@ export type DriverOptions = {
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
+	'ydb.sdk.token_timeout_ms'?: number
 	'ydb.sdk.enable_discovery'?: boolean
 	'ydb.sdk.discovery_timeout_ms'?: number
 	'ydb.sdk.discovery_interval_ms'?: number
 }
 
 const defaultOptions: DriverOptions = {
+	'ydb.sdk.ready_timeout_ms': 30_000,
+	'ydb.sdk.token_timeout_ms': 10_000,
 	'ydb.sdk.enable_discovery': true,
 	'ydb.sdk.discovery_timeout_ms': 10_000,
 	'ydb.sdk.discovery_interval_ms': 60_000,
@@ -106,9 +110,9 @@ export class Driver implements Disposable {
 			this.options['ydb.sdk.application'] ??= this.cs.searchParams.get('application') || ''
 		}
 
-		const discoveryInterval =
+		let discoveryInterval =
 			this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!
-		const discoveryTimeout =
+		let discoveryTimeout =
 			this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!
 		if (discoveryInterval < discoveryTimeout) {
 			throw new Error('Discovery interval must be greater than discovery timeout.')
@@ -178,7 +182,9 @@ export class Driver implements Disposable {
 	}
 
 	get token(): Promise<string> {
-		return this.#credentialsProvider.getToken()
+		let signal = AbortSignal.timeout(this.options['ydb.sdk.token_timeout_ms']!)
+
+		return this.#credentialsProvider.getToken(false, signal)
 	}
 
 	get database(): string {
@@ -197,7 +203,7 @@ export class Driver implements Disposable {
 		return this.cs.protocol === 'https:' || this.cs.protocol === 'grpcs:'
 	}
 
-	async #discovery(signal?: AbortSignal): Promise<void> {
+	async #discovery(signal: AbortSignal): Promise<void> {
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal,
@@ -234,17 +240,12 @@ export class Driver implements Disposable {
 		}
 	}
 
-	ready(signal?: AbortSignal): Promise<void> {
-		let abortPromise = new Promise<void>((_, reject) => {
-			if (signal) {
-				signal.addEventListener('abort', function abortHandler() {
-					reject(signal.reason)
-					signal.removeEventListener('abort', abortHandler)
-				})
-			}
-		})
+	async ready(signal?: AbortSignal): Promise<void> {
+		signal = signal
+			? AbortSignal.any([signal, AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)])
+			: AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)
 
-		return Promise.race([this.#ready.promise, abortPromise])
+		return abortable(signal, this.#ready.promise);
 	}
 
 	close(): void {
