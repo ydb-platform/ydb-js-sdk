@@ -8,10 +8,10 @@ import {
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
 import type { Driver } from '@ydbjs/core'
+import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { backoff, combine, jitter } from '@ydbjs/retry/strategy'
-import debug from 'debug'
 
 import { type CompressionCodec, defaultCodecMap } from '../codec.js'
 import { AsyncPriorityQueue } from '../queue.js'
@@ -91,7 +91,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		maxInflightCount: (options.maxInflightCount ??= 1000), // Default is 1000 messages.
 	}
 
-	let dbg = debug('ydbjs').extend('topic').extend('writer')
+	let dbg = loggers.topic.extend('writer')
 
 	// If the user does not provide a compression codec, use the RAW codec by default.
 	let codec: CompressionCodec = options.codec ?? defaultCodecMap.get(Codec.RAW)!
@@ -150,16 +150,23 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// This is useful to avoid holding too many messages in memory and to ensure that the writer does not leak memory.
 	// The flush interval is configurable and defaults to 60 seconds.
 	void (async function backgroundFlusher() {
-		for await (const _ of setInterval(options.flushIntervalMs, void 0, { signal })) {
-			_flush({
-				queue: outgoing,
-				codec: codec,
-				buffer,
-				inflight,
-				throughputSettings,
-				updateBufferSize,
-				...(options.tx && { tx: options.tx }),
-			})
+		try {
+			for await (let _ of setInterval(options.flushIntervalMs, void 0, { signal })) {
+				_flush({
+					queue: outgoing,
+					codec: codec,
+					buffer,
+					inflight,
+					throughputSettings,
+					updateBufferSize,
+					...(options.tx && { tx: options.tx }),
+				})
+			}
+		} catch (error) {
+			// Handle abort signal or other errors silently during disposal
+			if (!signal.aborted) {
+				dbg.log('background flusher error: %O', error)
+			}
 		}
 	})()
 
@@ -167,11 +174,18 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// This is useful to avoid token expiration and to ensure that the writer can continue to write messages to the topic.
 	// The update token interval is configurable and defaults to 60 seconds.
 	void (async function backgroundTokenRefresher() {
-		for await (const _ of setInterval(options.updateTokenIntervalMs, void 0, { signal })) {
-			_send_update_token_request({
-				queue: outgoing,
-				token: await driver.token,
-			})
+		try {
+			for await (let _ of setInterval(options.updateTokenIntervalMs, void 0, { signal })) {
+				_send_update_token_request({
+					queue: outgoing,
+					token: await driver.token,
+				})
+			}
+		} catch (error) {
+			// Handle abort signal or other errors silently during disposal
+			if (!signal.aborted) {
+				dbg.log('background token refresher error: %O', error)
+			}
 		}
 	})()
 
@@ -191,7 +205,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			budget: Infinity,
 			strategy: combine(jitter(50), backoff(50, 5000)),
 			onRetry(ctx) {
-				dbg('retrying stream connection, attempt %d, error: %O', ctx.attempt, ctx.error)
+				dbg.log('retrying stream connection, attempt %d, error: %O', ctx.attempt, ctx.error)
 			},
 		}
 
@@ -206,7 +220,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				let stream = driver.createClient(TopicServiceDefinition).streamWrite(outgoing, { signal })
 
 				// Send the initial request to the server to initialize the stream.
-				dbg('sending init request to server, producer: %s', options.producer)
+				dbg.log('sending init request to server, producer: %s', options.producer)
 
 				_send_init_request({
 					queue: outgoing,
@@ -221,8 +235,8 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				})
 
 				for await (const chunk of stream) {
-					dbg(
-						'receive message from server: %s, status: %d, payload: %o',
+					dbg.log(
+						'received server message: %s, status: %d, payload: %o',
 						chunk.$typeName,
 						chunk.status,
 						chunk.serverMessage.value?.$typeName
@@ -276,63 +290,25 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				}
 			})
 		} catch (err) {
-			dbg('error occurred while streaming: %O', err)
+			dbg.log('error occurred while streaming: %O', err)
 		} finally {
-			dbg('stream closed')
-			outgoing.dispose()
-			ac.abort()
+			dbg.log('stream closed')
+			destroy(new Error('Stream closed'))
 		}
 	})()
 
-	// This function is used to flush the buffer and send the messages to the topic.
-	// It will send all messages in the buffer to the topic service and wait for them to be acknowledged.
-	// If the buffer is empty, it will return immediately.
-	// Returns the last sequence number of the topic after flushing.
-	let flush = async function flush(): Promise<bigint | undefined> {
-		if (isDisposed) {
-			throw new Error('Writer is destroyed')
-		}
+	dbg.log('creating writer with producer: %s, topic: %s', options.producer, options.topic)
 
-		if (!buffer.length && !inflight.length) {
-			return lastSeqNo
-		}
-
-		// Set flushing flag to temporarily block new messages
-		isFlushing = true
-
-		try {
-			while (buffer.length > 0 || inflight.length > 0) {
-				// Check if writer was destroyed during flush (destroy should stop immediately)
-				if (isDisposed) {
-					throw new Error('Writer was destroyed during flush')
-				}
-				// Note: isClosed is OK here - we want to flush existing messages even if closed
-
-				dbg(
-					'waiting for inflight messages to be acknowledged, inflight size: %d, buffer size: %d',
-					inflight.length,
-					buffer.length
-				)
-
-				_flush({
-					queue: outgoing,
-					codec: codec,
-					buffer,
-					inflight,
-					throughputSettings,
-					updateBufferSize,
-					...(options.tx && { tx: options.tx }),
-				})
-
-				// eslint-disable-next-line no-await-in-loop
-				await new Promise((resolve) => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }))
-			}
-
-			return lastSeqNo
-		} finally {
-			// Always reset flushing flag, even if error occurred
-			isFlushing = false
-		}
+	// outgoing queue pause/resume
+	let originalPause = outgoing.pause.bind(outgoing)
+	let originalResume = outgoing.resume.bind(outgoing)
+	outgoing.pause = () => {
+		dbg.log('outgoing queue paused')
+		return originalPause()
+	}
+	outgoing.resume = () => {
+		dbg.log('outgoing queue resumed')
+		return originalResume()
 	}
 
 	// This function is used to write a message to the topic.
@@ -341,7 +317,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// Promise will be resolved when the message is acknowledged by the topic service.
 	// Returns the sequence number of the message that was written to the topic.
 	// If the sequence number is not provided, it will use the last sequence number of the topic.
-	let write = function write(
+	function write(
 		payload: Uint8Array,
 		extra: { seqNo?: bigint; createdAt?: Date; metadataItems?: { [key: string]: Uint8Array } } = {}
 	): bigint {
@@ -363,10 +339,11 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			)
 		}
 
-		// If a sequence number is provided, use it.
 		if (extra.seqNo) {
 			isSeqNoProvided = true
 		}
+
+		dbg.log('write: payload %d bytes, seqNo: %s, buffer: %d, inflight: %d', payload.length, extra.seqNo ?? '-', buffer.length, inflight.length)
 
 		return _write(
 			{
@@ -386,8 +363,70 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		)
 	}
 
+	if (options.onAck) {
+		let originalOnAck = options.onAck
+		options.onAck = (seqNo, status) => {
+			dbg.log('ack: seqNo: %s, status: %s', seqNo, status)
+			try {
+				originalOnAck(seqNo, status)
+			} catch (err) {
+				dbg.log('onAck callback error: %O', err)
+			}
+		}
+	}
+
+	// This function is used to flush the buffer and send the messages to the topic.
+	// It will send all messages in the buffer to the topic service and wait for them to be acknowledged.
+	// If the buffer is empty, it will return immediately.
+	// Returns the last sequence number of the topic after flushing.
+	async function flush(): Promise<bigint | undefined> {
+		if (isDisposed) {
+			throw new Error('Writer is destroyed')
+		}
+
+		if (!buffer.length && !inflight.length) {
+			dbg.log('flush: nothing to flush')
+			return lastSeqNo
+		}
+
+		isFlushing = true
+
+		try {
+			let prevBuffer = buffer.length
+			let prevInflight = inflight.length
+			dbg.log('flush: starting, buffer: %d, inflight: %d', buffer.length, inflight.length)
+
+			while (buffer.length > 0 || inflight.length > 0) {
+				if (isDisposed) {
+					throw new Error('Writer was destroyed during flush')
+				}
+
+				if (buffer.length !== prevBuffer || inflight.length !== prevInflight) {
+					dbg.log('flush progress: inflight: %d, buffer: %d', inflight.length, buffer.length)
+					prevBuffer = buffer.length
+					prevInflight = inflight.length
+				}
+
+				_flush({
+					queue: outgoing,
+					codec: codec,
+					buffer,
+					inflight,
+					throughputSettings,
+					updateBufferSize,
+					...(options.tx && { tx: options.tx }),
+				})
+				await new Promise((resolve) => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }))
+			}
+			dbg.log('flush: complete, lastSeqNo: %s', lastSeqNo)
+			return lastSeqNo
+		} finally {
+			isFlushing = false
+		}
+	}
+
 	// Gracefully close the writer - stop accepting new messages and wait for existing ones
-	let close = async function close(): Promise<void> {
+	async function close(): Promise<void> {
 		if (isDisposed) {
 			throw new Error('Writer is already destroyed')
 		}
@@ -403,18 +442,21 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			// Wait for existing messages to be sent
 			await flush()
 		} catch (err) {
-			dbg('Error during close flush: %O', err)
+			dbg.log('error during close flush: %O', err)
 			throw err
 		}
 
-		dbg('writer closed gracefully')
+		dbg.log('writer closed gracefully')
 	}
 
 	// Immediate destruction - stop everything immediately
-	let destroy = function destroy(reason?: Error) {
+	function destroy(reason?: Error) {
 		if (isDisposed) {
 			return
 		}
+
+		// Dispose the outgoing queue
+		outgoing.dispose()
 
 		// Abort all operations
 		ac.abort()
@@ -424,13 +466,10 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		bufferSize = 0n
 		inflight.length = 0
 
-		// Dispose the outgoing queue
-		outgoing.dispose()
-
 		isClosed = true
 		isDisposed = true
 		isFlushing = false // Reset flushing flag
-		dbg('writer destroyed, reason: %O', reason)
+		dbg.log('writer destroyed, reason: %O', reason)
 	}
 
 	// Before committing the transaction, require all messages to be written and acknowledged.
@@ -455,7 +494,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				try {
 					await close() // Use graceful close
 				} catch (error) {
-					dbg('Error during async dispose close: %O', error)
+					dbg.log('error during async dispose close: %O', error)
 				}
 			}
 			destroy(new Error('Writer async disposed'))

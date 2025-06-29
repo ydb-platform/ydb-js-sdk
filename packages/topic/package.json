@@ -48,6 +48,7 @@
 		"@bufbuild/protobuf": "2.6.0",
 		"@ydbjs/api": "6.0.0-alpha.28",
 		"@ydbjs/core": "6.0.0-alpha.28",
+		"@ydbjs/debug": "6.0.0-alpha.28",
 		"@ydbjs/error": "6.0.0-alpha.28",
 		"@ydbjs/retry": "6.0.0-alpha.28",
 		"@ydbjs/value": "6.0.0-alpha.28",
