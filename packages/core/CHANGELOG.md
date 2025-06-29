@@ -1,5 +1,18 @@
 # @ydbjs/core
 
+## 6.0.0-alpha.29
+
+### Patch Changes
+
+- Add better debug logging
+- Updated dependencies
+  - @ydbjs/abortable@6.0.0-alpha.29
+  - @ydbjs/api@6.0.0-alpha.29
+  - @ydbjs/auth@6.0.0-alpha.29
+  - @ydbjs/debug@6.0.0-alpha.29
+  - @ydbjs/error@6.0.0-alpha.29
+  - @ydbjs/retry@6.0.0-alpha.29
+
 ## 6.0.0-alpha.28
 
 ### Patch Changes

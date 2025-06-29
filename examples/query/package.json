@@ -1,4 +1,7 @@
 {
+	"name": "@ydbjs/examples-query",
+	"version": "6.0.0",
+	"private": true,
 	"type": "module",
 	"engines": {
 		"node": ">=20.19.0",
@@ -10,8 +13,11 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/core": "^6.0.0-alpha.28",
-		"@ydbjs/query": "^6.0.0-alpha.28",
-		"@ydbjs/value": "^6.0.0-alpha.28"
+		"@ydbjs/core": "^6.0.0-alpha.29",
+		"@ydbjs/query": "^6.0.0-alpha.29",
+		"@ydbjs/value": "^6.0.0-alpha.29"
+	},
+	"publishConfig": {
+		"access": "restricted"
 	}
 }

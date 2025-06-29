@@ -1,4 +1,7 @@
 {
+	"name": "@ydbjs/examples-sls",
+	"version": "6.0.0",
+	"private": true,
 	"type": "module",
 	"main": "index.js",
 	"engines": {
@@ -11,8 +14,11 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/auth": "^6.0.0-alpha.28",
-		"@ydbjs/core": "^6.0.0-alpha.28",
-		"@ydbjs/query": "^6.0.0-alpha.28"
+		"@ydbjs/auth": "^6.0.0-alpha.29",
+		"@ydbjs/core": "^6.0.0-alpha.29",
+		"@ydbjs/query": "^6.0.0-alpha.29"
+	},
+	"publishConfig": {
+		"access": "restricted"
 	}
 }

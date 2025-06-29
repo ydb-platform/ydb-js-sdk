@@ -1,4 +1,7 @@
 {
+	"name": "@ydbjs/examples-api",
+	"version": "6.0.0",
+	"private": true,
 	"type": "module",
 	"engines": {
 		"node": ">=20.19.0",
@@ -11,8 +14,11 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.6.0",
-		"@ydbjs/api": "^6.0.0-alpha.28",
-		"@ydbjs/auth": "^6.0.0-alpha.28",
-		"@ydbjs/core": "^6.0.0-alpha.28"
+		"@ydbjs/api": "^6.0.0-alpha.29",
+		"@ydbjs/auth": "^6.0.0-alpha.29",
+		"@ydbjs/core": "^6.0.0-alpha.29"
+	},
+	"publishConfig": {
+		"access": "restricted"
 	}
 }

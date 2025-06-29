@@ -9,7 +9,9 @@
     "@ydbjs/query": "6.0.0-alpha.2",
     "@ydbjs/retry": "6.0.0-alpha.2",
     "@ydbjs/topic": "6.0.0-alpha.2",
-    "@ydbjs/value": "6.0.0-alpha.2"
+    "@ydbjs/value": "6.0.0-alpha.2",
+    "@ydbjs/abortable": "6.0.0-alpha.28",
+    "@ydbjs/debug": "6.0.0-alpha.28"
   },
   "changesets": [
     "angry-bags-fail",
@@ -53,6 +55,7 @@
     "twenty-hands-write",
     "violet-words-wave",
     "warm-breads-tell",
+    "wet-baboons-wear",
     "wicked-carrots-own",
     "yellow-banks-burn",
     "yellow-brooms-care"
