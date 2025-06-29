@@ -38,3 +38,25 @@
 - Aim for high test coverage, but prioritize critical paths
 - Include both unit tests and integration tests
 - Use concise and clear test names that reflect the behavior being tested
+- Add descriptive verbs when helpful for clarity (e.g., 'expects', 'treats', 'handles', 'applies', 'accepts', 'respects')
+- Be specific about the scenario being tested
+- Avoid redundant context in test names (e.g., don't repeat the function name being tested)
+- Use consistent terminology throughout the codebase
+
+## Test Naming Examples
+
+**Good examples:**
+
+- `'processes string template'` - clear action and subject
+- `'handles single issue'` - what it handles
+- `'creates commit error'` - what it creates
+- `'expects error is retryable'` - what it expects
+- `'accepts custom configuration'` - what it accepts
+- `'stops when limit exceeded'` - specific condition and behavior
+
+**Avoid:**
+
+- `'function with custom parameter'` - redundant function name prefix
+- `'test that method works'` - vague and obvious
+- `'should process correctly'` - unnecessary "should" word
+- `'validates input properly'` - vague adverb
