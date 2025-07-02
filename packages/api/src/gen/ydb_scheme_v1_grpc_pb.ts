@@ -87,3 +87,7 @@ export const SchemeServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+SchemeServiceDefinition["name"] = "SchemeService";
+//@ts-expect-error
+SchemeServiceDefinition["fullName"] = "Ydb.Scheme.V1.SchemeService";

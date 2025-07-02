@@ -44,3 +44,7 @@ export const ExportServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+ExportServiceDefinition["name"] = "ExportService";
+//@ts-expect-error
+ExportServiceDefinition["fullName"] = "Ydb.Export.V1.ExportService";

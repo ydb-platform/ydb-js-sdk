@@ -104,3 +104,7 @@ export const RateLimiterServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+RateLimiterServiceDefinition["name"] = "RateLimiterService";
+//@ts-expect-error
+RateLimiterServiceDefinition["fullName"] = "Ydb.RateLimiter.V1.RateLimiterService";

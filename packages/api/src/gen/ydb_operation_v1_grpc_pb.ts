@@ -75,3 +75,7 @@ export const OperationServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+OperationServiceDefinition["name"] = "OperationService";
+//@ts-expect-error
+OperationServiceDefinition["fullName"] = "Ydb.Operation.V1.OperationService";

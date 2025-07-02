@@ -38,3 +38,7 @@ export const DiscoveryServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+DiscoveryServiceDefinition["name"] = "DiscoveryService";
+//@ts-expect-error
+DiscoveryServiceDefinition["fullName"] = "Ydb.Discovery.V1.DiscoveryService";

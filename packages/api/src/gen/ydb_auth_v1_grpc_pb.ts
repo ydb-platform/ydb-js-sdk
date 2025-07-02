@@ -27,3 +27,7 @@ export const AuthServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+AuthServiceDefinition["name"] = "AuthService";
+//@ts-expect-error
+AuthServiceDefinition["fullName"] = "Ydb.Auth.V1.AuthService";

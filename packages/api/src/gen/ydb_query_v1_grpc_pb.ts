@@ -164,3 +164,7 @@ export const QueryServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+QueryServiceDefinition["name"] = "QueryService";
+//@ts-expect-error
+QueryServiceDefinition["fullName"] = "Ydb.Query.V1.QueryService";

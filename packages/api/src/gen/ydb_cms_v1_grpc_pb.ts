@@ -102,3 +102,7 @@ export const CmsServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+CmsServiceDefinition["name"] = "CmsService";
+//@ts-expect-error
+CmsServiceDefinition["fullName"] = "Ydb.Cms.V1.CmsService";

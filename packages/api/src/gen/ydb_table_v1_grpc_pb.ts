@@ -354,3 +354,7 @@ export const TableServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+TableServiceDefinition["name"] = "TableService";
+//@ts-expect-error
+TableServiceDefinition["fullName"] = "Ydb.Table.V1.TableService";

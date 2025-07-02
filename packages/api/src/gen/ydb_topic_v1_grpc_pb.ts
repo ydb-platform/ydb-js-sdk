@@ -197,3 +197,7 @@ export const TopicServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+TopicServiceDefinition["name"] = "TopicService";
+//@ts-expect-error
+TopicServiceDefinition["fullName"] = "Ydb.Topic.V1.TopicService";

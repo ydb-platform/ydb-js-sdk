@@ -94,3 +94,7 @@ export const CoordinationServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+CoordinationServiceDefinition["name"] = "CoordinationService";
+//@ts-expect-error
+CoordinationServiceDefinition["fullName"] = "Ydb.Coordination.V1.CoordinationService";

@@ -42,3 +42,7 @@ export const MonitoringServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+MonitoringServiceDefinition["name"] = "MonitoringService";
+//@ts-expect-error
+MonitoringServiceDefinition["fullName"] = "Ydb.Monitoring.V1.MonitoringService";

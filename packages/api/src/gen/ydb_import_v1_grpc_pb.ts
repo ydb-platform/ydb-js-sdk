@@ -4,7 +4,7 @@
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { ImportDataRequestSchema, ImportDataResponseSchema, ImportFromS3RequestSchema, ImportFromS3ResponseSchema } from "./protos/ydb_import_pb.js";
+import { ImportDataRequestSchema, ImportDataResponseSchema, ImportFromS3RequestSchema, ImportFromS3ResponseSchema, ListObjectsInS3ExportRequestSchema, ListObjectsInS3ExportResponseSchema } from "./protos/ydb_import_pb.js";
 import type { ServiceDefinition } from "nice-grpc";
 
 /**
@@ -28,6 +28,21 @@ export const ImportServiceDefinition = {
     options: {},
   },
   /**
+   * List objects from existing export stored in S3 bucket
+   *
+   * @generated from rpc Ydb.Import.V1.ImportService.ListObjectsInS3Export
+   */
+  listObjectsInS3Export: {
+    path: "/Ydb.Import.V1.ImportService/ListObjectsInS3Export",
+    requestStream: false,
+    requestSerialize: (message: MessageInitShape<typeof ListObjectsInS3ExportRequestSchema>) => toBinary(ListObjectsInS3ExportRequestSchema, create(ListObjectsInS3ExportRequestSchema, message)),
+    requestDeserialize: (bytes: Uint8Array) => fromBinary(ListObjectsInS3ExportRequestSchema,bytes),
+      responseStream: false, 
+    responseSerialize: (message: MessageInitShape<typeof ListObjectsInS3ExportResponseSchema>) => toBinary(ListObjectsInS3ExportResponseSchema, create(ListObjectsInS3ExportResponseSchema, message)),
+    responseDeserialize: (bytes: Uint8Array) => fromBinary(ListObjectsInS3ExportResponseSchema,bytes),
+    options: {},
+  },
+  /**
    * Writes data to a table.
    * Method accepts serialized data in the selected format and writes it non-transactionally.
    *
@@ -44,3 +59,7 @@ export const ImportServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+ImportServiceDefinition["name"] = "ImportService";
+//@ts-expect-error
+ImportServiceDefinition["fullName"] = "Ydb.Import.V1.ImportService";

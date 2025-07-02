@@ -53,3 +53,7 @@ export const ScriptingServiceDefinition = {
     options: {},
   },
 } as const satisfies ServiceDefinition
+//@ts-expect-error
+ScriptingServiceDefinition["name"] = "ScriptingService";
+//@ts-expect-error
+ScriptingServiceDefinition["fullName"] = "Ydb.Scripting.V1.ScriptingService";
