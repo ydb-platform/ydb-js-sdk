@@ -24,8 +24,10 @@ let plugin = createEcmaScriptPlugin({
 				for (let method of service.methods) {
 					let requestSchema = f.importSchema(method.input)
 					let responseSchema = f.importSchema(method.output)
-					let requestStream = method.methodKind === 'client_streaming' || method.methodKind === 'bidi_streaming'
-					let responseStream = method.methodKind === 'server_streaming' || method.methodKind === 'bidi_streaming'
+					let requestStream =
+						method.methodKind === 'client_streaming' || method.methodKind === 'bidi_streaming'
+					let responseStream =
+						method.methodKind === 'server_streaming' || method.methodKind === 'bidi_streaming'
 
 					f.print(f.jsDoc(method, '  '))
 					f.print('  ', safeIdentifier(method.localName), ': {')
@@ -46,7 +48,13 @@ let plugin = createEcmaScriptPlugin({
 						requestSchema,
 						', message)),'
 					)
-					f.print('    requestDeserialize: (bytes: Uint8Array) => ', bufProtoFromBinary, '(', requestSchema, ',bytes),')
+					f.print(
+						'    requestDeserialize: (bytes: Uint8Array) => ',
+						bufProtoFromBinary,
+						'(',
+						requestSchema,
+						',bytes),'
+					)
 					f.print('      responseStream: ' + (responseStream ? 'true' : 'false') + ', ')
 					f.print(
 						'    responseSerialize: (message: ',
@@ -63,11 +71,22 @@ let plugin = createEcmaScriptPlugin({
 						responseSchema,
 						', message)),'
 					)
-					f.print('    responseDeserialize: (bytes: Uint8Array) => ', bufProtoFromBinary, '(', responseSchema, ',bytes),')
+					f.print(
+						'    responseDeserialize: (bytes: Uint8Array) => ',
+						bufProtoFromBinary,
+						'(',
+						responseSchema,
+						',bytes),'
+					)
 					f.print('    options: {},')
 					f.print('  },')
 				}
 				f.print('} as const satisfies ', niceGRPCServiceDefinition)
+
+				f.print('//@ts-expect-error')
+				f.print(safeIdentifier(service.name + 'Definition'), '["name"] = "', service.name, '";')
+				f.print('//@ts-expect-error')
+				f.print(safeIdentifier(service.name + 'Definition'), '["fullName"] = "', service.typeName, '";')
 			}
 		}
 	},
