@@ -21,7 +21,7 @@ export default defineConfig({
 					globalSetup: './vitest.setup.ydb.ts',
 					benchmark: {
 						include: ['packages/*/tests/**/*.bench.ts'],
-					}
+					},
 				},
 			},
 			{
@@ -43,8 +43,12 @@ export default defineConfig({
 			exclude: [
 				'packages/api/**',
 				'examples/**',
+				'**/coverage/**',
+				'**/tests/**',
 				'**/dist/**',
 				'**/vitest.*',
+				'**/*.test.ts',
+				'**/*.bench.ts',
 			]
 		}
 	},

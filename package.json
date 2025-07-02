@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"workspaces": [
+		"e2e/*",
 		"examples/*",
 		"packages/*",
 		"third-party/*"
@@ -14,7 +15,7 @@
 	},
 	"engineStrict": true,
 	"scripts": {
-		"build": "turbo run build",
+		"build": "turbo run build --output-logs=errors-only",
 		"attw": "turbo run attw",
 		"lint": "oxlint --import-plugin --promise-plugin --vitest-plugin",
 		"test": "vitest run --project uni",
