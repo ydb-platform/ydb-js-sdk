@@ -234,13 +234,10 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 					outgoing.pause()
 				})
 
+				let dbgrpc = dbg.extend('grpc')
+
 				for await (const chunk of stream) {
-					dbg.log(
-						'received server message: %s, status: %d, payload: %o',
-						chunk.$typeName,
-						chunk.status,
-						chunk.serverMessage.value?.$typeName
-					)
+					dbgrpc.log('receive %s with status %d', chunk.serverMessage.value?.$typeName, chunk.status)
 
 					if (chunk.status !== StatusIds_StatusCode.SUCCESS) {
 						console.error('error occurred while streaming: %O', chunk.issues)
@@ -263,6 +260,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 									throughputSettings,
 									updateLastSeqNo,
 									updateBufferSize,
+									...(options.tx && { tx: options.tx }),
 									...(lastSeqNo && { lastSeqNo })
 								},
 								chunk.serverMessage.value
@@ -290,10 +288,12 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				}
 			})
 		} catch (err) {
-			dbg.log('error occurred while streaming: %O', err)
+			if (!signal.aborted) {
+				dbg.log('error occurred while streaming: %O', err)
+			}
 		} finally {
 			dbg.log('stream closed')
-			destroy(new Error('Stream closed'))
+			destroy()
 		}
 	})()
 
@@ -342,8 +342,6 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		if (extra.seqNo) {
 			isSeqNoProvided = true
 		}
-
-		dbg.log('write: payload %d bytes, seqNo: %s, buffer: %d, inflight: %d', payload.length, extra.seqNo ?? '-', buffer.length, inflight.length)
 
 		return _write(
 			{
@@ -416,6 +414,8 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 					updateBufferSize,
 					...(options.tx && { tx: options.tx }),
 				})
+
+				// eslint-disable-next-line
 				await new Promise((resolve) => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }))
 			}
 			dbg.log('flush: complete, lastSeqNo: %s', lastSeqNo)
@@ -442,15 +442,16 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			// Wait for existing messages to be sent
 			await flush()
 		} catch (err) {
-			dbg.log('error during close flush: %O', err)
+			dbg.log('error during close: %O', err)
 			throw err
 		}
 
 		dbg.log('writer closed gracefully')
+		destroy()
 	}
 
 	// Immediate destruction - stop everything immediately
-	function destroy(reason?: Error) {
+	function destroy() {
 		if (isDisposed) {
 			return
 		}
@@ -469,11 +470,14 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		isClosed = true
 		isDisposed = true
 		isFlushing = false // Reset flushing flag
-		dbg.log('writer destroyed, reason: %O', reason)
 	}
 
 	// Before committing the transaction, require all messages to be written and acknowledged.
 	options.tx?.registerPrecommitHook(async () => {
+		if (isDisposed) {
+			return
+		}
+
 		// Close the writer. Do not accept new messages.
 		isClosed = true
 		// Wait for all messages to be flushed.
@@ -486,7 +490,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		close,
 		destroy,
 		[Symbol.dispose]: () => {
-			destroy(new Error('Writer disposed'))
+			destroy()
 		},
 		[Symbol.asyncDispose]: async () => {
 			// Graceful async disposal: wait for existing messages to be sent
@@ -497,7 +501,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 					dbg.log('error during async dispose close: %O', error)
 				}
 			}
-			destroy(new Error('Writer async disposed'))
+			destroy()
 		},
 	}
 }
