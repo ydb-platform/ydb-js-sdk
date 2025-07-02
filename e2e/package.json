@@ -1,0 +1,27 @@
+{
+	"name": "@ydbjs/e2e",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"test": "vitest --run --project e2e",
+		"test:debug": "FORCE_COLOR=3 DEBUG_COLORS=1 DEBUG=ydbjs:* vitest --project e2e --inspect --no-file-parallelism"
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "^2.6.0",
+		"@ydbjs/api": "*",
+		"@ydbjs/auth": "*",
+		"@ydbjs/core": "*",
+		"@ydbjs/debug": "*",
+		"@ydbjs/query": "*",
+		"@ydbjs/topic": "*"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	}
+}
