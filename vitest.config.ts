@@ -5,7 +5,10 @@ export default defineConfig({
 		projects: [
 			{
 				test: {
-					name: 'uni',
+					name: {
+						label: 'uni',
+						color: 'yellow'
+					},
 					include: ['packages/*/src/**/*.test.ts'],
 					environment: 'node',
 					benchmark: {
@@ -15,7 +18,10 @@ export default defineConfig({
 			},
 			{
 				test: {
-					name: 'int',
+					name: {
+						label: 'int',
+						color: 'blue'
+					},
 					include: ['packages/*/tests/**/*.test.ts'],
 					environment: 'node',
 					globalSetup: './vitest.setup.ydb.ts',
@@ -26,12 +32,16 @@ export default defineConfig({
 			},
 			{
 				test: {
-					name: 'e2e',
+					name: {
+						label: 'e2e',
+						color: 'magenta'
+					},
 					include: ['e2e/**/*.test.ts'],
 					environment: 'node',
 					globalSetup: './vitest.setup.ydb.ts',
 					testTimeout: 60000,
 					hookTimeout: 30000,
+					maxConcurrency: 1,
 					benchmark: {
 						include: ['e2e/**/*.bench.ts']
 					}
