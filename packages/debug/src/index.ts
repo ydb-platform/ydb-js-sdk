@@ -5,36 +5,14 @@ import debug from 'debug'
  * Debug categories used across YDB SDK
  */
 export type YDBLogCategory =
-	| 'api'        // API calls and responses
-	| 'auth'       // Authentication and token management
-	| 'grpc'       // gRPC client operations
-	| 'driver'     // Driver lifecycle and connection management
-	| 'discovery'  // Service discovery
-	| 'session'    // Session management
-	| 'query'      // Query execution
-	| 'topic'      // Topic operations
-	| 'tx'         // Transaction operations
-	| 'retry'      // Retry logic
-	| 'error'      // Error handling
-	| 'perf'       // Performance metrics
-
-/**
- * Color mapping for debug categories (following Playwright's approach)
- */
-const debugColors: Record<YDBLogCategory, number> = {
-	'api': 45,       // cyan
-	'auth': 34,      // green
-	'grpc': 33,      // blue
-	'driver': 92,    // purple
-	'discovery': 93, // bright yellow
-	'session': 35,   // magenta
-	'query': 36,     // cyan
-	'topic': 94,     // bright blue
-	'tx': 91,        // bright red
-	'retry': 95,     // bright magenta
-	'error': 160,    // red
-	'perf': 32,      // green
-}
+	| 'auth'
+	| 'driver'
+	| 'error'
+	| 'grpc'
+	| 'query'
+	| 'retry'
+	| 'topic'
+	| 'tx'
 
 /**
  * Centralized debug logger for YDB SDK (inspired by Playwright's DebugLogger)
@@ -53,9 +31,8 @@ export class YDBDebugLogger {
 
 		let cachedDebugger = this.debuggers.get(namespace)
 		if (!cachedDebugger) {
-			cachedDebugger = debug(namespace)
-				// Set color for the category
-				; (cachedDebugger as any).color = debugColors[category] || 0
+			cachedDebugger = debug(namespace);
+
 			this.debuggers.set(namespace, cachedDebugger)
 		}
 
@@ -133,17 +110,14 @@ export let ydbLogger = new YDBDebugLogger()
 /**
  * Convenience functions for common logging patterns
  */
+// Sorted for consistency and maintainability
 export let loggers = {
-	api: ydbLogger.createLogger('api'),
 	auth: ydbLogger.createLogger('auth'),
-	grpc: ydbLogger.createLogger('grpc'),
 	driver: ydbLogger.createLogger('driver'),
-	discovery: ydbLogger.createLogger('discovery'),
-	session: ydbLogger.createLogger('session'),
+	error: ydbLogger.createLogger('error'),
+	grpc: ydbLogger.createLogger('grpc'),
 	query: ydbLogger.createLogger('query'),
+	retry: ydbLogger.createLogger('retry'),
 	topic: ydbLogger.createLogger('topic'),
 	tx: ydbLogger.createLogger('tx'),
-	retry: ydbLogger.createLogger('retry'),
-	error: ydbLogger.createLogger('error'),
-	perf: ydbLogger.createLogger('perf'),
 }

@@ -1,55 +1,56 @@
 {
-    "name": "@ydbjs/debug",
-    "version": "6.0.0-alpha.29",
-    "description": "Centralized debug logging for YDB JavaScript SDK",
-    "keywords": [
-        "ydb",
-        "debug",
-        "logging",
-        "sdk",
-        "typescript"
-    ],
-    "homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
-    "bugs": {
-        "url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
-        "directory": "packages/debug"
-    },
-    "author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-    "contributors": [
-        "Vladislav Polyakov <me@polrk.com>"
-    ],
-    "license": "Apache-2.0",
-    "type": "module",
-    "sideEffects": false,
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "exports": {
-        ".": "./dist/index.js"
-    },
-    "engines": {
-        "node": ">=20.19.0",
-        "npm": ">=10"
-    },
-    "engineStrict": true,
-    "scripts": {
-        "clean": "rm -rf dist",
-        "build": "tsc",
-        "test": "vitest --run",
-        "attw": "attw --pack --profile esm-only"
-    },
-    "dependencies": {
-        "debug": "^4.4.0"
-    },
-    "devDependencies": {
-        "@types/debug": "^4.1.12"
-    },
-    "publishConfig": {
-        "tag": "alpha",
-        "access": "public",
-        "registry": "https://registry.npmjs.org/"
-    }
+	"name": "@ydbjs/debug",
+	"version": "6.0.0-alpha.29",
+	"description": "Centralized debug logging for YDB JavaScript SDK",
+	"keywords": [
+		"ydb",
+		"debug",
+		"logging",
+		"sdk",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/debug"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	},
+	"dependencies": {
+		"debug": "^4.4.0",
+		"supports-color": "^7.2.0"
+	},
+	"devDependencies": {
+		"@types/debug": "^4.1.12"
+	},
+	"publishConfig": {
+		"tag": "alpha",
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	}
 }
