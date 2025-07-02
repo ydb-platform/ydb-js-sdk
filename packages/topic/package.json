@@ -30,7 +30,7 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": "./dist/index.js",
-		"./reader": "./dist/reader.js",
+		"./reader": "./dist/reader/index.js",
 		"./writer": "./dist/writer/index.js"
 	},
 	"engines": {
