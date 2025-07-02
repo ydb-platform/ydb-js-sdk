@@ -23,9 +23,11 @@ import {
 	createClientFactory,
 	waitForChannelReady,
 } from 'nice-grpc'
+import pkg from '../package.json' with { type: 'json' }
 import { type Connection, LazyConnection } from './conn.js'
 import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
+import { detectRuntime } from './runtime.js'
 
 let dbg = loggers.driver
 
@@ -56,6 +58,21 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.discovery_interval_ms': 60_000,
 } as const satisfies DriverOptions
 
+const defaultChannelOptions: ChannelOptions = {
+	'grpc.primary_user_agent': `ydb-js-sdk/${pkg.version}`,
+	'grpc.secondary_user_agent': detectRuntime(),
+
+	'grpc.keepalive_time_ms': 30_000,
+	'grpc.keepalive_timeout_ms': 5_000,
+	'grpc.keepalive_permit_without_calls': 1,
+
+	'grpc.max_send_message_length': 64 * 1024 * 1024,
+	'grpc.max_receive_message_length': 64 * 1024 * 1024,
+
+	'grpc.initial_reconnect_backoff_ms': 50,
+	'grpc.max_reconnect_backoff_ms': 5_000,
+}
+
 if (!Promise.withResolvers) {
 	Promise.withResolvers = function <T>(): {
 		promise: Promise<T>
@@ -73,8 +90,8 @@ if (!Promise.withResolvers) {
 }
 
 export class Driver implements Disposable {
-	protected readonly cs: URL
-	protected readonly options: DriverOptions = {}
+	readonly cs: URL
+	readonly options: DriverOptions = {}
 
 	#pool: ConnectionPool
 	#ready: PromiseWithResolvers<void> = Promise.withResolvers<void>()
@@ -96,6 +113,9 @@ export class Driver implements Disposable {
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
 		this.options = Object.assign({}, defaultOptions, options)
 		this.options.secureOptions ??= this.options.ssl
+
+		// Merge default channel options with user-provided options
+		this.options.channelOptions = Object.assign({}, defaultChannelOptions, this.options.channelOptions)
 
 		if (['grpc:', 'grpcs:', 'http:', 'https:'].includes(this.cs.protocol) === false) {
 			throw new Error('Invalid connection string protocol. Must be one of grpc, grpcs, http, https')
@@ -254,11 +274,10 @@ export class Driver implements Disposable {
 				)
 			}
 
-			dbg.log('discovery successful, received %d endpoints', result.endpoints.length)
+			dbg.log('discovery successful, received %d endpoints: %O', result.endpoints.length, result.endpoints)
 			return result
 		})
 
-		dbg.log('updating connection pool with %d endpoints', result.endpoints.length)
 		for (let endpoint of result.endpoints) {
 			this.#pool.add(endpoint)
 		}
@@ -294,7 +313,7 @@ export class Driver implements Disposable {
 	}
 
 	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
-		dbg.log('creating client %s', preferNodeId ? ` with preferNodeId: ${preferNodeId}` : '', service.fullName)
+		dbg.log(`creating client for %s${preferNodeId ? ` with preferNodeId: ${preferNodeId}` : ''}`, service.fullName || service.name)
 		return createClientFactory()
 			.use(this.#middleware)
 			.create(
