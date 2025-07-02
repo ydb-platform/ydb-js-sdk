@@ -6,7 +6,7 @@ import { loggers } from "@ydbjs/debug";
 import { TopicPartitionSession } from "../partition-session.js";
 import { _send_start_partition_session_response } from "./_start_partition_session_response.js";
 import { _send_stop_partition_session_response } from "./_stop_partition_session_response.js";
-import type { TopicReaderOptions, TopicCommitPromise } from "./types.js";
+import type { TopicCommitPromise, TopicReaderOptions } from "./types.js";
 
 let dbg = loggers.topic.extend('reader')
 
