@@ -9,6 +9,5 @@
 		"**/*.test.ts",
 		"**/*.bench.ts",
 		"vitest.config.ts",
-		"src/writer/actors/**"
 	]
 }

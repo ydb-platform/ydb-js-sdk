@@ -11,7 +11,10 @@
     "@ydbjs/topic": "6.0.0-alpha.2",
     "@ydbjs/value": "6.0.0-alpha.2",
     "@ydbjs/abortable": "6.0.0-alpha.28",
-    "@ydbjs/debug": "6.0.0-alpha.28"
+    "@ydbjs/debug": "6.0.0-alpha.28",
+    "@ydbjs/examples-api": "6.0.0",
+    "@ydbjs/examples-query": "6.0.0",
+    "@ydbjs/examples-sls": "6.0.0"
   },
   "changesets": [
     "angry-bags-fail",
@@ -38,6 +41,7 @@
     "lazy-dolls-dream",
     "major-aliens-go",
     "major-poets-work",
+    "metal-states-learn",
     "moody-friends-laugh",
     "moody-houses-divide",
     "polite-eggs-fetch",

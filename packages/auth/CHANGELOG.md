@@ -1,5 +1,16 @@
 # @ydbjs/auth
 
+## 6.0.1-alpha.30
+
+### Patch Changes
+
+- Introduce Table-Topic Transactions
+- Updated dependencies
+  - @ydbjs/api@6.0.1-alpha.30
+  - @ydbjs/debug@6.0.1-alpha.30
+  - @ydbjs/error@6.0.1-alpha.30
+  - @ydbjs/retry@6.0.1-alpha.30
+
 ## 6.0.0-alpha.29
 
 ### Patch Changes

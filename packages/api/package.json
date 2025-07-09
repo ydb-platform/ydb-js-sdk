@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/api",
-	"version": "6.0.0-alpha.29",
+	"version": "6.0.1-alpha.30",
 	"description": "TypeScript gRPC service definitions and protobuf types for all YDB APIs. Enables strongly-typed client generation and low-level protocol access.",
 	"keywords": [
 		"ydb",
