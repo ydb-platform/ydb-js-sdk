@@ -1,4 +1,4 @@
-import { setInterval } from 'node:timers/promises'
+import { setInterval, setTimeout } from 'node:timers/promises'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
@@ -10,7 +10,7 @@ import {
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, retry } from '@ydbjs/retry'
+import { type RetryConfig, isRetryableError, retry } from '@ydbjs/retry'
 import { backoff, combine, jitter } from '@ydbjs/retry/strategy'
 
 import { type CompressionCodec, defaultCodecMap } from '../codec.js'
@@ -63,7 +63,7 @@ export type TopicWriterOptions = {
 	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
 }
 
-export interface TopicWriter extends Disposable, AsyncDisposable {
+export interface TopicWriter extends AsyncDisposable {
 	// Write a message to the topic.
 	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
 	write(
@@ -200,10 +200,10 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 
 		let retryConfig = options.retryConfig?.(signal)
 		retryConfig ??= {
-			retry: true,
+			retry: isRetryableError,
 			signal: signal,
 			budget: Infinity,
-			strategy: combine(jitter(50), backoff(50, 5000)),
+			strategy: combine(backoff(50, 5000), jitter(50)),
 			onRetry(ctx) {
 				dbg.log('retrying stream connection, attempt %d, error: %O', ctx.attempt, ctx.error)
 			},
@@ -377,9 +377,17 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// It will send all messages in the buffer to the topic service and wait for them to be acknowledged.
 	// If the buffer is empty, it will return immediately.
 	// Returns the last sequence number of the topic after flushing.
-	async function flush(): Promise<bigint | undefined> {
+	async function flush(signal?: AbortSignal): Promise<bigint | undefined> {
 		if (isDisposed) {
 			throw new Error('Writer is destroyed')
+		}
+
+		if (signal) {
+			signal = AbortSignal.any([ac.signal, signal])
+		}
+
+		if (signal?.aborted) {
+			throw new Error('Flush is aborted', { cause: signal.reason })
 		}
 
 		if (!buffer.length && !inflight.length) {
@@ -399,6 +407,10 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 					throw new Error('Writer was destroyed during flush')
 				}
 
+				if (signal?.aborted) {
+					throw new Error('Flush was aborted', { cause: signal.reason })
+				}
+
 				if (buffer.length !== prevBuffer || inflight.length !== prevInflight) {
 					dbg.log('flush progress: inflight: %d, buffer: %d', inflight.length, buffer.length)
 					prevBuffer = buffer.length
@@ -416,7 +428,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				})
 
 				// eslint-disable-next-line
-				await new Promise((resolve) => setTimeout(resolve, throughputSettings.flushIntervalMs, { signal }))
+				await setTimeout(throughputSettings.flushIntervalMs, void 0, { signal })
 			}
 			dbg.log('flush: complete, lastSeqNo: %s', lastSeqNo)
 			return lastSeqNo
@@ -426,7 +438,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	}
 
 	// Gracefully close the writer - stop accepting new messages and wait for existing ones
-	async function close(): Promise<void> {
+	async function close(signal?: AbortSignal): Promise<void> {
 		if (isDisposed) {
 			throw new Error('Writer is already destroyed')
 		}
@@ -435,12 +447,20 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			return // Already closed
 		}
 
+		if (signal) {
+			signal = AbortSignal.any([ac.signal, signal])
+		}
+
+		if (signal?.aborted) {
+			throw new Error('Flush is aborted', { cause: signal.reason })
+		}
+
 		// Stop accepting new messages
 		isClosed = true
 
 		try {
 			// Wait for existing messages to be sent
-			await flush()
+			await flush(signal)
 		} catch (err) {
 			dbg.log('error during close: %O', err)
 			throw err
@@ -473,7 +493,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	}
 
 	// Before committing the transaction, require all messages to be written and acknowledged.
-	options.tx?.registerPrecommitHook(async () => {
+	options.tx?.onCommit(async (signal) => {
 		if (isDisposed) {
 			return
 		}
@@ -481,7 +501,23 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		// Close the writer. Do not accept new messages.
 		isClosed = true
 		// Wait for all messages to be flushed.
-		await flush()
+		await flush(signal)
+	})
+
+	options.tx?.onRollback(() => {
+		if (isDisposed) {
+			return
+		}
+
+		destroy()
+	})
+
+	options.tx?.onClose(() => {
+		if (isDisposed) {
+			return
+		}
+
+		destroy()
 	})
 
 	return {
@@ -489,9 +525,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		write,
 		close,
 		destroy,
-		[Symbol.dispose]: () => {
-			destroy()
-		},
+		// [Symbol.dispose]: () => {
+		// 	destroy()
+		// },
 		[Symbol.asyncDispose]: async () => {
 			// Graceful async disposal: wait for existing messages to be sent
 			if (!isClosed && !isDisposed) {
@@ -507,12 +543,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 }
 
 export const createTopicTxWriter = function createTopicTxWriter(
+	tx: TX,
 	driver: Driver,
-	tx: { registerPrecommitHook: (fn: () => Promise<void> | void) => void; sessionId: string; transactionId: string },
 	options: TopicWriterOptions
 ): TopicWriter {
-	return createTopicWriter(driver, {
-		...options,
-		tx,
-	})
+	return createTopicWriter(driver, { ...options, tx })
 }
