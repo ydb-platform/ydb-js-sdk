@@ -310,7 +310,6 @@ test.sequential.skip.each(messageSizes)('measures sustained throughput with %i b
 				maxInflightCount: 1000,
 				flushIntervalMs: 1000,
 				garbageCollection: {
-					disabled: false,
 					maxGarbageCount: 100, // Aggressive GC - clean every 100 acks
 					maxGarbageSize: 10n * 1024n * 1024n, // 10MB threshold
 					forceGC: true, // Force native GC
