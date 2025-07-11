@@ -95,7 +95,7 @@ export type TopicTxReaderOptions = {
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
-export interface TopicReader extends Disposable, AsyncDisposable {
+export interface TopicReader extends AsyncDisposable {
 	// Read messages from the topic stream.
 	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
 	// Commit offsets for the provided messages.
@@ -106,7 +106,7 @@ export interface TopicReader extends Disposable, AsyncDisposable {
 	destroy(reason?: Error): void
 }
 
-export interface TopicTxReader extends Disposable, AsyncDisposable {
+export interface TopicTxReader {
 	// Read messages from the topic stream within a transaction.
 	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
 	// Gracefully close the reader.

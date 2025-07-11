@@ -3,7 +3,7 @@ import { StatusIds_StatusCode } from "@ydbjs/api/operation"
 import { TopicServiceDefinition } from "@ydbjs/api/topic"
 import { loggers } from "@ydbjs/debug"
 import { YDBError } from "@ydbjs/error"
-import { retry } from "@ydbjs/retry"
+import { defaultRetryConfig, retry } from "@ydbjs/retry"
 
 import { _send_init_request } from "./_init_request.js"
 import { _on_init_response } from "./_init_response.js"
@@ -12,7 +12,6 @@ import { _on_stop_partition_session_request } from "./_stop_partition_session_re
 import { _on_end_partition_session } from "./_end_partition_session.js"
 import { _on_read_response } from "./_read_response.js"
 import { _on_commit_offset_response } from "./_commit_offset_response.js"
-import { _create_retry_config } from "./_shared.js"
 import type { TopicReaderState } from "./types.js"
 
 let dbg = loggers.topic.extend('reader')
@@ -25,11 +24,7 @@ export let _consume_stream = async function consume_stream(state: TopicReaderSta
 	let signal = state.controller.signal
 	await state.driver.ready(signal)
 
-	// Configure retry strategy for stream consumption
-	let retryConfig = _create_retry_config(signal)
-
-	// TODO: handle user errors (for example tx errors). Ex: use abort signal
-	await retry(retryConfig, async (signal) => {
+	await retry({ ...defaultRetryConfig, signal }, async (signal) => {
 		// Clean up on signal abort
 		signal.addEventListener('abort', () => {
 			state.outgoingQueue.close();
@@ -96,18 +91,18 @@ export let _consume_stream = async function consume_stream(state: TopicReaderSta
 
 			// Handle the server message based on type
 			if (chunk.serverMessage.case === 'initResponse') {
-				_on_init_response({
+				void _on_init_response({
 					outgoingQueue: state.outgoingQueue,
 					freeBufferSize: state.freeBufferSize
 				}, chunk.serverMessage.value)
 			} else if (chunk.serverMessage.case === 'startPartitionSessionRequest') {
-				await _on_start_partition_session_request({
+				void _on_start_partition_session_request({
 					partitionSessions: state.partitionSessions,
 					outgoingQueue: state.outgoingQueue,
 					...(state.options.onPartitionSessionStart && { onPartitionSessionStart: state.options.onPartitionSessionStart })
 				}, chunk.serverMessage.value)
 			} else if (chunk.serverMessage.case === 'stopPartitionSessionRequest') {
-				await _on_stop_partition_session_request({
+				void _on_stop_partition_session_request({
 					partitionSessions: state.partitionSessions,
 					outgoingQueue: state.outgoingQueue,
 					buffer: state.buffer,
@@ -116,17 +111,17 @@ export let _consume_stream = async function consume_stream(state: TopicReaderSta
 					...(state.options.onPartitionSessionStop && { onPartitionSessionStop: state.options.onPartitionSessionStop })
 				}, chunk.serverMessage.value)
 			} else if (chunk.serverMessage.case === 'endPartitionSession') {
-				_on_end_partition_session({
+				void _on_end_partition_session({
 					partitionSessions: state.partitionSessions
 				}, chunk.serverMessage.value)
 			} else if (chunk.serverMessage.case === 'commitOffsetResponse') {
-				_on_commit_offset_response({
+				void _on_commit_offset_response({
 					pendingCommits: state.pendingCommits,
 					partitionSessions: state.partitionSessions,
 					...(state.options.onCommittedOffset && { onCommittedOffset: state.options.onCommittedOffset })
 				}, chunk.serverMessage.value)
 			} else if (chunk.serverMessage.case === 'readResponse') {
-				_on_read_response({
+				void _on_read_response({
 					buffer: state.buffer,
 					updateFreeBufferSize: (deltaBytes: bigint) => {
 						state.freeBufferSize += deltaBytes

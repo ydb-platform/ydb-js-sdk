@@ -194,7 +194,7 @@ export const createTopicTxReader = function createTopicTxReader(driver: Driver, 
 	_initialize_codecs(state.codecs, options.codecMap)
 
 	// Register precommit hook to send updateOffsetsInTransaction
-	options.tx.registerPrecommitHook(async () => {
+	options.tx.onCommit(async () => {
 		// Send updateOffsetsInTransaction for all read offsets
 		let updates = []
 
