@@ -1,94 +1,102 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Test: All Unit Tests",
-            "type": "shell",
-            "command": "npm",
-            "args": [
-                "run",
-                "test:uni"
-            ],
-            "group": {
-                "kind": "test",
-                "isDefault": true
-            },
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Test: All Integration Tests",
-            "type": "shell",
-            "command": "npm",
-            "args": [
-                "run",
-                "test:int"
-            ],
-            "group": "test",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Test: All E2E Tests",
-            "type": "shell",
-            "command": "npm",
-            "args": [
-                "run",
-                "test:e2e"
-            ],
-            "group": "test",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Test: Everything",
-            "type": "shell",
-            "command": "npm",
-            "args": [
-                "run",
-                "test:all"
-            ],
-            "group": "test",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Test: UI Mode",
-            "type": "shell",
-            "command": "npx",
-            "args": [
-                "vitest",
-                "--ui"
-            ],
-            "group": "test",
-            "isBackground": true,
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "shared"
-            },
-            "problemMatcher": []
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test: All Unit Tests",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"test:uni"
+			],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test: All Integration Tests",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"test:int"
+			],
+			"group": "test",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test: All E2E Tests",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"test:e2e"
+			],
+			"group": "test",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test: Everything",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"test:all"
+			],
+			"group": "test",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Test: UI Mode",
+			"type": "shell",
+			"command": "npx",
+			"args": [
+				"vitest",
+				"--standalone",
+				"--ui",
+			],
+			"options": {
+				"env": {
+					"DEBUG": "ydbjs:*",
+					"FORCE_COLOR": "3",
+					"DEBUG_COLORS": "1",
+				}
+			},
+			"group": "test",
+			"isBackground": true,
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		}
+	]
 }
