@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest'
-import { loggers, ydbLogger } from './index.js'
+import { YDBDebugLogger, loggers } from './index.js'
 
 test('creates logger with correct namespace', () => {
-	let logger = ydbLogger.createLogger('topic', 'writer')
+	let logger = new YDBDebugLogger('topic')
 	expect(logger).toBeDefined()
 	expect(typeof logger.log).toBe('function')
 	expect(typeof logger.enabled).toBe('boolean')
@@ -10,13 +10,13 @@ test('creates logger with correct namespace', () => {
 })
 
 test('extends logger correctly', () => {
-	let topicLogger = ydbLogger.createLogger('topic')
+	let topicLogger = new YDBDebugLogger('topic')
 	let writerLogger = topicLogger.extend('writer')
 	expect(writerLogger).toBeDefined()
 })
 
 test('handles enabled state correctly', () => {
-	let isEnabled = ydbLogger.isEnabled('topic')
+	let isEnabled = new YDBDebugLogger('topic').enabled
 	expect(typeof isEnabled).toBe('boolean')
 })
 
