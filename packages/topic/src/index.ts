@@ -23,7 +23,7 @@ export function topic(driver: Driver): TopicClient {
 			return createTopicWriter(driver, options);
 		},
 		createTxWriter(tx: TX, options: TopicWriterOptions) {
-			return createTopicTxWriter(driver, tx, options);
+			return createTopicTxWriter(tx, driver, options);
 		},
 	} as TopicClient
 }
