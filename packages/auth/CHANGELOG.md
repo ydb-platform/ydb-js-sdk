@@ -1,5 +1,27 @@
 # @ydbjs/auth
 
+## 6.0.1-alpha.32
+
+### Patch Changes
+
+- Small refactoring and TopicWriter2 (ot top of xstate)
+- Updated dependencies
+  - @ydbjs/debug@6.0.1-alpha.32
+  - @ydbjs/error@6.0.1-alpha.32
+  - @ydbjs/retry@6.0.1-alpha.32
+  - @ydbjs/api@6.0.1-alpha.32
+
+## 6.0.1-alpha.31
+
+### Patch Changes
+
+- Explicitly define grpc-js as dep
+- Updated dependencies
+  - @ydbjs/api@6.0.1-alpha.31
+  - @ydbjs/error@6.0.1-alpha.31
+  - @ydbjs/retry@6.0.1-alpha.31
+  - @ydbjs/debug@6.0.1-alpha.31
+
 ## 6.0.1-alpha.30
 
 ### Patch Changes

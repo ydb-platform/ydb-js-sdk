@@ -1,5 +1,17 @@
 # @ydbjs/api
 
+## 6.0.1-alpha.32
+
+### Patch Changes
+
+- Small refactoring and TopicWriter2 (ot top of xstate)
+
+## 6.0.1-alpha.31
+
+### Patch Changes
+
+- Explicitly define grpc-js as dep
+
 ## 6.0.1-alpha.30
 
 ### Patch Changes

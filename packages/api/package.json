@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/api",
-	"version": "6.0.1-alpha.30",
+	"version": "6.0.1-alpha.32",
 	"description": "TypeScript gRPC service definitions and protobuf types for all YDB APIs. Enables strongly-typed client generation and low-level protocol access.",
 	"keywords": [
 		"ydb",
@@ -59,6 +59,7 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
+		"@grpc/grpc-js": "^1.13.4",
 		"nice-grpc": "^2.1.12"
 	},
 	"devDependencies": {
