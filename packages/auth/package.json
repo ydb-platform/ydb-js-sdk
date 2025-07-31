@@ -53,6 +53,7 @@
 		"@ydbjs/debug": "6.0.1-alpha.32",
 		"@ydbjs/error": "6.0.1-alpha.32",
 		"@ydbjs/retry": "6.0.1-alpha.32",
+		"jose": "^6.0.12",
 		"nice-grpc": "^2.1.12"
 	},
 	"publishConfig": {
