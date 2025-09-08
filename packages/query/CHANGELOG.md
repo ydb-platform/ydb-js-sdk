@@ -1,5 +1,17 @@
 # @ydbjs/query
 
+## 7.0.0-alpha.33
+
+### Patch Changes
+
+- Updated dependencies [236c3e5]
+  - @ydbjs/api@7.0.0-alpha.33
+  - @ydbjs/core@7.0.0-alpha.33
+  - @ydbjs/error@7.0.0-alpha.33
+  - @ydbjs/retry@7.0.0-alpha.33
+  - @ydbjs/value@7.0.0-alpha.33
+  - @ydbjs/debug@7.0.0-alpha.33
+
 ## 6.0.1-alpha.32
 
 ### Patch Changes

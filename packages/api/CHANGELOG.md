@@ -1,5 +1,11 @@
 # @ydbjs/api
 
+## 7.0.0-alpha.33
+
+### Minor Changes
+
+- 236c3e5: Sync proto apis
+
 ## 6.0.1-alpha.32
 
 ### Patch Changes

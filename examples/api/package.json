@@ -14,9 +14,9 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.6.0",
-		"@ydbjs/api": "^6.0.1-alpha.32",
-		"@ydbjs/auth": "^6.0.1-alpha.32",
-		"@ydbjs/core": "^6.0.1-alpha.32"
+		"@ydbjs/api": "^7.0.0-alpha.33",
+		"@ydbjs/auth": "^7.0.0-alpha.33",
+		"@ydbjs/core": "^7.0.0-alpha.33"
 	},
 	"publishConfig": {
 		"access": "restricted"
