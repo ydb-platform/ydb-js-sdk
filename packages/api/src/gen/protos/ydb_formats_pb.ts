@@ -2,15 +2,15 @@
 // @generated from file protos/ydb_formats.proto (package Ydb.Formats, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file protos/ydb_formats.proto.
  */
 export const file_protos_ydb_formats: GenFile = /*@__PURE__*/
-  fileDesc("Chhwcm90b3MveWRiX2Zvcm1hdHMucHJvdG8SC1lkYi5Gb3JtYXRzIiQKEkFycm93QmF0Y2hTZXR0aW5ncxIOCgZzY2hlbWEYASABKAwi2gEKC0NzdlNldHRpbmdzEhEKCXNraXBfcm93cxgBIAEoDRIRCglkZWxpbWl0ZXIYAiABKAwSEgoKbnVsbF92YWx1ZRgDIAEoDBIOCgZoZWFkZXIYBCABKAgSMQoHcXVvdGluZxgFIAEoCzIgLllkYi5Gb3JtYXRzLkNzdlNldHRpbmdzLlF1b3RpbmcaTgoHUXVvdGluZxIQCghkaXNhYmxlZBgBIAEoCBISCgpxdW90ZV9jaGFyGAIgASgMEh0KFWRvdWJsZV9xdW90ZV9kaXNhYmxlZBgDIAEoCEJXChZ0ZWNoLnlkYi5wcm90by5mb3JtYXRzWjpnaXRodWIuY29tL3lkYi1wbGF0Zm9ybS95ZGItZ28tZ2VucHJvdG8vcHJvdG9zL1lkYl9Gb3JtYXRz+AEBYgZwcm90bzM");
+  fileDesc("Chhwcm90b3MveWRiX2Zvcm1hdHMucHJvdG8SC1lkYi5Gb3JtYXRzIiQKEkFycm93QmF0Y2hTZXR0aW5ncxIOCgZzY2hlbWEYASABKAwi2gEKC0NzdlNldHRpbmdzEhEKCXNraXBfcm93cxgBIAEoDRIRCglkZWxpbWl0ZXIYAiABKAwSEgoKbnVsbF92YWx1ZRgDIAEoDBIOCgZoZWFkZXIYBCABKAgSMQoHcXVvdGluZxgFIAEoCzIgLllkYi5Gb3JtYXRzLkNzdlNldHRpbmdzLlF1b3RpbmcaTgoHUXVvdGluZxIQCghkaXNhYmxlZBgBIAEoCBISCgpxdW90ZV9jaGFyGAIgASgMEh0KFWRvdWJsZV9xdW90ZV9kaXNhYmxlZBgDIAEoCCKsAgoTQXJyb3dGb3JtYXRTZXR0aW5ncxJMChFjb21wcmVzc2lvbl9jb2RlYxgBIAEoCzIxLllkYi5Gb3JtYXRzLkFycm93Rm9ybWF0U2V0dGluZ3MuQ29tcHJlc3Npb25Db2RlYxrGAQoQQ29tcHJlc3Npb25Db2RlYxJECgR0eXBlGAEgASgOMjYuWWRiLkZvcm1hdHMuQXJyb3dGb3JtYXRTZXR0aW5ncy5Db21wcmVzc2lvbkNvZGVjLlR5cGUSEgoFbGV2ZWwYAiABKAVIAIgBASJOCgRUeXBlEhQKEFRZUEVfVU5TUEVDSUZJRUQQABINCglUWVBFX05PTkUQARINCglUWVBFX1pTVEQQAhISCg5UWVBFX0xaNF9GUkFNRRADQggKBl9sZXZlbCIhCg9BcnJvd0Zvcm1hdE1ldGESDgoGc2NoZW1hGAEgASgMQlcKFnRlY2gueWRiLnByb3RvLmZvcm1hdHNaOmdpdGh1Yi5jb20veWRiLXBsYXRmb3JtL3lkYi1nby1nZW5wcm90by9wcm90b3MvWWRiX0Zvcm1hdHP4AQFiBnByb3RvMw");
 
 /**
  * @generated from message Ydb.Formats.ArrowBatchSettings
@@ -100,4 +100,117 @@ export type CsvSettings_Quoting = Message<"Ydb.Formats.CsvSettings.Quoting"> & {
  */
 export const CsvSettings_QuotingSchema: GenMessage<CsvSettings_Quoting> = /*@__PURE__*/
   messageDesc(file_protos_ydb_formats, 1, 0);
+
+/**
+ * *
+ * ArrowFormatSettings is settings for Ydb.ResultSet.Format.FORMAT_ARROW in Ydb.Query.ExecuteQueryRequest.
+ * It is used to configure compression for record batches in Ydb.ResultSet.data field.
+ *
+ * @generated from message Ydb.Formats.ArrowFormatSettings
+ */
+export type ArrowFormatSettings = Message<"Ydb.Formats.ArrowFormatSettings"> & {
+  /**
+   * Codec for compressing binary data in Ydb.ResultSet.data field
+   *
+   * @generated from field: Ydb.Formats.ArrowFormatSettings.CompressionCodec compression_codec = 1;
+   */
+  compressionCodec?: ArrowFormatSettings_CompressionCodec;
+};
+
+/**
+ * Describes the message Ydb.Formats.ArrowFormatSettings.
+ * Use `create(ArrowFormatSettingsSchema)` to create a new message.
+ */
+export const ArrowFormatSettingsSchema: GenMessage<ArrowFormatSettings> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_formats, 2);
+
+/**
+ * @generated from message Ydb.Formats.ArrowFormatSettings.CompressionCodec
+ */
+export type ArrowFormatSettings_CompressionCodec = Message<"Ydb.Formats.ArrowFormatSettings.CompressionCodec"> & {
+  /**
+   * Type of the compression codec
+   *
+   * @generated from field: Ydb.Formats.ArrowFormatSettings.CompressionCodec.Type type = 1;
+   */
+  type: ArrowFormatSettings_CompressionCodec_Type;
+
+  /**
+   * Compression level for the codec.
+   * If is not specified, the default level of the codec type is used.
+   *
+   * @generated from field: optional int32 level = 2;
+   */
+  level?: number;
+};
+
+/**
+ * Describes the message Ydb.Formats.ArrowFormatSettings.CompressionCodec.
+ * Use `create(ArrowFormatSettings_CompressionCodecSchema)` to create a new message.
+ */
+export const ArrowFormatSettings_CompressionCodecSchema: GenMessage<ArrowFormatSettings_CompressionCodec> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_formats, 2, 0);
+
+/**
+ * @generated from enum Ydb.Formats.ArrowFormatSettings.CompressionCodec.Type
+ */
+export enum ArrowFormatSettings_CompressionCodec_Type {
+  /**
+   * Unspecified mode, corresponds to TYPE_NONE
+   *
+   * @generated from enum value: TYPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Binary data without compression
+   *
+   * @generated from enum value: TYPE_NONE = 1;
+   */
+  NONE = 1,
+
+  /**
+   * Zstandard compression
+   *
+   * @generated from enum value: TYPE_ZSTD = 2;
+   */
+  ZSTD = 2,
+
+  /**
+   * LZ4 frame compression
+   *
+   * @generated from enum value: TYPE_LZ4_FRAME = 3;
+   */
+  LZ4_FRAME = 3,
+}
+
+/**
+ * Describes the enum Ydb.Formats.ArrowFormatSettings.CompressionCodec.Type.
+ */
+export const ArrowFormatSettings_CompressionCodec_TypeSchema: GenEnum<ArrowFormatSettings_CompressionCodec_Type> = /*@__PURE__*/
+  enumDesc(file_protos_ydb_formats, 2, 0, 0);
+
+/**
+ * *
+ * ArrowFormatMeta is a metadata for Ydb.ResultSet.Format.FORMAT_ARROW in Ydb.ResultSet.
+ * It is used to get the schema of the Arrow record batch.
+ *
+ * @generated from message Ydb.Formats.ArrowFormatMeta
+ */
+export type ArrowFormatMeta = Message<"Ydb.Formats.ArrowFormatMeta"> & {
+  /**
+   * Schema of the arrow batch of the result.
+   * May be empty for custom Ydb.Query.SchemaInclusionMode
+   *
+   * @generated from field: bytes schema = 1;
+   */
+  schema: Uint8Array;
+};
+
+/**
+ * Describes the message Ydb.Formats.ArrowFormatMeta.
+ * Use `create(ArrowFormatMetaSchema)` to create a new message.
+ */
+export const ArrowFormatMetaSchema: GenMessage<ArrowFormatMeta> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_formats, 3);
 
