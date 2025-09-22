@@ -10,7 +10,7 @@
 		"messaging",
 		"typescript"
 	],
-	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+    "homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/topic#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
