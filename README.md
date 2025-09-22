@@ -1,6 +1,11 @@
 # YDB JavaScript SDK
 
-A modular, modern SDK for working with YDB in JavaScript/TypeScript. Supports queries, transactions, types, error handling, authentication, and more.
+Modern, modular SDK for YDB in TypeScript/JavaScript.
+
+- Type‑safe YQL queries with tagged templates
+- Automatic parameter binding and transactions
+- Rich value/type system with `@ydbjs/value`
+- Clear errors, retries, and diagnostics
 
 ## Other versions
 
@@ -23,17 +28,13 @@ A modular, modern SDK for working with YDB in JavaScript/TypeScript. Supports qu
 
 ## Quick Start
 
-### 1. Run YDB Locally
-
-Start a local YDB instance with Docker: https://ydb.tech/docs/en/quickstart
-
-### 2. Install Required Packages
+### 1) Install
 
 ```sh
 npm install @ydbjs/core @ydbjs/query
 ```
 
-### 3. Connect and Query
+### 2) Connect and Query
 
 ```ts
 import { Driver } from '@ydbjs/core'
@@ -49,14 +50,6 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 
 ---
 
-## Installation
-
-```sh
-npm install @ydbjs/core @ydbjs/query @ydbjs/value @ydbjs/api @ydbjs/error
-```
-
----
-
 ## Documentation
 
 - [@ydbjs/core](./packages/core/README.md)
@@ -67,11 +60,19 @@ npm install @ydbjs/core @ydbjs/query @ydbjs/value @ydbjs/api @ydbjs/error
 - [@ydbjs/auth](./packages/auth/README.md)
 - [@ydbjs/retry](./packages/retry/README.md)
 
+Project docs:
+
+- [Releasing](./RELEASING.md)
+- [Versioning](./VERSIONING.md)
+- [Contributing](./CONTRIBUTING.md)
+
 ---
 
 ## Examples
 
-**Parameterized Query:**
+Examples
+
+- Parameterized query:
 
 ```ts
 import { Int64, Optional, PrimitiveType } from '@ydbjs/value'
@@ -79,7 +80,7 @@ const sql = query(driver)
 await sql`SELECT ${new Optional(new Int64(100n), new PrimitiveType('INT64'))};`
 ```
 
-**Transactions:**
+– Transactions:
 
 ```ts
 await sql.begin(async (tx, signal) => {
@@ -88,7 +89,7 @@ await sql.begin(async (tx, signal) => {
 })
 ```
 
-**Error Handling:**
+– Error handling:
 
 ```ts
 import { YdbError } from '@ydbjs/error'
@@ -129,5 +130,6 @@ Copy the appropriate file to your project root to enable secure AI code generati
 
 ## Developer Guide
 
-- Build all packages: `npm run build`
-- Run all tests: `npm test`
+- Build: `npm run build`
+- Test (all): `npm test`
+- Lint: `npm run lint`
