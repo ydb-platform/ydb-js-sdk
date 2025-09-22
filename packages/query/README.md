@@ -1,5 +1,7 @@
 # @ydbjs/query
 
+Read this in Russian: [README.ru.md](README.ru.md)
+
 The `@ydbjs/query` package provides a high-level, type-safe client for executing YQL queries and managing transactions in YDB. It features a tagged template API, automatic parameter binding, transaction helpers, and deep integration with the YDB type system.
 
 ## Features
@@ -89,6 +91,7 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 ### Advanced: Multiple Result Sets, Streaming, and Events
 
 ```ts
+import { StatsMode } from '@ydbjs/api/query'
 // Multiple result sets
 type Result = [[{ id: number }], [{ count: number }]]
 const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
@@ -116,12 +119,15 @@ try {
 ### Query Options and Chaining
 
 ```ts
+import { StatsMode } from '@ydbjs/api/query'
 await sql`SELECT * FROM users`
   .isolation('onlineReadOnly', { allowInconsistentReads: true })
   .idempotent(true)
   .timeout(5000)
   .withStats(StatsMode.FULL)
 ```
+
+Note: isolation(), idempotent(), timeout(), and withStats() apply to single execute calls only; they are ignored inside transactions (sql.begin/sql.transaction).
 
 ### Value Conversion and Type Safety
 
@@ -137,10 +143,33 @@ await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
 You can enable and access query execution statistics:
 
 ```ts
+import { StatsMode } from '@ydbjs/api/query'
 const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
 await q
 console.log(q.stats())
 ```
+
+## Identifiers and Unsafe Fragments
+
+- Use identifiers for dynamic table/column names:
+
+```ts
+// As a method on the client
+await sql`SELECT * FROM ${sql.identifier('users')}`
+
+// Or import from the package if needed
+import { identifier } from '@ydbjs/query'
+await sql`SELECT * FROM ${identifier('users')}`
+```
+
+- Use unsafe only for trusted SQL fragments (never with user input):
+
+```ts
+import { unsafe } from '@ydbjs/query'
+await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
+```
+
+Security note: identifier() only quotes the name and escapes backticks. Do not pass untrusted input without validation/allow‑listing.
 
 ## Development
 

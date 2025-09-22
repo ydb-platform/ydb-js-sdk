@@ -89,5 +89,8 @@ export function unsafe(value: string | { toString(): string }) {
 }
 
 export function identifier(path: string) {
-	return unsafe("`" + path + "`")
+    // Escape backticks inside identifier by doubling them
+    // Example: my`table -> my``table
+    let escaped = path.replaceAll('`', '``')
+    return unsafe("`" + escaped + "`")
 }

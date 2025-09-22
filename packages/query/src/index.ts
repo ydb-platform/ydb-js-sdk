@@ -9,7 +9,7 @@ import { loggers } from '@ydbjs/debug'
 
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
-import { UnsafeString, identifier, yql } from './yql.js'
+import { UnsafeString, identifier, unsafe, yql } from './yql.js'
 
 let dbg = loggers.query
 
@@ -68,6 +68,15 @@ export interface QueryClient extends SQL, AsyncDisposable {
 	 * ```
 	 */
 	identifier(value: string | { toString(): string }): UnsafeString
+
+	/**
+	 * Create an UnsafeString that will be injected into the query as-is.
+	 *
+	 * WARNING: Use only with trusted SQL fragments (e.g., migrations) and never
+	 * with user-provided input. Prefer parameters or {@link identifier} for
+	 * dynamic values.
+	 */
+	unsafe(value: string | { toString(): string }): UnsafeString
 }
 
 const doImpl = function <T = unknown>(): Promise<T> {
@@ -238,7 +247,10 @@ export function query(driver: Driver): QueryClient {
 			begin: txIml,
 			transaction: txIml,
 			identifier: identifier,
+			unsafe: unsafe,
 			async [Symbol.asyncDispose]() { },
 		}
 	)
 }
+
+export { identifier, unsafe, UnsafeString } from './yql.js'
