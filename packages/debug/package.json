@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/debug",
-	"version": "6.0.0-alpha.33",
+	"version": "6.0.0",
 	"description": "Centralized debug logging for YDB JavaScript SDK",
 	"keywords": [
 		"ydb",
@@ -49,7 +49,6 @@
 		"@types/debug": "^4.1.12"
 	},
 	"publishConfig": {
-		"tag": "alpha",
 		"access": "public",
 		"registry": "https://registry.npmjs.org/"
 	}
