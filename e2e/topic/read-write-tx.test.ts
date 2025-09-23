@@ -69,13 +69,13 @@ test('writes and reads in tx', async () => {
 
 	// Begin a transaction
 	await yql.begin({ idempotent: true }, async (tx) => {
-		await using readerTx = createTopicTxReader(driver, {
+		let readerTx = createTopicTxReader(driver, {
 			tx,
 			topic: testTopicName,
 			consumer: testConsumerName,
 		})
 
-		await using writerTx = createTopicTxWriter(driver, tx, {
+		await using writerTx = createTopicTxWriter(tx, driver, {
 			topic: testTopicName,
 			producer: testProducerName,
 		})
@@ -132,7 +132,7 @@ test('rollbacks reads', async () => {
 
 	await yql
 		.begin({ idempotent: true }, async (tx) => {
-			await using readerTx = createTopicTxReader(driver, {
+			let readerTx = createTopicTxReader(driver, {
 				tx,
 				topic: testTopicName,
 				consumer: testConsumerName,
@@ -186,7 +186,7 @@ test('rollbacks writes', async () => {
 
 	await yql
 		.begin({ idempotent: true }, async (tx) => {
-			await using writerTx = createTopicTxWriter(driver, tx, {
+			await using writerTx = createTopicTxWriter(tx, driver, {
 				topic: testTopicName,
 				producer: testProducerName,
 			})

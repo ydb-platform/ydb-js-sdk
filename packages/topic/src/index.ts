@@ -6,7 +6,7 @@ import type { TX } from "./tx.js";
 
 export interface TopicClient {
 	createReader(options: TopicReaderOptions): TopicReader;
-	createTxReader(options: TopicTxReaderOptions): TopicTxReader;
+	createTxReader(tx: TX, options: TopicTxReaderOptions): TopicTxReader;
 	createWriter(options: TopicWriterOptions): TopicWriter;
 	createTxWriter(tx: TX, options: TopicWriterOptions): TopicWriter;
 }
@@ -16,13 +16,13 @@ export function topic(driver: Driver): TopicClient {
 		createReader(options) {
 			return createTopicReader(driver, options);
 		},
-		createTxReader(options: TopicTxReaderOptions) {
-			return createTopicTxReader(driver, options);
+		createTxReader(tx: TX, options: Omit<TopicTxReaderOptions, 'tx'>) {
+			return createTopicTxReader(tx, driver, options);
 		},
 		createWriter(options: TopicWriterOptions) {
 			return createTopicWriter(driver, options);
 		},
-		createTxWriter(tx: TX, options: TopicWriterOptions) {
+		createTxWriter(tx: TX, options: Omit<TopicWriterOptions, 'tx'>) {
 			return createTopicTxWriter(tx, driver, options);
 		},
 	} as TopicClient

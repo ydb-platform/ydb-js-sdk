@@ -24,7 +24,9 @@ export type TX = SQL & {
 	nodeId: bigint
 	sessionId: string
 	transactionId: string
-	registerPrecommitHook: RegisterPrecommitHook
+	onRollback: (fn: (error: unknown, signal?: AbortSignal) => Promise<void> | void) => void
+	onCommit: (fn: (signal?: AbortSignal) => Promise<void> | void) => void
+	onClose: (fn: (committed: boolean, signal?: AbortSignal) => Promise<void> | void) => void
 }
 
 interface SessionContextCallback<T> {
@@ -194,25 +196,35 @@ export function query(driver: Driver): QueryClient {
 
 			store.transactionId = beginTransactionResult.txMeta!.id
 
+			let сommitHooks: Array<(signal?: AbortSignal) => Promise<void> | void> = []
+			let rollbackHooks: Array<(error: unknown, signal?: AbortSignal) => Promise<void> | void> = []
+			let closeHooks: Array<(committed: boolean, signal?: AbortSignal) => Promise<void> | void> = []
+
+			let commited = false
 			try {
-				let precommitHooks: Array<() => Promise<void> | void> = []
 				let tx = Object.assign(yqlQuery, {
 					nodeId: store.nodeId,
 					sessionId: store.sessionId,
 					transactionId: store.transactionId,
-					registerPrecommitHook: (fn: () => Promise<void> | void) => {
-						precommitHooks.push(fn);
+					onRollback: (fn: () => Promise<void> | void) => {
+						rollbackHooks.push(fn);
+					},
+					onCommit: (fn: () => Promise<void> | void) => {
+						сommitHooks.push(fn);
+					},
+					onClose: (fn: () => Promise<void> | void) => {
+						closeHooks.push(fn);
 					},
 				}) as TX
 
 				dbg.log('executing transaction body')
 				let result = await ctx.run(store, () => caller!(tx, signal))
 
-				dbg.log('executing %d precommit hooks', precommitHooks.length)
-				await Promise.all(precommitHooks.map(async (hook, i) => {
-					dbg.log('executing precommit hook #%d', i + 1)
-					await hook()
-					dbg.log('precommit hook #%d completed', i + 1)
+				dbg.log('executing %d commit hooks', сommitHooks.length)
+				await Promise.all(сommitHooks.map(async (hook, i) => {
+					dbg.log('executing commit hook #%d', i + 1)
+					await hook(signal)
+					dbg.log('commit hook #%d completed', i + 1)
 				}))
 
 				dbg.log('committing transaction')
@@ -222,10 +234,19 @@ export function query(driver: Driver): QueryClient {
 					throw new CommitError("Transaction commit failed.", new YDBError(commitResult.status, commitResult.issues))
 				}
 
+				commited = true
 				dbg.log('transaction committed successfully')
 				return result
 			} catch (error) {
 				dbg.log('transaction error: %O', error)
+
+				dbg.log('executing %d rollback hooks', сommitHooks.length)
+				await Promise.all(rollbackHooks.map(async (hook, i) => {
+					dbg.log('executing rollback hook #%d', i + 1)
+					await hook(error, signal)
+					dbg.log('rollback hook #%d completed', i + 1)
+				}))
+
 				void client.rollbackTransaction({ sessionId: store.sessionId, txId: store.transactionId })
 
 				if (!isRetryableError(error, options.idempotent)) {
@@ -237,6 +258,13 @@ export function query(driver: Driver): QueryClient {
 			} finally {
 				dbg.log('deleting session %s', sessionResponse.sessionId)
 				void client.deleteSession({ sessionId: sessionResponse.sessionId })
+
+				dbg.log('executing %d close hooks', сommitHooks.length)
+				await Promise.all(closeHooks.map(async (hook, i) => {
+					dbg.log('executing close hook #%d', i + 1)
+					await hook(commited, signal)
+					dbg.log('close hook #%d completed', i + 1)
+				}))
 			}
 		})
 	}
