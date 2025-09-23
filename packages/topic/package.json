@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "7.0.0-alpha.33",
+	"version": "6.0.0-alpha.33",
 	"description": "YDB Topics client for publish-subscribe messaging. Provides at-least-once delivery, exactly-once publishing, FIFO guarantees, and scalable message processing for unstructured data.",
 	"keywords": [
 		"ydb",
@@ -10,7 +10,7 @@
 		"messaging",
 		"typescript"
 	],
-    "homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/topic#readme",
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/topic#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
@@ -47,12 +47,12 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
-		"@ydbjs/api": "7.0.0-alpha.33",
-		"@ydbjs/core": "7.0.0-alpha.33",
-		"@ydbjs/debug": "7.0.0-alpha.33",
-		"@ydbjs/error": "7.0.0-alpha.33",
-		"@ydbjs/retry": "7.0.0-alpha.33",
-		"@ydbjs/value": "7.0.0-alpha.33",
+		"@ydbjs/api": "6.0.0-alpha.33",
+		"@ydbjs/core": "6.0.0-alpha.33",
+		"@ydbjs/debug": "6.0.0-alpha.33",
+		"@ydbjs/error": "6.0.0-alpha.33",
+		"@ydbjs/retry": "6.0.0-alpha.33",
+		"@ydbjs/value": "6.0.0-alpha.33",
 		"debug": "^4.4.0",
 		"ms": "^2.1.3",
 		"nice-grpc": "^2.1.12",

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/core",
-	"version": "7.0.0-alpha.33",
+	"version": "6.0.0-alpha.33",
 	"description": "Core driver for YDB: manages connections, endpoint discovery, authentication, and service client creation. Foundation for all YDB client operations.",
 	"keywords": [
 		"ydb",
@@ -45,12 +45,12 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
 		"@grpc/grpc-js": "^1.13.4",
-		"@ydbjs/abortable": "7.0.0-alpha.33",
-		"@ydbjs/api": "7.0.0-alpha.33",
-		"@ydbjs/auth": "^7.0.0-alpha.33",
-		"@ydbjs/debug": "7.0.0-alpha.33",
-		"@ydbjs/error": "7.0.0-alpha.33",
-		"@ydbjs/retry": "7.0.0-alpha.33",
+		"@ydbjs/abortable": "6.0.0-alpha.33",
+		"@ydbjs/api": "6.0.0-alpha.33",
+		"@ydbjs/auth": "^6.0.0-alpha.33",
+		"@ydbjs/debug": "6.0.0-alpha.33",
+		"@ydbjs/error": "6.0.0-alpha.33",
+		"@ydbjs/retry": "6.0.0-alpha.33",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},

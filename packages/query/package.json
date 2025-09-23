@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "7.0.0-alpha.33",
+	"version": "6.0.0-alpha.33",
 	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
 	"keywords": [
 		"ydb",
@@ -10,7 +10,7 @@
 		"transaction",
 		"typescript"
 	],
-    "homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/query#readme",
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/query#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
@@ -44,12 +44,12 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
-		"@ydbjs/api": "7.0.0-alpha.33",
-		"@ydbjs/core": "7.0.0-alpha.33",
-		"@ydbjs/debug": "7.0.0-alpha.33",
-		"@ydbjs/error": "7.0.0-alpha.33",
-		"@ydbjs/retry": "7.0.0-alpha.33",
-		"@ydbjs/value": "7.0.0-alpha.33",
+		"@ydbjs/api": "6.0.0-alpha.33",
+		"@ydbjs/core": "6.0.0-alpha.33",
+		"@ydbjs/debug": "6.0.0-alpha.33",
+		"@ydbjs/error": "6.0.0-alpha.33",
+		"@ydbjs/retry": "6.0.0-alpha.33",
+		"@ydbjs/value": "6.0.0-alpha.33",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},
@@ -57,8 +57,8 @@
 		"@types/debug": "^4.1.12"
 	},
 	"peerDependencies": {
-		"@ydbjs/api": "7.0.0-alpha.33",
-		"@ydbjs/core": "7.0.0-alpha.33"
+		"@ydbjs/api": "6.0.0-alpha.33",
+		"@ydbjs/core": "6.0.0-alpha.33"
 	},
 	"publishConfig": {
 		"tag": "alpha",
