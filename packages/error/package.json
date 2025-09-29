@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/error",
-	"version": "6.0.1-alpha.32",
+	"version": "6.0.0",
 	"description": "Error utilities for YDB: error classification, rich messages, and TypeScript support for robust error handling in YDB applications.",
 	"keywords": [
 		"ydb",
@@ -42,10 +42,9 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.6.0",
-		"@ydbjs/api": "6.0.1-alpha.32"
+		"@ydbjs/api": "6.0.0"
 	},
 	"publishConfig": {
-		"tag": "alpha",
 		"access": "public",
 		"registry": "https://registry.npmjs.org/"
 	}

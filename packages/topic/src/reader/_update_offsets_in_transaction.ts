@@ -16,8 +16,8 @@ import type { TopicPartitionSession } from "../partition-session.js"
 let dbg = loggers.topic.extend('reader')
 
 export let _update_offsets_in_transaction = async function updateOffsetsInTransaction(
-	driver: Driver,
 	tx: TX,
+	driver: Driver,
 	consumer: string,
 	updates: Array<{
 		partitionSession: TopicPartitionSession

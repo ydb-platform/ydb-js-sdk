@@ -145,17 +145,32 @@ test('handles mixed unsafe and safe values', () => {
 })
 
 test('creates identifier unsafe string', () => {
-	let id = identifier('my_table')
+    let id = identifier('my_table')
 
-	expect(id.toString()).eq('`my_table`')
-	expect(id).toBeInstanceOf(String)
+    expect(id.toString()).eq('`my_table`')
+    expect(id).toBeInstanceOf(String)
 })
 
 test('creates unsafe string', () => {
-	let raw = unsafe('RAW SQL')
+    let raw = unsafe('RAW SQL')
 
-	expect(raw.toString()).eq('RAW SQL')
-	expect(raw).toBeInstanceOf(String)
+    expect(raw.toString()).eq('RAW SQL')
+    expect(raw).toBeInstanceOf(String)
+})
+
+test('identifier escapes backticks inside names', () => {
+    let id = identifier('my`table')
+
+    expect(id.toString()).eq('`my``table`')
+})
+
+test('public exports identifier/unsafe behave correctly', async () => {
+    // Import from public entry to ensure re-exports work in tests
+    const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
+
+    expect(pubIdentifier('users').toString()).eq('`users`')
+    expect(pubIdentifier('a`b').toString()).eq('`a``b`')
+    expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
 })
 
 test('handles various data types', () => {

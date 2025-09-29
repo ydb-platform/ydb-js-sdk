@@ -15,20 +15,23 @@ The `yql` function enforces strict validation to prevent common security vulnera
 #### ✅ Safe:
 
 ```typescript
+import { query } from '@ydbjs/query'
 import { Optional, Int32 } from '@ydbjs/value'
+
+const sql = query(driver)
 
 // Use Optional for nullable database values
 let userId = userInput?.id ? new Int32(userInput.id) : Optional.int32()
-yql`SELECT * FROM users WHERE id = ${userId}`
+await sql`SELECT * FROM users WHERE id = ${userId}`
 
 // Validate and default user inputs
 let limit = Math.min(userInput.limit ?? 10, 100) // Prevent large queries
-yql`SELECT * FROM posts LIMIT ${limit}`
+await sql`SELECT * FROM posts LIMIT ${limit}`
 
 // Use safe string handling
 let searchTerm = (userInput.search || '').trim()
 if (searchTerm.length > 0) {
-  yql`SELECT * FROM posts WHERE title LIKE ${searchTerm}`
+  await sql`SELECT * FROM posts WHERE title LIKE ${searchTerm}`
 }
 ```
 
@@ -58,10 +61,13 @@ yql`SELECT * FROM users WHERE id = ${userId}` // Runtime error
 #### ✅ Safe - Template literals (recommended):
 
 ```typescript
+import { query } from '@ydbjs/query'
+const sql = query(driver)
+
 // Values are automatically parameterized
 let userId = 123
 let status = "'; DROP TABLE users; --"
-yql`SELECT * FROM users WHERE id = ${userId} AND status = ${status}`
+await sql`SELECT * FROM users WHERE id = ${userId} AND status = ${status}`
 // Results in: SELECT * FROM users WHERE id = $p0 AND status = $p1
 // With parameters: { $p0: Int32(123), $p1: Text("'; DROP TABLE users; --") }
 ```
@@ -72,25 +78,28 @@ yql`SELECT * FROM users WHERE id = ${userId} AND status = ${status}`
 // NEVER DO THIS - Direct string concatenation
 let userId = '123; DROP TABLE users; --'
 let dangerousQuery = `SELECT * FROM users WHERE id = ${userId}`
-yql(dangerousQuery) // ⚠️ VULNERABLE TO SQL INJECTION
+// yql(dangerousQuery) // (internal helper) ⚠️ VULNERABLE TO SQL INJECTION
+// await sql(dangerousQuery as any) // also unsafe
 ```
 
 #### Dynamic identifiers and special cases:
 
 ```typescript
+import { identifier, unsafe } from '@ydbjs/query'
+
 // For table/column names, use identifier()
 let tableName = 'users'
 let columnName = 'email'
-yql`SELECT ${identifier(columnName)} FROM ${identifier(tableName)} WHERE id = ${userId}`
+await sql`SELECT ${identifier(columnName)} FROM ${identifier(tableName)} WHERE id = ${userId}`
 
 // For migration scripts or trusted contexts, use unsafe()
 let trustedSqlFragment = 'ORDER BY created_at DESC'
-yql`SELECT * FROM users ${unsafe(trustedSqlFragment)}`
+await sql`SELECT * FROM users ${unsafe(trustedSqlFragment)}`
 ```
 
 **Key principles:**
 
-- **Always use template literals** with `yql\`query\`` syntax
+- **Always use template literals** with `sql\`query\`` syntax (returned by `query(driver)`)
 - **Never concatenate user input** into query strings manually
 - **Use identifier()** for dynamic table/column names
 - **Use unsafe()** only for trusted, non-user-facing code (migrations, etc.)
@@ -155,3 +164,56 @@ cp node_modules/@ydbjs/query/ai-instructions/.ai-instructions.example.md .ai-ins
 For the latest Cursor versions, consider using the new `.cursor/rules/` format instead of legacy `.cursorrules`.
 
 This ensures AI assistants understand YQL security requirements and generate safe code patterns.
+
+## Validating Dynamic Identifiers (Allow‑list Examples)
+
+When using identifier() with dynamic values, validate or allow‑list inputs before passing them.
+
+Example: strict allow‑list of table names
+
+```ts
+import { identifier } from '@ydbjs/query'
+
+const allowedTables = new Set(['users', 'orders', 'invoices'])
+
+function safeTable(name: string) {
+  if (!allowedTables.has(name)) throw new Error('Unknown table')
+  return identifier(name)
+}
+
+await sql`SELECT * FROM ${safeTable(userInput.table)}`
+```
+
+Example: validate column name by pattern
+
+```ts
+import { identifier } from '@ydbjs/query'
+
+const columnRe = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function safeColumn(name: string) {
+  if (!columnRe.test(name)) throw new Error('Invalid column name')
+  return identifier(name)
+}
+
+await sql`SELECT ${safeColumn(userInput.column)} FROM ${identifier('users')}`
+```
+
+Example: mapping external inputs to known internal identifiers
+
+```ts
+import { identifier } from '@ydbjs/query'
+
+const sortMap: Record<string, string> = {
+  newest: 'created_at',
+  popular: 'views',
+}
+
+function sortColumn(key: string) {
+  const col = sortMap[key]
+  if (!col) throw new Error('Unsupported sort key')
+  return identifier(col)
+}
+
+await sql`SELECT * FROM posts ORDER BY ${sortColumn(userInput.sort)} DESC`
+```

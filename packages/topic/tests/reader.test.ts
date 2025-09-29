@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 import { create } from '@bufbuild/protobuf'
 import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
-
 import { createTopicReader } from '../src/reader/index.js'
 
 let driver = new Driver(inject('connectionString'), {

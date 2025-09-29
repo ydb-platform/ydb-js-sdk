@@ -14,6 +14,7 @@ import { _read } from "./_read.js"
 import { _commit } from "./_commit.js"
 import { _update_offsets_in_transaction } from "./_update_offsets_in_transaction.js"
 import { _create_disposal_functions, _initialize_codecs, _start_background_token_refresher } from "./_shared.js"
+import type { TX } from "../tx.js"
 
 let dbg = loggers.topic.extend('reader')
 
@@ -164,12 +165,12 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 // Re-export types for compatibility
 export type { TopicReaderOptions, TopicReader, TopicTxReaderOptions, TopicTxReader } from "./types.js"
 
-export const createTopicTxReader = function createTopicTxReader(driver: Driver, options: TopicTxReaderOptions): TopicTxReader {
+export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: Driver, options: Omit<TopicTxReaderOptions, 'tx'>): TopicTxReader {
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
 
 	let state: TopicTxReaderState = {
 		driver,
-		options,
+		options: Object.assign(options, { tx }),
 		topicsReadSettings: _parse_topics_read_settings(options.topic),
 
 		// Control
@@ -194,7 +195,7 @@ export const createTopicTxReader = function createTopicTxReader(driver: Driver, 
 	_initialize_codecs(state.codecs, options.codecMap)
 
 	// Register precommit hook to send updateOffsetsInTransaction
-	options.tx.onCommit(async () => {
+	tx.onCommit(async () => {
 		// Send updateOffsetsInTransaction for all read offsets
 		let updates = []
 
@@ -212,8 +213,8 @@ export const createTopicTxReader = function createTopicTxReader(driver: Driver, 
 
 		if (updates.length > 0) {
 			await _update_offsets_in_transaction(
+				tx,
 				state.driver,
-				options.tx,
 				state.options.consumer,
 				updates
 			)
@@ -265,8 +266,8 @@ export const createTopicTxReader = function createTopicTxReader(driver: Driver, 
 		if (updates.length > 0) {
 			try {
 				await _update_offsets_in_transaction(
+					tx,
 					state.driver,
-					options.tx,
 					state.options.consumer,
 					updates
 				)
