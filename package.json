@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"workspaces": [
+		"docs",
 		"e2e/*",
 		"examples/*",
 		"packages/*",
@@ -15,6 +16,9 @@
 	},
 	"engineStrict": true,
 	"scripts": {
+        "docs:dev": "vitepress dev docs",
+        "docs:build": "vitepress build docs",
+        "docs:preview": "vitepress preview docs",
 		"build": "turbo run build --output-logs=errors-only",
 		"attw": "turbo run attw",
 		"lint": "oxlint --import-plugin --promise-plugin --vitest-plugin",
