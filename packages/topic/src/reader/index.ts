@@ -312,6 +312,5 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 
 		close,
 		destroy,
-		..._create_disposal_functions({ close, destroy }, 'TopicTxReader'),
 	}
 }
