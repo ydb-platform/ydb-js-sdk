@@ -1,5 +1,16 @@
 # @ydbjs/auth
 
+## 6.0.4
+
+### Patch Changes
+
+- cb0db2f: Update dependencies
+- Updated dependencies [cb0db2f]
+  - @ydbjs/debug@6.0.4
+  - @ydbjs/error@6.0.4
+  - @ydbjs/retry@6.0.4
+  - @ydbjs/api@6.0.4
+
 ## 6.0.3
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "6.0.3",
+	"version": "6.0.4",
 	"description": "YDB Topics client for publish-subscribe messaging. Provides at-least-once delivery, exactly-once publishing, FIFO guarantees, and scalable message processing for unstructured data.",
 	"keywords": [
 		"ydb",
@@ -47,12 +47,12 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.9.0",
-		"@ydbjs/api": "6.0.3",
-		"@ydbjs/core": "6.0.3",
-		"@ydbjs/debug": "6.0.3",
-		"@ydbjs/error": "6.0.3",
-		"@ydbjs/retry": "6.0.3",
-		"@ydbjs/value": "6.0.3",
+		"@ydbjs/api": "6.0.4",
+		"@ydbjs/core": "6.0.4",
+		"@ydbjs/debug": "6.0.4",
+		"@ydbjs/error": "6.0.4",
+		"@ydbjs/retry": "6.0.4",
+		"@ydbjs/value": "6.0.4",
 		"ms": "^2.1.3",
 		"nice-grpc": "^2.1.13",
 		"xstate": "^5.23.0"

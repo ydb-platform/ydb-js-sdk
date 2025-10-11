@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/debug",
-	"version": "6.0.3",
+	"version": "6.0.4",
 	"description": "Centralized debug logging for YDB JavaScript SDK",
 	"keywords": [
 		"ydb",

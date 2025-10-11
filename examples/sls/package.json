@@ -14,9 +14,9 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/auth": "^6.0.3",
-		"@ydbjs/core": "^6.0.3",
-		"@ydbjs/query": "^6.0.3"
+		"@ydbjs/auth": "^6.0.4",
+		"@ydbjs/core": "^6.0.4",
+		"@ydbjs/query": "^6.0.4"
 	},
 	"publishConfig": {
 		"access": "restricted"
