@@ -48,8 +48,7 @@
 		"@ydbjs/api": "6.0.3",
 		"@ydbjs/debug": "6.0.3",
 		"@ydbjs/error": "6.0.3",
-		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.12"
+		"nice-grpc": "^2.1.13"
 	},
 	"publishConfig": {
 		"access": "public",

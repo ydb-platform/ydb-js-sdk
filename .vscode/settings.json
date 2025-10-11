@@ -1,12 +1,12 @@
 {
 	"files.exclude": {
-		"**/.DS_Store": true,
 		"**/.git": true,
-		"**/.hg": true,
 		"**/.svn": true,
+		"**/.hg": true,
+		"**/.DS_Store": true,
+		"**/Thumbs.db": true,
 		"**/.turbo": true,
 		"**/node_modules": true,
-		"**/Thumbs.db": true,
 		"**/vitest/dist": true
 	},
 	"search.exclude": {
@@ -14,5 +14,6 @@
 	},
 	"vitest.rootConfig": "./vitest.config.ts",
 	"vitest.workspaceConfig": "./vitest.config.ts",
-	"github.copilot.chat.codeGeneration.useInstructionFiles": true
+	"github.copilot.chat.codeGeneration.useInstructionFiles": true,
+	"explorerExclude.backup": {}
 }

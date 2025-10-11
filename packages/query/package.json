@@ -43,7 +43,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.6.0",
+		"@bufbuild/protobuf": "2.9.0",
 		"@ydbjs/api": "6.0.3",
 		"@ydbjs/core": "6.0.3",
 		"@ydbjs/debug": "6.0.3",
@@ -51,7 +51,7 @@
 		"@ydbjs/retry": "6.0.3",
 		"@ydbjs/value": "6.0.3",
 		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.12"
+		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"

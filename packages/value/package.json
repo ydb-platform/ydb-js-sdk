@@ -52,11 +52,10 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.6.0",
-		"@date-fns/tz": "^1.2.0",
+		"@bufbuild/protobuf": "2.9.0",
+		"@date-fns/tz": "^1.4.1",
 		"@ydbjs/api": "6.0.3",
 		"date-fns": "^4.1.0",
-		"debug": "^4.4.0",
 		"proposal-decimal": "^20250613.0.0"
 	},
 	"publishConfig": {

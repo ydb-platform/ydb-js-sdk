@@ -2,47 +2,28 @@
 	"$schema": "https://turbo.build/schema.json",
 	"tasks": {
 		"codegen": {
-			"dependsOn": [
-				"^codegen"
-			],
-			"outputs": [
-				"./src/gen/**"
-			]
+			"dependsOn": ["^codegen"],
+			"outputs": ["./src/gen/**"]
 		},
 		"clean": {},
 		"build": {
-			"dependsOn": [
-				"^build",
-				"clean",
-				"codegen"
-			],
-			"inputs": [
-				"./src/**"
-			],
-			"outputs": [
-				"./dist/**"
-			]
+			"dependsOn": ["^build", "clean", "codegen"],
+			"inputs": ["./src/**"],
+			"outputs": ["./dist/**"]
 		},
 		"test": {
-			"dependsOn": [
-				"^test",
-				"build"
-			]
+			"dependsOn": ["^test", "build"]
 		},
 		"attw": {
-			"dependsOn": [
-				"^attw",
-				"build"
-			],
-			"inputs": [
-				"./dist/**",
-				"package.json"
-			]
+			"dependsOn": ["^attw", "build"],
+			"inputs": ["./dist/**", "package.json"]
+		},
+		"docs": {
+			"inputs": ["**/**.md"],
+			"outputs": [".vitepress/dist/**"]
 		},
 		"//#test:root": {
-			"dependsOn": [
-				"build"
-			],
+			"dependsOn": ["build"],
 			"env": [
 				"DEBUG",
 				"GRPC_TRACE",
@@ -54,9 +35,7 @@
 				"YDB_CONNECTION_STRING_SECURE",
 				"YDB_SSL_ROOT_CERTIFICATES_FILE"
 			],
-			"outputs": [
-				"coverage/**"
-			]
+			"outputs": ["coverage/**"]
 		}
 	}
 }
