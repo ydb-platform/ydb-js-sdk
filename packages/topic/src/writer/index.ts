@@ -80,6 +80,16 @@ export interface TopicWriter extends AsyncDisposable {
 	destroy(reason?: Error): void
 }
 
+export interface TopicTxWriter {
+	write(
+		payload: Uint8Array,
+		extra?: { seqNo?: bigint; createdAt?: Date; metadataItems?: Record<string, Uint8Array> }
+	): bigint
+	flush(): Promise<bigint | undefined>
+	close(): Promise<void>
+	destroy(): void
+}
+
 export const createTopicWriter = function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
 	options.producer ??= _get_producer_id()
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.

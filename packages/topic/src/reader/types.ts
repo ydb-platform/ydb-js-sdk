@@ -107,12 +107,12 @@ export interface TopicReader extends AsyncDisposable {
 }
 
 export interface TopicTxReader {
-	// Read messages from the topic stream within a transaction.
-	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
-	// Gracefully close the reader.
-	close(): Promise<void>
-	// Immediately destroy the reader and release all resources.
-	destroy(reason?: Error): void
+    // Read messages from the topic stream within a transaction.
+    read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
+    // Gracefully close the reader.
+    close(): Promise<void>
+    // Immediately destroy the reader and release all resources.
+    destroy(reason?: Error): void
 }
 
 export type TopicReaderState = TopicBaseReaderState & {
