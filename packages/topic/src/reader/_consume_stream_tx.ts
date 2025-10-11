@@ -23,7 +23,7 @@ export let _consume_stream_tx = async function consume_stream_tx(state: TopicTxR
 	let signal = state.controller.signal
 	await state.driver.ready(signal)
 
-	state.options.tx.onRollback((reason) => {
+	state.tx.onRollback((reason) => {
 		state.controller.abort(reason)
 	});
 
