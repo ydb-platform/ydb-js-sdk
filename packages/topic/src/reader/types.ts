@@ -1,8 +1,9 @@
 import type { StreamReadMessage_InitRequest_TopicReadSettings } from "@ydbjs/api/topic"
-import type { StringValue } from "ms"
 import type { Driver } from "@ydbjs/core"
+import type { StringValue } from "ms"
 import type { CodecMap } from "../codec.js"
 import type { TopicPartitionSession } from "../partition-session.js"
+import type { TX } from "../tx.js"
 
 export type TopicReaderSource = {
 	/**
@@ -69,32 +70,6 @@ export type TopicReaderOptions = {
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
-export type TopicTxReaderOptions = {
-	// Topic path or an array of topic sources.
-	topic: string | TopicReaderSource | TopicReaderSource[]
-	// Consumer name.
-	consumer: string
-	// Transaction to use for reading.
-	tx: import("../tx.js").TX
-	// Compression codecs to use for reading messages.
-	codecMap?: CodecMap
-	// Maximum size of the internal buffer in bytes.
-	// If not provided, the default is 8MB.
-	maxBufferBytes?: bigint
-	// How often to update the token in milliseconds.
-	updateTokenIntervalMs?: number
-	// Hooks for partition session events.
-	// Called when a partition session is started.
-	// It can be used to initialize the partition session, for example, to set the read offset.
-	onPartitionSessionStart?: onPartitionSessionStartCallback
-	// Called when a partition session is stopped.
-	// It can be used to commit the offsets for the partition session.
-	onPartitionSessionStop?: onPartitionSessionStopCallback
-	// Called when receive commit offset response from server.
-	// This callback is called after the offsets are committed to the server.
-	onCommittedOffset?: onCommittedOffsetCallback
-}
-
 export interface TopicReader extends AsyncDisposable {
 	// Read messages from the topic stream.
 	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
@@ -107,12 +82,12 @@ export interface TopicReader extends AsyncDisposable {
 }
 
 export interface TopicTxReader {
-    // Read messages from the topic stream within a transaction.
-    read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
-    // Gracefully close the reader.
-    close(): Promise<void>
-    // Immediately destroy the reader and release all resources.
-    destroy(reason?: Error): void
+	// Read messages from the topic stream within a transaction.
+	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
+	// Gracefully close the reader.
+	close(): Promise<void>
+	// Immediately destroy the reader and release all resources.
+	destroy(reason?: Error): void
 }
 
 export type TopicReaderState = TopicBaseReaderState & {
@@ -140,7 +115,8 @@ export type TopicBaseReaderState = {
 }
 
 export type TopicTxReaderState = TopicBaseReaderState & {
-	readonly options: TopicTxReaderOptions
+	readonly tx: TX
+	readonly options: TopicReaderOptions
 	// Transaction support - track read offsets for commit hook
 	readonly readOffsets: Map<bigint, { firstOffset: bigint, lastOffset: bigint }> // partitionSessionId -> first and last read offsets
 }

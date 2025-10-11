@@ -5,7 +5,7 @@ import { loggers } from "@ydbjs/debug"
 import { AsyncPriorityQueue } from "../queue.js"
 import { defaultCodecMap } from "../codec.js"
 
-import type { TopicReader, TopicReaderOptions, TopicReaderState, TopicTxReader, TopicTxReaderOptions, TopicTxReaderState } from "./types.js"
+import type { TopicReader, TopicReaderOptions, TopicReaderState, TopicTxReader, TopicTxReaderState } from "./types.js"
 import { _send_update_token_request } from "./_update_token.js"
 import { _parse_topics_read_settings } from "./_topics_config.js"
 import { _consume_stream } from "./_consume_stream.js"
@@ -162,15 +162,13 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 	}
 }
 
-// Re-export types for compatibility
-export type { TopicReaderOptions, TopicReader, TopicTxReaderOptions, TopicTxReader } from "./types.js"
-
-export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: Driver, options: Omit<TopicTxReaderOptions, 'tx'>): TopicTxReader {
+export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: Driver, options: TopicReaderOptions): TopicTxReader {
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
 
 	let state: TopicTxReaderState = {
+		tx,
 		driver,
-		options: Object.assign(options, { tx }),
+		options,
 		topicsReadSettings: _parse_topics_read_settings(options.topic),
 
 		// Control
@@ -314,3 +312,6 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 		destroy,
 	}
 }
+
+// Re-export types for compatibility
+export type { TopicReaderOptions, TopicReader, TopicTxReader } from "./types.js"
