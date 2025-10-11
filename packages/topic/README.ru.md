@@ -140,9 +140,9 @@ await writer.flush()
 
 ## Транзакции
 
-Запускайте чтение/запись внутри обработчика транзакций `@ydbjs/query` и передавайте `tx`, который он выдаёт.
+Запускайте чтение/запись внутри обработчика транзакций `@ydbjs/query` и передавайте `tx`, который он выдаёт. Не используйте `using`/явное закрытие — ресурсы управляются хуками транзакции.
 
-- Reader: `createTopicTxReader(driver, { topic, consumer, tx })` или `t.createTxReader({ ..., tx })`. Offsets будут учтены через updateOffsetsInTransaction на коммите.
+- Reader: `createTopicTxReader(tx, driver, { topic, consumer })` или `t.createTxReader(tx, { ... })`. Offsets будут учтены через updateOffsetsInTransaction на коммите.
 - Writer: `createTopicTxWriter(tx, driver, { topic, ... })` или `t.createTxWriter(tx, { ... })`. Writer дождётся флаша перед коммитом.
 
 ```ts
@@ -153,13 +153,14 @@ import { createTopicTxWriter } from '@ydbjs/topic/writer'
 const qc = query(driver)
 
 await qc.transaction(async (tx, signal) => {
-  await using reader = createTopicTxReader(driver, { topic: '/Root/my-topic', consumer: 'svc-a', tx })
+  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'svc-a' })
   for await (const batch of reader.read({ signal })) {
     // обработка...
   }
 
-  await using writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
   writer.write(new TextEncoder().encode('message'))
+  // writer дождётся flush в onCommit, ручное закрытие не требуется
 })
 ```
 
@@ -197,7 +198,7 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
-- `@ydbjs/topic/writer2`: экспериментальный state‑machine writer (API может измениться)
+- `@ydbjs/topic/writer2`: экспериментальный state‑machine writer
 
 ## Лицензия
 

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.0.0",
+	"version": "6.0.1",
 	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
 	"keywords": [
 		"ydb",
@@ -44,10 +44,10 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@ydbjs/abortable": "6.0.0",
-		"@ydbjs/api": "6.0.0",
-		"@ydbjs/debug": "6.0.0",
-		"@ydbjs/error": "6.0.0",
+		"@ydbjs/abortable": "6.0.1",
+		"@ydbjs/api": "6.0.1",
+		"@ydbjs/debug": "6.0.1",
+		"@ydbjs/error": "6.0.1",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.12"
 	},

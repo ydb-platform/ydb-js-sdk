@@ -155,10 +155,10 @@ await writer.flush()
 
 ## Transactions
 
-Run topic reads/writes inside an @ydbjs/query transaction handler and pass the `tx` object that it provides.
+Run topic reads/writes inside an @ydbjs/query transaction handler and pass the `tx` object that it provides. Do not use `using`/explicit close inside the transaction — TopicTxReader/Writer are wired to `tx` hooks and clean up automatically.
 
-- Reader: `createTopicTxReader(driver, { topic, consumer, tx })` or `t.createTxReader({ ..., tx })`. The reader tracks read offsets and automatically issues updateOffsetsInTransaction on commit.
-- Writer: `createTopicTxWriter(tx, driver, { topic, ... })` or `t.createTxWriter(tx, { ... })`. The writer ensures a flush before the transaction commits.
+- Reader: `createTopicTxReader(tx, driver, { topic, consumer })` or `t.createTxReader(tx, { ... })`. The reader tracks read offsets and issues `updateOffsetsInTransaction` on commit.
+- Writer: `createTopicTxWriter(tx, driver, { topic, ... })` or `t.createTxWriter(tx, { ... })`. The writer flushes before commit.
 
 ```ts
 import { query } from '@ydbjs/query'
@@ -168,15 +168,14 @@ import { createTopicTxWriter } from '@ydbjs/topic/writer'
 const qc = query(driver)
 
 await qc.transaction(async (tx, signal) => {
-  // Tx‑aware reader: offsets are bound to the transaction commit
-  await using reader = createTopicTxReader(driver, { topic: '/Root/my-topic', consumer: 'svc-a', tx })
+  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'svc-a' })
   for await (const batch of reader.read({ signal })) {
     // process batch...
   }
 
-  // Tx‑aware writer: flushes before commit
-  await using writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
   writer.write(new TextEncoder().encode('message'))
+  // writer waits for flush on tx.onCommit; no manual close required
 })
 ```
 
@@ -214,7 +213,7 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` and types
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types
-- `@ydbjs/topic/writer2`: experimental state‑machine writer (API subject to change)
+- `@ydbjs/topic/writer2`: experimental state‑machine writer
 
 ## License
 
