@@ -1,0 +1,23 @@
+{
+	"name": "@ydbjs/examples-tls",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"start": "node index.js",
+		"dev": "DEBUG=ydbjs:* node index.js"
+	},
+	"dependencies": {
+		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/auth": "^6.0.0",
+		"@ydbjs/core": "^6.0.0"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	}
+}

@@ -1,0 +1,23 @@
+{
+	"name": "@ydbjs/examples-topic",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"start": "node index.js",
+		"dev": "DEBUG=ydbjs:* node index.js"
+	},
+	"dependencies": {
+		"@ydbjs/core": "^6.0.0",
+		"@ydbjs/query": "^6.0.0",
+		"@ydbjs/topic": "^6.0.0"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	}
+}
