@@ -1,16 +1,17 @@
 {
-    "name": "@ydbjs/docs",
-    "type": "module",
-    "scripts": {
-        "dev": "vitepress dev .",
-        "build": "vitepress build .",
-        "preview": "vitepress preview .",
-        "start": "vitepress"
-    },
-    "devDependencies": {
-        "vitepress": "^1.6.4"
-    },
-    "publishConfig": {
-        "access": "restricted"
-    }
+	"name": "@ydbjs/docs",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "vitepress dev .",
+		"build": "vitepress build .",
+		"preview": "vitepress preview .",
+		"start": "vitepress"
+	},
+	"devDependencies": {
+		"vitepress": "^1.6.4"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	}
 }
