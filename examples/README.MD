@@ -4,6 +4,10 @@ This folder contains runnable examples for YDB JavaScript SDK. Each example is a
 
 Эта папка содержит примеры использования YDB JavaScript SDK. Каждый пример — отдельный npm‑пакет, который можно скопировать как стартовый шаблон.
 
+> **💡 Looking for more examples?** Check out the [ydb-js-examples](https://github.com/ydb-platform/ydb-js-examples) repository for comprehensive real-world examples and use cases.
+>
+> **💡 Ищете больше примеров?** Посмотрите репозиторий [ydb-js-examples](https://github.com/ydb-platform/ydb-js-examples) с полным набором примеров реальных сценариев использования.
+
 ## 📦 Examples / Примеры
 
 ### 📁 [api/](./api/)

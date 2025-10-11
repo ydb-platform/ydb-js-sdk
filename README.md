@@ -124,7 +124,7 @@ Copy the appropriate file to your project root to enable secure AI code generati
 - **Add a new service?** Use `@ydbjs/api` for gRPC definitions.
 - **Work with YDB types?** Use `@ydbjs/value`.
 - **Implement retries?** Use `@ydbjs/retry`.
-- **More examples?** See package docs and [GitHub Examples](https://github.com/ydb-platform/ydb-js-sdk/tree/main/examples).
+- **More examples?** See package docs, [local examples](https://github.com/ydb-platform/ydb-js-sdk/tree/main/examples), or explore [ydb-js-examples](https://github.com/ydb-platform/ydb-js-examples) repository with comprehensive real-world examples.
 
 ---
 
