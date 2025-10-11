@@ -97,8 +97,9 @@ test('handles falsy values', () => {
 
 test('throws detailed error for undefined value', () => {
 	try {
+		// oxlint-disable-next-line no-unassigned-vars
 		let undefinedVar: any
-		yql`SELECT ${undefinedVar};`
+		void yql`SELECT ${undefinedVar};`
 		expect.fail('Should have thrown')
 	} catch (error: any) {
 		expect(error.message).toContain('position 0')
@@ -110,7 +111,7 @@ test('throws detailed error for undefined value', () => {
 
 test('throws detailed error for null value', () => {
 	try {
-		yql`SELECT ${42}, ${null}, ${true};`
+		void yql`SELECT ${42}, ${null}, ${true};`
 		expect.fail('Should have thrown')
 	} catch (error: any) {
 		expect(error.message).toContain('position 1') // null is at position 1
@@ -145,32 +146,32 @@ test('handles mixed unsafe and safe values', () => {
 })
 
 test('creates identifier unsafe string', () => {
-    let id = identifier('my_table')
+	let id = identifier('my_table')
 
-    expect(id.toString()).eq('`my_table`')
-    expect(id).toBeInstanceOf(String)
+	expect(id.toString()).eq('`my_table`')
+	expect(id).toBeInstanceOf(String)
 })
 
 test('creates unsafe string', () => {
-    let raw = unsafe('RAW SQL')
+	let raw = unsafe('RAW SQL')
 
-    expect(raw.toString()).eq('RAW SQL')
-    expect(raw).toBeInstanceOf(String)
+	expect(raw.toString()).eq('RAW SQL')
+	expect(raw).toBeInstanceOf(String)
 })
 
 test('identifier escapes backticks inside names', () => {
-    let id = identifier('my`table')
+	let id = identifier('my`table')
 
-    expect(id.toString()).eq('`my``table`')
+	expect(id.toString()).eq('`my``table`')
 })
 
 test('public exports identifier/unsafe behave correctly', async () => {
-    // Import from public entry to ensure re-exports work in tests
-    const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
+	// Import from public entry to ensure re-exports work in tests
+	const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
 
-    expect(pubIdentifier('users').toString()).eq('`users`')
-    expect(pubIdentifier('a`b').toString()).eq('`a``b`')
-    expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
+	expect(pubIdentifier('users').toString()).eq('`users`')
+	expect(pubIdentifier('a`b').toString()).eq('`a``b`')
+	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
 })
 
 test('handles various data types', () => {
@@ -210,7 +211,7 @@ test('handles unsafe values at boundaries', () => {
 
 test('validates all parameters and reports first error', () => {
 	try {
-		yql`SELECT ${undefined}, ${null};` // both are invalid
+		void yql`SELECT ${undefined}, ${null};` // both are invalid
 		expect.fail('Should have thrown')
 	} catch (error: any) {
 		// Should catch the first error (undefined at position 0)

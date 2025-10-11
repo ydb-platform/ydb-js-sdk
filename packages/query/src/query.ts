@@ -75,6 +75,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		this.#parameters = {}
 
 		for (let key in params) {
+			// oxlint-disable no-unused-expressions
 			key.startsWith('$') || (key = '$' + key)
 			this.#parameters[key] = params[key]!
 		}
@@ -305,6 +306,7 @@ export class Query<T extends any[] = unknown[]> extends EventEmitter<QueryEventM
 		let queryText = this.#text
 		if (this.#parameters) {
 			for (let [name, value] of Object.entries(this.#parameters)) {
+				// oxlint-disable no-unused-expressions
 				name.startsWith('$') || (name = '$' + name)
 
 				queryText = `DECLARE ${name} AS ${typeToString(value.type)};\n` + queryText

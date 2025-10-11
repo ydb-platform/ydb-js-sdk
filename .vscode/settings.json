@@ -12,6 +12,7 @@
 	"search.exclude": {
 		"**/vitest/dist": true
 	},
+	"oxc.enable": true,
 	"vitest.rootConfig": "./vitest.config.ts",
 	"vitest.workspaceConfig": "./vitest.config.ts",
 	"github.copilot.chat.codeGeneration.useInstructionFiles": true,
