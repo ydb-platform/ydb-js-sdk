@@ -35,5 +35,5 @@ features:
   - title: 'Security'
     details: 'Parameterization, safe identifiers, input validation'
   - title: 'Examples'
-    details: 'Ready-to-run samples: api, query, topic, tls, sls'
+    details: 'Ready-to-run samples: api, query, topic, tls, sls. More at ydb-js-examples repository'
 ---
