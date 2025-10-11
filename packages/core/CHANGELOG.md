@@ -1,5 +1,16 @@
 # @ydbjs/core
 
+## 6.0.3
+
+### Patch Changes
+
+- @ydbjs/abortable@6.0.3
+- @ydbjs/api@6.0.3
+- @ydbjs/auth@6.0.3
+- @ydbjs/debug@6.0.3
+- @ydbjs/error@6.0.3
+- @ydbjs/retry@6.0.3
+
 ## 6.0.2
 
 ### Patch Changes

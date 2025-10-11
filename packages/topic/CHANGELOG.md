@@ -1,5 +1,17 @@
 # @ydbjs/topic
 
+## 6.0.3
+
+### Patch Changes
+
+- Fix access to tx in topic reader
+  - @ydbjs/api@6.0.3
+  - @ydbjs/core@6.0.3
+  - @ydbjs/debug@6.0.3
+  - @ydbjs/error@6.0.3
+  - @ydbjs/retry@6.0.3
+  - @ydbjs/value@6.0.3
+
 ## 6.0.2
 
 ### Patch Changes
