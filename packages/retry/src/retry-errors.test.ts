@@ -3,7 +3,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 
-import { isRetryableError, defaultRetryConfig } from './index.ts'
+import { defaultRetryConfig, isRetryableError } from './index.ts'
 
 // Tests for isRetryableError function
 test('ClientError with ABORTED is retryable', () => {
