@@ -281,4 +281,5 @@ export function query(driver: Driver): QueryClient {
 	)
 }
 
+export { type Query } from './query.ts'
 export { identifier, unsafe, UnsafeString } from './yql.js'
