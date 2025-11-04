@@ -8,7 +8,7 @@
 		"e2e/*",
 		"examples/*",
 		"packages/*",
-		"third-party/*"
+		"third-parties/*"
 	],
 	"engines": {
 		"node": ">=20.19.0",
@@ -43,7 +43,8 @@
 		"zx": "^8.8.5"
 	},
 	"overrides": {
-		"@grpc/proto-loader": "npm:dry-uninstall"
+		"@grpc/proto-loader": "npm:dry-uninstall",
+		"esbuild": "^0.25.0"
 	},
 	"packageManager": "npm@11.4.0",
 	"prettier": {

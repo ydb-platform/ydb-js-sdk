@@ -1,0 +1,64 @@
+{
+	"name": "@ydbjs/auth-yandex-cloud",
+	"version": "0.1.0",
+	"description": "Yandex Cloud Service Account authentication provider for YDB. Supports authorized key JSON files and automatic IAM token management.",
+	"keywords": [
+		"ydb",
+		"database",
+		"authentication",
+		"auth",
+		"yandex-cloud",
+		"service-account",
+		"iam",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "third-parties/auth-yandex-cloud"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	},
+	"dependencies": {
+		"@ydbjs/auth": "^6.0.0",
+		"@ydbjs/debug": "^6.0.0",
+		"@ydbjs/retry": "^6.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.10.0",
+		"typescript": "^5.9.3",
+		"vitest": "^4.0.7"
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	}
+}

@@ -475,6 +475,12 @@ Select affected packages, choose bump type (major/minor/patch), write user-facin
 - **MINOR:** Backwards-compatible features
 - **PATCH:** Bug fixes, docs, typings
 
+**Important Rules:**
+
+- **DO NOT create CHANGELOG.md files manually** - Changesets automatically generates them from changeset files in `.changeset/` directory
+- **If you create or delete packages in `packages/` directory** - Update the `fixed` array in `.changeset/config.json` to include new packages or remove deleted ones (packages must be listed alphabetically)
+- Third-parties packages (`third-parties/`) are NOT included in `fixed` array - they version independently
+
 See `RELEASING.md` and `VERSIONING.md` for full release process
 
 ---
