@@ -251,6 +251,20 @@ npm run lint            # Run oxlint
 
 ## Agent Workflow
 
+### Command Execution Rules
+
+**CRITICAL:** Never use interactive commands that require user input or interaction.
+
+**Rules:**
+
+- Always use non-interactive flags or parameters for all commands
+- Never open editors or interactive prompts that require user input
+- Prefer file-based input over interactive prompts
+- Use appropriate flags (`--yes`, `--no-interaction`, `--force`) to avoid prompts
+- Provide all required parameters directly via command-line arguments or input files
+
+**General principle:** If a command might open an editor, prompt for confirmation, or wait for user input, it must be made non-interactive using appropriate flags or alternative methods.
+
 ### Development Process
 
 **Order of operations** (priority: functionality → correctness → style):
