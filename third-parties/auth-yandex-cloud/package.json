@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth-yandex-cloud",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Yandex Cloud Service Account authentication provider for YDB. Supports authorized key JSON files and automatic IAM token management.",
 	"keywords": [
 		"ydb",
