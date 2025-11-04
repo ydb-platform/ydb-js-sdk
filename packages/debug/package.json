@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/debug",
-	"version": "6.0.4",
+	"version": "6.0.5",
 	"description": "Centralized debug logging for YDB JavaScript SDK",
 	"keywords": [
 		"ydb",
@@ -48,6 +48,11 @@
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
 	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
 	"publishConfig": {
 		"access": "public",
 		"registry": "https://registry.npmjs.org/"

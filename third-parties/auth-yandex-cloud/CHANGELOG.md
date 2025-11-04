@@ -1,5 +1,15 @@
 # @ydbjs/auth-yandex-cloud
 
+## 0.1.2
+
+### Patch Changes
+
+- Reduce npm package size by limiting published files to dist, README.md, and CHANGELOG.md only
+- Updated dependencies
+  - @ydbjs/auth@6.0.5
+  - @ydbjs/debug@6.0.5
+  - @ydbjs/retry@6.0.5
+
 ## 0.1.1
 
 ### Patch Changes

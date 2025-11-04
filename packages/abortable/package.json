@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/abortable",
-	"version": "6.0.4",
+	"version": "6.0.5",
 	"description": "Utilities for working with AbortController and AbortSignal in YDB operations.",
 	"keywords": [
 		"ydb",
@@ -42,5 +42,14 @@
 		"build": "tsc",
 		"test": "vitest --run",
 		"attw": "attw --pack --profile esm-only"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	}
 }

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/auth-yandex-cloud",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Yandex Cloud Service Account authentication provider for YDB. Supports authorized key JSON files and automatic IAM token management.",
 	"keywords": [
 		"ydb",
@@ -48,15 +48,20 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@ydbjs/auth": "^6.0.0",
-		"@ydbjs/debug": "^6.0.0",
-		"@ydbjs/retry": "^6.0.0"
+		"@ydbjs/auth": "^6.0.5",
+		"@ydbjs/debug": "^6.0.5",
+		"@ydbjs/retry": "^6.0.5"
 	},
 	"devDependencies": {
 		"@types/node": "^24.10.0",
 		"typescript": "^5.9.3",
 		"vitest": "^4.0.7"
 	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
 	"publishConfig": {
 		"access": "public",
 		"registry": "https://registry.npmjs.org/"

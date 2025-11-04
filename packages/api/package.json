@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/api",
-	"version": "6.0.4",
+	"version": "6.0.5",
 	"description": "TypeScript gRPC service definitions and protobuf types for all YDB APIs. Enables strongly-typed client generation and low-level protocol access.",
 	"keywords": [
 		"ydb",
@@ -66,6 +66,11 @@
 		"@bufbuild/buf": "^1.59.0",
 		"@bufbuild/protoc-gen-es": "^2.10.0"
 	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
 	"publishConfig": {
 		"access": "public",
 		"registry": "https://registry.npmjs.org/"

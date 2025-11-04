@@ -1,5 +1,18 @@
 # @ydbjs/query
 
+## 6.0.5
+
+### Patch Changes
+
+- Reduce npm package size by limiting published files to dist, README.md, and CHANGELOG.md only
+- Updated dependencies
+  - @ydbjs/api@6.0.5
+  - @ydbjs/core@6.0.5
+  - @ydbjs/debug@6.0.5
+  - @ydbjs/error@6.0.5
+  - @ydbjs/retry@6.0.5
+  - @ydbjs/value@6.0.5
+
 ## 6.0.4
 
 ### Patch Changes
