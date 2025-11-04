@@ -65,6 +65,17 @@ cd examples/topic
 npm install && npm start
 ```
 
+### 📁 [service-account/](./service-account/)
+
+EN: Yandex Cloud Service Account authentication with authorized key JSON file.
+
+RU: Авторизация через Yandex Cloud Service Account с использованием authorized key JSON файла.
+
+```bash
+cd examples/service-account
+npm install && npm start
+```
+
 ## 🚀 DevContainer
 
 EN: Easiest way to try; spins up YDB and sets env for you.
@@ -107,6 +118,7 @@ cd examples/query && npm run dev
 cd examples/sls && npm start
 cd examples/tls && npm start
 cd examples/topic && npm start
+cd examples/service-account && npm start
 ```
 
 ## 💡 Tips / Советы
