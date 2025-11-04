@@ -4,7 +4,16 @@
 	"commit": false,
 	"fixed": [
 		[
-			"@ydbjs/*"
+			"@ydbjs/abortable",
+			"@ydbjs/api",
+			"@ydbjs/auth",
+			"@ydbjs/core",
+			"@ydbjs/debug",
+			"@ydbjs/error",
+			"@ydbjs/query",
+			"@ydbjs/retry",
+			"@ydbjs/topic",
+			"@ydbjs/value"
 		]
 	],
 	"linked": [],
