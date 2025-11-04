@@ -1,0 +1,24 @@
+{
+	"name": "@ydbjs/examples-auth-yandex-cloud",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example of YDB connection using Yandex Cloud IAM authentication",
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"start": "node index.js",
+		"dev": "DEBUG=ydbjs:* node index.js"
+	},
+	"dependencies": {
+		"@ydbjs/auth-yandex-cloud": "^0.1.1",
+		"@ydbjs/core": "^6.0.4",
+		"@ydbjs/query": "^6.0.4"
+	},
+	"publishConfig": {
+		"access": "restricted"
+	}
+}
