@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { createPrivateKey, sign } from 'node:crypto'
+import { constants, createPrivateKey, sign } from 'node:crypto'
 import { CredentialsProvider } from '@ydbjs/auth'
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
@@ -80,12 +80,18 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			)
 		}
 
+		// Yandex Cloud authorized keys may contain a warning line before the PEM key
+		// Remove it if present to get clean PEM format
+		if (key.private_key.includes('PLEASE DO NOT REMOVE')) {
+			key.private_key = key.private_key.replace(/^.*?-----BEGIN PRIVATE KEY-----/s, '-----BEGIN PRIVATE KEY-----')
+		}
+
 		this.#key = key
 		if (options?.iamEndpoint) {
 			this.#iamEndpoint = options.iamEndpoint
 		}
 
-		dbg.log('creating service account credentials provider for SA: %s', key.service_account_id)
+		dbg.log('creating service account credentials provider for SA: %s (key ID: %s)', key.service_account_id, key.id)
 	}
 
 	/**
@@ -161,12 +167,16 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
-		dbg.log('fetching new IAM token (token expired or force=true)')
+		dbg.log('fetching new IAM token (token expired or force=true, key ID: %s)', this.#key.id)
 
 		this.#promise = (async (): Promise<string> => {
 			try {
 				this.#token = await this.#fetchIamToken(signal)
-				dbg.log('IAM token fetched successfully, expires at %s', new Date(this.#token.expires_at).toISOString())
+				dbg.log(
+					'IAM token fetched successfully, expires at %s (key ID: %s)',
+					new Date(this.#token.expires_at).toISOString(),
+					this.#key.id
+				)
 				return this.#token.value
 			} finally {
 				this.#promise = null
@@ -191,14 +201,15 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			try {
 				this.#token = await this.#fetchIamToken(signal)
 				dbg.log(
-					'background IAM token refresh successful, expires at %s',
-					new Date(this.#token.expires_at).toISOString()
+					'background IAM token refresh successful, expires at %s (key ID: %s)',
+					new Date(this.#token.expires_at).toISOString(),
+					this.#key.id
 				)
 				return this.#token.value
 			} catch (error) {
 				// Don't throw - failed background refresh will retry on next getToken call
 				// Return existing token if available to avoid breaking ongoing requests
-				dbg.log('background IAM token refresh failed: %O', error)
+				dbg.log('background IAM token refresh failed: %O (key ID: %s)', error, this.#key.id)
 				if (this.#token) {
 					return this.#token.value
 				}
@@ -296,7 +307,7 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 		// - https://datatracker.ietf.org/doc/html/rfc7518#section-3.5 (JWT PS256 algorithm specification)
 		let signature = sign('sha256', Buffer.from(unsignedToken), {
 			key: privateKey,
-			padding: 1, // RSA_PKCS1_PSS_PADDING constant value
+			padding: constants.RSA_PKCS1_PSS_PADDING,
 			saltLength: 32,
 		})
 
@@ -325,7 +336,12 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 				return strategy ? strategy(ctx, cfg) : 0
 			},
 			onRetry: (ctx) => {
-				dbg.log('retrying IAM token fetch, attempt %d, error: %O', ctx.attempt, ctx.error)
+				dbg.log(
+					'retrying IAM token fetch, attempt %d, error: %O (key ID: %s)',
+					ctx.attempt,
+					ctx.error,
+					this.#key.id
+				)
 			},
 		}
 
