@@ -427,6 +427,8 @@ Fixed bug                                # ❌ What bug? Where?
 
 GitHub automatically loads `.github/pull_request_template.md` when creating a PR.
 
+**IMPORTANT:** Pull request descriptions must be written in English.
+
 **Key points:**
 
 - **What** - describe what the PR does (focus on main goal)
