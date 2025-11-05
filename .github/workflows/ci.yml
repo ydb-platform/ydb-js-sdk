@@ -10,6 +10,29 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    concurrency:
+      group: lint-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run lint
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: build-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: npm run build
+      - run: npm run attw
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -25,7 +48,7 @@ jobs:
 
     services:
       ydb:
-        image: ghcr.io/ydb-platform/local-ydb:24.3
+        image: ydbplatform/local-ydb:25.2
         ports:
           - 2135:2135
           - 2136:2136
@@ -35,9 +58,6 @@ jobs:
         env:
           YDB_ENABLE_COLUMN_TABLES: true
           YDB_USE_IN_MEMORY_PDISKS: true
-          YDB_LOCAL_SURVIVE_RESTART: true
-          YDB_TABLE_ENABLE_PREPARED_DDL: true
-          YDB_FEATURE_FLAGS: enable_topic_service_tx
         options: '-h localhost'
 
     env:
@@ -46,7 +66,7 @@ jobs:
       YDB_STATIC_CREDENTIALS_ENDPOINT: grpc://localhost:2136
       YDB_CONNECTION_STRING: grpc://localhost:2136/local
       YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
-      YDB_SSL_ROOT_CERTIFICATES_FILE: /ydb_certs/ca.pem
+      YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
 
     steps:
       # Checkout the repository
@@ -55,5 +75,4 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm run build
       - run: npm run test:all
