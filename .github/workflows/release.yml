@@ -3,7 +3,7 @@ name: Release (Changesets)
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   contents: write
