@@ -238,6 +238,7 @@ export const createTopicWriter = function createTopicWriter(
 									throughputSettings,
 									updateLastSeqNo,
 									updateBufferSize,
+									isSeqNoProvided,
 									...(options.tx && { tx: options.tx }),
 									...(lastSeqNo && { lastSeqNo }),
 								},

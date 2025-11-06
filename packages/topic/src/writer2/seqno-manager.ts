@@ -7,8 +7,8 @@
  */
 export class SeqNoManager {
 	#mode: 'auto' | 'manual' | null = null
-	#nextSeqNo: bigint = 1n
 	#lastSeqNo: bigint = 0n
+	#nextSeqNo: bigint = 1n
 	#highestUserSeqNo: bigint = 0n
 
 	constructor(initialSeqNo: bigint = 0n) {

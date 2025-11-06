@@ -30,9 +30,11 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": "./dist/index.js",
+		"./codec": "./dist/codec.js",
 		"./reader": "./dist/reader/index.js",
 		"./writer": "./dist/writer/index.js",
-		"./writer2": "./dist/writer2/index.js"
+		"./writer2": "./dist/writer2/index.js",
+		"./message": "./dist/message.js"
 	},
 	"engines": {
 		"node": ">=20.19.0",

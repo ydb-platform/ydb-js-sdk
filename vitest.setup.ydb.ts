@@ -45,7 +45,7 @@ export async function setup(project: TestProject) {
 	}
 
 	// prettier-ignore
-	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish 2135:2135 --publish 2136:2136 --publish 8765:8765 --publish 9092:9092 ydbplatform/local-ydb:25.2.1`.text()
+	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish 2135 --publish 2136 --publish 8765 --publish 9092 ydbplatform/local-ydb:25.3`.text()
 	containerID = container.trim()
 
 	let signal = AbortSignal.timeout(30 * 1000)
