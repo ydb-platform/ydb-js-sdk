@@ -37,7 +37,14 @@ import { isRetryableError } from '@ydbjs/retry'
 import { assign, enqueueActions, sendTo, setup } from 'xstate'
 import { defaultCodecMap } from '../codec.js'
 import { WriterStream, type WriterStreamReceiveEvent } from './stream.js'
-import type { TopicWriterOptions, WriterContext, WriterEmitted, WriterEvents, WriterInput } from './types.js'
+import type {
+	SeqNoShiftEvent,
+	TopicWriterOptions,
+	WriterContext,
+	WriterEmitted,
+	WriterEvents,
+	WriterInput,
+} from './types.js'
 import { loggers } from '@ydbjs/debug'
 
 // ============================================================================
@@ -259,24 +266,196 @@ let writerMachineFactory = setup({
 		// ====================================================================
 
 		/**
-		 * Updates session state after receiving an init response.
-		 * Emits a session event with session ID and last sequence number.
+		 * Updates the writer context after receiving STREAM_WRITE_SESSION_INIT.
+		 * Common steps for both seqNo modes:
+		 * - Determine the new `inflightStart` using `serverLastSeqNo`
+		 * - Leave all unsent messages in place while keeping their original order
 		 *
-		 * @param enqueue - Enqueue function for scheduling actions
-		 * @param event - Init response event containing session details
+		 * Mode specific logic:
+		 * - manual: perform a single pass over `[inflight, buffer)`; drop messages with `seqNo <= serverLastSeqNo`
+		 *   (already persisted on the server), compact the window, and update counters without changing seqNo values.
+		 * - auto: after the same pass, renumber every message whose seqNo may shift and emit `SeqNoShiftEvent`
+		 *   segments so `TopicWriter.resolveSeqNo()` can map initial numbers to the final ones.
+		 *
+		 * @param enqueue - XState enqueue helper for scheduling actions
+		 * @param event - init response with session metadata
+		 * @param context - current state machine context
 		 */
-		updateWriteSession: enqueueActions(({ enqueue, event }) => {
+		updateWriteSession: enqueueActions(({ enqueue, event, context }) => {
 			assert.ok(event.type === 'writer.stream.response.init')
 			assert.ok(event.data)
 
+			let lastSeqNo = event.data.lastSeqNo || 0n
+			let nextSeqNo = lastSeqNo + 1n
+
+			// --------------------------------------------------------------------
+			// 1. Подсчитываем подтверждённые сообщения и новое начало окна inflight
+			//    Это позволяет дальше просто сдвигать указатели без пересоздания массивов
+			// --------------------------------------------------------------------
+			let inflightStartIndex = context.inflightStart
+			let inflightEndIndex = context.inflightStart + context.inflightLength
+			let bufferEndIndex = context.bufferStart + context.bufferLength
+
+			if (context.seqNoMode === 'manual') {
+				let writeIndex = inflightStartIndex
+				let acknowledgedSize = 0n
+				let pendingCount = 0
+				let pendingSize = 0n
+				let bufferKeptCount = 0
+				let skippedSize = 0n
+				let bufferSize = context.bufferSize
+
+				for (let i = inflightStartIndex; i < bufferEndIndex; i++) {
+					let message = context.messages[i]
+					if (!message) continue
+
+					let messageSize = BigInt(message.data.length)
+
+					if (i < inflightEndIndex) {
+						if (message.seqNo <= lastSeqNo) {
+							acknowledgedSize += messageSize
+							continue
+						}
+
+						pendingCount++
+						pendingSize += messageSize
+					} else {
+						if (message.seqNo <= lastSeqNo) {
+							skippedSize += messageSize
+							bufferSize -= messageSize
+							continue
+						}
+
+						bufferKeptCount++
+					}
+
+					if (writeIndex !== i) {
+						context.messages[writeIndex] = message
+					}
+					writeIndex++
+				}
+
+				let newBufferStart = inflightStartIndex
+				let bufferLength = pendingCount + bufferKeptCount
+				let inflightSize = context.inflightSize - (acknowledgedSize + pendingSize)
+				let garbageSize = context.garbageSize + acknowledgedSize + skippedSize
+				let newBufferSize = bufferSize + pendingSize
+
+				enqueue.assign({
+					sessionId: event.data.sessionId,
+					inflightStart: newBufferStart,
+					inflightLength: 0,
+					inflightSize,
+					bufferStart: newBufferStart,
+					bufferLength,
+					bufferSize: newBufferSize,
+					garbageSize,
+				})
+
+				enqueue.emit(() => ({
+					type: 'writer.session',
+					sessionId: event.data.sessionId,
+					lastSeqNo,
+					nextSeqNo: lastSeqNo + 1n,
+				}))
+
+				return
+			}
+
+			let firstPendingIndex = inflightEndIndex
+			let acknowledgedSize = 0n
+			let pendingCount = 0
+			let pendingSize = 0n
+
+			for (let i = inflightStartIndex; i < inflightEndIndex; i++) {
+				let message = context.messages[i]
+				if (!message) continue
+
+				if (firstPendingIndex === inflightEndIndex && message.seqNo > lastSeqNo) {
+					firstPendingIndex = i
+				}
+
+				if (i < firstPendingIndex) {
+					acknowledgedSize += BigInt(message.data.length)
+				} else {
+					pendingCount++
+					pendingSize += BigInt(message.data.length)
+				}
+			}
+
+			let newBufferStart = firstPendingIndex
+
+			let seqNoShifts: SeqNoShiftEvent[] = []
+			let currentShiftStart: bigint | null = null
+			let currentShiftDelta: bigint | null = null
+			let currentShiftCount = 0
+
+			let flushCurrentShift = () => {
+				if (currentShiftStart !== null && currentShiftDelta !== null && currentShiftCount > 0) {
+					seqNoShifts.push({
+						startOld: currentShiftStart,
+						count: currentShiftCount,
+						delta: currentShiftDelta,
+					})
+				}
+				currentShiftStart = null
+				currentShiftDelta = null
+				currentShiftCount = 0
+			}
+
+			for (let i = firstPendingIndex; i < bufferEndIndex; i++) {
+				let message = context.messages[i]
+				if (!message) continue
+
+				let oldSeqNo = message.seqNo
+				let newSeqNo = nextSeqNo
+				nextSeqNo++
+
+				if (oldSeqNo !== newSeqNo) {
+					let delta = newSeqNo - oldSeqNo
+					if (
+						currentShiftStart !== null &&
+						currentShiftDelta === delta &&
+						oldSeqNo === currentShiftStart + BigInt(currentShiftCount)
+					) {
+						currentShiftCount++
+					} else {
+						flushCurrentShift()
+						currentShiftStart = oldSeqNo
+						currentShiftDelta = delta
+						currentShiftCount = 1
+					}
+				} else {
+					flushCurrentShift()
+				}
+
+				message.seqNo = newSeqNo
+			}
+
+			flushCurrentShift()
+
+			let inflightSize = context.inflightSize - acknowledgedSize - pendingSize
+			let bufferSize = context.bufferSize + pendingSize
+			let garbageSize = context.garbageSize + acknowledgedSize
+			let bufferLength = pendingCount + context.bufferLength
+
 			enqueue.assign({
 				sessionId: event.data.sessionId,
+				inflightStart: newBufferStart,
+				inflightLength: 0,
+				inflightSize,
+				bufferStart: newBufferStart,
+				bufferLength,
+				bufferSize,
+				garbageSize,
 			})
 
 			enqueue.emit(() => ({
 				type: 'writer.session',
 				sessionId: event.data.sessionId,
-				lastSeqNo: event.data.lastSeqNo || 0n,
+				lastSeqNo: lastSeqNo,
+				nextSeqNo,
+				...(seqNoShifts.length ? { seqNoShifts } : {}),
 			}))
 		}),
 
@@ -304,7 +483,9 @@ let writerMachineFactory = setup({
 			if (context.inflightLength >= context.options.maxInflightCount!) {
 				enqueue.emit(() => ({
 					type: 'writer.error',
-					error: new Error('Internal Error: Max inflight messages limit reached. If you see this error, please report it.'),
+					error: new Error(
+						'Internal Error: Max inflight messages limit reached. If you see this error, please report it.'
+					),
 				}))
 
 				return
@@ -440,7 +621,6 @@ let writerMachineFactory = setup({
 				})
 			}
 
-
 			// @ts-ignore
 			enqueue({ type: 'log', params: { message: 'ACK | {stats}' } })
 		}),
@@ -458,7 +638,9 @@ let writerMachineFactory = setup({
 			if (event.message.data.length > MAX_PAYLOAD_SIZE) {
 				enqueue.emit(() => ({
 					type: 'writer.error',
-					error: new Error('Internal Error: Payload size exceeds 48MiB limit. If you see this error, please report it.'),
+					error: new Error(
+						'Internal Error: Payload size exceeds 48MiB limit. If you see this error, please report it.'
+					),
 				}))
 
 				return
@@ -470,6 +652,10 @@ let writerMachineFactory = setup({
 				value,
 			}))
 			let uncompressedSize = BigInt(event.message.data.length)
+
+			// Track seqNo mode (set once on first message, then remains constant)
+			// Mode is passed from TopicWriter which knows it from SeqNoManager
+			let seqNoMode: 'auto' | 'manual' | null = context.seqNoMode ?? event.seqNoMode ?? null
 
 			let message = create(StreamWriteMessage_WriteRequest_MessageDataSchema, {
 				data: event.message.data,
@@ -483,8 +669,9 @@ let writerMachineFactory = setup({
 			context.messages.push(message)
 
 			enqueue.assign(({ context }) => ({
+				seqNoMode,
 				bufferSize: context.bufferSize + BigInt(event.message.data.length),
-				bufferLength: context.bufferLength + 1
+				bufferLength: context.bufferLength + 1,
 			}))
 
 			//@ts-ignore
@@ -531,6 +718,7 @@ let writerMachineFactory = setup({
 		releaseResources: assign(() => {
 			return {
 				messages: [],
+				seqNoMode: null,
 				bufferStart: 0,
 				bufferLength: 0,
 				inflightStart: 0,
@@ -694,6 +882,7 @@ export const WriterMachine = writerMachineFactory.createMachine({
 
 			// Single array approach with sliding window
 			messages: [],
+			seqNoMode: null,
 			bufferStart: 0,
 			bufferLength: 0,
 			inflightStart: 0,
@@ -716,12 +905,12 @@ export const WriterMachine = writerMachineFactory.createMachine({
 	on: {
 		'writer.close': {
 			target: '.closing',
-			actions: [log('CLS | {topicPath}')]
+			actions: [log('CLS | {topicPath}')],
 		},
 		'writer.destroy': {
 			// Force close, skip graceful shutdown
 			target: '.closed',
-			actions: [log('DST | {topicPath}')]
+			actions: [log('DST | {topicPath}')],
 		},
 		'writer.stream.error': {
 			// Enter error state on stream error
@@ -738,8 +927,8 @@ export const WriterMachine = writerMachineFactory.createMachine({
 		idle: {
 			always: {
 				target: 'connecting',
-				actions: [log('INT | {topicPath}')]
-			}
+				actions: [log('INT | {topicPath}')],
+			},
 		},
 		/**
 		 * Connecting state: Establishes connection to the topic stream.
@@ -941,11 +1130,7 @@ export const WriterMachine = writerMachineFactory.createMachine({
 		closed: {
 			// All resources are released in this final state
 			type: 'final',
-			entry: [
-				'closeConnection',
-				'releaseResources',
-				log('FIN | {stats}'),
-			],
-		}
+			entry: ['closeConnection', 'releaseResources', log('FIN | {stats}')],
+		},
 	},
 })
