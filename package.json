@@ -16,17 +16,10 @@
 	},
 	"engineStrict": true,
 	"scripts": {
-		"docs:dev": "vitepress dev docs",
-		"docs:build": "vitepress build docs",
-		"docs:preview": "vitepress preview docs",
 		"build": "turbo run build --output-logs=errors-only",
 		"attw": "turbo run attw",
-		"lint": "oxlint --import-plugin --promise-plugin --vitest-plugin",
-		"test": "vitest run --project uni",
-		"test:uni": "vitest run --project uni",
-		"test:int": "vitest run --project int",
-		"test:e2e": "vitest run --project e2e",
-		"test:all": "vitest run",
+		"test": "vitest --run",
+		"lint": "oxlint",
 		"publish-packages": "turbo run clean build test attw && changeset version && changeset publish"
 	},
 	"dependencies": {
@@ -46,7 +39,7 @@
 		"@grpc/proto-loader": "npm:dry-uninstall",
 		"esbuild": "^0.25.0"
 	},
-	"packageManager": "npm@11.4.0",
+	"packageManager": "npm@11.5.1",
 	"prettier": {
 		"printWidth": 120,
 		"tabWidth": 4,

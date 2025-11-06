@@ -5,37 +5,18 @@
 			"dependsOn": ["^codegen"],
 			"outputs": ["./src/gen/**"]
 		},
-		"clean": {},
+		"clean": {
+			"inputs": ["./dist/**"],
+			"outputs": []
+		},
 		"build": {
 			"dependsOn": ["^build", "clean", "codegen"],
 			"inputs": ["./src/**"],
 			"outputs": ["./dist/**"]
 		},
-		"test": {
-			"dependsOn": ["^test", "build"]
-		},
 		"attw": {
 			"dependsOn": ["^attw", "build"],
 			"inputs": ["./dist/**", "package.json"]
-		},
-		"docs": {
-			"inputs": ["**/**.md"],
-			"outputs": [".vitepress/dist/**"]
-		},
-		"//#test:root": {
-			"dependsOn": ["build"],
-			"env": [
-				"DEBUG",
-				"GRPC_TRACE",
-				"GRPC_VERBOSITY",
-				"YDB_STATIC_CREDENTIALS_USER",
-				"YDB_STATIC_CREDENTIALS_PASSWORD",
-				"YDB_STATIC_CREDENTIALS_ENDPOINT",
-				"YDB_CONNECTION_STRING",
-				"YDB_CONNECTION_STRING_SECURE",
-				"YDB_SSL_ROOT_CERTIFICATES_FILE"
-			],
-			"outputs": ["coverage/**"]
 		}
 	}
 }

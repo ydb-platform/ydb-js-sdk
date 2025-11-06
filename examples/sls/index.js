@@ -42,6 +42,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 	handler({})
 		.then((result) => {
 			console.log('Result:', result)
+			return result
 		})
 		.catch((error) => {
 			console.error('Error:', error)

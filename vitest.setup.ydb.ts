@@ -32,7 +32,10 @@ export async function setup(project: TestProject) {
 		return
 	}
 
-	let container = await $`docker run --rm --detach --publish 2135 --publish 2136 --publish 8765 --publish 9092 --hostname localhost --platform linux/amd64 ydbplatform/local-ydb:25.1.1.3`.text()
+	let ports = ['2135', '2136', '8765', '9092'].map((port) => `--publish ${port}`).join(' ')
+
+	// prettier-ignore
+	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 ${ports} ydbplatform/local-ydb:25.2`.text()
 	containerID = container.trim()
 
 	let signal = AbortSignal.timeout(30 * 1000)

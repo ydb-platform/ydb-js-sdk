@@ -7,7 +7,7 @@ import { Driver } from '@ydbjs/core'
 import { createTopicWriter } from '../src/writer/index.js'
 
 let driver = new Driver(inject('connectionString'), {
-	'ydb.sdk.enable_discovery': false
+	'ydb.sdk.enable_discovery': false,
 })
 await driver.ready()
 
@@ -38,9 +38,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-	await topicService.dropTopic(create(DropTopicRequestSchema, {
-		path: testTopicName,
-	}))
+	await topicService.dropTopic(
+		create(DropTopicRequestSchema, {
+			path: testTopicName,
+		})
+	)
 })
 
 test('writes single message to topic', async () => {

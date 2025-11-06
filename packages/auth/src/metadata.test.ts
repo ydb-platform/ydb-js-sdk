@@ -1,6 +1,6 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from 'vitest'
 
-import { MetadataCredentialsProvider } from "./metadata.ts";
+import { MetadataCredentialsProvider } from './metadata.ts'
 
 afterEach(() => {
 	vi.restoreAllMocks()
@@ -17,7 +17,7 @@ test('extracts valid token', async () => {
 	let provider = new MetadataCredentialsProvider({})
 
 	let token = await provider.getToken(true)
-	expect(token, 'Token is not empty').eq('test-token')
+	expect(token).eq('test-token')
 })
 
 test('handles invalid response', async () => {

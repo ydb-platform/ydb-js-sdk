@@ -432,5 +432,7 @@ test('throws error on invalid private key format', async () => {
 		return response
 	})
 
-	await expect(provider.getToken(true)).rejects.toThrow()
+	await expect(provider.getToken(true)).rejects.toMatchObject({
+		message: expect.stringMatching(/DECODER|unsupported/i),
+	})
 })

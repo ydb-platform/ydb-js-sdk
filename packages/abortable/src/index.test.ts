@@ -44,7 +44,7 @@ test('throws immediately when signal aborted with reason', async () => {
 
 test('aborts when signal aborted during promise execution', async () => {
 	let controller = new AbortController()
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 100)
 	})
 
@@ -58,7 +58,7 @@ test('aborts when signal aborted during promise execution', async () => {
 
 test('resolves when promise completes before abort signal', async () => {
 	let controller = new AbortController()
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('fast result'), 10)
 	})
 
@@ -79,7 +79,7 @@ test('handles multiple abort listeners correctly', async () => {
 		listenerCalled = true
 	})
 
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 100)
 	})
 
@@ -135,7 +135,7 @@ test('creates AbortError when signal aborted with reason', async () => {
 	let controller = new AbortController()
 	let customReason = new Error('Custom cancellation')
 
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 100)
 	})
 
@@ -143,20 +143,14 @@ test('creates AbortError when signal aborted with reason', async () => {
 
 	setTimeout(() => controller.abort(customReason), 10)
 
-	try {
-		await result
-		expect.fail('Expected promise to reject')
-	} catch (error: any) {
-		expect(error.name).eq('AbortError')
-		expect(error.message).eq('AbortError')
-	}
+	await expect(result).rejects.toThrow('AbortError')
 })
 
 test('handles concurrent abortable calls with same signal', async () => {
 	let controller = new AbortController()
 
-	let promise1 = new Promise(resolve => setTimeout(() => resolve('result1'), 50))
-	let promise2 = new Promise(resolve => setTimeout(() => resolve('result2'), 50))
+	let promise1 = new Promise((resolve) => setTimeout(() => resolve('result1'), 50))
+	let promise2 = new Promise((resolve) => setTimeout(() => resolve('result2'), 50))
 
 	let result1 = abortable(controller.signal, promise1)
 	let result2 = abortable(controller.signal, promise2)
@@ -189,7 +183,7 @@ test('works with different promise types', async () => {
 
 test('handles abort without reason', async () => {
 	let controller = new AbortController()
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 100)
 	})
 
@@ -197,13 +191,7 @@ test('handles abort without reason', async () => {
 
 	setTimeout(() => controller.abort(), 10)
 
-	try {
-		await result
-		expect.fail('Expected promise to reject')
-	} catch (error: any) {
-		expect(error.name).eq('AbortError')
-		expect(error.cause).eq(undefined)
-	}
+	await expect(result).rejects.toThrow('AbortError')
 })
 
 test('handles promise that resolves to undefined', async () => {
@@ -226,7 +214,7 @@ test('handles promise that resolves immediately', async () => {
 
 test('handles extremely fast abort timing', async () => {
 	let controller = new AbortController()
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 0)
 	})
 
@@ -242,7 +230,7 @@ test('handles abort signal from different controller', async () => {
 	let controller1 = new AbortController()
 	let controller2 = new AbortController()
 
-	let promise = new Promise(resolve => {
+	let promise = new Promise((resolve) => {
 		setTimeout(() => resolve('success'), 50)
 	})
 
