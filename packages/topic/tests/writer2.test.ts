@@ -454,20 +454,16 @@ test('messages written before initialization get correct seqno', async () => {
 	})
 
 	// Write messages immediately after creating writer (before session initialization)
-	// These messages will get temporary seqno (1, 2, 3...) initially
-	let seqNo1 = writer.write(new TextEncoder().encode('Message 1'))
-	let seqNo2 = writer.write(new TextEncoder().encode('Message 2'))
-	let seqNo3 = writer.write(new TextEncoder().encode('Message 3'))
+	writer.write(new TextEncoder().encode('Message 1'))
+	writer.write(new TextEncoder().encode('Message 2'))
+	writer.write(new TextEncoder().encode('Message 3'))
 
 	// Wait for initialization and flush
 	let lastSeqNo = await writer.flush()
 
 	// After initialization, seqno should be recalculated based on server's lastSeqNo
 	// So final seqno should be sequential and start from serverLastSeqNo + 1
-	expect(seqNo1).toBeGreaterThan(0n)
-	expect(seqNo2).toBe(seqNo1 + 1n)
-	expect(seqNo3).toBe(seqNo2 + 1n)
-	expect(lastSeqNo).toBe(seqNo3)
+	expect(lastSeqNo).toBeGreaterThan(0n)
 
 	// Verify messages were written by reading them
 	await using reader = createTopicReader(driver, {
@@ -476,11 +472,11 @@ test('messages written before initialization get correct seqno', async () => {
 	})
 
 	let messagesRead = 0
-	let seqNos = new Set<bigint>()
+	let seqNos: bigint[] = []
 
 	for await (let batch of reader.read({ limit: 10, waitMs: 2000 })) {
 		for (let msg of batch) {
-			seqNos.add(msg.seqNo)
+			seqNos.push(msg.seqNo)
 			let content = new TextDecoder().decode(msg.payload)
 			expect(['Message 1', 'Message 2', 'Message 3']).toContain(content)
 			messagesRead++
@@ -494,10 +490,11 @@ test('messages written before initialization get correct seqno', async () => {
 	}
 
 	expect(messagesRead).toBe(3)
-	// Verify all seqno are present (messages were not dropped)
-	expect(seqNos.has(seqNo1)).toBe(true)
-	expect(seqNos.has(seqNo2)).toBe(true)
-	expect(seqNos.has(seqNo3)).toBe(true)
+	// Verify seqno are sequential
+	expect(seqNos.length).toBe(3)
+	expect(seqNos[0]! + 1n).toBe(seqNos[1])
+	expect(seqNos[1]! + 1n).toBe(seqNos[2])
+	expect(seqNos[2]).toBe(lastSeqNo)
 })
 
 test('messages written before initialization are not dropped', async () => {
@@ -506,8 +503,8 @@ test('messages written before initialization are not dropped', async () => {
 		producerId: `test-producer-${Date.now()}`,
 	})
 
-	// Write message immediately (will get temporary seqno = 1)
-	let seqNo = writer.write(new TextEncoder().encode('Test message'))
+	// Write message immediately
+	writer.write(new TextEncoder().encode('Test message'))
 
 	// Flush to ensure message is sent
 	await writer.flush()
@@ -522,8 +519,8 @@ test('messages written before initialization are not dropped', async () => {
 	let messagePayload: string | null = null
 	for await (let batch of reader.read({ limit: 1, waitMs: 2000 })) {
 		for (let msg of batch) {
-			if (msg.seqNo === seqNo) {
-				messagePayload = new TextDecoder().decode(msg.payload)
+			messagePayload = new TextDecoder().decode(msg.payload)
+			if (messagePayload === 'Test message') {
 				messageFound = true
 				break
 			}
@@ -547,21 +544,16 @@ test(
 		let producerId = `test-producer-${Date.now()}`
 
 		// First writer: write messages
-		await using writer1 = await new TopicWriter(driver, {
+		await using writer1 = new TopicWriter(driver, {
 			topic: testTopicName,
 			producerId,
 		})
 
-		let writer1SeqNo1 = writer1.write(
-			new TextEncoder().encode('Writer1 Message 1')
-		)
-		let writer1SeqNo2 = writer1.write(
-			new TextEncoder().encode('Writer1 Message 2')
-		)
+		writer1.write(new TextEncoder().encode('Writer1 Message 1'))
+		writer1.write(new TextEncoder().encode('Writer1 Message 2'))
 		let writer1LastSeqNo = await writer1.flush()
 
-		expect(writer1SeqNo2).toBe(writer1LastSeqNo)
-		expect(writer1SeqNo2).toBe(writer1SeqNo1 + 1n)
+		expect(writer1LastSeqNo).toBeGreaterThan(0n)
 
 		// Wait a bit to ensure messages are committed on server
 		await new Promise((resolve) => setTimeout(resolve, 500))
@@ -581,9 +573,6 @@ test(
 		// Verify seqno are sequential and continue from writer1
 		// This is the key test: writer2 should get lastSeqNo from server and continue sequence
 		// After initialization, seqno for writer2's messages should be recalculated from serverLastSeqNo
-		// Note: write() returns temporary seqno (1, 2, 3...) before initialization
-		// After initialization, seqno are recalculated, but write() return values don't change
-		// We verify correctness through flush() which returns the actual lastSeqNo after recalculation
 		// writer2 wrote 2 messages, so lastSeqNo should be writer1LastSeqNo + 2
 		expect(writer2LastSeqNo).toBe(writer1LastSeqNo + 2n)
 

@@ -85,6 +85,10 @@ export type WriterContext = {
 	// Message buffers - single array with sliding window approach
 	readonly messages: import('@ydbjs/api/topic').StreamWriteMessage_WriteRequest_MessageData[]
 
+	// Track seqNo mode: 'auto' means all seqno are auto-generated, 'manual' means all are user-provided
+	// Updated when first message is written, then remains constant (SeqNoManager enforces mode consistency)
+	readonly seqNoMode: 'auto' | 'manual' | null
+
 	// Buffer window: [bufferStart, bufferStart + bufferLength)
 	readonly bufferStart: number
 	readonly bufferLength: number
@@ -112,7 +116,7 @@ export type WriterContext = {
 
 export type MessageToSend = {
 	data: Uint8Array
-	seqNo: bigint // Now required - TopicWriter always provides it
+	seqNo: bigint // Always provided by TopicWriter (either auto-generated or user-provided)
 	createdAt?: Date
 	metadataItems?: Record<string, Uint8Array>
 }
@@ -120,7 +124,11 @@ export type MessageToSend = {
 // Events for the state machine
 export type WriterEvents =
 	// User-initiated events
-	| { type: 'writer.write'; message: MessageToSend }
+	| {
+			type: 'writer.write'
+			message: MessageToSend
+			seqNoMode?: 'auto' | 'manual'
+	  }
 	| { type: 'writer.flush' }
 	| { type: 'writer.close' }
 	| { type: 'writer.destroy'; reason?: unknown }
@@ -131,7 +139,12 @@ export type WriterEvents =
 export type WriterEmitted =
 	| { type: 'writer.error'; error: unknown }
 	| { type: 'writer.close'; reason?: unknown }
-	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint }
+	| {
+			type: 'writer.session'
+			sessionId: string
+			lastSeqNo: bigint
+			nextSeqNo: bigint
+	  }
 	| {
 			type: 'writer.acknowledgments'
 			acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'>

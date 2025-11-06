@@ -37,10 +37,7 @@ export function _write(
 	let seqNo = msg.seqNo ?? (ctx.lastSeqNo ?? 0n) + 1n
 	let createdAt = timestampFromDate(msg.createdAt ?? new Date())
 	let metadataItems = Object.entries(msg.metadataItems || {}).map(
-		([key, value]) => ({
-			key,
-			value,
-		})
+		([key, value]) => ({ key, value })
 	)
 	let uncompressedSize = BigInt(data.length)
 
@@ -54,7 +51,13 @@ export function _write(
 
 	ctx.buffer.push(message) // Store the message in the buffer
 	ctx.updateBufferSize(BigInt(data.length)) // Update the buffer size
-	ctx.updateLastSeqNo(seqNo) // Update the last sequence number
+
+	// Only update lastSeqNo if session is initialized (lastSeqNo is defined)
+	// For messages written before session initialization, lastSeqNo will be updated
+	// after renumbering in _on_init_response
+	if (ctx.lastSeqNo !== undefined) {
+		ctx.updateLastSeqNo(seqNo)
+	}
 
 	return seqNo
 }

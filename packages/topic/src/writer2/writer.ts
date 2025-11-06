@@ -10,6 +10,7 @@ export class TopicWriter implements AsyncDisposable {
 	#promise: ReturnType<typeof Promise.withResolvers<bigint>> | null = null
 	#subscription: Subscription
 	#seqNoManager: SeqNoManager
+	#isSessionInitialized = false
 
 	constructor(driver: Driver, options: TopicWriterOptions) {
 		this.#seqNoManager = new SeqNoManager()
@@ -30,7 +31,12 @@ export class TopicWriter implements AsyncDisposable {
 
 		// Subscribe to emitted events for seqNo management
 		this.#actor.on('writer.session', (event) => {
-			this.#seqNoManager.initialize(event.lastSeqNo)
+			// State machine already recalculated seqno for all buffered messages
+			// event.nextSeqNo is the next seqno that should be used for new messages
+			// So lastSeqNo for SeqNoManager should be nextSeqNo - 1
+			let lastSeqNo = event.nextSeqNo - 1n
+			this.#seqNoManager.initialize(lastSeqNo)
+			this.#isSessionInitialized = true
 		})
 
 		// Subscribe to error events
@@ -51,7 +57,6 @@ export class TopicWriter implements AsyncDisposable {
 	 * Write a message to the topic
 	 * @param data Message payload
 	 * @param extra Optional message metadata
-	 * @returns Sequence number of the message
 	 */
 	write(
 		data: Uint8Array,
@@ -60,9 +65,13 @@ export class TopicWriter implements AsyncDisposable {
 			createdAt?: Date
 			metadataItems?: Record<string, Uint8Array>
 		}
-	): bigint {
+	): void {
 		// Get seqNo from SeqNoManager (handles auto/manual modes)
 		let seqNo = this.#seqNoManager.getNext(extra?.seqNo)
+		let seqNoState = this.#seqNoManager.getState()
+		// Determine mode for state machine (if not yet determined, determine it now)
+		let seqNoMode: 'auto' | 'manual' | undefined =
+			seqNoState.mode ?? (extra?.seqNo !== undefined ? 'manual' : 'auto')
 
 		this.#actor.send({
 			type: 'writer.write',
@@ -74,15 +83,24 @@ export class TopicWriter implements AsyncDisposable {
 					metadataItems: extra.metadataItems,
 				}),
 			},
+			seqNoMode,
 		})
-
-		return seqNo
 	}
 
 	/**
 	 * Flush all buffered messages and wait for acknowledgment
 	 * @param signal Optional AbortSignal to cancel the flush operation
 	 * @returns Promise that resolves with the last acknowledged sequence number
+	 *
+	 * **Important:** After `flush()` completes, all messages written before this call
+	 * have been sent to the server with their final seqNo values. This is the safe way
+	 * to ensure seqNo accuracy for critical operations like deduplication or tracking.
+	 *
+	 * **Getting final seqNo for messages:**
+	 * After `flush()` completes, all seqNo values up to the returned `lastSeqNo` are final.
+	 * If you need to track individual messages, you can:
+	 * - Use the order of `write()` calls to determine final seqNo (sequential after flush)
+	 * - Use user-provided seqNo (always final, never recalculated)
 	 */
 	async flush(signal?: AbortSignal): Promise<bigint> {
 		// If there's already a flush in progress, return the same promise
@@ -121,7 +139,8 @@ export class TopicWriter implements AsyncDisposable {
 
 	/**
 	 * Get current writer statistics
-	 */ get stats() {
+	 */
+	get stats() {
 		let snapshot = this.#actor.getSnapshot()
 		let seqNoState = this.#seqNoManager.getState()
 
@@ -134,19 +153,47 @@ export class TopicWriter implements AsyncDisposable {
 			bufferLength: snapshot.context.bufferLength,
 			inflightSize: snapshot.context.inflightSize,
 			inflightLength: snapshot.context.inflightLength,
+			isSessionInitialized: this.#isSessionInitialized,
 		}
+	}
+
+	/**
+	 * Check if the writer session is initialized
+	 * @returns true if session is initialized, false otherwise
+	 */
+	get isSessionInitialized(): boolean {
+		return this.#isSessionInitialized
 	}
 
 	/**
 	 * Close the writer gracefully, waiting for all messages to be sent
 	 */
 	async close(signal?: AbortSignal): Promise<void> {
+		let snapshot = this.#actor.getSnapshot()
+
+		// If already closed, return immediately
+		if (snapshot.value === 'closed') {
+			return
+		}
+
+		// If actor is stopped, return immediately
+		if (snapshot.status === 'stopped') {
+			return
+		}
+
 		let { promise, resolve } = Promise.withResolvers<void>()
 		let subscription = this.#actor.subscribe((snapshot) => {
-			if (snapshot.value === 'closed') {
+			if (snapshot.value === 'closed' || snapshot.status === 'stopped') {
 				resolve()
 			}
 		})
+
+		// Check again before sending (actor might have stopped between checks)
+		snapshot = this.#actor.getSnapshot()
+		if (snapshot.value === 'closed' || snapshot.status === 'stopped') {
+			subscription.unsubscribe()
+			return
+		}
 
 		this.#actor.send({ type: 'writer.close' })
 
@@ -177,7 +224,16 @@ export class TopicWriter implements AsyncDisposable {
 	 * AsyncDisposable implementation - graceful close with resource cleanup
 	 */
 	async [Symbol.asyncDispose](): Promise<void> {
-		await this.close()
-		this.destroy()
+		// Try graceful close first
+		try {
+			await this.close()
+		} catch (error) {
+			// If close fails, force destroy
+			this.destroy(error as Error)
+			throw error
+		}
+		// After successful close, the actor is already stopped in closed state
+		// Just clean up subscription
+		this.#subscription.unsubscribe()
 	}
 }

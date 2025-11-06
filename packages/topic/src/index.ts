@@ -39,6 +39,3 @@ export function topic(driver: Driver): TopicClient {
 		},
 	} as TopicClient
 }
-
-export type { TopicTxReader } from './reader/index.js'
-export type { TopicTxWriter } from './writer/index.js'
