@@ -1,20 +1,20 @@
-import type { StreamReadMessage_FromClient } from "@ydbjs/api/topic"
-import type { Driver } from "@ydbjs/core"
-import { loggers } from "@ydbjs/debug"
+import type { StreamReadMessage_FromClient } from '@ydbjs/api/topic'
+import type { Driver } from '@ydbjs/core'
+import { loggers } from '@ydbjs/debug'
 
-import { AsyncPriorityQueue } from "../queue.js"
-import { defaultCodecMap } from "../codec.js"
+import { AsyncPriorityQueue } from '../queue.js'
+import { defaultCodecMap } from '../codec.js'
 
-import type { TopicReader, TopicReaderOptions, TopicReaderState, TopicTxReader, TopicTxReaderState } from "./types.js"
-import { _send_update_token_request } from "./_update_token.js"
-import { _parse_topics_read_settings } from "./_topics_config.js"
-import { _consume_stream } from "./_consume_stream.js"
-import { _consume_stream_tx } from "./_consume_stream_tx.js"
-import { _read } from "./_read.js"
-import { _commit } from "./_commit.js"
-import { _update_offsets_in_transaction } from "./_update_offsets_in_transaction.js"
-import { _create_disposal_functions, _initialize_codecs, _start_background_token_refresher } from "./_shared.js"
-import type { TX } from "../tx.js"
+import type { TopicReader, TopicReaderOptions, TopicReaderState, TopicTxReader, TopicTxReaderState } from './types.js'
+import { _send_update_token_request } from './_update_token.js'
+import { _parse_topics_read_settings } from './_topics_config.js'
+import { _consume_stream } from './_consume_stream.js'
+import { _consume_stream_tx } from './_consume_stream_tx.js'
+import { _read } from './_read.js'
+import { _commit } from './_commit.js'
+import { _update_offsets_in_transaction } from './_update_offsets_in_transaction.js'
+import { _create_disposal_functions, _initialize_codecs, _start_background_token_refresher } from './_shared.js'
+import type { TX } from '../tx.js'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -105,7 +105,7 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 				// Wait for all pending commits or timeout after 30 seconds
 				await Promise.race([
 					Promise.all(pendingCommitPromises),
-					new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS))
+					new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS)),
 				])
 			} catch (err) {
 				dbg.log('error during close: %O', err)
@@ -137,19 +137,22 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 
 	return {
 		read(options = {}) {
-			return _read({
-				disposed: state.disposed,
-				controller: state.controller,
-				buffer: state.buffer,
-				partitionSessions: state.partitionSessions,
-				codecs: state.codecs,
-				outgoingQueue: state.outgoingQueue,
-				maxBufferSize: state.maxBufferSize,
-				freeBufferSize: state.freeBufferSize,
-				updateFreeBufferSize: (releasedBytes: bigint) => {
-					state.freeBufferSize += releasedBytes
+			return _read(
+				{
+					disposed: state.disposed,
+					controller: state.controller,
+					buffer: state.buffer,
+					partitionSessions: state.partitionSessions,
+					codecs: state.codecs,
+					outgoingQueue: state.outgoingQueue,
+					maxBufferSize: state.maxBufferSize,
+					freeBufferSize: state.freeBufferSize,
+					updateFreeBufferSize: (releasedBytes: bigint) => {
+						state.freeBufferSize += releasedBytes
+					},
 				},
-			}, options)
+				options
+			)
 		},
 
 		commit(input) {
@@ -162,7 +165,11 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 	}
 }
 
-export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: Driver, options: TopicReaderOptions): TopicTxReader {
+export const createTopicTxReader = function createTopicTxReader(
+	tx: TX,
+	driver: Driver,
+	options: TopicReaderOptions
+): TopicTxReader {
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
 
 	let state: TopicTxReaderState = {
@@ -194,7 +201,6 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 
 	// Register precommit hook to send updateOffsetsInTransaction
 	tx.onCommit(async () => {
-		// Send updateOffsetsInTransaction for all read offsets
 		let updates = []
 
 		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
@@ -202,7 +208,7 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 			if (partitionSession) {
 				updates.push({
 					partitionSession,
-					offsetRange
+					offsetRange,
 				})
 			}
 		}
@@ -210,13 +216,24 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 		dbg.log('Updating offsets in transaction for %d partitions', updates.length)
 
 		if (updates.length > 0) {
-			await _update_offsets_in_transaction(
-				tx,
-				state.driver,
-				state.options.consumer,
-				updates
-			)
+			await _update_offsets_in_transaction(tx, state.driver, state.options.consumer, updates)
 		}
+
+		closeWithReason('Transaction committed')
+	})
+
+	tx.onRollback((error) => {
+		dbg.log('transaction rollback detected, closing tx reader: %O', error)
+		closeWithReason('Transaction rolled back', error)
+	})
+
+	tx.onClose(() => {
+		if (state.disposed) {
+			return
+		}
+
+		dbg.log('transaction closed, disposing tx reader')
+		closeWithReason('Transaction closed')
 	})
 
 	// Start consuming the stream immediately.
@@ -241,71 +258,47 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 		state.controller.signal
 	)
 
+	function closeWithReason(reason: string, error?: unknown) {
+		if (state.disposed) {
+			return
+		}
+
+		dbg.log('tx reader closing (%s)', reason)
+		destroy(error ?? new Error(reason))
+	}
+
 	async function close() {
-		if (state.disposed) return
-
-		// Stop accepting new messages and requests
-		state.outgoingQueue.close()
-
-		// Send updateOffsetsInTransaction for all read offsets before closing
-		let updates = []
-		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
-			let partitionSession = state.partitionSessions.get(partitionSessionId)
-			if (partitionSession) {
-				updates.push({
-					partitionSession,
-					offsetRange
-				})
-			}
-		}
-
-		dbg.log('Updating offsets in transaction during close for %d partitions', updates.length)
-
-		if (updates.length > 0) {
-			try {
-				await _update_offsets_in_transaction(
-					tx,
-					state.driver,
-					state.options.consumer,
-					updates
-				)
-			} catch (error) {
-				dbg.log('error updating offsets during close: %O', error)
-				// Don't throw, continue with cleanup
-			}
-		}
-
-		dbg.log('tx reader closed gracefully')
-
-		// Now safely dispose - this will stop the token refresher via AbortSignal
-		destroy(new Error('TopicTxReader closed'))
+		closeWithReason('TopicTxReader closed')
 	}
 
 	function destroy(reason: unknown) {
 		if (state.disposed) return
 
-		state.disposed = true
+		state.controller.abort(reason)
 		state.outgoingQueue.close()
 		state.readOffsets.clear()
-		state.controller.abort(reason)
+		state.disposed = true
 	}
 
 	return {
 		read(readOptions = {}) {
-			return _read({
-				disposed: state.disposed,
-				controller: state.controller,
-				buffer: state.buffer,
-				partitionSessions: state.partitionSessions,
-				codecs: state.codecs,
-				outgoingQueue: state.outgoingQueue,
-				maxBufferSize: state.maxBufferSize,
-				freeBufferSize: state.freeBufferSize,
-				readOffsets: state.readOffsets,
-				updateFreeBufferSize: (releasedBytes: bigint) => {
-					state.freeBufferSize += releasedBytes
+			return _read(
+				{
+					disposed: state.disposed,
+					controller: state.controller,
+					buffer: state.buffer,
+					partitionSessions: state.partitionSessions,
+					codecs: state.codecs,
+					outgoingQueue: state.outgoingQueue,
+					maxBufferSize: state.maxBufferSize,
+					freeBufferSize: state.freeBufferSize,
+					readOffsets: state.readOffsets,
+					updateFreeBufferSize: (releasedBytes: bigint) => {
+						state.freeBufferSize += releasedBytes
+					},
 				},
-			}, readOptions)
+				readOptions
+			)
 		},
 
 		close,
@@ -314,4 +307,4 @@ export const createTopicTxReader = function createTopicTxReader(tx: TX, driver: 
 }
 
 // Re-export types for compatibility
-export type { TopicReaderOptions, TopicReader, TopicTxReader } from "./types.js"
+export type { TopicReaderOptions, TopicReader, TopicTxReader } from './types.js'
