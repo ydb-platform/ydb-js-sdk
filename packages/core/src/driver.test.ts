@@ -7,7 +7,7 @@ test('database in pathname', async () => {
 		'ydb.sdk.enable_discovery': false,
 	})
 
-	expect(driver.database, 'Database is not set').toBe('/local')
+	expect(driver.database).toBe('/local')
 })
 
 test('database in querystring', async () => {
@@ -15,7 +15,7 @@ test('database in querystring', async () => {
 		'ydb.sdk.enable_discovery': false,
 	})
 
-	expect(driver.database, 'Database is not set').toBe('/local')
+	expect(driver.database).toBe('/local')
 })
 
 test('validates default channel options for long-lived streams', () => {
@@ -44,7 +44,7 @@ test('allows custom channel options override', () => {
 		channelOptions: {
 			'grpc.keepalive_time_ms': 60_000, // Custom value
 			'grpc.max_send_message_length': 32 * 1024 * 1024, // Custom value
-		}
+		},
 	}
 
 	let driver = new Driver('grpc://localhost:2136/test', customOptions)

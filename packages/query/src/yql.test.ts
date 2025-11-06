@@ -70,7 +70,8 @@ test('processes mixed parameters and identifiers', () => {
 })
 
 test('handles falsy values', () => {
-	let { text, params } = yql`SELECT * FROM table WHERE str = ${""} AND int = ${0} AND int64 = ${0n} AND bool = ${false};`
+	let { text, params } =
+		yql`SELECT * FROM table WHERE str = ${''} AND int = ${0} AND int64 = ${0n} AND bool = ${false};`
 
 	expect(text).eq('SELECT * FROM table WHERE str = $p0 AND int = $p1 AND int64 = $p2 AND bool = $p3;')
 	expect(params).toMatchInlineSnapshot(`
@@ -96,29 +97,27 @@ test('handles falsy values', () => {
 })
 
 test('throws detailed error for undefined value', () => {
-	try {
-		// oxlint-disable-next-line no-unassigned-vars
-		let undefinedVar: any
+	// oxlint-disable-next-line no-unassigned-vars
+	let undefinedVar: any
+
+	expect(() => {
 		void yql`SELECT ${undefinedVar};`
-		expect.fail('Should have thrown')
-	} catch (error: any) {
-		expect(error.message).toContain('position 0')
-		expect(error.message).toContain('Undefined value')
-		expect(error.message).toContain('variable wasn\'t initialized')
-		expect(error.message).toContain('YDB Optional type')
-	}
+	}).toThrowErrorMatchingInlineSnapshot(`
+		[Error: ❌ Undefined value at position 0 in yql template. This usually means:
+		  • A variable wasn't initialized
+		  • A function returned undefined
+		  • An object property doesn't exist
+		For intentional null database values, use YDB Optional type.]
+	`)
 })
 
 test('throws detailed error for null value', () => {
-	try {
+	expect(() => {
 		void yql`SELECT ${42}, ${null}, ${true};`
-		expect.fail('Should have thrown')
-	} catch (error: any) {
-		expect(error.message).toContain('position 1') // null is at position 1
-		expect(error.message).toContain('Null value')
-		expect(error.message).toContain('JavaScript null is not directly supported')
-		expect(error.message).toContain('YDB Optional type')
-	}
+	}).toThrowErrorMatchingInlineSnapshot(`
+		[Error: ❌ Null value at position 1 in yql template. JavaScript null is not directly supported in YDB queries.
+		For null database values, use YDB Optional type instead.]
+	`)
 })
 
 test('handles unsafe strings', () => {
@@ -210,12 +209,13 @@ test('handles unsafe values at boundaries', () => {
 })
 
 test('validates all parameters and reports first error', () => {
-	try {
-		void yql`SELECT ${undefined}, ${null};` // both are invalid
-		expect.fail('Should have thrown')
-	} catch (error: any) {
-		// Should catch the first error (undefined at position 0)
-		expect(error.message).toContain('position 0')
-		expect(error.message).toContain('Undefined value')
-	}
+	expect(() => {
+		void yql`SELECT ${undefined}, ${null};`
+	}).toThrowErrorMatchingInlineSnapshot(`
+		[Error: ❌ Undefined value at position 0 in yql template. This usually means:
+		  • A variable wasn't initialized
+		  • A function returned undefined
+		  • An object property doesn't exist
+		For intentional null database values, use YDB Optional type.]
+	`)
 })

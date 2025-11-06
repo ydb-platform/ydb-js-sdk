@@ -10,12 +10,12 @@
 			}
 		],
 		"unicorn/require-post-message-target-origin": "off",
-		"yoda": "deny"
+		"yoda": "deny",
+		"vitest/consistent-test-it": ["error", { "fn": "test" }],
+		"vitest/max-nested-describe": ["error", 0]
 	},
-	"ignorePatterns": [
-		"**/node_modules/**",
-		"**/dist/**"
-	],
+	"plugins": ["node", "import", "vitest", "promise", "typescript"],
+	"ignorePatterns": ["**/node_modules/**", "**/dist/**"],
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn",

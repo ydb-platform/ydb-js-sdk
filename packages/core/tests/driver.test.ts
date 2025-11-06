@@ -7,5 +7,5 @@ test('initializes driver ready', async () => {
 		'ydb.sdk.discovery_timeout_ms': 1000,
 	})
 
-	expect(() => driver.ready(), 'Driver is not ready').not.throw()
+	expect(() => driver.ready()).not.throw()
 })

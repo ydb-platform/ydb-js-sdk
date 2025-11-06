@@ -101,7 +101,7 @@ test('starts background refresh when approaching soft expiry threshold', async (
 	expect(token2).toBe(token1) // Still cached token
 
 	vi.useRealTimers()
-	await new Promise(resolve => setTimeout(resolve, 100))
+	await new Promise((resolve) => setTimeout(resolve, 100))
 
 	let token3 = await provider.getToken()
 	expect(token3).toBeDefined()
@@ -174,9 +174,9 @@ test('handles concurrent requests without duplicate authentication', async () =>
 	let firstToken = tokens[0]
 	expect(firstToken).toBeDefined()
 
-	tokens.forEach(token => {
+	for (let token of tokens) {
 		expect(token).toBe(firstToken)
-	})
+	}
 })
 
 test('respects abort signal', async () => {
@@ -189,7 +189,7 @@ test('respects abort signal', async () => {
 	let controller = new AbortController()
 	setTimeout(() => controller.abort(), 1)
 
-	await expect(provider.getToken(false, controller.signal)).rejects.toThrow()
+	await expect(provider.getToken(false, controller.signal)).rejects.toThrow('AbortError')
 })
 
 test('handles invalid credentials gracefully', async () => {
@@ -197,7 +197,7 @@ test('handles invalid credentials gracefully', async () => {
 
 	let provider = new StaticCredentialsProvider({ username: 'invalid', password: 'invalid' }, endpoint)
 
-	await expect(provider.getToken()).rejects.toThrow()
+	await expect(provider.getToken()).rejects.toBeInstanceOf(Error)
 })
 
 test('handles invalid endpoint protocols', async () => {

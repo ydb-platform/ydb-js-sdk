@@ -182,7 +182,7 @@ export class Driver implements Disposable {
 			)
 				.then(() => {
 					dbg.log('single endpoint ready')
-					this.#ready.resolve()
+					return this.#ready.resolve()
 				})
 				.catch((error) => {
 					dbg.log('single endpoint failed to become ready: %O', error)
@@ -198,7 +198,7 @@ export class Driver implements Disposable {
 			this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
 				.then(() => {
 					dbg.log('initial discovery completed successfully')
-					this.#ready.resolve()
+					return this.#ready.resolve()
 				})
 				.catch((error) => {
 					dbg.log('initial discovery failed: %O', error)
@@ -206,7 +206,10 @@ export class Driver implements Disposable {
 				})
 
 			// Periodic discovery
-			dbg.log('setting up periodic discovery every %d ms', this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!)
+			dbg.log(
+				'setting up periodic discovery every %d ms',
+				this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!
+			)
 			this.#rediscoverTimer = setInterval(() => {
 				dbg.log('starting periodic discovery')
 				void this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
@@ -313,7 +316,10 @@ export class Driver implements Disposable {
 	}
 
 	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
-		dbg.log(`creating client for %s${preferNodeId ? ` with preferNodeId: ${preferNodeId}` : ''}`, service.fullName || service.name)
+		dbg.log(
+			`creating client for %s${preferNodeId ? ` with preferNodeId: ${preferNodeId}` : ''}`,
+			service.fullName || service.name
+		)
 		return createClientFactory()
 			.use(this.#middleware)
 			.create(
