@@ -1,38 +1,49 @@
-import { abortable } from "@ydbjs/abortable"
-import { Codec } from "@ydbjs/api/topic"
-import { timestampMs } from "@bufbuild/protobuf/wkt"
-import { loggers } from "@ydbjs/debug"
+import { abortable } from '@ydbjs/abortable'
+import { Codec } from '@ydbjs/api/topic'
+import { timestampMs } from '@bufbuild/protobuf/wkt'
+import { loggers } from '@ydbjs/debug'
 
-import { TopicMessage } from "../message.js"
-import { _send_read_request } from "./_read_request.js"
-import type { TopicPartitionSession } from "../partition-session.js"
-import type { CodecMap } from "../codec.js"
-import type { AsyncPriorityQueue } from "../queue.js"
-import type { StreamReadMessage_FromClient, StreamReadMessage_ReadResponse } from "@ydbjs/api/topic"
+import { TopicMessage } from '../message.js'
+import { _send_read_request } from './_read_request.js'
+import type { TopicPartitionSession } from '../partition-session.js'
+import type { CodecMap } from '../codec.js'
+import type { AsyncPriorityQueue } from '../queue.js'
+import type { StreamReadMessage_FromClient, StreamReadMessage_ReadResponse } from '@ydbjs/api/topic'
 
 let dbg = loggers.topic.extend('reader')
 
-export let _read = function read(ctx: {
-	readonly disposed: boolean
-	readonly controller: AbortController
-	readonly buffer: StreamReadMessage_ReadResponse[]
-	readonly partitionSessions: Map<bigint, TopicPartitionSession>
-	readonly codecs: CodecMap
-	readonly outgoingQueue: AsyncPriorityQueue<StreamReadMessage_FromClient>
-	readonly maxBufferSize: bigint
-	readonly freeBufferSize: bigint
-	readonly readOffsets?: Map<bigint, { firstOffset: bigint, lastOffset: bigint }> // Optional for transaction support
-	readonly updateFreeBufferSize: (releasedBytes: bigint) => void // Helper to update free buffer size
-}, options: { limit?: number, waitMs?: number, signal?: AbortSignal } = {}
+export let _read = function read(
+	ctx: {
+		readonly disposed: boolean
+		readonly controller: AbortController
+		readonly buffer: StreamReadMessage_ReadResponse[]
+		readonly partitionSessions: Map<bigint, TopicPartitionSession>
+		readonly codecs: CodecMap
+		readonly outgoingQueue: AsyncPriorityQueue<StreamReadMessage_FromClient>
+		readonly maxBufferSize: bigint
+		readonly freeBufferSize: bigint
+		readonly readOffsets?: Map<bigint, { firstOffset: bigint; lastOffset: bigint }> // Optional for transaction support
+		readonly updateFreeBufferSize: (releasedBytes: bigint) => void // Helper to update free buffer size
+	},
+	options: { limit?: number; waitMs?: number; signal?: AbortSignal } = {}
 ): AsyncIterable<TopicMessage[]> {
 	let limit = options.limit || Infinity
 	let signal = options.signal
 	let waitMs = options.waitMs || 60_000
 
-	dbg.log('starting read operation with limit=%s, waitMs=%d, hasSignal=%s',
-		limit === Infinity ? 'unlimited' : limit, waitMs, !!signal)
-	dbg.log('reader state: disposed=%s, bufferSize=%d, freeBufferSize=%d, partitionSessions=%d',
-		ctx.disposed, ctx.buffer.length, ctx.freeBufferSize, ctx.partitionSessions.size)
+	dbg.log(
+		'starting read operation with limit=%s, waitMs=%d, hasSignal=%s',
+		limit === Infinity ? 'unlimited' : limit,
+		waitMs,
+		!!signal
+	)
+	dbg.log(
+		'reader state: disposed=%s, bufferSize=%d, freeBufferSize=%d, partitionSessions=%d',
+		ctx.disposed,
+		ctx.buffer.length,
+		ctx.freeBufferSize,
+		ctx.partitionSessions.size
+	)
 
 	// Check if the reader has been disposed, cannot read with disposed reader
 	if (ctx.disposed) {
@@ -55,8 +66,11 @@ export let _read = function read(ctx: {
 		let messageCount = 0
 
 		while (true) {
-			dbg.log('generator iteration called, messageCount=%d, limit=%s',
-				messageCount, limit === Infinity ? 'unlimited' : limit)
+			dbg.log(
+				'generator iteration called, messageCount=%d, limit=%s',
+				messageCount,
+				limit === Infinity ? 'unlimited' : limit
+			)
 
 			// If the reader is disposed, return
 			if (ctx.disposed) {
@@ -94,11 +108,7 @@ export let _read = function read(ctx: {
 				try {
 					// oxlint-disable-next-line no-await-in-loop
 					await abortable(AbortSignal.any([signal, AbortSignal.timeout(waitMs)]), waiter.promise)
-						.finally(() => {
-							clearInterval(bufferCheckInterval)
-						})
 				} catch {
-					clearInterval(bufferCheckInterval)
 					if (signal.aborted) {
 						dbg.log('read aborted during wait, finishing')
 						return
@@ -107,6 +117,8 @@ export let _read = function read(ctx: {
 					dbg.log('wait timeout expired, yielding empty result')
 					yield []
 					continue
+				} finally {
+					clearInterval(bufferCheckInterval)
 				}
 
 				if (signal.aborted) {
@@ -121,7 +133,6 @@ export let _read = function read(ctx: {
 			}
 
 			let releasableBufferBytes = 0n
-
 			while (ctx.buffer.length && messageCount < limit) {
 				let fullRead = true
 				let response = ctx.buffer.shift()! // Get the first response from the buffer
@@ -151,6 +162,17 @@ export let _read = function read(ctx: {
 						break
 					}
 
+					let partitionSession = ctx.partitionSessions.get(pd.partitionSessionId)
+					if (!partitionSession) {
+						dbg.log('error: readResponse for unknown partitionSessionId=%s', pd.partitionSessionId)
+						continue
+					}
+
+					if (partitionSession.isStopped) {
+						dbg.log('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId)
+						continue
+					}
+
 					while (pd.batches.length && messageCount < limit) {
 						let batch = pd.batches.shift()! // Get the first batch
 
@@ -163,17 +185,6 @@ export let _read = function read(ctx: {
 						if (messageCount >= limit) {
 							pd.batches.unshift(batch) // Put the batch back to the front of the partition data
 							break
-						}
-
-						let partitionSession = ctx.partitionSessions.get(pd.partitionSessionId)
-						if (!partitionSession) {
-							dbg.log('error: readResponse for unknown partitionSessionId=%s', pd.partitionSessionId)
-							continue
-						}
-
-						if (partitionSession.isStopped) {
-							dbg.log('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId)
-							continue
 						}
 
 						while (batch.messageData.length && messageCount < limit) {
@@ -213,7 +224,11 @@ export let _read = function read(ctx: {
 								uncompressedSize: msg.uncompressedSize,
 								...(msg.createdAt && { createdAt: timestampMs(msg.createdAt) }),
 								...(batch.writtenAt && { writtenAt: timestampMs(batch.writtenAt) }),
-								...(msg.metadataItems && { metadataItems: Object.fromEntries(msg.metadataItems.map(item => [item.key, item.value])) })
+								...(msg.metadataItems && {
+									metadataItems: Object.fromEntries(
+										msg.metadataItems.map((item) => [item.key, item.value])
+									),
+								}),
 							})
 
 							// Track read offset for transaction support
@@ -226,7 +241,7 @@ export let _read = function read(ctx: {
 									// First message for this partition session
 									ctx.readOffsets.set(pd.partitionSessionId, {
 										firstOffset: msg.offset,
-										lastOffset: msg.offset
+										lastOffset: msg.offset,
 									})
 								}
 							}
@@ -245,7 +260,8 @@ export let _read = function read(ctx: {
 						fullRead = false
 						response.partitionData.unshift(pd) // Put the partition data back to the front of the response
 					}
-				} if (response.partitionData.length != 0) {
+				}
+				if (response.partitionData.length != 0) {
 					fullRead = false
 					ctx.buffer.unshift(response) // Put the response back to the front of the buffer
 				}
@@ -257,12 +273,25 @@ export let _read = function read(ctx: {
 				}
 			}
 
-			dbg.log('message processing complete: yielding %d messages, total messageCount=%d',
-				messages.length, messageCount)
-			dbg.log('buffer state: bufferSize=%d, maxBufferSize=%d, freeBufferSize=%d, releasableBytes=%s',
-				ctx.buffer.length, ctx.maxBufferSize, ctx.freeBufferSize, releasableBufferBytes)
+			dbg.log(
+				'message processing complete: yielding %d messages, total messageCount=%d',
+				messages.length,
+				messageCount
+			)
+			dbg.log(
+				'buffer state: bufferSize=%d, maxBufferSize=%d, freeBufferSize=%d, releasableBytes=%s',
+				ctx.buffer.length,
+				ctx.maxBufferSize,
+				ctx.freeBufferSize,
+				releasableBufferBytes
+			)
 
-			dbg.log('yield %d messages, buffer size is %d bytes, free buffer size is %d bytes', messages.length, ctx.maxBufferSize - ctx.freeBufferSize, ctx.freeBufferSize)
+			dbg.log(
+				'yield %d messages, buffer size is %d bytes, free buffer size is %d bytes',
+				messages.length,
+				ctx.maxBufferSize - ctx.freeBufferSize,
+				ctx.freeBufferSize
+			)
 
 			if (releasableBufferBytes > 0n) {
 				// Update free buffer size using helper function
@@ -271,7 +300,7 @@ export let _read = function read(ctx: {
 				// If we have free buffer space, request more data.
 				_send_read_request({
 					queue: ctx.outgoingQueue,
-					bytesSize: releasableBufferBytes
+					bytesSize: releasableBufferBytes,
 				})
 			}
 
