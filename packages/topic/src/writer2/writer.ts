@@ -3,7 +3,6 @@ import type { Driver } from '@ydbjs/core'
 import { abortable } from '@ydbjs/abortable'
 import { WriterMachine } from './machine.js'
 import { SeqNoManager } from './seqno-manager.js'
-import { SeqNoResolver } from './seqno-resolver.js'
 import type { TopicWriterOptions } from './types.js'
 
 export class TopicWriter implements AsyncDisposable {
@@ -12,11 +11,9 @@ export class TopicWriter implements AsyncDisposable {
 	#subscription: Subscription
 	#seqNoManager: SeqNoManager
 	#isSessionInitialized = false
-	#seqNoResolver: SeqNoResolver
 
 	constructor(driver: Driver, options: TopicWriterOptions) {
 		this.#seqNoManager = new SeqNoManager()
-		this.#seqNoResolver = new SeqNoResolver()
 		this.#actor = createActor(WriterMachine, { input: { driver, options } })
 
 		// Subscribe to state changes for flush completions
@@ -35,9 +32,6 @@ export class TopicWriter implements AsyncDisposable {
 			// event.nextSeqNo is the next seqno that should be used for new messages
 			// So lastSeqNo for SeqNoManager should be nextSeqNo - 1
 			let lastSeqNo = event.nextSeqNo - 1n
-			if (event.seqNoShifts?.length) {
-				this.#seqNoResolver.applyShifts(event.seqNoShifts)
-			}
 			this.#seqNoManager.initialize(lastSeqNo)
 			this.#isSessionInitialized = true
 		})
@@ -60,42 +54,6 @@ export class TopicWriter implements AsyncDisposable {
 	 * Write a message to the topic
 	 * @param data Message payload
 	 * @param extra Optional message metadata
-	 * @returns Sequence number of the message
-	 *
-	 * **⚠️ WARNING: Do NOT rely on returned seqNo for critical operations!**
-	 *
-	 * The returned seqNo may be a temporary value that gets recalculated after session initialization.
-	 * This can lead to incorrect behavior if used for:
-	 * - Message deduplication
-	 * - Tracking message delivery
-	 * - Database lookups by seqNo
-	 * - Any operation that requires accurate seqNo values
-	 *
-	 * **When seqNo is temporary:**
-	 * - Session is not yet initialized (first messages written before connection)
-	 * - Writer reconnected after network issues
-	 * - Auto-generated seqNo mode (not user-provided)
-	 *
-	 * **When seqNo is final:**
-	 * - User-provided seqNo (via `extra.seqNo`) - always final, never recalculated
-	 * - After `flush()` completes - all messages have been sent with final seqNo
-	 *
-	 * **Recommended usage:**
-	 * ```typescript
-	 * // ❌ BAD: Storing seqNo immediately
-	 * let seqNo = writer.write(data)
-	 * await saveToDatabase(seqNo) // May be wrong!
-	 *
-	 * // ✅ GOOD: Wait for flush to ensure seqNo is final
-	 * writer.write(data)
-	 * let lastSeqNo = await writer.flush() // All messages up to this seqNo are final
-	 * await saveToDatabase(lastSeqNo)
-	 *
-	 * // ✅ GOOD: Use user-provided seqNo (always final)
-	 * let mySeqNo = 100n
-	 * writer.write(data, { seqNo: mySeqNo })
-	 * // mySeqNo is guaranteed to be final
-	 * ```
 	 */
 	write(
 		data: Uint8Array,
@@ -104,7 +62,7 @@ export class TopicWriter implements AsyncDisposable {
 			createdAt?: Date
 			metadataItems?: Record<string, Uint8Array>
 		}
-	): bigint {
+	): void {
 		// Get seqNo from SeqNoManager (handles auto/manual modes)
 		let seqNo = this.#seqNoManager.getNext(extra?.seqNo)
 		let seqNoState = this.#seqNoManager.getState()
@@ -122,19 +80,6 @@ export class TopicWriter implements AsyncDisposable {
 			},
 			seqNoMode,
 		})
-
-		return seqNo
-	}
-
-	/**
-	 * Resolve final seqNo for a message that was written before session initialization
-	 * or was retried after reconnection.
-	 *
-	 * @param initialSeqNo Temporary seqNo returned by write()
-	 * @returns Final seqNo assigned after session re-initialization
-	 */
-	resolveSeqNo(initialSeqNo: bigint): bigint {
-		return this.#seqNoResolver.resolveSeqNo(initialSeqNo)
 	}
 
 	/**
@@ -146,10 +91,9 @@ export class TopicWriter implements AsyncDisposable {
 	 * have been sent to the server with their final seqNo values. This is the safe way
 	 * to ensure seqNo accuracy for critical operations like deduplication or tracking.
 	 *
-	 * **Getting final seqNo for specific messages:**
+	 * **Getting final seqNo for messages:**
 	 * After `flush()` completes, all seqNo values up to the returned `lastSeqNo` are final.
 	 * If you need to track individual messages, you can:
-	 * - Call `writer.resolveSeqNo(initialSeqNo)` to translate temporary numbers into final ones
 	 * - Use the order of `write()` calls to determine final seqNo (sequential after flush)
 	 * - Use user-provided seqNo (always final, never recalculated)
 	 */
@@ -207,16 +151,7 @@ export class TopicWriter implements AsyncDisposable {
 
 	/**
 	 * Check if the writer session is initialized
-	 * @returns true if session is initialized and seqNo values are final, false if they may be temporary
-	 *
-	 * **Usage:**
-	 * ```typescript
-	 * let seqNo = writer.write(data)
-	 * if (!writer.isSessionInitialized) {
-	 *   // seqNo may be temporary, wait for flush before using it
-	 *   await writer.flush()
-	 * }
-	 * ```
+	 * @returns true if session is initialized, false otherwise
 	 */
 	get isSessionInitialized(): boolean {
 		return this.#isSessionInitialized
@@ -266,7 +201,6 @@ export class TopicWriter implements AsyncDisposable {
 		// Reject any pending flush
 		this.#promise?.reject(new Error('Writer was destroyed'))
 		this.#promise = null
-		this.#seqNoResolver.reset()
 
 		// Send destroy event (optional - for cleanup logic)
 		this.#actor.send({ type: 'writer.destroy', ...(reason && { reason }) })

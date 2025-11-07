@@ -113,12 +113,6 @@ export type MessageToSend = {
 	metadataItems?: Record<string, Uint8Array>
 }
 
-export type SeqNoShift = {
-	start: bigint
-	end: bigint
-	delta: bigint
-}
-
 // Events for the state machine
 export type WriterEvents =
 	// User-initiated events
@@ -138,7 +132,6 @@ export type WriterEmitted =
 			sessionId: string
 			lastSeqNo: bigint
 			nextSeqNo: bigint
-			seqNoShifts?: SeqNoShift[]
 	  }
 	| { type: 'writer.acknowledgments'; acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'> }
 

@@ -37,7 +37,6 @@ import { isRetryableError } from '@ydbjs/retry'
 import { assign, enqueueActions, sendTo, setup } from 'xstate'
 import { defaultCodecMap } from '../codec.js'
 import { WriterStream, type WriterStreamReceiveEvent } from './stream.js'
-import { SeqNoShiftBuilder } from './seqno-shift-builder.js'
 import type { TopicWriterOptions, WriterContext, WriterEmitted, WriterEvents, WriterInput } from './types.js'
 import { loggers } from '@ydbjs/debug'
 
@@ -268,8 +267,7 @@ let writerMachineFactory = setup({
 		 *
 		 * Mode-specific behaviour:
 		 * - Manual seqNo: compact the window, update bookkeeping, keep user-provided seqNo as-is
-		 * - Auto seqNo: compact the window, renumber remaining messages, emit `SeqNoShift` segments so
-		 *   `TopicWriter.resolveSeqNo()` can translate temporary numbers into the final ones
+		 * - Auto seqNo: compact the window, renumber remaining messages sequentially
 		 *
 		 * @param enqueue - XState enqueue helper for scheduling actions
 		 * @param event - init response with session metadata
@@ -375,22 +373,14 @@ let writerMachineFactory = setup({
 
 			let newBufferStart = firstPendingIndex
 
-			let shiftBuilder = new SeqNoShiftBuilder()
-
 			// Renumber the remaining messages sequentially so we continue where the server left off.
 			for (let i = firstPendingIndex; i < bufferEndIndex; i++) {
 				let message = context.messages[i]
 				if (!message) continue
 
-				let oldSeqNo = message.seqNo
-				let newSeqNo = nextSeqNo
+				message.seqNo = nextSeqNo
 				nextSeqNo++
-
-				shiftBuilder.addShift(oldSeqNo, newSeqNo)
-				message.seqNo = newSeqNo
 			}
-
-			let seqNoShifts = shiftBuilder.build()
 
 			let inflightSize = context.inflightSize - acknowledgedSize - pendingSize
 			let bufferSize = context.bufferSize + pendingSize
@@ -413,7 +403,6 @@ let writerMachineFactory = setup({
 				sessionId: event.data.sessionId,
 				lastSeqNo: lastSeqNo,
 				nextSeqNo,
-				...(seqNoShifts.length ? { seqNoShifts } : {}),
 			}))
 		}),
 
