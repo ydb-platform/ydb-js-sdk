@@ -45,12 +45,12 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "2.10.0",
 		"@grpc/grpc-js": "^1.14.0",
-		"@ydbjs/abortable": "6.0.5",
-		"@ydbjs/api": "6.0.5",
-		"@ydbjs/auth": "^6.0.5",
-		"@ydbjs/debug": "6.0.5",
-		"@ydbjs/error": "6.0.5",
-		"@ydbjs/retry": "6.0.5",
+		"@ydbjs/abortable": "^6.0.0",
+		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/auth": "^6.0.0",
+		"@ydbjs/debug": "^6.0.0",
+		"@ydbjs/error": "^6.0.0",
+		"@ydbjs/retry": "^6.0.0",
 		"abort-controller-x": "^0.4.3",
 		"nice-grpc": "^2.1.13"
 	},

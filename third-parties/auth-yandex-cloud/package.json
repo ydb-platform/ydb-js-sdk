@@ -48,9 +48,9 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@ydbjs/auth": "^6.0.5",
-		"@ydbjs/debug": "^6.0.5",
-		"@ydbjs/retry": "^6.0.5"
+		"@ydbjs/auth": "^6.0.0",
+		"@ydbjs/debug": "^6.0.0",
+		"@ydbjs/retry": "^6.0.0"
 	},
 	"devDependencies": {
 		"@types/node": "^24.10.0",

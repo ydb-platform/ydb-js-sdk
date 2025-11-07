@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/e2e",
-	"version": "6.0.0",
+	"version": "0.0.0",
 	"private": true,
 	"type": "module",
 	"engines": {
@@ -18,8 +18,11 @@
 		"@ydbjs/auth": "*",
 		"@ydbjs/core": "*",
 		"@ydbjs/debug": "*",
+		"@ydbjs/error": "*",
 		"@ydbjs/query": "*",
-		"@ydbjs/topic": "*"
+		"@ydbjs/retry": "*",
+		"@ydbjs/topic": "*",
+		"@ydbjs/value": "*"
 	},
 	"publishConfig": {
 		"access": "restricted"
