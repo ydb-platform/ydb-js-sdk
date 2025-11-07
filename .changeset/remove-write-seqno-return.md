@@ -2,11 +2,12 @@
 '@ydbjs/topic': minor
 ---
 
-Fix seqNo renumbering bug and simplify TopicWriter API.
+Fix seqNo renumbering bug in both writer implementations and simplify TopicWriter API.
 
 **Bug fix:**
 
 - Fixed issue where messages written before session initialization were not renumbered after receiving `lastSeqNo` from server. Previously, auto-generated seqNo started from 0 and were not updated when server provided actual `lastSeqNo`, causing seqNo conflicts. Now messages are properly renumbered to continue from server's `lastSeqNo + 1`.
+- Fixed in both `writer` (legacy) and `writer2` implementations
 
 **API changes:**
 
