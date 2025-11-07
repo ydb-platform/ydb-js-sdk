@@ -1,9 +1,9 @@
-import type { Driver } from "@ydbjs/core"
-import type { ActorRef, CallbackSnapshot } from "xstate"
-import type { CompressionCodec } from "../codec.js"
-import type { TX } from "../tx.js"
-import type { WriterStreamEmittedEvent, WriterStreamInput, WriterStreamReceiveEvent } from "./stream.ts"
-import type { YDBDebugLogger } from "@ydbjs/debug"
+import type { Driver } from '@ydbjs/core'
+import type { ActorRef, CallbackSnapshot } from 'xstate'
+import type { CompressionCodec } from '../codec.js'
+import type { TX } from '../tx.js'
+import type { WriterStreamEmittedEvent, WriterStreamInput, WriterStreamReceiveEvent } from './stream.ts'
+import type { YDBDebugLogger } from '@ydbjs/debug'
 
 export type TopicWriterOptions = {
 	// Transaction identity.
@@ -79,7 +79,11 @@ export type WriterContext = {
 	readonly sessionId?: string
 
 	// Message buffers - single array with sliding window approach
-	readonly messages: import("@ydbjs/api/topic").StreamWriteMessage_WriteRequest_MessageData[]
+	readonly messages: import('@ydbjs/api/topic').StreamWriteMessage_WriteRequest_MessageData[]
+
+	// Track seqNo mode: 'auto' means all seqno are auto-generated, 'manual' means all are user-provided
+	// Updated when first message is written, then remains constant (SeqNoManager enforces mode consistency)
+	readonly seqNoMode: 'auto' | 'manual' | null
 
 	// Buffer window: [bufferStart, bufferStart + bufferLength)
 	readonly bufferStart: number
@@ -97,12 +101,14 @@ export type WriterContext = {
 	readonly lastError?: unknown
 
 	// Reference to the stream actor
-	readonly streamRef?: ActorRef<CallbackSnapshot<WriterStreamInput>, WriterStreamReceiveEvent, WriterStreamEmittedEvent> | undefined
+	readonly streamRef?:
+		| ActorRef<CallbackSnapshot<WriterStreamInput>, WriterStreamReceiveEvent, WriterStreamEmittedEvent>
+		| undefined
 }
 
 export type MessageToSend = {
 	data: Uint8Array
-	seqNo: bigint  // Now required - TopicWriter always provides it
+	seqNo: bigint // Always provided by TopicWriter (either auto-generated or user-provided)
 	createdAt?: Date
 	metadataItems?: Record<string, Uint8Array>
 }
@@ -110,7 +116,7 @@ export type MessageToSend = {
 // Events for the state machine
 export type WriterEvents =
 	// User-initiated events
-	| { type: 'writer.write'; message: MessageToSend }
+	| { type: 'writer.write'; message: MessageToSend; seqNoMode?: 'auto' | 'manual' }
 	| { type: 'writer.flush' }
 	| { type: 'writer.close' }
 	| { type: 'writer.destroy'; reason?: unknown }
@@ -121,20 +127,18 @@ export type WriterEvents =
 export type WriterEmitted =
 	| { type: 'writer.error'; error: unknown }
 	| { type: 'writer.close'; reason?: unknown }
-	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint }
+	| {
+			type: 'writer.session'
+			sessionId: string
+			lastSeqNo: bigint
+			nextSeqNo: bigint
+	  }
 	| { type: 'writer.acknowledgments'; acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'> }
 
 export type WriterInput = {
-	driver: Driver;
+	driver: Driver
 	options: TopicWriterOptions
 }
 
 // State machine states
-export type WriterStates =
-	| 'connecting'
-	| 'connected'
-	| 'errored'
-	| 'writing'
-	| 'flushing'
-	| 'closing'
-	| 'destroyed'
+export type WriterStates = 'connecting' | 'connected' | 'errored' | 'writing' | 'flushing' | 'closing' | 'destroyed'

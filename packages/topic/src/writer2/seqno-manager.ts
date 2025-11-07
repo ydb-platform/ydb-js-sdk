@@ -7,8 +7,8 @@
  */
 export class SeqNoManager {
 	#mode: 'auto' | 'manual' | null = null
-	#nextSeqNo: bigint = 1n
 	#lastSeqNo: bigint = 0n
+	#nextSeqNo: bigint = 1n
 	#highestUserSeqNo: bigint = 0n
 
 	constructor(initialSeqNo: bigint = 0n) {
@@ -37,7 +37,9 @@ export class SeqNoManager {
 
 		if (this.#mode === 'auto') {
 			if (userSeqNo !== undefined) {
-				throw new Error('Cannot mix auto and manual seqNo modes. Once auto mode is started, all messages must use auto seqNo.')
+				throw new Error(
+					'Cannot mix auto and manual seqNo modes. Once auto mode is started, all messages must use auto seqNo.'
+				)
 			}
 
 			let seqNo = this.#nextSeqNo
@@ -47,12 +49,16 @@ export class SeqNoManager {
 		} else {
 			// Manual mode
 			if (userSeqNo === undefined) {
-				throw new Error('Cannot mix manual and auto seqNo modes. Once manual mode is started, all messages must provide seqNo.')
+				throw new Error(
+					'Cannot mix manual and auto seqNo modes. Once manual mode is started, all messages must provide seqNo.'
+				)
 			}
 
 			// Validate strictly increasing
 			if (userSeqNo <= this.#highestUserSeqNo) {
-				throw new Error(`SeqNo must be strictly increasing. Provided: ${userSeqNo}, highest seen: ${this.#highestUserSeqNo}`)
+				throw new Error(
+					`SeqNo must be strictly increasing. Provided: ${userSeqNo}, highest seen: ${this.#highestUserSeqNo}`
+				)
 			}
 
 			this.#highestUserSeqNo = userSeqNo
