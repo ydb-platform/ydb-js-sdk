@@ -113,9 +113,9 @@ export type MessageToSend = {
 	metadataItems?: Record<string, Uint8Array>
 }
 
-export type SeqNoShiftEvent = {
-	startOld: bigint
-	count: number
+export type SeqNoShift = {
+	start: bigint
+	end: bigint
 	delta: bigint
 }
 
@@ -138,7 +138,7 @@ export type WriterEmitted =
 			sessionId: string
 			lastSeqNo: bigint
 			nextSeqNo: bigint
-			seqNoShifts?: SeqNoShiftEvent[]
+			seqNoShifts?: SeqNoShift[]
 	  }
 	| { type: 'writer.acknowledgments'; acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'> }
 

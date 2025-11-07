@@ -496,7 +496,7 @@ test('new writer continues seqno sequence after previous writer', { timeout: 15_
 	let producerId = `test-producer-${Date.now()}`
 
 	// First writer: write messages
-	await using writer1 = await new TopicWriter(driver, {
+	await using writer1 = new TopicWriter(driver, {
 		topic: testTopicName,
 		producerId,
 	})
@@ -531,6 +531,12 @@ test('new writer continues seqno sequence after previous writer', { timeout: 15_
 	// We verify correctness through flush() which returns the actual lastSeqNo after recalculation
 	// writer2 wrote 2 messages, so lastSeqNo should be writer1LastSeqNo + 2
 	expect(writer2LastSeqNo).toBe(writer1LastSeqNo + 2n)
+
+	// Ensure resolveSeqNo returns authoritative values for both messages
+	let firstSeqNo = writer2.resolveSeqNo(writer1SeqNo1)
+	let secondSeqNo = writer2.resolveSeqNo(writer1SeqNo2)
+	expect(firstSeqNo).toBe(writer1LastSeqNo + 1n)
+	expect(secondSeqNo).toBe(writer1LastSeqNo + 2n)
 
 	// Verify sequentiality: lastSeqNo should be exactly 2 more than writer1's lastSeqNo
 	// (because writer2 wrote 2 messages)

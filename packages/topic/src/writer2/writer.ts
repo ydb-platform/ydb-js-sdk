@@ -3,13 +3,8 @@ import type { Driver } from '@ydbjs/core'
 import { abortable } from '@ydbjs/abortable'
 import { WriterMachine } from './machine.js'
 import { SeqNoManager } from './seqno-manager.js'
-import type { SeqNoShiftEvent, TopicWriterOptions } from './types.js'
-
-type SeqNoShiftSegment = {
-	start: bigint
-	end: bigint
-	delta: bigint
-}
+import { SeqNoResolver } from './seqno-resolver.js'
+import type { TopicWriterOptions } from './types.js'
 
 export class TopicWriter implements AsyncDisposable {
 	#actor: ActorRefFrom<typeof WriterMachine>
@@ -17,10 +12,11 @@ export class TopicWriter implements AsyncDisposable {
 	#subscription: Subscription
 	#seqNoManager: SeqNoManager
 	#isSessionInitialized = false
-	#seqNoShifts: SeqNoShiftSegment[] = []
+	#seqNoResolver: SeqNoResolver
 
 	constructor(driver: Driver, options: TopicWriterOptions) {
 		this.#seqNoManager = new SeqNoManager()
+		this.#seqNoResolver = new SeqNoResolver()
 		this.#actor = createActor(WriterMachine, { input: { driver, options } })
 
 		// Subscribe to state changes for flush completions
@@ -40,7 +36,7 @@ export class TopicWriter implements AsyncDisposable {
 			// So lastSeqNo for SeqNoManager should be nextSeqNo - 1
 			let lastSeqNo = event.nextSeqNo - 1n
 			if (event.seqNoShifts?.length) {
-				this.#applySeqNoShifts(event.seqNoShifts)
+				this.#seqNoResolver.applyShifts(event.seqNoShifts)
 			}
 			this.#seqNoManager.initialize(lastSeqNo)
 			this.#isSessionInitialized = true
@@ -58,194 +54,6 @@ export class TopicWriter implements AsyncDisposable {
 		// lastSeqNo is managed internally when write() is called
 
 		this.#actor.start()
-	}
-
-	#applySeqNoShifts(shifts: SeqNoShiftEvent[]): void {
-		for (let shift of shifts) {
-			this.#applySeqNoShift(shift.startOld, shift.count, shift.delta)
-		}
-	}
-
-	#applySeqNoShift(startOld: bigint, count: number, delta: bigint): void {
-		if (!count || delta === 0n) {
-			return
-		}
-
-		let oldEnd = startOld + BigInt(count)
-		let updatedSegments: SeqNoShiftSegment[] = []
-		let coveredOldRanges: Array<{ start: bigint; end: bigint }> = []
-
-		for (let segment of this.#seqNoShifts) {
-			let segStart = segment.start
-			let segEnd = segment.end
-			let segDelta = segment.delta
-
-			let intersectionStart = segStart > startOld - segDelta ? segStart : startOld - segDelta
-			let intersectionEnd = segEnd < oldEnd - segDelta ? segEnd : oldEnd - segDelta
-
-			if (intersectionStart < intersectionEnd) {
-				if (segStart < intersectionStart) {
-					updatedSegments.push({ start: segStart, end: intersectionStart, delta: segDelta })
-				}
-
-				updatedSegments.push({ start: intersectionStart, end: intersectionEnd, delta: segDelta + delta })
-
-				if (intersectionEnd < segEnd) {
-					updatedSegments.push({ start: intersectionEnd, end: segEnd, delta: segDelta })
-				}
-
-				let coveredStartOld = intersectionStart + segDelta
-				let coveredEndOld = intersectionEnd + segDelta
-				coveredOldRanges.push({ start: coveredStartOld, end: coveredEndOld })
-			} else {
-				updatedSegments.push({ ...segment })
-			}
-		}
-
-		this.#seqNoShifts = this.#mergeShiftSegments(updatedSegments)
-
-		let mergedCovered = this.#mergeRanges(coveredOldRanges, startOld, oldEnd)
-		let uncovered = this.#invertRanges(mergedCovered, startOld, oldEnd)
-		for (let range of uncovered) {
-			this.#seqNoShifts.push({ start: range.start, end: range.end, delta })
-		}
-
-		this.#seqNoShifts = this.#mergeShiftSegments(this.#seqNoShifts)
-	}
-
-	#mergeShiftSegments(segments: SeqNoShiftSegment[]): SeqNoShiftSegment[] {
-		if (!segments.length) {
-			return []
-		}
-
-		let sorted: SeqNoShiftSegment[] = []
-		for (let segment of segments) {
-			let entry = { ...segment }
-			let insertIndex = 0
-			while (insertIndex < sorted.length && sorted[insertIndex]!.start <= entry.start) {
-				insertIndex++
-			}
-			sorted.splice(insertIndex, 0, entry)
-		}
-
-		let merged: SeqNoShiftSegment[] = []
-
-		for (let segment of sorted) {
-			let last = merged[merged.length - 1]
-			if (!last) {
-				merged.push({ ...segment })
-				continue
-			}
-
-			if (segment.start <= last.end) {
-				if (segment.delta === last.delta) {
-					if (segment.end > last.end) {
-						last.end = segment.end
-					}
-					continue
-				}
-
-				if (segment.start < last.end) {
-					let adjustedStart = last.end
-					if (adjustedStart < segment.end) {
-						merged.push({ start: adjustedStart, end: segment.end, delta: segment.delta })
-					}
-					continue
-				}
-			}
-
-			if (segment.start === last.end && segment.delta === last.delta) {
-				last.end = segment.end
-			} else {
-				merged.push({ ...segment })
-			}
-		}
-
-		return merged
-	}
-
-	#mergeRanges(
-		ranges: Array<{ start: bigint; end: bigint }>,
-		boundStart: bigint,
-		boundEnd: bigint
-	): Array<{ start: bigint; end: bigint }> {
-		if (!ranges.length) {
-			return []
-		}
-
-		let filtered = ranges
-			.map((range) => {
-				let start = range.start > boundStart ? range.start : boundStart
-				let end = range.end < boundEnd ? range.end : boundEnd
-				return start < end ? { start, end } : null
-			})
-			.filter((range): range is { start: bigint; end: bigint } => Boolean(range))
-
-		if (!filtered.length) {
-			return []
-		}
-
-		let sorted: Array<{ start: bigint; end: bigint }> = []
-		for (let range of filtered) {
-			let entry = { ...range }
-			let insertIndex = 0
-			while (insertIndex < sorted.length && sorted[insertIndex]!.start <= entry.start) {
-				insertIndex++
-			}
-			sorted.splice(insertIndex, 0, entry)
-		}
-
-		let merged: Array<{ start: bigint; end: bigint }> = []
-
-		for (let range of sorted) {
-			let last = merged[merged.length - 1]
-			if (!last) {
-				merged.push({ ...range })
-				continue
-			}
-
-			if (range.start <= last.end) {
-				if (range.end > last.end) {
-					last.end = range.end
-				}
-			} else {
-				merged.push({ ...range })
-			}
-		}
-
-		return merged
-	}
-
-	#invertRanges(
-		ranges: Array<{ start: bigint; end: bigint }>,
-		boundStart: bigint,
-		boundEnd: bigint
-	): Array<{ start: bigint; end: bigint }> {
-		if (boundStart >= boundEnd) {
-			return []
-		}
-
-		if (!ranges.length) {
-			return [{ start: boundStart, end: boundEnd }]
-		}
-
-		let result: Array<{ start: bigint; end: bigint }> = []
-		let cursor = boundStart
-
-		for (let range of ranges) {
-			if (cursor < range.start) {
-				result.push({ start: cursor, end: range.start })
-			}
-			if (cursor < range.end) {
-				cursor = range.end
-			}
-		}
-
-		if (cursor < boundEnd) {
-			result.push({ start: cursor, end: boundEnd })
-		}
-
-		return result
 	}
 
 	/**
@@ -326,13 +134,7 @@ export class TopicWriter implements AsyncDisposable {
 	 * @returns Final seqNo assigned after session re-initialization
 	 */
 	resolveSeqNo(initialSeqNo: bigint): bigint {
-		for (let segment of this.#seqNoShifts) {
-			if (initialSeqNo >= segment.start && initialSeqNo < segment.end) {
-				return initialSeqNo + segment.delta
-			}
-		}
-
-		return initialSeqNo
+		return this.#seqNoResolver.resolveSeqNo(initialSeqNo)
 	}
 
 	/**
@@ -464,7 +266,7 @@ export class TopicWriter implements AsyncDisposable {
 		// Reject any pending flush
 		this.#promise?.reject(new Error('Writer was destroyed'))
 		this.#promise = null
-		this.#seqNoShifts = []
+		this.#seqNoResolver.reset()
 
 		// Send destroy event (optional - for cleanup logic)
 		this.#actor.send({ type: 'writer.destroy', ...(reason && { reason }) })

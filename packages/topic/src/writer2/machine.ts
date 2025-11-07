@@ -37,14 +37,8 @@ import { isRetryableError } from '@ydbjs/retry'
 import { assign, enqueueActions, sendTo, setup } from 'xstate'
 import { defaultCodecMap } from '../codec.js'
 import { WriterStream, type WriterStreamReceiveEvent } from './stream.js'
-import type {
-	SeqNoShiftEvent,
-	TopicWriterOptions,
-	WriterContext,
-	WriterEmitted,
-	WriterEvents,
-	WriterInput,
-} from './types.js'
+import { SeqNoShiftBuilder } from './seqno-shift-builder.js'
+import type { TopicWriterOptions, WriterContext, WriterEmitted, WriterEvents, WriterInput } from './types.js'
 import { loggers } from '@ydbjs/debug'
 
 // ============================================================================
@@ -267,15 +261,15 @@ let writerMachineFactory = setup({
 
 		/**
 		 * Updates the writer context after receiving STREAM_WRITE_SESSION_INIT.
-		 * Common steps for both seqNo modes:
-		 * - Determine the new `inflightStart` using `serverLastSeqNo`
-		 * - Leave all unsent messages in place while keeping their original order
 		 *
-		 * Mode specific logic:
-		 * - manual: perform a single pass over `[inflight, buffer)`; drop messages with `seqNo <= serverLastSeqNo`
-		 *   (already persisted on the server), compact the window, and update counters without changing seqNo values.
-		 * - auto: after the same pass, renumber every message whose seqNo may shift and emit `SeqNoShiftEvent`
-		 *   segments so `TopicWriter.resolveSeqNo()` can map initial numbers to the final ones.
+		 * Common groundwork for both seqNo modes:
+		 * - Walk the `[inflight, buffer)` window once while keeping message order
+		 * - Trim acked messages (seqNo <= `lastSeqNo`) and update sliding-window pointers
+		 *
+		 * Mode-specific behaviour:
+		 * - Manual seqNo: compact the window, update bookkeeping, keep user-provided seqNo as-is
+		 * - Auto seqNo: compact the window, renumber remaining messages, emit `SeqNoShift` segments so
+		 *   `TopicWriter.resolveSeqNo()` can translate temporary numbers into the final ones
 		 *
 		 * @param enqueue - XState enqueue helper for scheduling actions
 		 * @param event - init response with session metadata
@@ -288,57 +282,50 @@ let writerMachineFactory = setup({
 			let lastSeqNo = event.data.lastSeqNo || 0n
 			let nextSeqNo = lastSeqNo + 1n
 
-			// --------------------------------------------------------------------
-			// 1. Подсчитываем подтверждённые сообщения и новое начало окна inflight
-			//    Это позволяет дальше просто сдвигать указатели без пересоздания массивов
-			// --------------------------------------------------------------------
+			// Count acknowledged messages and identify the new inflight window start so we can slide pointers in place.
 			let inflightStartIndex = context.inflightStart
 			let inflightEndIndex = context.inflightStart + context.inflightLength
 			let bufferEndIndex = context.bufferStart + context.bufferLength
 
+			// Manual seqNo mode: drop acked entries and slide the window, seqNo stay untouched.
 			if (context.seqNoMode === 'manual') {
-				let writeIndex = inflightStartIndex
 				let acknowledgedSize = 0n
-				let pendingCount = 0
 				let pendingSize = 0n
-				let bufferKeptCount = 0
-				let skippedSize = 0n
 				let bufferSize = context.bufferSize
+				let firstKeptIndex: number | null = null
 
+				// Single pass over [inflight, buffer): skip acknowledged items and record the first live message.
 				for (let i = inflightStartIndex; i < bufferEndIndex; i++) {
 					let message = context.messages[i]
 					if (!message) continue
 
 					let messageSize = BigInt(message.data.length)
 
-					if (i < inflightEndIndex) {
-						if (message.seqNo <= lastSeqNo) {
-							acknowledgedSize += messageSize
-							continue
-						}
-
-						pendingCount++
-						pendingSize += messageSize
-					} else {
-						if (message.seqNo <= lastSeqNo) {
-							skippedSize += messageSize
+					// Messages already acknowledged by the server can be dropped from the sliding window.
+					if (message.seqNo <= lastSeqNo) {
+						acknowledgedSize += messageSize
+						if (i >= inflightEndIndex) {
+							// They came from buffer, so shrink buffer accounting as well.
 							bufferSize -= messageSize
-							continue
 						}
-
-						bufferKeptCount++
+						continue
 					}
 
-					if (writeIndex !== i) {
-						context.messages[writeIndex] = message
+					// Remember the first index that still contains a message we need to keep.
+					if (firstKeptIndex === null) {
+						firstKeptIndex = i
 					}
-					writeIndex++
+
+					if (i < inflightEndIndex) {
+						// Anything left in inflight becomes pending work that must be resent.
+						pendingSize += messageSize
+					}
 				}
 
-				let newBufferStart = inflightStartIndex
-				let bufferLength = pendingCount + bufferKeptCount
+				let newBufferStart = firstKeptIndex ?? bufferEndIndex
+				let bufferLength = bufferEndIndex - newBufferStart
 				let inflightSize = context.inflightSize - (acknowledgedSize + pendingSize)
-				let garbageSize = context.garbageSize + acknowledgedSize + skippedSize
+				let garbageSize = context.garbageSize + acknowledgedSize
 				let newBufferSize = bufferSize + pendingSize
 
 				enqueue.assign({
@@ -362,11 +349,14 @@ let writerMachineFactory = setup({
 				return
 			}
 
+			// Auto seqNo mode: compact window then reassign seqNo for the remaining messages.
 			let firstPendingIndex = inflightEndIndex
 			let acknowledgedSize = 0n
 			let pendingCount = 0
 			let pendingSize = 0n
 
+			// Scan inflight messages to find the first one that still needs server confirmation and to measure how much
+			// data must move back into the buffer before we renumber everything.
 			for (let i = inflightStartIndex; i < inflightEndIndex; i++) {
 				let message = context.messages[i]
 				if (!message) continue
@@ -385,24 +375,9 @@ let writerMachineFactory = setup({
 
 			let newBufferStart = firstPendingIndex
 
-			let seqNoShifts: SeqNoShiftEvent[] = []
-			let currentShiftStart: bigint | null = null
-			let currentShiftDelta: bigint | null = null
-			let currentShiftCount = 0
+			let shiftBuilder = new SeqNoShiftBuilder()
 
-			let flushCurrentShift = () => {
-				if (currentShiftStart !== null && currentShiftDelta !== null && currentShiftCount > 0) {
-					seqNoShifts.push({
-						startOld: currentShiftStart,
-						count: currentShiftCount,
-						delta: currentShiftDelta,
-					})
-				}
-				currentShiftStart = null
-				currentShiftDelta = null
-				currentShiftCount = 0
-			}
-
+			// Renumber the remaining messages sequentially so we continue where the server left off.
 			for (let i = firstPendingIndex; i < bufferEndIndex; i++) {
 				let message = context.messages[i]
 				if (!message) continue
@@ -411,28 +386,11 @@ let writerMachineFactory = setup({
 				let newSeqNo = nextSeqNo
 				nextSeqNo++
 
-				if (oldSeqNo !== newSeqNo) {
-					let delta = newSeqNo - oldSeqNo
-					if (
-						currentShiftStart !== null &&
-						currentShiftDelta === delta &&
-						oldSeqNo === currentShiftStart + BigInt(currentShiftCount)
-					) {
-						currentShiftCount++
-					} else {
-						flushCurrentShift()
-						currentShiftStart = oldSeqNo
-						currentShiftDelta = delta
-						currentShiftCount = 1
-					}
-				} else {
-					flushCurrentShift()
-				}
-
+				shiftBuilder.addShift(oldSeqNo, newSeqNo)
 				message.seqNo = newSeqNo
 			}
 
-			flushCurrentShift()
+			let seqNoShifts = shiftBuilder.build()
 
 			let inflightSize = context.inflightSize - acknowledgedSize - pendingSize
 			let bufferSize = context.bufferSize + pendingSize
@@ -573,7 +531,7 @@ let writerMachineFactory = setup({
 			// Update inflight and garbage metrics based on acknowledgments
 			enqueue.assign(({ context }) => {
 				let removedSize = 0n
-				let removedCount = 0
+				let removedLength = 0
 
 				// Move acknowledged messages to garbage
 				for (let i = context.inflightStart; i < context.inflightStart + context.inflightLength; i++) {
@@ -581,7 +539,7 @@ let writerMachineFactory = setup({
 
 					if (message && acks.has(message.seqNo)) {
 						removedSize += BigInt(message.data.length)
-						removedCount++
+						removedLength++
 					}
 				}
 
@@ -589,33 +547,30 @@ let writerMachineFactory = setup({
 				return {
 					garbageSize: context.garbageSize + removedSize,
 					inflightSize: context.inflightSize - removedSize,
-					inflightStart: context.inflightStart + removedCount,
-					inflightLength: context.inflightLength - removedCount,
+					inflightStart: context.inflightStart + removedLength,
+					inflightLength: context.inflightLength - removedLength,
 				}
 			})
 
 			// @ts-ignore
 			if (check({ type: 'shouldReclaimMemory' })) {
 				enqueue.assign(({ context }) => {
-					let removed = context.messages.splice(0, context.inflightStart)
-					let bufferStart = context.bufferStart - removed.length
-
-					// Recalculate bufferSize using sliding window approach:
-					// buffer region is messages from bufferStart to bufferStart + bufferLength
-					let bufferSize = 0n
-					for (let i = bufferStart; i < bufferStart + context.bufferLength; i++) {
-						let message = context.messages[i]
-						if (message) {
-							bufferSize += BigInt(message.data.length)
+					let garbageLength = context.inflightStart
+					if (!garbageLength) {
+						return {
+							garbageSize: 0n,
 						}
 					}
 
-					// Update context pointers
+					context.messages.splice(0, garbageLength)
+					let bufferStart = context.bufferStart - garbageLength
+
+					assert.ok(bufferStart >= 0)
+
 					return {
 						messages: context.messages,
 						garbageSize: 0n,
 						inflightStart: 0,
-						bufferSize,
 						bufferStart,
 					}
 				})
@@ -647,11 +602,11 @@ let writerMachineFactory = setup({
 			}
 
 			let createdAt = timestampFromDate(event.message.createdAt ?? new Date())
+			let uncompressedSize = BigInt(event.message.data.length)
 			let metadataItems = Object.entries(event.message.metadataItems || {}).map(([key, value]) => ({
 				key,
 				value,
 			}))
-			let uncompressedSize = BigInt(event.message.data.length)
 
 			// Track seqNo mode (set once on first message, then remains constant)
 			// Mode is passed from TopicWriter which knows it from SeqNoManager
