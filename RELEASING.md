@@ -5,7 +5,7 @@ This document describes how we cut stable releases for all packages in this mono
 ## Versioning Strategy
 
 - Packages follow SemVer.
-- We release coordinated versions across `@ydbjs/*` where feasible.
+- Packages are versioned independently based on their own changesets.
 - Pre-releases use the `alpha` tag; stable uses `latest`.
 
 See VERSIONING.md for details.
@@ -20,38 +20,38 @@ See VERSIONING.md for details.
 
 ## Release Steps
 
-1) Ensure workspace builds and tests pass
+1. Ensure workspace builds and tests pass
 
 ```bash
 npm run build
 npm test:all
 ```
 
-2) Verify package entry points and exports with ATTW
+2. Verify package entry points and exports with ATTW
 
 ```bash
 npm run attw
 ```
 
-3) Bump versions and generate changelogs (Changesets)
+3. Bump versions and generate changelogs (Changesets)
 
 ```bash
 npx changeset version
 ```
 
-4) Publish to npm (stable)
+4. Publish to npm (stable)
 
 ```bash
 # Ensure you are authenticated: npm whoami
 NPM_CONFIG_PROVENANCE=true npx changeset publish
 ```
 
-5) Create GitHub Release
+5. Create GitHub Release
 
 - Tag matches monorepo state (e.g., v7.0.0)
 - Paste aggregated changelog highlights
 
-6) Announce breaking changes and migration notes
+6. Announce breaking changes and migration notes
 
 - Link MIGRATION.md sections in release notes
 

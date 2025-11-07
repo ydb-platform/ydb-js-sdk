@@ -1,26 +1,11 @@
 {
 	"$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
-	"changelog": "@changesets/cli/changelog",
+	"changelog": ["@changesets/changelog-github", { "repo": "ydb-platform/ydb-js-sdk" }],
 	"commit": false,
-	"fixed": [
-		[
-			"@ydbjs/abortable",
-			"@ydbjs/api",
-			"@ydbjs/auth",
-			"@ydbjs/core",
-			"@ydbjs/debug",
-			"@ydbjs/error",
-			"@ydbjs/query",
-			"@ydbjs/retry",
-			"@ydbjs/topic",
-			"@ydbjs/value"
-		]
-	],
+	"fixed": [],
 	"linked": [],
 	"access": "public",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"ignore": [
-		"@ydbjs/examples-*"
-	]
+	"ignore": ["@ydbjs/examples-*"]
 }
