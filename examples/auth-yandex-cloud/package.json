@@ -15,8 +15,8 @@
 	},
 	"dependencies": {
 		"@ydbjs/auth-yandex-cloud": "^0.1.2",
-		"@ydbjs/core": "^6.0.5",
-		"@ydbjs/query": "^6.0.5"
+		"@ydbjs/core": "^6.0.0",
+		"@ydbjs/query": "^6.0.0"
 	},
 	"publishConfig": {
 		"access": "restricted"

@@ -54,7 +54,7 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "2.10.0",
 		"@date-fns/tz": "^1.4.1",
-		"@ydbjs/api": "6.0.5",
+		"@ydbjs/api": "^6.0.0",
 		"date-fns": "^4.1.0",
 		"proposal-decimal": "^20250613.0.0"
 	},
