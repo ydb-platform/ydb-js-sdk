@@ -56,3 +56,30 @@ test('allows custom channel options override', () => {
 
 	driver.close()
 })
+
+test('creating thousands of drivers with using does not leak memory', async () => {
+	let iterations = 100000
+	let memoryBefore = process.memoryUsage().heapUsed
+
+	for (let i = 0; i < iterations; i++) {
+		using _driver = new Driver('grpc://localhost:2136/local', {
+			'ydb.sdk.enable_discovery': false,
+		})
+
+		if (i % 1000 === 0 && i > 0) {
+			if (global.gc) {
+				global.gc()
+			}
+		}
+	}
+
+	if (global.gc) {
+		global.gc()
+	}
+
+	let memoryAfter = process.memoryUsage().heapUsed
+	let memoryGrowth = memoryAfter - memoryBefore
+	let memoryGrowthMB = memoryGrowth / (1024 * 1024)
+
+	expect(memoryGrowthMB).toBeLessThan(50)
+})
