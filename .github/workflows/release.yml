@@ -19,7 +19,7 @@ jobs:
 
       - uses: ./.github/actions/setup
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Build Packages
         run: npm run build
@@ -28,7 +28,7 @@ jobs:
         run: npm run attw
 
       - name: Create Release Pull Request or Publish
-        uses: changesets/action@v1
+        uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba
         with:
           version: npm run version
           publish: npm run publish
