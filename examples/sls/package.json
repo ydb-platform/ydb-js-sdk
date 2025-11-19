@@ -15,8 +15,8 @@
 	},
 	"dependencies": {
 		"@ydbjs/auth": "^6.0.0",
-		"@ydbjs/core": "^6.0.6",
-		"@ydbjs/query": "^6.0.6"
+		"@ydbjs/core": "^6.0.7",
+		"@ydbjs/query": "^6.0.7"
 	},
 	"publishConfig": {
 		"access": "restricted"

@@ -13,8 +13,8 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/core": "^6.0.6",
-		"@ydbjs/query": "^6.0.6",
+		"@ydbjs/core": "^6.0.7",
+		"@ydbjs/query": "^6.0.7",
 		"@ydbjs/value": "^6.0.0"
 	},
 	"publishConfig": {

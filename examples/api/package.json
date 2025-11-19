@@ -16,7 +16,7 @@
 		"@bufbuild/protobuf": "^2.6.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/auth": "^6.0.0",
-		"@ydbjs/core": "^6.0.6"
+		"@ydbjs/core": "^6.0.7"
 	},
 	"publishConfig": {
 		"access": "restricted"

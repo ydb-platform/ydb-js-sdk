@@ -1,5 +1,14 @@
 # @ydbjs/query
 
+## 6.0.7
+
+### Patch Changes
+
+- Fix discovery client undefined check
+
+- Updated dependencies []:
+  - @ydbjs/core@6.0.7
+
 ## 6.0.6
 
 ### Patch Changes

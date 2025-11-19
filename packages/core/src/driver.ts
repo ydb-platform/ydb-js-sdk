@@ -230,14 +230,10 @@ export class Driver implements Disposable {
 		return this.cs.protocol === 'https:' || this.cs.protocol === 'grpcs:'
 	}
 
-	get #getDiscoveryClient(): Client<typeof DiscoveryServiceDefinition> {
-		if (this.#discoveryClient === null) {
-			dbg.log('creating discovery client')
-			this.#discoveryClient = createClientFactory()
-				.use(this.#middleware)
-				.create(DiscoveryServiceDefinition, this.#connection.channel)
-		}
-		return this.#discoveryClient
+	#getDiscoveryClient(): Client<typeof DiscoveryServiceDefinition> {
+		return (this.#discoveryClient ??= createClientFactory()
+			.use(this.#middleware)
+			.create(DiscoveryServiceDefinition, this.#connection.channel))
 	}
 
 	async #discovery(signal: AbortSignal): Promise<void> {
@@ -253,7 +249,7 @@ export class Driver implements Disposable {
 
 		let result = await retry(retryConfig, async (signal) => {
 			dbg.log('attempting to list endpoints for database: %s', this.database)
-			let response = await this.#getDiscoveryClient.listEndpoints({ database: this.database }, { signal })
+			let response = await this.#getDiscoveryClient().listEndpoints({ database: this.database }, { signal })
 			if (!response.operation) {
 				throw new ClientError(
 					DiscoveryServiceDefinition.listEndpoints.path,
