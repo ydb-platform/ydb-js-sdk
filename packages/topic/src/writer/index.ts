@@ -205,8 +205,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 									throughputSettings,
 									updateLastSeqNo,
 									updateBufferSize,
+									isSeqNoProvided,
 									...(options.tx && { tx: options.tx }),
-									...(lastSeqNo && { lastSeqNo })
+									...(lastSeqNo && { lastSeqNo }),
 								},
 								chunk.serverMessage.value
 							)
@@ -503,4 +504,4 @@ export const createTopicTxWriter = function createTopicTxWriter(
 }
 
 // Re-export types for compatibility
-export type { TopicTxWriter, TopicWriter, TopicWriterOptions } from "./types.js"
+export type { TopicTxWriter, TopicWriter, TopicWriterOptions } from './types.js'
