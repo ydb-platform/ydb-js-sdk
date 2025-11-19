@@ -15,14 +15,23 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - uses: ./.github/actions/setup
         with:
           node-version: 22
+
+      - name: Build Packages
+        run: npm run build
+
+      - name: Check Types
+        run: npm run attw
+
       - name: Create Release Pull Request or Publish
         uses: changesets/action@v1
         with:
-          publish: npm run publish-packages
+          version: npm run version
+          publish: npm run publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ''
