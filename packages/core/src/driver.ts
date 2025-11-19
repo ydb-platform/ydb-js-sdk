@@ -12,6 +12,7 @@ import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
+	type Channel,
 	type ChannelOptions,
 	type Client,
 	ClientError,
@@ -21,13 +22,13 @@ import {
 	Status,
 	composeClientMiddleware,
 	createClientFactory,
-	waitForChannelReady,
 } from 'nice-grpc'
 import pkg from '../package.json' with { type: 'json' }
 import { type Connection, LazyConnection } from './conn.js'
 import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
+import { ConnectivityState } from '@grpc/grpc-js/build/src/connectivity-state.js'
 
 let dbg = loggers.driver
 
@@ -170,24 +171,11 @@ export class Driver implements Disposable {
 
 		this.#pool = new ConnectionPool(channelCredentials, this.options.channelOptions)
 
-		this.#discoveryClient = createClientFactory()
-			.use(this.#middleware)
-			.create(DiscoveryServiceDefinition, this.#connection.channel)
-
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
-			waitForChannelReady(
-				this.#connection.channel,
-				new Date(Date.now() + (this.options['ydb.sdk.ready_timeout_ms'] || 10000))
-			)
-				.then(() => {
-					dbg.log('single endpoint ready')
-					return this.#ready.resolve()
-				})
-				.catch((error) => {
-					dbg.log('single endpoint failed to become ready: %O', error)
-					this.#ready.reject(error)
-				})
+			// Channel will be lazily created on first use
+			// Readiness check is skipped to avoid memory leaks from Promise chains
+			this.#ready.resolve()
 		}
 
 		if (this.options['ydb.sdk.enable_discovery'] === true) {
@@ -242,6 +230,16 @@ export class Driver implements Disposable {
 		return this.cs.protocol === 'https:' || this.cs.protocol === 'grpcs:'
 	}
 
+	get #getDiscoveryClient(): Client<typeof DiscoveryServiceDefinition> {
+		if (this.#discoveryClient === null) {
+			dbg.log('creating discovery client')
+			this.#discoveryClient = createClientFactory()
+				.use(this.#middleware)
+				.create(DiscoveryServiceDefinition, this.#connection.channel)
+		}
+		return this.#discoveryClient
+	}
+
 	async #discovery(signal: AbortSignal): Promise<void> {
 		dbg.log('starting discovery for database: %s', this.database)
 
@@ -255,7 +253,7 @@ export class Driver implements Disposable {
 
 		let result = await retry(retryConfig, async (signal) => {
 			dbg.log('attempting to list endpoints for database: %s', this.database)
-			let response = await this.#discoveryClient.listEndpoints({ database: this.database }, { signal })
+			let response = await this.#getDiscoveryClient.listEndpoints({ database: this.database }, { signal })
 			if (!response.operation) {
 				throw new ClientError(
 					DiscoveryServiceDefinition.listEndpoints.path,
@@ -289,16 +287,60 @@ export class Driver implements Disposable {
 
 	async ready(signal?: AbortSignal): Promise<void> {
 		dbg.log('waiting for driver to become ready')
-		signal = signal
-			? AbortSignal.any([signal, AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)])
-			: AbortSignal.timeout(this.options['ydb.sdk.ready_timeout_ms']!)
+
+		let timeoutMs = this.options['ydb.sdk.ready_timeout_ms']!
+		let effectiveSignal = signal
+			? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+			: AbortSignal.timeout(timeoutMs)
 
 		try {
-			await abortable(signal, this.#ready.promise)
+			await abortable(effectiveSignal, this.#ready.promise)
+
+			if (this.options['ydb.sdk.enable_discovery'] === false) {
+				dbg.log('checking channel connectivity for single endpoint mode')
+				await this.#checkChannelConnectivity(this.#connection.channel, timeoutMs, effectiveSignal)
+			}
+
 			dbg.log('driver is ready')
 		} catch (error) {
 			dbg.log('driver failed to become ready: %O', error)
 			throw error
+		}
+	}
+
+	async #checkChannelConnectivity(channel: Channel, timeoutMs: number, signal: AbortSignal): Promise<void> {
+		let deadline = new Date(Date.now() + timeoutMs)
+
+		while (true) {
+			if (signal.aborted) {
+				throw signal.reason || new Error('Aborted while waiting for channel connectivity')
+			}
+
+			let state = channel.getConnectivityState(true) // true = try to connect
+			dbg.log('channel connectivity state: %d', state)
+
+			if (state === ConnectivityState.READY) {
+				dbg.log('channel is ready')
+				return
+			}
+
+			if (state === ConnectivityState.SHUTDOWN) {
+				throw new Error('Channel is shutdown')
+			}
+
+			let { promise, resolve, reject } = Promise.withResolvers<void>()
+			channel.watchConnectivityState(state, deadline, (err?: Error) => {
+				if (err) {
+					dbg.log('channel connectivity state change timeout: %O', err)
+					reject(err)
+				} else {
+					dbg.log('channel connectivity state changed')
+					resolve()
+				}
+			})
+
+			// oxlint-disable-next-line no-await-in-loop
+			await abortable(signal, promise)
 		}
 	}
 

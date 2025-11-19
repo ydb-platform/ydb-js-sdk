@@ -15,7 +15,7 @@
 	"dependencies": {
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/auth": "^6.0.0",
-		"@ydbjs/core": "^6.0.0"
+		"@ydbjs/core": "^6.0.6"
 	},
 	"publishConfig": {
 		"access": "restricted"

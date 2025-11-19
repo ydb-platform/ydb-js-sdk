@@ -30,7 +30,7 @@ runs:
 
     - name: Install global dependencies
       shell: bash
-      run: npm i -g turbo prettier typescript @changesets/cli @arethetypeswrong/cli
+      run: npm i -g turbo prettier typescript @arethetypeswrong/cli @changesets/cli @changesets/changelog-github
 
     - name: Install dependencies
       shell: bash

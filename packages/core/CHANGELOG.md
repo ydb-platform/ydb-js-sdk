@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.0.6
+
+### Patch Changes
+
+- Fix memory leaks in Driver class
+
 ## 6.0.5
 
 ### Patch Changes

@@ -2,25 +2,27 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
 	test: {
+		execArgv: ['--expose-gc'],
+		vmMemoryLimit: '300Mb',
 		projects: [
 			{
 				test: {
 					name: {
 						label: 'uni',
-						color: 'yellow'
+						color: 'yellow',
 					},
 					include: ['packages/*/src/**/*.test.ts'],
 					environment: 'node',
 					benchmark: {
-						include: ['packages/*/src/**/*.bench.ts']
-					}
+						include: ['packages/*/src/**/*.bench.ts'],
+					},
 				},
 			},
 			{
 				test: {
 					name: {
 						label: 'int',
-						color: 'blue'
+						color: 'blue',
 					},
 					include: ['packages/*/tests/**/*.test.ts'],
 					environment: 'node',
@@ -34,7 +36,7 @@ export default defineConfig({
 				test: {
 					name: {
 						label: 'e2e',
-						color: 'magenta'
+						color: 'magenta',
 					},
 					include: ['e2e/**/*.test.ts'],
 					environment: 'node',
@@ -43,8 +45,8 @@ export default defineConfig({
 					hookTimeout: 30000,
 					maxConcurrency: 1,
 					benchmark: {
-						include: ['e2e/**/*.bench.ts']
-					}
+						include: ['e2e/**/*.bench.ts'],
+					},
 				},
 			},
 		],
@@ -59,7 +61,7 @@ export default defineConfig({
 				'**/vitest.*',
 				'**/*.test.ts',
 				'**/*.bench.ts',
-			]
-		}
+			],
+		},
 	},
 })

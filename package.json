@@ -20,7 +20,8 @@
 		"attw": "turbo run attw",
 		"test": "vitest --run",
 		"lint": "oxlint",
-		"publish-packages": "turbo run clean build attw test && changeset version && changeset publish"
+		"version": "npx changeset version && npm install",
+		"publish": "npx changeset publish"
 	},
 	"dependencies": {
 		"@types/node": "^24.10.0"
