@@ -70,7 +70,7 @@ export type TopicReaderOptions = {
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
-export interface TopicReader extends AsyncDisposable {
+export interface TopicReader extends AsyncDisposable, Disposable {
 	// Read messages from the topic stream.
 	read(options?: {
 		limit?: number
@@ -116,6 +116,7 @@ export type TopicBaseReaderState = {
 	disposed: boolean
 
 	// Data structures
+	// Note: outgoingQueue is reset (not recreated) on each retry
 	readonly outgoingQueue: import('../queue.js').AsyncPriorityQueue<
 		import('@ydbjs/api/topic').StreamReadMessage_FromClient
 	>

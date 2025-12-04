@@ -30,10 +30,8 @@ export let _consume_stream_tx = async function consume_stream_tx(
 	})
 
 	await retry({ ...defaultRetryConfig, signal }, async (signal) => {
-		// Clean up on signal abort
-		signal.addEventListener('abort', () => {
-			state.outgoingQueue.close()
-		})
+		state.outgoingQueue.close()
+		state.outgoingQueue.reset()
 
 		dbg.log(
 			'connecting to the tx stream with consumer %s',
