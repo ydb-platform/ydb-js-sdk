@@ -3,6 +3,6 @@ set -euo pipefail
 
 npx turbo run build --filter=...[origin/main]
 
-npx turbo run test:uni --filter=...[origin/main]
+npx turbo run test --filter=...[origin/main]
 
 exit 0
