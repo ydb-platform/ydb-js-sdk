@@ -70,7 +70,7 @@ export type TopicReaderOptions = {
 	onCommittedOffset?: onCommittedOffsetCallback
 }
 
-export interface TopicReader extends AsyncDisposable {
+export interface TopicReader extends AsyncDisposable, Disposable {
 	// Read messages from the topic stream.
 	read(options?: {
 		limit?: number
@@ -116,7 +116,9 @@ export type TopicBaseReaderState = {
 	disposed: boolean
 
 	// Data structures
-	readonly outgoingQueue: import('../queue.js').AsyncPriorityQueue<
+	// Note: outgoingQueue is mutable because it needs to be recreated on each retry
+	// to ensure clean state for the bidirectional gRPC stream
+	outgoingQueue: import('../queue.js').AsyncPriorityQueue<
 		import('@ydbjs/api/topic').StreamReadMessage_FromClient
 	>
 	readonly buffer: import('@ydbjs/api/topic').StreamReadMessage_ReadResponse[]

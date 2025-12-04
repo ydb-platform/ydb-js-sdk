@@ -1,10 +1,12 @@
 import { nextTick } from 'node:process'
+import type { StreamReadMessage_FromClient } from '@ydbjs/api/topic'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { TopicServiceDefinition } from '@ydbjs/api/topic'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, retry } from '@ydbjs/retry'
 
+import { AsyncPriorityQueue } from '../queue.js'
 import { _send_init_request } from './_init_request.js'
 import { _on_init_response } from './_init_response.js'
 import { _on_start_partition_session_request } from './_start_partition_session_request.js'
@@ -30,10 +32,13 @@ export let _consume_stream_tx = async function consume_stream_tx(
 	})
 
 	await retry({ ...defaultRetryConfig, signal }, async (signal) => {
-		// Clean up on signal abort
-		signal.addEventListener('abort', () => {
-			state.outgoingQueue.close()
-		})
+		// Dispose old queue if exists and create a fresh one for this retry attempt
+		// This is necessary because the bidirectional gRPC stream requires a clean queue
+		if (state.outgoingQueue) {
+			state.outgoingQueue.dispose()
+		}
+		state.outgoingQueue =
+			new AsyncPriorityQueue<StreamReadMessage_FromClient>()
 
 		dbg.log(
 			'connecting to the tx stream with consumer %s',

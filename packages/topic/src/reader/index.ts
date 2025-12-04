@@ -60,8 +60,11 @@ export const createTopicReader = function createTopicReader(
 	// Initialize custom codecs if provided
 	_initialize_codecs(state.codecs, options.codecMap)
 
+	// Track the stream promise so we can wait for it to finish on destroy
+	let streamPromise: Promise<void> | null = null
+
 	// Start consuming the stream immediately.
-	void (async function stream() {
+	streamPromise = (async function stream() {
 		try {
 			await _consume_stream(state)
 		} catch (error) {
@@ -70,7 +73,8 @@ export const createTopicReader = function createTopicReader(
 			}
 		} finally {
 			dbg.log('stream closed')
-			destroy(new Error('Stream closed'))
+			// Don't call destroy here - it's already being called by close/destroy
+			// and calling it again would be a no-op anyway due to disposed check
 		}
 	})()
 
@@ -79,7 +83,7 @@ export const createTopicReader = function createTopicReader(
 	// The update token interval is configurable and defaults to 60 seconds.
 	_start_background_token_refresher(
 		state.driver,
-		state.outgoingQueue,
+		() => state.outgoingQueue, // Use getter to get current queue (may be recreated on retry)
 		options.updateTokenIntervalMs,
 		state.controller.signal
 	)
@@ -145,8 +149,10 @@ export const createTopicReader = function createTopicReader(
 		}
 
 		state.disposed = true
-		state.outgoingQueue.close()
+		state.outgoingQueue.dispose() // Use dispose() instead of close() to also clear the heap
 		state.pendingCommits.clear()
+		state.partitionSessions.clear()
+		state.buffer.length = 0
 		state.controller.abort(reason)
 	}
 
@@ -159,7 +165,7 @@ export const createTopicReader = function createTopicReader(
 					buffer: state.buffer,
 					partitionSessions: state.partitionSessions,
 					codecs: state.codecs,
-					outgoingQueue: state.outgoingQueue,
+					getOutgoingQueue: () => state.outgoingQueue, // Getter to get current queue
 					maxBufferSize: state.maxBufferSize,
 					freeBufferSize: state.freeBufferSize,
 					updateFreeBufferSize: (releasedBytes: bigint) => {
@@ -176,7 +182,33 @@ export const createTopicReader = function createTopicReader(
 
 		close,
 		destroy,
-		..._create_disposal_functions({ close, destroy }, 'TopicReader'),
+
+		[Symbol.dispose]() {
+			destroy(new Error('TopicReader disposed'))
+		},
+
+		async [Symbol.asyncDispose]() {
+			// Graceful async disposal: close and wait for stream to finish
+			try {
+				await close()
+			} catch (error) {
+				dbg.log('error during async dispose close: %O', error)
+			}
+
+			// Wait for the stream consumption to finish (with timeout)
+			if (streamPromise) {
+				try {
+					await Promise.race([
+						streamPromise,
+						new Promise<void>((resolve) =>
+							setTimeout(resolve, 1000)
+						), // 1s timeout
+					])
+				} catch {
+					// Ignore errors from stream - it's already being closed
+				}
+			}
+		},
 	}
 }
 
@@ -277,7 +309,7 @@ export const createTopicTxReader = function createTopicTxReader(
 	// Update the token periodically to ensure that the reader has a valid token.
 	_start_background_token_refresher(
 		state.driver,
-		state.outgoingQueue,
+		() => state.outgoingQueue, // Use getter to get current queue (may be recreated on retry)
 		options.updateTokenIntervalMs,
 		state.controller.signal
 	)
@@ -299,8 +331,10 @@ export const createTopicTxReader = function createTopicTxReader(
 		if (state.disposed) return
 
 		state.controller.abort(reason)
-		state.outgoingQueue.close()
+		state.outgoingQueue.dispose() // Use dispose() instead of close() to also clear the heap
 		state.readOffsets.clear()
+		state.partitionSessions.clear()
+		state.buffer.length = 0
 		state.disposed = true
 	}
 
@@ -313,7 +347,7 @@ export const createTopicTxReader = function createTopicTxReader(
 					buffer: state.buffer,
 					partitionSessions: state.partitionSessions,
 					codecs: state.codecs,
-					outgoingQueue: state.outgoingQueue,
+					getOutgoingQueue: () => state.outgoingQueue, // Getter to get current queue
 					maxBufferSize: state.maxBufferSize,
 					freeBufferSize: state.freeBufferSize,
 					readOffsets: state.readOffsets,

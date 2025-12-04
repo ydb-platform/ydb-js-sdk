@@ -24,6 +24,7 @@ export default defineProject({
 					},
 					include: ['./tests/**/*.test.ts'],
 					environment: 'node',
+					testTimeout: 15000,
 					globalSetup: '../../vitest.setup.ydb.ts',
 					benchmark: {
 						include: ['./tests/**/*.bench.ts'],

@@ -24,10 +24,11 @@ export function _initialize_codecs(
 
 /**
  * Start background token refresher
+ * @param getOutgoingQueue - Getter function to get the current queue (since queue may be recreated on retry)
  */
 export async function _start_background_token_refresher(
 	driver: Driver,
-	outgoingQueue: AsyncPriorityQueue<StreamReadMessage_FromClient>,
+	getOutgoingQueue: () => AsyncPriorityQueue<StreamReadMessage_FromClient>,
 	updateTokenIntervalMs: number,
 	signal: AbortSignal
 ): Promise<void> {
@@ -36,7 +37,7 @@ export async function _start_background_token_refresher(
 			signal,
 		})) {
 			_send_update_token_request({
-				queue: outgoingQueue,
+				queue: getOutgoingQueue(),
 				token: await driver.token,
 			})
 		}
