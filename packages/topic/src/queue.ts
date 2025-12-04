@@ -109,6 +109,7 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 	close() {
 		dbg.log('closing queue with %d pending items', this.heap.length)
 		this.closed = true
+
 		// Resolve any pending operations with done: true
 		if (this.pendingShift) {
 			dbg.log('resolving pending shift with done: true')
@@ -116,6 +117,29 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 			delete this.pendingShift
 			resolve({ value: undefined as any, done: true })
 		}
+
+		if (this.pendingResume) {
+			dbg.log('resolving pending resume')
+			let resolve = this.pendingResume
+			delete this.pendingResume
+			resolve()
+		}
+	}
+
+	reset() {
+		dbg.log('resetting queue, clearing %d items', this.heap.length)
+		this.paused = false
+		this.closed = false
+		this.heap.length = 0
+
+		// Resolve any pending operations with done: true
+		if (this.pendingShift) {
+			dbg.log('resolving pending shift with done: true')
+			let resolve = this.pendingShift
+			delete this.pendingShift
+			resolve({ value: undefined as any, done: true })
+		}
+
 		if (this.pendingResume) {
 			dbg.log('resolving pending resume')
 			let resolve = this.pendingResume

@@ -61,7 +61,7 @@ export const createTopicReader = function createTopicReader(
 	_initialize_codecs(state.codecs, options.codecMap)
 
 	// Start consuming the stream immediately.
-	void (async function stream() {
+	;(async function stream() {
 		try {
 			await _consume_stream(state)
 		} catch (error) {
@@ -70,7 +70,8 @@ export const createTopicReader = function createTopicReader(
 			}
 		} finally {
 			dbg.log('stream closed')
-			destroy(new Error('Stream closed'))
+			// Don't call destroy here - it's already being called by close/destroy
+			// and calling it again would be a no-op anyway due to disposed check
 		}
 	})()
 
@@ -145,8 +146,10 @@ export const createTopicReader = function createTopicReader(
 		}
 
 		state.disposed = true
-		state.outgoingQueue.close()
+		state.outgoingQueue.dispose()
 		state.pendingCommits.clear()
+		state.partitionSessions.clear()
+		state.buffer.length = 0
 		state.controller.abort(reason)
 	}
 
@@ -176,7 +179,19 @@ export const createTopicReader = function createTopicReader(
 
 		close,
 		destroy,
-		..._create_disposal_functions({ close, destroy }, 'TopicReader'),
+
+		[Symbol.dispose]() {
+			destroy(new Error('TopicReader disposed'))
+		},
+
+		async [Symbol.asyncDispose]() {
+			// Graceful async disposal: close and wait for stream to finish
+			try {
+				await close()
+			} catch (error) {
+				dbg.log('error during async dispose close: %O', error)
+			}
+		},
 	}
 }
 
@@ -298,10 +313,12 @@ export const createTopicTxReader = function createTopicTxReader(
 	function destroy(reason: unknown) {
 		if (state.disposed) return
 
-		state.controller.abort(reason)
-		state.outgoingQueue.close()
-		state.readOffsets.clear()
 		state.disposed = true
+		state.outgoingQueue.dispose()
+		state.readOffsets.clear()
+		state.partitionSessions.clear()
+		state.buffer.length = 0
+		state.controller.abort(reason)
 	}
 
 	return {

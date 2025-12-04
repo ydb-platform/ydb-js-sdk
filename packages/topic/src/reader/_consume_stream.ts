@@ -27,10 +27,8 @@ export let _consume_stream = async function consume_stream(
 	await state.driver.ready(signal)
 
 	await retry({ ...defaultRetryConfig, signal }, async (signal) => {
-		// Clean up on signal abort
-		signal.addEventListener('abort', () => {
-			state.outgoingQueue.close()
-		})
+		state.outgoingQueue.close()
+		state.outgoingQueue.reset()
 
 		dbg.log(
 			'connecting to the stream with consumer %s',
@@ -99,7 +97,7 @@ export let _consume_stream = async function consume_stream(
 		let dbgrpc = dbg.extend('grpc')
 
 		for await (let chunk of stream) {
-			state.controller.signal.throwIfAborted()
+			signal.throwIfAborted()
 
 			dbgrpc.log(
 				'receive %s with status %d',

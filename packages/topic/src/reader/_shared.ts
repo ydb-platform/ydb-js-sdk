@@ -24,6 +24,7 @@ export function _initialize_codecs(
 
 /**
  * Start background token refresher
+ * @param getOutgoingQueue - Getter function to get the current queue (since queue may be recreated on retry)
  */
 export async function _start_background_token_refresher(
 	driver: Driver,
