@@ -8,7 +8,10 @@ import { _send_read_request } from './_read_request.js'
 import type { TopicPartitionSession } from '../partition-session.js'
 import type { CodecMap } from '../codec.js'
 import type { AsyncPriorityQueue } from '../queue.js'
-import type { StreamReadMessage_FromClient, StreamReadMessage_ReadResponse } from '@ydbjs/api/topic'
+import type {
+	StreamReadMessage_FromClient,
+	StreamReadMessage_ReadResponse,
+} from '@ydbjs/api/topic'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -22,7 +25,10 @@ export let _read = function read(
 		readonly outgoingQueue: AsyncPriorityQueue<StreamReadMessage_FromClient>
 		readonly maxBufferSize: bigint
 		readonly freeBufferSize: bigint
-		readonly readOffsets?: Map<bigint, { firstOffset: bigint; lastOffset: bigint }> // Optional for transaction support
+		readonly readOffsets?: Map<
+			bigint,
+			{ firstOffset: bigint; lastOffset: bigint }
+		> // Optional for transaction support
 		readonly updateFreeBufferSize: (releasedBytes: bigint) => void // Helper to update free buffer size
 	},
 	options: { limit?: number; waitMs?: number; signal?: AbortSignal } = {}
@@ -100,14 +106,20 @@ export let _read = function read(
 				// Wait for new data to arrive
 				let bufferCheckInterval = setInterval(() => {
 					if (ctx.buffer.length > 0) {
-						dbg.log('data arrived in buffer, resolving waiter (bufferSize=%d)', ctx.buffer.length)
+						dbg.log(
+							'data arrived in buffer, resolving waiter (bufferSize=%d)',
+							ctx.buffer.length
+						)
 						waiter.resolve(undefined)
 					}
 				}, 10) // Check every 10ms
 
 				try {
 					// oxlint-disable-next-line no-await-in-loop
-					await abortable(AbortSignal.any([signal, AbortSignal.timeout(waitMs)]), waiter.promise)
+					await abortable(
+						AbortSignal.any([signal, AbortSignal.timeout(waitMs)]),
+						waiter.promise
+					)
 				} catch {
 					if (signal.aborted) {
 						dbg.log('read aborted during wait, finishing')
@@ -152,7 +164,10 @@ export let _read = function read(
 					let pd = response.partitionData.shift()! // Get the first partition data
 
 					if (pd.batches.length === 0) {
-						dbg.log('skipping empty partition data for sessionId=%s', pd.partitionSessionId)
+						dbg.log(
+							'skipping empty partition data for sessionId=%s',
+							pd.partitionSessionId
+						)
 						continue // Skip empty partition data
 					}
 
@@ -162,14 +177,22 @@ export let _read = function read(
 						break
 					}
 
-					let partitionSession = ctx.partitionSessions.get(pd.partitionSessionId)
+					let partitionSession = ctx.partitionSessions.get(
+						pd.partitionSessionId
+					)
 					if (!partitionSession) {
-						dbg.log('error: readResponse for unknown partitionSessionId=%s', pd.partitionSessionId)
+						dbg.log(
+							'error: readResponse for unknown partitionSessionId=%s',
+							pd.partitionSessionId
+						)
 						continue
 					}
 
 					if (partitionSession.isStopped) {
-						dbg.log('error: readResponse for stopped partitionSessionId=%s', pd.partitionSessionId)
+						dbg.log(
+							'error: readResponse for stopped partitionSessionId=%s',
+							pd.partitionSessionId
+						)
 						continue
 					}
 
@@ -177,7 +200,10 @@ export let _read = function read(
 						let batch = pd.batches.shift()! // Get the first batch
 
 						if (batch.messageData.length === 0) {
-							dbg.log('skipping empty batch from producer=%s', batch.producerId)
+							dbg.log(
+								'skipping empty batch from producer=%s',
+								batch.producerId
+							)
 							continue // Skip empty batches
 						}
 
@@ -187,7 +213,10 @@ export let _read = function read(
 							break
 						}
 
-						while (batch.messageData.length && messageCount < limit) {
+						while (
+							batch.messageData.length &&
+							messageCount < limit
+						) {
 							// Process each message in the batch
 							let msg = batch.messageData.shift()! // Get the first message from the batch
 
@@ -200,15 +229,25 @@ export let _read = function read(
 							let payload = msg.data
 							if (batch.codec !== Codec.UNSPECIFIED) {
 								if (!ctx.codecs.has(batch.codec)) {
-									dbg.log('error: codec %s is not supported', batch.codec)
-									throw new Error(`Codec ${batch.codec} is not supported`)
+									dbg.log(
+										'error: codec %s is not supported',
+										batch.codec
+									)
+									throw new Error(
+										`Codec ${batch.codec} is not supported`
+									)
 								}
 
 								// Decompress the message data using the provided decompress function
 								try {
-									payload = ctx.codecs.get(batch.codec)!.decompress(msg.data)
+									payload = ctx.codecs
+										.get(batch.codec)!
+										.decompress(msg.data)
 								} catch (error) {
-									dbg.log('error: failed to decompress message data: %O', error)
+									dbg.log(
+										'error: failed to decompress message data: %O',
+										error
+									)
 									throw error
 								}
 							}
@@ -222,18 +261,27 @@ export let _read = function read(
 								seqNo: msg.seqNo,
 								offset: msg.offset,
 								uncompressedSize: msg.uncompressedSize,
-								...(msg.createdAt && { createdAt: timestampMs(msg.createdAt) }),
-								...(batch.writtenAt && { writtenAt: timestampMs(batch.writtenAt) }),
+								...(msg.createdAt && {
+									createdAt: timestampMs(msg.createdAt),
+								}),
+								...(batch.writtenAt && {
+									writtenAt: timestampMs(batch.writtenAt),
+								}),
 								...(msg.metadataItems && {
 									metadataItems: Object.fromEntries(
-										msg.metadataItems.map((item) => [item.key, item.value])
+										msg.metadataItems.map((item) => [
+											item.key,
+											item.value,
+										])
 									),
 								}),
 							})
 
 							// Track read offset for transaction support
 							if (ctx.readOffsets) {
-								let existing = ctx.readOffsets.get(pd.partitionSessionId)
+								let existing = ctx.readOffsets.get(
+									pd.partitionSessionId
+								)
 								if (existing) {
 									// Update last offset, keep first offset
 									existing.lastOffset = msg.offset
@@ -269,7 +317,10 @@ export let _read = function read(
 				// If we have read all messages from the response, we can release its buffer allocation
 				if (response.partitionData.length === 0 && fullRead) {
 					releasableBufferBytes += response.bytesSize
-					dbg.log('response fully processed, releasing %s bytes from buffer', response.bytesSize)
+					dbg.log(
+						'response fully processed, releasing %s bytes from buffer',
+						response.bytesSize
+					)
 				}
 			}
 
@@ -308,7 +359,10 @@ export let _read = function read(
 			yield messages
 
 			// If we've reached the limit or no messages were yielded and buffer is empty, return
-			if (messageCount >= limit || (messages.length === 0 && !ctx.buffer.length)) {
+			if (
+				messageCount >= limit ||
+				(messages.length === 0 && !ctx.buffer.length)
+			) {
 				return
 			}
 		}

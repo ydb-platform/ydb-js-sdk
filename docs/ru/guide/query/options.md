@@ -1,5 +1,4 @@
-title: Query — Options & API
----
+## title: Query — Options & API
 
 # Options and API `@ydbjs/query`
 
@@ -97,9 +96,10 @@ try {
   // e instanceof YDBError
 }
 ```
+
 ---
-title: Query — опции и API
----
+
+## title: Query — опции и API
 
 # Опции и API `@ydbjs/query`
 

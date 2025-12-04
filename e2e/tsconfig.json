@@ -3,10 +3,6 @@
 	"compilerOptions": {
 		"noEmit": true
 	},
-	"include": [
-		"**/*.test.ts"
-	],
-	"exclude": [
-		"vitest.config.ts"
-	]
+	"include": ["**/*.test.ts"],
+	"exclude": ["vitest.config.ts"]
 }

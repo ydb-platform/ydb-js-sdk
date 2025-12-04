@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import { ServiceAccountCredentialsProvider, type ServiceAccountKey } from './service-account.js'
+import {
+	ServiceAccountCredentialsProvider,
+	type ServiceAccountKey,
+} from './service-account.js'
 
 // Valid RSA private key for testing (2048-bit)
 // Generated with: openssl genrsa 2048
@@ -65,7 +68,11 @@ test('creates provider with valid key', () => {
 test('throws error on invalid key', () => {
 	expect(() => {
 		// oxlint-disable-next-line no-new
-		new ServiceAccountCredentialsProvider({ id: '', service_account_id: '', private_key: '' })
+		new ServiceAccountCredentialsProvider({
+			id: '',
+			service_account_id: '',
+			private_key: '',
+		})
 	}).toThrow('Invalid Service Account key')
 })
 
@@ -132,7 +139,8 @@ test('fromFile reads and parses JSON file', () => {
 	let mockFileContent = JSON.stringify(mockKey)
 	vi.mocked(fs.readFileSync).mockReturnValue(mockFileContent)
 
-	let provider = ServiceAccountCredentialsProvider.fromFile('/path/to/key.json')
+	let provider =
+		ServiceAccountCredentialsProvider.fromFile('/path/to/key.json')
 	expect(provider).toBeDefined()
 	expect(fs.readFileSync).toHaveBeenCalledWith('/path/to/key.json', 'utf8')
 })
@@ -161,7 +169,9 @@ test('fromEnv throws if environment variable not set', () => {
 
 	expect(() => {
 		ServiceAccountCredentialsProvider.fromEnv()
-	}).toThrow('YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set')
+	}).toThrow(
+		'YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set'
+	)
 
 	if (originalEnv) {
 		process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = originalEnv

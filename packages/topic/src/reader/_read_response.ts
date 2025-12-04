@@ -1,5 +1,5 @@
-import { loggers } from "@ydbjs/debug"
-import type { StreamReadMessage_ReadResponse } from "@ydbjs/api/topic"
+import { loggers } from '@ydbjs/debug'
+import type { StreamReadMessage_ReadResponse } from '@ydbjs/api/topic'
 
 let dbg = loggers.topic.extend('reader')
 

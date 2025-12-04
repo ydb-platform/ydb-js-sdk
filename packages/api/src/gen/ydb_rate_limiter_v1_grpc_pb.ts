@@ -2,10 +2,23 @@
 // @generated from file ydb_rate_limiter_v1.proto (package Ydb.RateLimiter.V1, syntax proto3)
 /* eslint-disable */
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { AcquireResourceRequestSchema, AcquireResourceResponseSchema, AlterResourceRequestSchema, AlterResourceResponseSchema, CreateResourceRequestSchema, CreateResourceResponseSchema, DescribeResourceRequestSchema, DescribeResourceResponseSchema, DropResourceRequestSchema, DropResourceResponseSchema, ListResourcesRequestSchema, ListResourcesResponseSchema } from "./protos/ydb_rate_limiter_pb.js";
-import type { ServiceDefinition } from "nice-grpc";
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import {
+	AcquireResourceRequestSchema,
+	AcquireResourceResponseSchema,
+	AlterResourceRequestSchema,
+	AlterResourceResponseSchema,
+	CreateResourceRequestSchema,
+	CreateResourceResponseSchema,
+	DescribeResourceRequestSchema,
+	DescribeResourceResponseSchema,
+	DropResourceRequestSchema,
+	DropResourceResponseSchema,
+	ListResourcesRequestSchema,
+	ListResourcesResponseSchema,
+} from './protos/ydb_rate_limiter_pb.js'
+import type { ServiceDefinition } from 'nice-grpc'
 
 /**
  * Control plane API
@@ -13,98 +26,183 @@ import type { ServiceDefinition } from "nice-grpc";
  * @generated from service Ydb.RateLimiter.V1.RateLimiterService
  */
 export const RateLimiterServiceDefinition = {
-  /**
-   * Create a new resource in existing coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.CreateResource
-   */
-  createResource: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/CreateResource",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof CreateResourceRequestSchema>) => toBinary(CreateResourceRequestSchema, create(CreateResourceRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(CreateResourceRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof CreateResourceResponseSchema>) => toBinary(CreateResourceResponseSchema, create(CreateResourceResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(CreateResourceResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Update a resource in coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.AlterResource
-   */
-  alterResource: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/AlterResource",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof AlterResourceRequestSchema>) => toBinary(AlterResourceRequestSchema, create(AlterResourceRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(AlterResourceRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof AlterResourceResponseSchema>) => toBinary(AlterResourceResponseSchema, create(AlterResourceResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(AlterResourceResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Delete a resource from coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.DropResource
-   */
-  dropResource: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/DropResource",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof DropResourceRequestSchema>) => toBinary(DropResourceRequestSchema, create(DropResourceRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(DropResourceRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof DropResourceResponseSchema>) => toBinary(DropResourceResponseSchema, create(DropResourceResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(DropResourceResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * List resources in given coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.ListResources
-   */
-  listResources: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/ListResources",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ListResourcesRequestSchema>) => toBinary(ListResourcesRequestSchema, create(ListResourcesRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ListResourcesRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof ListResourcesResponseSchema>) => toBinary(ListResourcesResponseSchema, create(ListResourcesResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ListResourcesResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Describe properties of resource in coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.DescribeResource
-   */
-  describeResource: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/DescribeResource",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof DescribeResourceRequestSchema>) => toBinary(DescribeResourceRequestSchema, create(DescribeResourceRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(DescribeResourceRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof DescribeResourceResponseSchema>) => toBinary(DescribeResourceResponseSchema, create(DescribeResourceResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(DescribeResourceResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Take units for usage of a resource in coordination node.
-   *
-   * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.AcquireResource
-   */
-  acquireResource: {
-    path: "/Ydb.RateLimiter.V1.RateLimiterService/AcquireResource",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof AcquireResourceRequestSchema>) => toBinary(AcquireResourceRequestSchema, create(AcquireResourceRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(AcquireResourceRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof AcquireResourceResponseSchema>) => toBinary(AcquireResourceResponseSchema, create(AcquireResourceResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(AcquireResourceResponseSchema,bytes),
-    options: {},
-  },
+	/**
+	 * Create a new resource in existing coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.CreateResource
+	 */
+	createResource: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/CreateResource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof CreateResourceRequestSchema>
+		) =>
+			toBinary(
+				CreateResourceRequestSchema,
+				create(CreateResourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateResourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof CreateResourceResponseSchema>
+		) =>
+			toBinary(
+				CreateResourceResponseSchema,
+				create(CreateResourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateResourceResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Update a resource in coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.AlterResource
+	 */
+	alterResource: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/AlterResource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof AlterResourceRequestSchema>
+		) =>
+			toBinary(
+				AlterResourceRequestSchema,
+				create(AlterResourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AlterResourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof AlterResourceResponseSchema>
+		) =>
+			toBinary(
+				AlterResourceResponseSchema,
+				create(AlterResourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AlterResourceResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Delete a resource from coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.DropResource
+	 */
+	dropResource: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/DropResource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof DropResourceRequestSchema>
+		) =>
+			toBinary(
+				DropResourceRequestSchema,
+				create(DropResourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DropResourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof DropResourceResponseSchema>
+		) =>
+			toBinary(
+				DropResourceResponseSchema,
+				create(DropResourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DropResourceResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * List resources in given coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.ListResources
+	 */
+	listResources: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/ListResources',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ListResourcesRequestSchema>
+		) =>
+			toBinary(
+				ListResourcesRequestSchema,
+				create(ListResourcesRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListResourcesRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ListResourcesResponseSchema>
+		) =>
+			toBinary(
+				ListResourcesResponseSchema,
+				create(ListResourcesResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListResourcesResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Describe properties of resource in coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.DescribeResource
+	 */
+	describeResource: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/DescribeResource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof DescribeResourceRequestSchema>
+		) =>
+			toBinary(
+				DescribeResourceRequestSchema,
+				create(DescribeResourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeResourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof DescribeResourceResponseSchema>
+		) =>
+			toBinary(
+				DescribeResourceResponseSchema,
+				create(DescribeResourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeResourceResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Take units for usage of a resource in coordination node.
+	 *
+	 * @generated from rpc Ydb.RateLimiter.V1.RateLimiterService.AcquireResource
+	 */
+	acquireResource: {
+		path: '/Ydb.RateLimiter.V1.RateLimiterService/AcquireResource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof AcquireResourceRequestSchema>
+		) =>
+			toBinary(
+				AcquireResourceRequestSchema,
+				create(AcquireResourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AcquireResourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof AcquireResourceResponseSchema>
+		) =>
+			toBinary(
+				AcquireResourceResponseSchema,
+				create(AcquireResourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AcquireResourceResponseSchema, bytes),
+		options: {},
+	},
 } as const satisfies ServiceDefinition
 //@ts-expect-error
-RateLimiterServiceDefinition["name"] = "RateLimiterService";
+RateLimiterServiceDefinition['name'] = 'RateLimiterService'
 //@ts-expect-error
-RateLimiterServiceDefinition["fullName"] = "Ydb.RateLimiter.V1.RateLimiterService";
+RateLimiterServiceDefinition['fullName'] =
+	'Ydb.RateLimiter.V1.RateLimiterService'

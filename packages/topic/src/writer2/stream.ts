@@ -35,38 +35,38 @@ export interface WriterStreamInput {
 // Events that the stream actor can receive
 export type WriterStreamReceiveEvent =
 	| {
-		type: 'writer.stream.request.init'
-		data: StreamWriteMessage_InitRequest
-	}
+			type: 'writer.stream.request.init'
+			data: StreamWriteMessage_InitRequest
+	  }
 	| {
-		type: 'writer.stream.request.write'
-		data: StreamWriteMessage_WriteRequest
-	}
+			type: 'writer.stream.request.write'
+			data: StreamWriteMessage_WriteRequest
+	  }
 
 // Events that the stream actor can send back
 export type WriterStreamEmittedEvent =
 	| {
-		type: 'writer.stream.start'
-	}
+			type: 'writer.stream.start'
+	  }
 	| {
-		type: 'writer.stream.response.init'
-		data: StreamWriteMessage_InitResponse
-	}
+			type: 'writer.stream.response.init'
+			data: StreamWriteMessage_InitResponse
+	  }
 	| {
-		type: 'writer.stream.response.write'
-		data: StreamWriteMessage_WriteResponse
-	}
+			type: 'writer.stream.response.write'
+			data: StreamWriteMessage_WriteResponse
+	  }
 	| {
-		type: 'writer.stream.response.token'
-		data: UpdateTokenResponse
-	}
+			type: 'writer.stream.response.token'
+			data: UpdateTokenResponse
+	  }
 	| {
-		type: 'writer.stream.error'
-		error: unknown
-	}
+			type: 'writer.stream.error'
+			error: unknown
+	  }
 	| {
-		type: 'writer.stream.close'
-	}
+			type: 'writer.stream.close'
+	  }
 
 export const WriterStream = fromCallback<
 	WriterStreamReceiveEvent,
@@ -80,23 +80,36 @@ export const WriterStream = fromCallback<
 	receive((event: WriterStreamReceiveEvent) => {
 		switch (event.type) {
 			case 'writer.stream.request.init':
-				loggers.grpc.log(`%s/%s`, TopicServiceDefinition.streamWrite.path, StreamWriteMessage_InitRequestSchema.typeName)
+				loggers.grpc.log(
+					`%s/%s`,
+					TopicServiceDefinition.streamWrite.path,
+					StreamWriteMessage_InitRequestSchema.typeName
+				)
 
-				return queue.push(create(StreamWriteMessage_FromClientSchema, {
-					clientMessage: {
-						case: 'initRequest',
-						value: event.data
-					}
-				}), 100)
+				return queue.push(
+					create(StreamWriteMessage_FromClientSchema, {
+						clientMessage: {
+							case: 'initRequest',
+							value: event.data,
+						},
+					}),
+					100
+				)
 			case 'writer.stream.request.write':
-				loggers.grpc.log(`%s/%s`, TopicServiceDefinition.streamWrite.path, StreamWriteMessage_WriteRequestSchema.typeName)
+				loggers.grpc.log(
+					`%s/%s`,
+					TopicServiceDefinition.streamWrite.path,
+					StreamWriteMessage_WriteRequestSchema.typeName
+				)
 
-				return queue.push(create(StreamWriteMessage_FromClientSchema, {
-					clientMessage: {
-						case: 'writeRequest',
-						value: event.data
-					}
-				}))
+				return queue.push(
+					create(StreamWriteMessage_FromClientSchema, {
+						clientMessage: {
+							case: 'writeRequest',
+							value: event.data,
+						},
+					})
+				)
 		}
 	})
 
@@ -110,7 +123,12 @@ export const WriterStream = fromCallback<
 		sendBack({ type: 'writer.stream.start' })
 
 		for await (let event of stream) {
-			loggers.grpc.log(`%s/%s`, TopicServiceDefinition.streamWrite.path, event.serverMessage.value?.$typeName, event.status)
+			loggers.grpc.log(
+				`%s/%s`,
+				TopicServiceDefinition.streamWrite.path,
+				event.serverMessage.value?.$typeName,
+				event.status
+			)
 
 			if (ac.signal.aborted) {
 				break
@@ -124,25 +142,28 @@ export const WriterStream = fromCallback<
 				case 'initResponse':
 					sendBack({
 						type: 'writer.stream.response.init',
-						data: event.serverMessage.value
+						data: event.serverMessage.value,
 					})
 					break
 				case 'writeResponse':
 					sendBack({
 						type: 'writer.stream.response.write',
-						data: event.serverMessage.value
+						data: event.serverMessage.value,
 					})
 					break
 				case 'updateTokenResponse':
 					sendBack({
 						type: 'writer.stream.update.response.token',
-						data: event.serverMessage.value
+						data: event.serverMessage.value,
 					})
 					break
 				default:
 					sendBack({
 						type: 'writer.stream.error',
-						error: new Error('Received unknown message type: ' + event.serverMessage.case)
+						error: new Error(
+							'Received unknown message type: ' +
+								event.serverMessage.case
+						),
 					})
 			}
 		}
@@ -151,24 +172,31 @@ export const WriterStream = fromCallback<
 	let authorizer = async () => {
 		await input.driver.ready(ac.signal)
 
-		let interval = input.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS
-		for await (let _ of setInterval(interval, null, { signal: ac.signal })) {
+		let interval =
+			input.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS
+		for await (let _ of setInterval(interval, null, {
+			signal: ac.signal,
+		})) {
 			let token = await input.driver.token
-			queue.push(create(StreamWriteMessage_FromClientSchema, {
-				clientMessage: {
-					case: 'updateTokenRequest',
-					value: create(UpdateTokenRequestSchema, { token })
-				}
-			}), 10)
+			queue.push(
+				create(StreamWriteMessage_FromClientSchema, {
+					clientMessage: {
+						case: 'updateTokenRequest',
+						value: create(UpdateTokenRequestSchema, { token }),
+					},
+				}),
+				10
+			)
 		}
 	}
 
 	void stream()
-		.catch(error => sendBack({ type: 'writer.stream.error', error }))
+		.catch((error) => sendBack({ type: 'writer.stream.error', error }))
 		.finally(() => sendBack({ type: 'writer.stream.close' }))
 
-	void authorizer()
-		.catch(error => sendBack({ type: 'writer.stream.error', error }))
+	void authorizer().catch((error) =>
+		sendBack({ type: 'writer.stream.error', error })
+	)
 
 	return () => {
 		queue.close()

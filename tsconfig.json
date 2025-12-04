@@ -11,9 +11,7 @@
 		"declaration": true,
 		"declarationMap": true,
 		"rewriteRelativeImportExtensions": true,
-		"types": [
-			"node"
-		],
+		"types": ["node"],
 		"esModuleInterop": false,
 		// As strict as possible
 		"strict": true,
@@ -40,9 +38,7 @@
 		"moduleResolution": "NodeNext",
 		"module": "NodeNext",
 		// Better error reporting
-		"pretty": true,
+		"pretty": true
 	},
-	"exclude": [
-		"node_modules"
-	]
+	"exclude": ["node_modules"]
 }

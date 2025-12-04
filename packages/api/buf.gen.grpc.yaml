@@ -1,6 +1,11 @@
 version: v2
 plugins:
-  - local: ['node', '--experimental-strip-types', './plugins/protoc-gen-nice-grpc.ts']
+  - local:
+      [
+        'node',
+        '--experimental-strip-types',
+        './plugins/protoc-gen-nice-grpc.ts',
+      ]
     opt: target=ts,import_extension=js
     out: ./src/gen
 inputs:

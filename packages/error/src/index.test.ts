@@ -51,11 +51,16 @@ test('handles multiple issues', () => {
 	])
 
 	expect(error.code).eq(StatusIds_StatusCode.ABORTED)
-	expect(error.message).eq('ABORTED, Issues: FATAL(14): Some error message; ERROR(15): Another error message')
+	expect(error.message).eq(
+		'ABORTED, Issues: FATAL(14): Some error message; ERROR(15): Another error message'
+	)
 })
 
 test('creates commit error', () => {
-	let error = new CommitError('Commit failed', new YDBError(StatusIds_StatusCode.ABORTED, []))
+	let error = new CommitError(
+		'Commit failed',
+		new YDBError(StatusIds_StatusCode.ABORTED, [])
+	)
 
 	expect(error.message).eq('Commit failed')
 })

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
 import { create } from '@bufbuild/protobuf'
-import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import {
+	CreateTopicRequestSchema,
+	DropTopicRequestSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 
 import { createTopicWriter } from '../src/writer/index.js'

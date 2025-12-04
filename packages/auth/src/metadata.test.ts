@@ -8,7 +8,9 @@ afterEach(() => {
 
 test('extracts valid token', async () => {
 	global.fetch = vi.fn(async () => {
-		let response = new Response(JSON.stringify({ access_token: 'test-token' }))
+		let response = new Response(
+			JSON.stringify({ access_token: 'test-token' })
+		)
 		response.headers.set('Content-Type', 'application/json')
 
 		return response

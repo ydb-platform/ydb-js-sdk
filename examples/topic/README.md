@@ -13,4 +13,3 @@ npm install
 export YDB_CONNECTION_STRING=grpc://localhost:2136/local
 npm start
 ```
-

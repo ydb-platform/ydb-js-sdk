@@ -39,14 +39,20 @@ await driver.ready()
 const t = topic(driver)
 
 // Reader
-await using reader = t.createReader({ topic: '/Root/my-topic', consumer: 'my-consumer' })
+await using reader = t.createReader({
+  topic: '/Root/my-topic',
+  consumer: 'my-consumer',
+})
 for await (const batch of reader.read()) {
   for (const msg of batch) console.log(new TextDecoder().decode(msg.payload))
   await reader.commit(batch)
 }
 
 // Writer
-await using writer = t.createWriter({ topic: '/Root/my-topic', producer: 'my-producer' })
+await using writer = t.createWriter({
+  topic: '/Root/my-topic',
+  producer: 'my-producer',
+})
 writer.write(new TextEncoder().encode('Hello, YDB!'))
 await writer.flush()
 ```
@@ -61,8 +67,14 @@ import { createTopicWriter, createTopicTxWriter } from '@ydbjs/topic/writer'
 const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
-await using reader = createTopicReader(driver, { topic: '/Root/my-topic', consumer: 'my-consumer' })
-await using writer = createTopicWriter(driver, { topic: '/Root/my-topic', producer: 'my-producer' })
+await using reader = createTopicReader(driver, {
+  topic: '/Root/my-topic',
+  consumer: 'my-consumer',
+})
+await using writer = createTopicWriter(driver, {
+  topic: '/Root/my-topic',
+  producer: 'my-producer',
+})
 ```
 
 ## Reader
@@ -129,9 +141,14 @@ for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
 
 ```ts
 const t = topic(driver)
-await using writer = t.createWriter({ topic: '/Root/my-topic', producer: 'json-producer' })
+await using writer = t.createWriter({
+  topic: '/Root/my-topic',
+  producer: 'json-producer',
+})
 
-const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
+const payload = new TextEncoder().encode(
+  JSON.stringify({ foo: 'bar', ts: Date.now() })
+)
 const seqNo = writer.write(payload)
 await writer.flush()
 ```
@@ -153,12 +170,18 @@ import { createTopicTxWriter } from '@ydbjs/topic/writer'
 const qc = query(driver)
 
 await qc.transaction(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'svc-a' })
+  const reader = createTopicTxReader(tx, driver, {
+    topic: '/Root/my-topic',
+    consumer: 'svc-a',
+  })
   for await (const batch of reader.read({ signal })) {
     // обработка...
   }
 
-  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, {
+    topic: '/Root/my-topic',
+    producer: 'p1',
+  })
   writer.write(new TextEncoder().encode('message'))
   // writer дождётся flush в onCommit, ручное закрытие не требуется
 })

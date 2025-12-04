@@ -5,14 +5,17 @@
 ## Что демонстрирует
 
 ### 🔌 **Подключение и аутентификация**
+
 - Создание драйвера с настройками подключения
 - Использование StaticCredentialsProvider для аутентификации
 
 ### 📡 **Discovery Service**
+
 - `listEndpoints()` - получение списка доступных endpoint'ов
 - `whoAmI()` - информация о текущем пользователе
 
 ### � **Scheme Service**
+
 - `listDirectory()` - просмотр структуры базы данных
 - Сортировка и отображение объектов с пометкой системных таблиц 🔧
 
@@ -63,10 +66,10 @@ DEBUG=ydbjs:* node index.js
 ```javascript
 // Создание драйвера с аутентификацией
 let driver = new Driver(connectionString, {
-    credentialsProvider: new StaticCredentialsProvider(
-        { username: 'root', password: '1234' },
-        connectionStringForAuth
-    )
+  credentialsProvider: new StaticCredentialsProvider(
+    { username: 'root', password: '1234' },
+    connectionStringForAuth
+  ),
 })
 
 // Создание клиента для сервиса

@@ -4,9 +4,5 @@
 		"rootDir": "./src",
 		"outDir": "./dist"
 	},
-	"exclude": [
-		"dist/**/*",
-		"plugins/**/*",
-		"**/*.test.ts",
-	]
+	"exclude": ["dist/**/*", "plugins/**/*", "**/*.test.ts"]
 }

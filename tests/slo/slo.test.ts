@@ -1,11 +1,11 @@
 // eslint-disable no-await-in-loop
-import { randomInt, randomUUID } from "node:crypto"
+import { randomInt, randomUUID } from 'node:crypto'
 
-import { Driver } from "@ydbjs/core"
-import { query } from "@ydbjs/query"
-import { Timestamp, Uint64 } from "@ydbjs/value/primitive"
+import { Driver } from '@ydbjs/core'
+import { query } from '@ydbjs/query'
+import { Timestamp, Uint64 } from '@ydbjs/value/primitive'
 
-import { meterProvider } from "./telemetry.ts"
+import { meterProvider } from './telemetry.ts'
 
 const QPS = 100
 const MAX_CONCURRENCY_READ = 200
@@ -17,7 +17,7 @@ let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 let sql = query(driver)
 let [[[version]]] = await sql`SELECT CAST(version() as Text);`.values()
 
-console.log("YDB Server version:", version)
+console.log('YDB Server version:', version)
 
 await sql`
 DROP TABLE IF EXISTS test;
@@ -38,40 +38,76 @@ WITH (
 	AUTO_PARTITIONING_MAX_PARTITIONS_COUNT = 1000
 );`
 
-let meter = meterProvider.getMeter('slo-meter');
-let sdk_errors_total = meter.createCounter("sdk_errors_total", { valueType: 0 })
-let sdk_operations_total = meter.createCounter("sdk_operations_total", { valueType: 0 })
-let sdk_retry_attempts_total = meter.createCounter("sdk_retry_attempts_total", { valueType: 0 })
-let sdk_operations_success_total = meter.createCounter("sdk_operations_success_total", { valueType: 0 })
-let sdk_operations_failure_total = meter.createCounter("sdk_operations_failure_total", { valueType: 0 })
-let sdk_operation_latency_seconds = meter.createHistogram("sdk_operation_latency_seconds", { unit: 'seconds', valueType: 1 })
+let meter = meterProvider.getMeter('slo-meter')
+let sdk_errors_total = meter.createCounter('sdk_errors_total', { valueType: 0 })
+let sdk_operations_total = meter.createCounter('sdk_operations_total', {
+	valueType: 0,
+})
+let sdk_retry_attempts_total = meter.createCounter('sdk_retry_attempts_total', {
+	valueType: 0,
+})
+let sdk_operations_success_total = meter.createCounter(
+	'sdk_operations_success_total',
+	{
+		valueType: 0,
+	}
+)
+let sdk_operations_failure_total = meter.createCounter(
+	'sdk_operations_failure_total',
+	{
+		valueType: 0,
+	}
+)
+let sdk_operation_latency_seconds = meter.createHistogram(
+	'sdk_operation_latency_seconds',
+	{
+		unit: 'seconds',
+		valueType: 1,
+	}
+)
 
 let curId = 1
-let inFlightRead = 0;
-let inFlightWrite = 0;
+let inFlightRead = 0
+let inFlightWrite = 0
 
-meter.createObservableGauge("sdk_pending_operations", { unit: 'operations', valueType: 0, description: "Pending operations" })
+meter
+	.createObservableGauge('sdk_pending_operations', {
+		unit: 'operations',
+		valueType: 0,
+		description: 'Pending operations',
+	})
 	.addCallback((observableResult) => {
-		observableResult.observe(inFlightRead + inFlightWrite, { operation_type: "all" })
-		observableResult.observe(inFlightRead, { operation_type: "read" })
-		observableResult.observe(inFlightWrite, { operation_type: "write" })
+		observableResult.observe(inFlightRead + inFlightWrite, {
+			operation_type: 'all',
+		})
+		observableResult.observe(inFlightRead, { operation_type: 'read' })
+		observableResult.observe(inFlightWrite, { operation_type: 'write' })
 	})
 
-meter.createObservableGauge("sdk_memory_usage", { unit: 'bytes', valueType: 0, description: "Memory usage" })
+meter
+	.createObservableGauge('sdk_memory_usage', {
+		unit: 'bytes',
+		valueType: 0,
+		description: 'Memory usage',
+	})
 	.addCallback((observableResult) => {
-		let usage = process.memoryUsage();
+		let usage = process.memoryUsage()
 
-		observableResult.observe(usage.rss, { type: "rss" })
-		observableResult.observe(usage.external, { type: "external" })
-		observableResult.observe(usage.heapUsed, { type: "heapUsed" })
-		observableResult.observe(usage.heapTotal, { type: "heapTotal" })
-		observableResult.observe(usage.arrayBuffers, { type: "arrayBuffers" })
+		observableResult.observe(usage.rss, { type: 'rss' })
+		observableResult.observe(usage.external, { type: 'external' })
+		observableResult.observe(usage.heapUsed, { type: 'heapUsed' })
+		observableResult.observe(usage.heapTotal, { type: 'heapTotal' })
+		observableResult.observe(usage.arrayBuffers, { type: 'arrayBuffers' })
 	})
 
 function sleep(ms: number) {
 	return Promise.race([
-		new Promise(resolve => setTimeout(resolve, ms)),
-		new Promise((_, reject) => ctrl.signal.addEventListener('abort', () => reject(new Error('Aborted'))))
+		new Promise((resolve) => setTimeout(resolve, ms)),
+		new Promise((_, reject) =>
+			ctrl.signal.addEventListener('abort', () =>
+				reject(new Error('Aborted'))
+			)
+		),
 	])
 }
 
@@ -82,25 +118,42 @@ async function read(maxId: number) {
 	let randomId = new Uint64(BigInt(randomInt(maxId)))
 
 	try {
-		await using stmt = sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
-			.idempotent(true)
-			.isolation('onlineReadOnly')
-			.timeout(10 * 10000)
-			.signal(ctrl.signal)
-			.on('retry', ({ error }) => {
-				sdk_errors_total.add(1, { operation_type: "read", error_type: error instanceof Error ? error.name : "Unknown" })
-				sdk_retry_attempts_total.add(1, { operation_type: "read", error_type: error instanceof Error ? error.name : "Unknown" })
-			})
+		await using stmt =
+			sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
+				.idempotent(true)
+				.isolation('onlineReadOnly')
+				.timeout(10 * 10000)
+				.signal(ctrl.signal)
+				.on('retry', ({ error }) => {
+					sdk_errors_total.add(1, {
+						operation_type: 'read',
+						error_type:
+							error instanceof Error ? error.name : 'Unknown',
+					})
+					sdk_retry_attempts_total.add(1, {
+						operation_type: 'read',
+						error_type:
+							error instanceof Error ? error.name : 'Unknown',
+					})
+				})
 
 		await stmt
 
-		sdk_operations_success_total.add(1, { operation_type: "read" })
+		sdk_operations_success_total.add(1, { operation_type: 'read' })
 	} catch (err) {
-		sdk_operations_failure_total.add(1, { operation_type: "read" })
-		sdk_errors_total.add(1, { operation_type: "read", error_type: err instanceof Error ? err.name : "Unknown" })
+		sdk_operations_failure_total.add(1, { operation_type: 'read' })
+		sdk_errors_total.add(1, {
+			operation_type: 'read',
+			error_type: err instanceof Error ? err.name : 'Unknown',
+		})
 	} finally {
-		sdk_operations_total.add(1, { operation_type: "read" })
-		sdk_operation_latency_seconds.record((performance.now() - start) / 1000, { operation_type: "read" })
+		sdk_operations_total.add(1, { operation_type: 'read' })
+		sdk_operation_latency_seconds.record(
+			(performance.now() - start) / 1000,
+			{
+				operation_type: 'read',
+			}
+		)
 	}
 }
 
@@ -111,30 +164,47 @@ async function write(curId: number) {
 	let id = new Uint64(BigInt(curId))
 
 	try {
-		await using stmt = sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+		await using stmt =
+			sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 			Digest::NumericHash(${id}),
 			${id},
 			${randomUUID()},
 			${Math.random()},
 			${new Timestamp(new Date())}
 		);`
-			.isolation('serializableReadWrite')
-			.timeout(10 * 10000)
-			.signal(ctrl.signal)
-			.on('retry', ({ error }) => {
-				sdk_errors_total.add(1, { operation_type: "write", error_type: error instanceof Error ? error.name : "Unknown" })
-				sdk_retry_attempts_total.add(1, { operation_type: "write", error_type: error instanceof Error ? error.name : "Unknown" })
-			})
+				.isolation('serializableReadWrite')
+				.timeout(10 * 10000)
+				.signal(ctrl.signal)
+				.on('retry', ({ error }) => {
+					sdk_errors_total.add(1, {
+						operation_type: 'write',
+						error_type:
+							error instanceof Error ? error.name : 'Unknown',
+					})
+					sdk_retry_attempts_total.add(1, {
+						operation_type: 'write',
+						error_type:
+							error instanceof Error ? error.name : 'Unknown',
+					})
+				})
 
 		await stmt
 
-		sdk_operations_success_total.add(1, { operation_type: "write" })
+		sdk_operations_success_total.add(1, { operation_type: 'write' })
 	} catch (err) {
-		sdk_operations_failure_total.add(1, { operation_type: "write" })
-		sdk_errors_total.add(1, { operation_type: "write", error_type: err instanceof Error ? err.name : "Unknown" })
+		sdk_operations_failure_total.add(1, { operation_type: 'write' })
+		sdk_errors_total.add(1, {
+			operation_type: 'write',
+			error_type: err instanceof Error ? err.name : 'Unknown',
+		})
 	} finally {
-		sdk_operations_total.add(1, { operation_type: "write" })
-		sdk_operation_latency_seconds.record((performance.now() - start) / 1000, { operation_type: "write" })
+		sdk_operations_total.add(1, { operation_type: 'write' })
+		sdk_operation_latency_seconds.record(
+			(performance.now() - start) / 1000,
+			{
+				operation_type: 'write',
+			}
+		)
 	}
 }
 
@@ -147,7 +217,7 @@ async function spawn_read() {
 		void read(curId).then(() => (inFlightRead -= 1))
 		inFlightRead += 1
 	}
-};
+}
 
 async function spawn_write() {
 	if (ctrl.signal.aborted) return
@@ -158,25 +228,28 @@ async function spawn_write() {
 		void write(curId++).then(() => (inFlightWrite -= 1))
 		inFlightWrite += 1
 	}
-};
+}
 
-setTimeout(() => {
-	console.error("Timeout, closing workers...")
+setTimeout(
+	() => {
+		console.error('Timeout, closing workers...')
 
-	ctrl.abort()
-}, 30 * 60 * 1000)
+		ctrl.abort()
+	},
+	30 * 60 * 1000
+)
 
 process.on('SIGINT', async () => {
-	console.error(" SIGINT received, closing workers...")
+	console.error(' SIGINT received, closing workers...')
 
 	ctrl.abort()
-});
+})
 
 while (!ctrl.signal.aborted) {
-	await spawn_write();
-	await spawn_read();
+	await spawn_write()
+	await spawn_read()
 
-	await sleep(1000 / QPS);
+	await sleep(1000 / QPS)
 }
 
 await meterProvider.shutdown()

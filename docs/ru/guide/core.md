@@ -16,7 +16,9 @@ title: Начало работы
 ```ts
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
+const driver = new Driver(
+  process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local'
+)
 await driver.ready()
 
 // используйте driver для Query/Topic или низкоуровневых клиентов
@@ -35,7 +37,9 @@ import { Driver } from '@ydbjs/core'
 import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token'
 
 const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
-  credentialsProvider: new AccessTokenCredentialsProvider({ token: process.env.YDB_TOKEN! }),
+  credentialsProvider: new AccessTokenCredentialsProvider({
+    token: process.env.YDB_TOKEN!,
+  }),
 })
 await driver.ready()
 ```
@@ -50,7 +54,7 @@ const authEndpoint = 'grpcs://ydb.example.com:2135' // AuthService endpoint
 const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
     { username: process.env.YDB_USER!, password: process.env.YDB_PASSWORD! },
-    authEndpoint,
+    authEndpoint
   ),
 })
 await driver.ready()
@@ -130,12 +134,15 @@ import * as fs from 'node:fs'
 const authEndpoint = 'grpcs://ydb.example.com:2135'
 const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
-    { username: 'user', password: 'pass' },
+    {
+      username: 'user',
+      password: 'pass',
+    },
     authEndpoint,
     {
       ca: fs.readFileSync('/etc/ssl/custom/ca.pem'),
       cert: fs.readFileSync('/etc/ssl/custom/client.crt'), // при mTLS
-      key: fs.readFileSync('/etc/ssl/custom/client.key'),  // при mTLS
+      key: fs.readFileSync('/etc/ssl/custom/client.key'), // при mTLS
     }
   ),
 })
@@ -165,6 +172,7 @@ const driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
 ```
 
 Советы:
+
 - Кешируйте токен и продлевайте его заранее (как делает `StaticCredentialsProvider`).
 - Учтите таймауты: `ydb.sdk.token_timeout_ms` в опциях драйвера.
 
@@ -182,10 +190,17 @@ const driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
 class MyCredentialsProvider extends CredentialsProvider {
   #token: string | null = null
 
-  async getToken(force = false, signal: AbortSignal = AbortSignal.timeout(10_000)) {
+  async getToken(
+    force = false,
+    signal: AbortSignal = AbortSignal.timeout(10_000)
+  ) {
     if (!force && this.#token) return this.#token
     const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
-    const res = await fetch(this.#endpoint, { method: 'POST', body: '{}', signal: abort })
+    const res = await fetch(this.#endpoint, {
+      method: 'POST',
+      body: '{}',
+      signal: abort,
+    })
     if (!res.ok) throw new Error(`Auth failed: ${res.status}`)
     const { token } = await res.json()
     this.#token = token

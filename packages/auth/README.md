@@ -38,81 +38,84 @@ YDB requires authentication for most operations. The credentials provider you ch
 ### Using with YDB Driver
 
 ```ts
-import { Driver } from '@ydbjs/core';
-import { query } from '@ydbjs/query';
-import { StaticCredentialsProvider } from '@ydbjs/auth/static';
+import { Driver } from '@ydbjs/core'
+import { query } from '@ydbjs/query'
+import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
 const driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: new StaticCredentialsProvider({
     username: 'username',
     password: 'password',
   }),
-});
-await driver.ready();
+})
+await driver.ready()
 
-const sql = query(driver);
-const result = await sql`SELECT 1`;
+const sql = query(driver)
+const result = await sql`SELECT 1`
 ```
 
 ### Static Credentials (Manual Usage)
 
 ```ts
-import { StaticCredentialsProvider } from '@ydbjs/auth/static';
+import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
-const provider = new StaticCredentialsProvider({
-  username: 'username',
-  password: 'password',
-}, 'grpc://localhost:2136/local');
+const provider = new StaticCredentialsProvider(
+  {
+    username: 'username',
+    password: 'password',
+  },
+  'grpc://localhost:2136/local'
+)
 
-const token = await provider.getToken();
+const token = await provider.getToken()
 // The token can be used in custom gRPC calls if needed
 ```
 
 ### Token-Based Authentication
 
 ```ts
-import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token';
+import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token'
 
 const provider = new AccessTokenCredentialsProvider({
   token: 'your-access-token',
-});
+})
 
 // Use with driver
-import { Driver } from '@ydbjs/core';
+import { Driver } from '@ydbjs/core'
 const driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: provider,
-});
-await driver.ready();
+})
+await driver.ready()
 ```
 
 ### Anonymous Access
 
 ```ts
-import { Driver } from '@ydbjs/core';
-import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous';
+import { Driver } from '@ydbjs/core'
+import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 
 const driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: new AnonymousCredentialsProvider(),
-});
-await driver.ready();
+})
+await driver.ready()
 ```
 
 ### VM Metadata Authentication (Cloud)
 
 ```ts
-import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata';
+import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata'
 
 const provider = new MetadataCredentialsProvider({
   // Optional: override endpoint or flavor for your cloud
   // endpoint: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token',
   // flavor: 'Google',
-});
+})
 
-import { Driver } from '@ydbjs/core';
+import { Driver } from '@ydbjs/core'
 const driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: provider,
-});
-await driver.ready();
+})
+await driver.ready()
 ```
 
 ---

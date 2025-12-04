@@ -18,7 +18,8 @@ import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { Json, Timestamp, Uint64 } from '@ydbjs/value/primitive'
 
-let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
+let connectionString =
+	process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
 let sql = query(driver)
 
@@ -55,14 +56,18 @@ try {
 			title: 'Вторая запись',
 			content: 'Содержимое второй записи',
 			created_at: new Timestamp(new Date()),
-			metadata: new Json(JSON.stringify({ tags: ['example'], priority: 'high' })),
+			metadata: new Json(
+				JSON.stringify({ tags: ['example'], priority: 'high' })
+			),
 		},
 		{
 			id: new Uint64(3n),
 			title: 'Третья запись',
 			content: 'Содержимое третьей записи',
 			created_at: new Timestamp(new Date()),
-			metadata: new Json(JSON.stringify({ tags: ['test'], priority: 'low' })),
+			metadata: new Json(
+				JSON.stringify({ tags: ['test'], priority: 'low' })
+			),
 		},
 	]
 

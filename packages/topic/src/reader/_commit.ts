@@ -1,9 +1,15 @@
-import { create } from "@bufbuild/protobuf"
-import { type OffsetsRange, OffsetsRangeSchema, type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset, StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, StreamReadMessage_FromClientSchema } from "@ydbjs/api/topic"
-import { loggers } from "@ydbjs/debug"
+import { create } from '@bufbuild/protobuf'
+import {
+	type OffsetsRange,
+	OffsetsRangeSchema,
+	type StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset,
+	StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema,
+	StreamReadMessage_FromClientSchema,
+} from '@ydbjs/api/topic'
+import { loggers } from '@ydbjs/debug'
 
-import type { TopicMessage } from "../message.js"
-import type { TopicCommitPromise, TopicReaderState } from "./types.js"
+import type { TopicMessage } from '../message.js'
+import type { TopicCommitPromise, TopicReaderState } from './types.js'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -22,7 +28,8 @@ export let _commit = function commit(
 
 	// Group offsets by partition session
 	let offsets = new Map<bigint, OffsetsRange[]>()
-	let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] = []
+	let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] =
+		[]
 
 	for (let message of messages) {
 		// Each message must be alive
@@ -57,36 +64,57 @@ export let _commit = function commit(
 			} else if (offset > last.end) {
 				// If there's a gap between offsets, create a new range
 				// This handles non-consecutive offsets properly
-				partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }))
+				partOffsets.push(
+					create(OffsetsRangeSchema, {
+						start: offset,
+						end: offset + 1n,
+					})
+				)
 			} else {
 				// If offset <= last.end, it's either out of order or a duplicate.
-				throw new Error(`Message with offset ${offset} is out of order or duplicate for partition session ${partitionSession.partitionSessionId}`)
+				throw new Error(
+					`Message with offset ${offset} is out of order or duplicate for partition session ${partitionSession.partitionSessionId}`
+				)
 			}
 		} else {
 			// First offset for this partition, create initial range
-			partOffsets.push(create(OffsetsRangeSchema, { start: offset, end: offset + 1n }))
+			partOffsets.push(
+				create(OffsetsRangeSchema, { start: offset, end: offset + 1n })
+			)
 		}
 	}
 
 	// Convert our optimized Map structure into the API's expected format
 	for (let [partitionSessionId, partOffsets] of offsets.entries()) {
-		dbg.log('committing offsets for partition session %s: %o', partitionSessionId, partOffsets)
-
-		commitOffsets.push(create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
+		dbg.log(
+			'committing offsets for partition session %s: %o',
 			partitionSessionId,
-			offsets: partOffsets
-		}))
+			partOffsets
+		)
+
+		commitOffsets.push(
+			create(
+				StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema,
+				{
+					partitionSessionId,
+					offsets: partOffsets,
+				}
+			)
+		)
 	}
 
 	// Send the commit request to the server
-	state.outgoingQueue.push(create(StreamReadMessage_FromClientSchema, {
-		clientMessage: {
-			case: 'commitOffsetRequest',
-			value: {
-				commitOffsets
-			}
-		}
-	}), 0)
+	state.outgoingQueue.push(
+		create(StreamReadMessage_FromClientSchema, {
+			clientMessage: {
+				case: 'commitOffsetRequest',
+				value: {
+					commitOffsets,
+				},
+			},
+		}),
+		0
+	)
 
 	// Create a promise that resolves when the commit is acknowledged by the server.
 	return new Promise((resolve, reject) => {
@@ -96,7 +124,7 @@ export let _commit = function commit(
 				partitionSessionId,
 				offset: partOffsets[partOffsets.length - 1]!.end, // Use the last offset in the range
 				resolve,
-				reject
+				reject,
 			}
 
 			// Add to pending commits map

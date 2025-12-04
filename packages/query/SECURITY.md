@@ -99,7 +99,7 @@ await sql`SELECT * FROM users ${unsafe(trustedSqlFragment)}`
 
 **Key principles:**
 
-- **Always use template literals** with `sql\`query\`` syntax (returned by `query(driver)`)
+- **Always use template literals** with `sql\`query\``syntax (returned by`query(driver)`)
 - **Never concatenate user input** into query strings manually
 - **Use identifier()** for dynamic table/column names
 - **Use unsafe()** only for trusted, non-user-facing code (migrations, etc.)

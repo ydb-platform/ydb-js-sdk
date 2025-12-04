@@ -83,9 +83,12 @@ const result = await sql.begin(async (tx) => {
 })
 
 // С изоляцией и идемпотентностью
-await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) => {
-  return await tx`SELECT COUNT(*) FROM users`
-})
+await sql.begin(
+  { isolation: 'snapshotReadOnly', idempotent: true },
+  async (tx) => {
+    return await tx`SELECT COUNT(*) FROM users`
+  }
+)
 ```
 
 ### Продвинутое: несколько наборов результатов, стриминг и события
@@ -94,7 +97,8 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 import { StatsMode } from '@ydbjs/api/query'
 // Несколько наборов результатов
 type Result = [[{ id: number }], [{ count: number }]]
-const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
+const [rows, [{ count }]] =
+  await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
 
 // Подписка на статистику и ретраи
 const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)

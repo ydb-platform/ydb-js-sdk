@@ -52,7 +52,8 @@ test('processes ydb values as parameters', () => {
 })
 
 test('processes mixed parameters and identifiers', () => {
-	let { text, params } = yql`FROM ${identifier('my_table')}.${identifier('my_column')} SELECT ${1}, ${2};`
+	let { text, params } =
+		yql`FROM ${identifier('my_table')}.${identifier('my_column')} SELECT ${1}, ${2};`
 
 	expect(text).eq('FROM `my_table`.`my_column` SELECT $p0, $p1;')
 	expect(params).toMatchInlineSnapshot(`
@@ -73,7 +74,9 @@ test('handles falsy values', () => {
 	let { text, params } =
 		yql`SELECT * FROM table WHERE str = ${''} AND int = ${0} AND int64 = ${0n} AND bool = ${false};`
 
-	expect(text).eq('SELECT * FROM table WHERE str = $p0 AND int = $p1 AND int64 = $p2 AND bool = $p3;')
+	expect(text).eq(
+		'SELECT * FROM table WHERE str = $p0 AND int = $p1 AND int64 = $p2 AND bool = $p3;'
+	)
 	expect(params).toMatchInlineSnapshot(`
 		{
 		  "$p0": Text {
@@ -121,7 +124,8 @@ test('throws detailed error for null value', () => {
 })
 
 test('handles unsafe strings', () => {
-	let { text, params } = yql`SELECT * FROM ${identifier('table')} WHERE id = ${1};`
+	let { text, params } =
+		yql`SELECT * FROM ${identifier('table')} WHERE id = ${1};`
 
 	expect(text).eq('SELECT * FROM `table` WHERE id = $p0;')
 	expect(params).toHaveProperty('$p0')
@@ -129,14 +133,16 @@ test('handles unsafe strings', () => {
 })
 
 test('handles multiple unsafe values', () => {
-	let { text, params } = yql`SELECT ${identifier('col1')}, ${identifier('col2')} FROM ${identifier('table')};`
+	let { text, params } =
+		yql`SELECT ${identifier('col1')}, ${identifier('col2')} FROM ${identifier('table')};`
 
 	expect(text).eq('SELECT `col1`, `col2` FROM `table`;')
 	expect(Object.keys(params)).toHaveLength(0)
 })
 
 test('handles mixed unsafe and safe values', () => {
-	let { text, params } = yql`SELECT ${identifier('name')}, ${42} FROM ${identifier('users')} WHERE id = ${1};`
+	let { text, params } =
+		yql`SELECT ${identifier('name')}, ${42} FROM ${identifier('users')} WHERE id = ${1};`
 
 	expect(text).eq('SELECT `name`, $p0 FROM `users` WHERE id = $p1;')
 	expect(params).toHaveProperty('$p0')
@@ -166,11 +172,14 @@ test('identifier escapes backticks inside names', () => {
 
 test('public exports identifier/unsafe behave correctly', async () => {
 	// Import from public entry to ensure re-exports work in tests
-	const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
+	const { identifier: pubIdentifier, unsafe: pubUnsafe } =
+		await import('./index.ts')
 
 	expect(pubIdentifier('users').toString()).eq('`users`')
 	expect(pubIdentifier('a`b').toString()).eq('`a``b`')
-	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
+	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq(
+		'ORDER BY created_at DESC'
+	)
 })
 
 test('handles various data types', () => {
@@ -201,7 +210,8 @@ test('handles complex parameter mixing', () => {
 })
 
 test('handles unsafe values at boundaries', () => {
-	let { text, params } = yql`${identifier('SELECT')} ${1} ${identifier('FROM')} ${identifier('table')}`
+	let { text, params } =
+		yql`${identifier('SELECT')} ${1} ${identifier('FROM')} ${identifier('table')}`
 
 	expect(text).eq('`SELECT` $p0 `FROM` `table`')
 	expect(Object.keys(params)).toHaveLength(1)

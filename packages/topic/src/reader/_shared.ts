@@ -1,10 +1,10 @@
-import type { StreamReadMessage_FromClient } from "@ydbjs/api/topic"
-import type { Driver } from "@ydbjs/core"
-import { loggers } from "@ydbjs/debug"
-import { setInterval } from "node:timers/promises"
-import type { CodecMap } from "../codec.js"
-import type { AsyncPriorityQueue } from "../queue.js"
-import { _send_update_token_request } from "./_update_token.js"
+import type { StreamReadMessage_FromClient } from '@ydbjs/api/topic'
+import type { Driver } from '@ydbjs/core'
+import { loggers } from '@ydbjs/debug'
+import { setInterval } from 'node:timers/promises'
+import type { CodecMap } from '../codec.js'
+import type { AsyncPriorityQueue } from '../queue.js'
+import { _send_update_token_request } from './_update_token.js'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -32,7 +32,9 @@ export async function _start_background_token_refresher(
 	signal: AbortSignal
 ): Promise<void> {
 	try {
-		for await (let _ of setInterval(updateTokenIntervalMs, void 0, { signal })) {
+		for await (let _ of setInterval(updateTokenIntervalMs, void 0, {
+			signal,
+		})) {
 			_send_update_token_request({
 				queue: outgoingQueue,
 				token: await driver.token,
@@ -49,7 +51,9 @@ export async function _start_background_token_refresher(
 /**
  * Create disposal functions for readers
  */
-export function _create_disposal_functions<T extends { close(): Promise<void>, destroy(reason?: Error): void }>(
+export function _create_disposal_functions<
+	T extends { close(): Promise<void>; destroy(reason?: Error): void },
+>(
 	reader: T,
 	readerType: string
 ): {

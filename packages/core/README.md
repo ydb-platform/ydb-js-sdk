@@ -30,32 +30,32 @@ npm install @ydbjs/core@alpha
 ### Basic Example
 
 ```ts
-import { Driver } from '@ydbjs/core';
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery';
+import { Driver } from '@ydbjs/core'
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const driver = new Driver('grpc://localhost:2136/local');
-await driver.ready();
+const driver = new Driver('grpc://localhost:2136/local')
+await driver.ready()
 
-const discovery = driver.createClient(DiscoveryServiceDefinition);
-const endpoints = await discovery.listEndpoints({ database: '/local' });
-console.log(endpoints);
+const discovery = driver.createClient(DiscoveryServiceDefinition)
+const endpoints = await discovery.listEndpoints({ database: '/local' })
+console.log(endpoints)
 
-await driver.close();
+await driver.close()
 ```
 
 ### Using Authentication Providers
 
 ```ts
-import { Driver } from '@ydbjs/core';
-import { StaticCredentialsProvider } from '@ydbjs/auth/static';
+import { Driver } from '@ydbjs/core'
+import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
 const driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: new StaticCredentialsProvider({
     username: 'user',
     password: 'pass',
   }),
-});
-await driver.ready();
+})
+await driver.ready()
 // ...
 ```
 
@@ -66,7 +66,7 @@ You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider
 Always close the driver when done to release resources:
 
 ```ts
-driver.close();
+driver.close()
 ```
 
 ## Development

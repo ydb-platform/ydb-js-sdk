@@ -19,7 +19,10 @@ export class TupleType implements Type {
 	encode(): Ydb.Type {
 		if (!this.#typeInstance) {
 			this.#typeInstance = create(Ydb.TypeSchema, {
-				type: { case: 'tupleType', value: { elements: this.elements.map((e) => e.encode()) } },
+				type: {
+					case: 'tupleType',
+					value: { elements: this.elements.map((e) => e.encode()) },
+				},
 			})
 		}
 
@@ -45,7 +48,9 @@ export class Tuple<T extends Value = Value> implements Value<TupleType> {
 
 	encode(): Ydb.Value {
 		if (!this.#valueInstance) {
-			this.#valueInstance = create(Ydb.ValueSchema, { items: this.items.map((item) => item.encode()) })
+			this.#valueInstance = create(Ydb.ValueSchema, {
+				items: this.items.map((item) => item.encode()),
+			})
 		}
 
 		return this.#valueInstance

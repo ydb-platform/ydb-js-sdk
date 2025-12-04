@@ -71,7 +71,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * @param key - Service Account authorized key JSON object
 	 * @param options - Optional configuration (IAM endpoint override)
 	 */
-	constructor(key: ServiceAccountKey, options?: ServiceAccountCredentialsOptions) {
+	constructor(
+		key: ServiceAccountKey,
+		options?: ServiceAccountCredentialsOptions
+	) {
 		super()
 
 		if (!key.id || !key.service_account_id || !key.private_key) {
@@ -83,7 +86,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 		// Yandex Cloud authorized keys may contain a warning line before the PEM key
 		// Remove it if present to get clean PEM format
 		if (key.private_key.includes('PLEASE DO NOT REMOVE')) {
-			key.private_key = key.private_key.replace(/^.*?-----BEGIN PRIVATE KEY-----/s, '-----BEGIN PRIVATE KEY-----')
+			key.private_key = key.private_key.replace(
+				/^.*?-----BEGIN PRIVATE KEY-----/s,
+				'-----BEGIN PRIVATE KEY-----'
+			)
 		}
 
 		this.#key = key
@@ -91,7 +97,11 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			this.#iamEndpoint = options.iamEndpoint
 		}
 
-		dbg.log('creating service account credentials provider for SA: %s (key ID: %s)', key.service_account_id, key.id)
+		dbg.log(
+			'creating service account credentials provider for SA: %s (key ID: %s)',
+			key.service_account_id,
+			key.id
+		)
 	}
 
 	/**
@@ -101,7 +111,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * @param options - Optional configuration
 	 * @returns ServiceAccountCredentialsProvider instance
 	 */
-	static fromFile(filePath: string, options?: ServiceAccountCredentialsOptions): ServiceAccountCredentialsProvider {
+	static fromFile(
+		filePath: string,
+		options?: ServiceAccountCredentialsOptions
+	): ServiceAccountCredentialsProvider {
 		let resolvedPath = path.resolve(filePath)
 		dbg.log('reading service account key from file: %s', resolvedPath)
 
@@ -109,14 +122,19 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 		try {
 			content = fs.readFileSync(resolvedPath, 'utf8')
 		} catch (error) {
-			throw new Error(`Failed to read Service Account key file: ${filePath}`, { cause: error })
+			throw new Error(
+				`Failed to read Service Account key file: ${filePath}`,
+				{ cause: error }
+			)
 		}
 
 		let key: ServiceAccountKey
 		try {
 			key = JSON.parse(content)
 		} catch (error) {
-			throw new Error(`Failed to parse Service Account key JSON`, { cause: error })
+			throw new Error(`Failed to parse Service Account key JSON`, {
+				cause: error,
+			})
 		}
 
 		return new ServiceAccountCredentialsProvider(key, options)
@@ -131,10 +149,14 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * @returns ServiceAccountCredentialsProvider instance
 	 * @throws Error if environment variable is not set
 	 */
-	static fromEnv(options?: ServiceAccountCredentialsOptions): ServiceAccountCredentialsProvider {
+	static fromEnv(
+		options?: ServiceAccountCredentialsOptions
+	): ServiceAccountCredentialsProvider {
 		let filePath = process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS
 		if (!filePath) {
-			throw new Error('YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set')
+			throw new Error(
+				'YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set'
+			)
 		}
 
 		return ServiceAccountCredentialsProvider.fromFile(filePath, options)
@@ -167,7 +189,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
-		dbg.log('fetching new IAM token (token expired or force=true, key ID: %s)', this.#key.id)
+		dbg.log(
+			'fetching new IAM token (token expired or force=true, key ID: %s)',
+			this.#key.id
+		)
 
 		this.#promise = (async (): Promise<string> => {
 			try {
@@ -209,7 +234,11 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			} catch (error) {
 				// Don't throw - failed background refresh will retry on next getToken call
 				// Return existing token if available to avoid breaking ongoing requests
-				dbg.log('background IAM token refresh failed: %O (key ID: %s)', error, this.#key.id)
+				dbg.log(
+					'background IAM token refresh failed: %O (key ID: %s)',
+					error,
+					this.#key.id
+				)
 				if (this.#token) {
 					return this.#token.value
 				}
@@ -260,7 +289,11 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 		}
 
 		// Network errors are transient - fast retry to catch when connection restored
-		if (error.name === 'TypeError' && (error.message.includes('fetch') || error.message.includes('network'))) {
+		if (
+			error.name === 'TypeError' &&
+			(error.message.includes('fetch') ||
+				error.message.includes('network'))
+		) {
 			return fixed(0)
 		}
 
@@ -356,7 +389,9 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			})
 
 			if (!response.ok) {
-				let errorText = await response.text().catch(() => 'Unknown error')
+				let errorText = await response
+					.text()
+					.catch(() => 'Unknown error')
 				throw new IamApiError(
 					`IAM API error: ${response.status} ${response.statusText} - ${errorText}`,
 					response.status,
@@ -364,7 +399,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 				)
 			}
 
-			let data = (await response.json()) as { iamToken?: string; expiresAt?: string }
+			let data = (await response.json()) as {
+				iamToken?: string
+				expiresAt?: string
+			}
 
 			if (!data.iamToken) {
 				throw new Error('IAM API response missing iamToken field')

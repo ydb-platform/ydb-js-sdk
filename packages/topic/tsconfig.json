@@ -8,6 +8,6 @@
 		"dist/**/*",
 		"**/*.test.ts",
 		"**/*.bench.ts",
-		"vitest.config.ts",
+		"vitest.config.ts"
 	]
 }

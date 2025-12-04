@@ -37,13 +37,16 @@ await sql`UPDATE counters SET v = v + 1 WHERE id = ${id}`
 ```ts
 import { retry, defaultRetryConfig, strategies } from '@ydbjs/retry'
 
-await retry({
-  ...defaultRetryConfig,
-  budget: 5,
-  strategy: strategies.exponential(200),
-}, async (signal) => {
-  return await sql`SELECT 1`.signal(signal)
-})
+await retry(
+  {
+    ...defaultRetryConfig,
+    budget: 5,
+    strategy: strategies.exponential(200),
+  },
+  async (signal) => {
+    return await sql`SELECT 1`.signal(signal)
+  }
+)
 ```
 
 ## Topic streaming

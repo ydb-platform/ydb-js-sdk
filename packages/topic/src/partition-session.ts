@@ -34,25 +34,29 @@ export class TopicPartitionSession {
 	 * @param partitionId - The identifier of the partition.
 	 * @param topicPath - The path of the topic.
 	 */
-	constructor(partitionSessionId: bigint, partitionId: bigint, topicPath: string) {
-		this.partitionSessionId = partitionSessionId;
-		this.partitionId = partitionId;
-		this.topicPath = topicPath;
+	constructor(
+		partitionSessionId: bigint,
+		partitionId: bigint,
+		topicPath: string
+	) {
+		this.partitionSessionId = partitionSessionId
+		this.partitionId = partitionId
+		this.topicPath = topicPath
 	}
 
 	get isStopped(): boolean {
-		return this.#stopped;
+		return this.#stopped
 	}
 
 	get isEnded(): boolean {
-		return this.#ended;
+		return this.#ended
 	}
 
 	stop(): void {
-		this.#stopped = true;
+		this.#stopped = true
 	}
 
 	end(): void {
-		this.#ended = true;
+		this.#ended = true
 	}
 }

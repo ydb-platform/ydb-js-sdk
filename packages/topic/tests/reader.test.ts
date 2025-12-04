@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
 import { create } from '@bufbuild/protobuf'
-import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import {
+	CreateTopicRequestSchema,
+	DropTopicRequestSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { createTopicReader } from '../src/reader/index.js'
 
 let driver = new Driver(inject('connectionString'), {
-	'ydb.sdk.enable_discovery': false
+	'ydb.sdk.enable_discovery': false,
 })
 await driver.ready()
 
@@ -36,13 +40,18 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-	await topicService.dropTopic(create(DropTopicRequestSchema, {
-		path: testTopicName,
-	}))
+	await topicService.dropTopic(
+		create(DropTopicRequestSchema, {
+			path: testTopicName,
+		})
+	)
 })
 
 test('reads single message from topic', async () => {
-	await using reader = createTopicReader(driver, { topic: testTopicName, consumer: testConsumerName })
+	await using reader = createTopicReader(driver, {
+		topic: testTopicName,
+		consumer: testConsumerName,
+	})
 
 	for await (let batch of reader.read({ limit: 1, waitMs: 100 })) {
 		await reader.commit(batch)

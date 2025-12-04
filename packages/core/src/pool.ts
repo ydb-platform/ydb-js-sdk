@@ -1,20 +1,23 @@
-import { type EndpointInfo } from '@ydbjs/api/discovery';
-import { loggers } from '@ydbjs/debug';
-import type { ChannelCredentials, ChannelOptions } from 'nice-grpc';
-import { type Connection, LazyConnection } from './conn.js';
+import { type EndpointInfo } from '@ydbjs/api/discovery'
+import { loggers } from '@ydbjs/debug'
+import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
+import { type Connection, LazyConnection } from './conn.js'
 
 let dbg = loggers.driver.extend('pool')
 
-const PESSIMIZATION_TIMEOUT_MS = 60_000;
+const PESSIMIZATION_TIMEOUT_MS = 60_000
 
 export class ConnectionPool implements Disposable {
-	protected connections: Set<Connection> = new Set();
-	protected pessimized: Set<Connection> = new Set();
+	protected connections: Set<Connection> = new Set()
+	protected pessimized: Set<Connection> = new Set()
 
-	#channelOptions?: ChannelOptions;
-	#channelCredentials: ChannelCredentials;
+	#channelOptions?: ChannelOptions
+	#channelCredentials: ChannelCredentials
 
-	constructor(channelCredentials: ChannelCredentials, channelOptions?: ChannelOptions) {
+	constructor(
+		channelCredentials: ChannelCredentials,
+		channelOptions?: ChannelOptions
+	) {
 		dbg.log('creating connection pool')
 		this.#channelCredentials = channelCredentials
 
@@ -28,48 +31,64 @@ export class ConnectionPool implements Disposable {
 	 * @param preferNodeId The preferred node id to use
 	 * @returns A connection from the pool
 	 */
-	acquire(preferNodeId?: Connection["nodeId"]): Connection {
-		let candidate: Connection | null = null;
-		this.#refreshPessimizedChannels();
+	acquire(preferNodeId?: Connection['nodeId']): Connection {
+		let candidate: Connection | null = null
+		this.#refreshPessimizedChannels()
 
 		// Try to find preferred node or any good connection
 		for (let connection of this.connections) {
-			candidate ??= connection;
+			candidate ??= connection
 
 			if (connection.nodeId === preferNodeId) {
-				dbg.log('returning preferred connection to node %d', preferNodeId)
-				return connection;
-			}
-		}
-
-		if (candidate) {
-			// Move to end of set for round-robin
-			this.connections.delete(candidate);
-			this.connections.add(candidate);
-			dbg.log('returning round-robin connection to node %d (pool size: %d)', candidate.nodeId, this.connections.size)
-			return candidate;
-		}
-
-		// Fallback to pessimized connections
-		dbg.log('no good connections available, falling back to pessimized connections')
-		for (let connection of this.pessimized) {
-			candidate ??= connection;
-
-			if (connection.nodeId === preferNodeId) {
-				dbg.log('returning preferred pessimized connection to node %d', preferNodeId)
+				dbg.log(
+					'returning preferred connection to node %d',
+					preferNodeId
+				)
 				return connection
 			}
 		}
 
 		if (candidate) {
-			this.pessimized.delete(candidate);
-			this.pessimized.add(candidate);
-			dbg.log('returning pessimized connection to node %d (pessimized size: %d)', candidate.nodeId, this.pessimized.size)
-			return candidate;
+			// Move to end of set for round-robin
+			this.connections.delete(candidate)
+			this.connections.add(candidate)
+			dbg.log(
+				'returning round-robin connection to node %d (pool size: %d)',
+				candidate.nodeId,
+				this.connections.size
+			)
+			return candidate
+		}
+
+		// Fallback to pessimized connections
+		dbg.log(
+			'no good connections available, falling back to pessimized connections'
+		)
+		for (let connection of this.pessimized) {
+			candidate ??= connection
+
+			if (connection.nodeId === preferNodeId) {
+				dbg.log(
+					'returning preferred pessimized connection to node %d',
+					preferNodeId
+				)
+				return connection
+			}
+		}
+
+		if (candidate) {
+			this.pessimized.delete(candidate)
+			this.pessimized.add(candidate)
+			dbg.log(
+				'returning pessimized connection to node %d (pessimized size: %d)',
+				candidate.nodeId,
+				this.pessimized.size
+			)
+			return candidate
 		}
 
 		dbg.log('no connections available in pool')
-		throw new Error('No connection available');
+		throw new Error('No connection available')
 	}
 
 	/**
@@ -78,14 +97,18 @@ export class ConnectionPool implements Disposable {
 	 * @returns The connection pool instance
 	 */
 	release(conn: Connection) {
-		this.connections.delete(conn);
-		this.connections.add(conn);
+		this.connections.delete(conn)
+		this.connections.add(conn)
 
-		this.pessimized.delete(conn);
-		this.pessimized.add(conn);
+		this.pessimized.delete(conn)
+		this.pessimized.add(conn)
 
-		dbg.log('released connection to node %d address %s', conn.nodeId, conn.address)
-		return this;
+		dbg.log(
+			'released connection to node %d address %s',
+			conn.nodeId,
+			conn.address
+		)
+		return this
 	}
 
 	/**
@@ -96,16 +119,25 @@ export class ConnectionPool implements Disposable {
 		let connection = this.findByNodeId(BigInt(endpoint.nodeId))
 		if (connection) {
 			dbg.log('replacing existing connection to node %d', endpoint.nodeId)
-			this.remove(connection);
-			connection.channel.close();
+			this.remove(connection)
+			connection.channel.close()
 		}
 
-		connection = new LazyConnection(endpoint, this.#channelCredentials, this.#channelOptions);
+		connection = new LazyConnection(
+			endpoint,
+			this.#channelCredentials,
+			this.#channelOptions
+		)
 
-		this.connections.add(connection);
-		dbg.log('added connection to node %d address %s (pool size: %d)', connection.nodeId, connection.address, this.connections.size)
+		this.connections.add(connection)
+		dbg.log(
+			'added connection to node %d address %s (pool size: %d)',
+			connection.nodeId,
+			connection.address,
+			this.connections.size
+		)
 
-		return this;
+		return this
 	}
 
 	/**
@@ -113,16 +145,16 @@ export class ConnectionPool implements Disposable {
 	 * @param nodeId The node id to search for
 	 * @returns The connection if found, undefined otherwise
 	 */
-	findByNodeId(nodeId: Connection["nodeId"]): Connection | undefined {
+	findByNodeId(nodeId: Connection['nodeId']): Connection | undefined {
 		for (let connection of this.connections) {
 			if (connection.nodeId === nodeId) {
-				return connection;
+				return connection
 			}
 		}
 
 		for (let connection of this.pessimized) {
 			if (connection.nodeId === nodeId) {
-				return connection;
+				return connection
 			}
 		}
 
@@ -134,12 +166,16 @@ export class ConnectionPool implements Disposable {
 	 * @param connection The connection to remove
 	 */
 	remove(connection: Connection) {
-		this.connections.delete(connection);
-		this.pessimized.delete(connection);
+		this.connections.delete(connection)
+		this.pessimized.delete(connection)
 
-		dbg.log('removed connection to node %d address %s', connection.nodeId, connection.address)
+		dbg.log(
+			'removed connection to node %d address %s',
+			connection.nodeId,
+			connection.address
+		)
 
-		return this;
+		return this
 	}
 
 	/**
@@ -147,11 +183,15 @@ export class ConnectionPool implements Disposable {
 	 * @param connection The connection to pessimize
 	 */
 	pessimize(connection: Connection) {
-		connection.pessimizedUntil = Date.now() + PESSIMIZATION_TIMEOUT_MS;
-		this.pessimized.add(connection);
-		this.connections.delete(connection);
+		connection.pessimizedUntil = Date.now() + PESSIMIZATION_TIMEOUT_MS
+		this.pessimized.add(connection)
+		this.connections.delete(connection)
 
-		dbg.log('pessimized node %d address %s', connection.nodeId, connection.address)
+		dbg.log(
+			'pessimized node %d address %s',
+			connection.nodeId,
+			connection.address
+		)
 
 		return this
 	}
@@ -160,14 +200,18 @@ export class ConnectionPool implements Disposable {
 	 * Check pessimized channels and restore them if the timeout has elapsed
 	 */
 	#refreshPessimizedChannels(): void {
-		let now = Date.now();
+		let now = Date.now()
 
 		for (let connection of this.pessimized) {
 			if (connection.pessimizedUntil! < now) {
-				this.pessimized.delete(connection);
-				this.connections.add(connection);
+				this.pessimized.delete(connection)
+				this.connections.add(connection)
 
-				dbg.log('un-pessimized node %d address %s', connection.nodeId, connection.address)
+				dbg.log(
+					'un-pessimized node %d address %s',
+					connection.nodeId,
+					connection.address
+				)
 			}
 		}
 	}
@@ -176,18 +220,22 @@ export class ConnectionPool implements Disposable {
 	 * Close all connections in the pool
 	 */
 	close() {
-		dbg.log('closing connection pool (%d active, %d pessimized)', this.connections.size, this.pessimized.size)
+		dbg.log(
+			'closing connection pool (%d active, %d pessimized)',
+			this.connections.size,
+			this.pessimized.size
+		)
 
 		for (let connection of this.connections) {
-			connection.close();
+			connection.close()
 		}
 
 		for (let connection of this.pessimized) {
-			connection.close();
+			connection.close()
 		}
 
-		this.connections.clear();
-		this.pessimized.clear();
+		this.connections.clear()
+		this.pessimized.clear()
 
 		dbg.log('connection pool closed')
 	}
@@ -196,10 +244,10 @@ export class ConnectionPool implements Disposable {
 	 * Destroy the connection pool.
 	 */
 	destroy() {
-		this.close();
+		this.close()
 	}
 
 	[Symbol.dispose]() {
-		return this.destroy();
+		return this.destroy()
 	}
 }

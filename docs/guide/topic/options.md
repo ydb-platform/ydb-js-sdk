@@ -17,6 +17,7 @@ title: Topic — Options
 - `onCommittedOffset?`: `(session, committedOffset) => void`
 
 Methods and behavior:
+
 - `read({ limit?, waitMs?, signal? })`: `AsyncIterable<TopicMessage[]>`
   - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `waitMs` sets maximum wait for data; on timeout, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
   - Rationale: long blocking reads hurt cooperative multitasking; time‑based empty yields simplify scheduling without busy‑wait.
@@ -43,6 +44,7 @@ Methods and behavior:
 - `onAck?(seqNo, status?)`: `(seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void`
 
 Methods and behavior:
+
 - `write(payload: Uint8Array, extra?)`: `bigint`
   - Buffers a message and returns assigned `seqNo`. You may provide `seqNo`, `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher.
   - Why `seqNo`: `producerId + seqNo` on the producer ensures idempotency, deterministic acks, and per‑partition order.
@@ -52,15 +54,18 @@ Methods and behavior:
 - `destroy()`: `void` — immediate stop without delivery guarantees.
 
 Acknowledgements:
+
 - `onAck(seqNo, status)`: notifies about message fate. `status`:
   - `written` — written outside a transaction
   - `writtenInTx` — written in a transaction (visible after commit)
   - `skipped` — skipped (e.g., `seqNo` conflict)
 
 Retries and resilience:
+
 - The connection to TopicService is streaming; it reestablishes on failures per `retryConfig`. Command queue is recreated.
 
 Transactional variants:
+
 - `createTopicTxReader(tx, ...)` and `createTopicTxWriter(tx, ...)` are bound to a Query transaction.
   - TxReader tracks read offsets and sends `updateOffsetsInTransaction` on `tx.onCommit`.
   - TxWriter triggers `flush` on `tx.onCommit` and shuts down correctly on `tx.onRollback/onClose`.

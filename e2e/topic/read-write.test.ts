@@ -2,7 +2,11 @@ import { afterEach, assert, beforeEach, inject, test } from 'vitest'
 import { Driver } from '@ydbjs/core'
 import { createTopicReader } from '@ydbjs/topic/reader'
 import { createTopicWriter } from '@ydbjs/topic/writer'
-import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import {
+	CreateTopicRequestSchema,
+	DropTopicRequestSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
 import { create } from '@bufbuild/protobuf'
 import { once } from 'node:events'
 
@@ -75,7 +79,10 @@ test('writes and reads messages from a topic', async () => {
 	for await (let batch of reader.read()) {
 		assert.equal(batch.length, 1, 'Expected one message in batch')
 		let message = batch[0]!
-		assert.equal(Buffer.from(message.payload).toString('utf-8'), 'Hello, world!')
+		assert.equal(
+			Buffer.from(message.payload).toString('utf-8'),
+			'Hello, world!'
+		)
 
 		await reader.commit(batch)
 
@@ -105,7 +112,11 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	let wb = 0
 	let rb = 0
 	let ctrl = new AbortController()
-	let signal = AbortSignal.any([tc.signal, ctrl.signal, AbortSignal.timeout(25_000)])
+	let signal = AbortSignal.any([
+		tc.signal,
+		ctrl.signal,
+		AbortSignal.timeout(25_000),
+	])
 
 	// Write messages to the topic
 	void (async () => {
@@ -124,7 +135,9 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 		let start = performance.now()
 		await writer.flush()
 		console.log(`Write took ${performance.now() - start} ms`)
-		console.log(`Throughput: ${((wb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`)
+		console.log(
+			`Throughput: ${((wb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`
+		)
 	})()
 
 	// Read messages from the topic
@@ -143,7 +156,9 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 		}
 
 		console.log(`Read took ${performance.now() - start} ms`)
-		console.log(`Throughput: ${((rb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`)
+		console.log(
+			`Throughput: ${((rb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`
+		)
 	})()
 
 	let start = Date.now()
@@ -151,6 +166,10 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	await writer.close()
 	await reader.close()
 
-	console.log(`Wrote ${wb} bytes and read ${rb} bytes in ${Date.now() - start} ms.`)
-	console.log(`Throughput: ${((rb / (Date.now() - start)) * 1000) / 1024 / 1024} MiB/s`)
+	console.log(
+		`Wrote ${wb} bytes and read ${rb} bytes in ${Date.now() - start} ms.`
+	)
+	console.log(
+		`Throughput: ${((rb / (Date.now() - start)) * 1000) / 1024 / 1024} MiB/s`
+	)
 })

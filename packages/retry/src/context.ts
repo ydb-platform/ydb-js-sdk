@@ -2,6 +2,6 @@
  * Context for retry operation
  */
 export type RetryContext = {
-	attempt: number;
-	error: unknown;
+	attempt: number
+	error: unknown
 }

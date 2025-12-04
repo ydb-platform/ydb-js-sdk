@@ -1,6 +1,6 @@
-import { loggers } from '@ydbjs/debug';
-import { isAbortError } from 'abort-controller-x';
-import { ClientError, type ClientMiddleware } from "nice-grpc";
+import { loggers } from '@ydbjs/debug'
+import { isAbortError } from 'abort-controller-x'
+import { ClientError, type ClientMiddleware } from 'nice-grpc'
 
 let log = loggers.grpc
 

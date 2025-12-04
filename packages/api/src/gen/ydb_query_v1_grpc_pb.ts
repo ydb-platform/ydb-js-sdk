@@ -2,169 +2,305 @@
 // @generated from file ydb_query_v1.proto (package Ydb.Query.V1, syntax proto3)
 /* eslint-disable */
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { AttachSessionRequestSchema, BeginTransactionRequestSchema, BeginTransactionResponseSchema, CommitTransactionRequestSchema, CommitTransactionResponseSchema, CreateSessionRequestSchema, CreateSessionResponseSchema, DeleteSessionRequestSchema, DeleteSessionResponseSchema, ExecuteQueryRequestSchema, ExecuteQueryResponsePartSchema, ExecuteScriptRequestSchema, FetchScriptResultsRequestSchema, FetchScriptResultsResponseSchema, RollbackTransactionRequestSchema, RollbackTransactionResponseSchema, SessionStateSchema } from "./protos/ydb_query_pb.js";
-import { OperationSchema } from "./protos/ydb_operation_pb.js";
-import type { ServiceDefinition } from "nice-grpc";
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import {
+	AttachSessionRequestSchema,
+	BeginTransactionRequestSchema,
+	BeginTransactionResponseSchema,
+	CommitTransactionRequestSchema,
+	CommitTransactionResponseSchema,
+	CreateSessionRequestSchema,
+	CreateSessionResponseSchema,
+	DeleteSessionRequestSchema,
+	DeleteSessionResponseSchema,
+	ExecuteQueryRequestSchema,
+	ExecuteQueryResponsePartSchema,
+	ExecuteScriptRequestSchema,
+	FetchScriptResultsRequestSchema,
+	FetchScriptResultsResponseSchema,
+	RollbackTransactionRequestSchema,
+	RollbackTransactionResponseSchema,
+	SessionStateSchema,
+} from './protos/ydb_query_pb.js'
+import { OperationSchema } from './protos/ydb_operation_pb.js'
+import type { ServiceDefinition } from 'nice-grpc'
 
 /**
  * @generated from service Ydb.Query.V1.QueryService
  */
 export const QueryServiceDefinition = {
-  /**
-   * Sessions are basic primitives for communicating with YDB Query Service. The are similar to
-   * connections for classic relational DBs. Sessions serve three main purposes:
-   * 1. Provide a flow control for DB requests with limited number of active channels.
-   * 2. Distribute load evenly across multiple DB nodes.
-   * 3. Store state for volatile stateful operations, such as short-living transactions.
-   *
-   * @generated from rpc Ydb.Query.V1.QueryService.CreateSession
-   */
-  createSession: {
-    path: "/Ydb.Query.V1.QueryService/CreateSession",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof CreateSessionRequestSchema>) => toBinary(CreateSessionRequestSchema, create(CreateSessionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(CreateSessionRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof CreateSessionResponseSchema>) => toBinary(CreateSessionResponseSchema, create(CreateSessionResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(CreateSessionResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * @generated from rpc Ydb.Query.V1.QueryService.DeleteSession
-   */
-  deleteSession: {
-    path: "/Ydb.Query.V1.QueryService/DeleteSession",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof DeleteSessionRequestSchema>) => toBinary(DeleteSessionRequestSchema, create(DeleteSessionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(DeleteSessionRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof DeleteSessionResponseSchema>) => toBinary(DeleteSessionResponseSchema, create(DeleteSessionResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(DeleteSessionResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * @generated from rpc Ydb.Query.V1.QueryService.AttachSession
-   */
-  attachSession: {
-    path: "/Ydb.Query.V1.QueryService/AttachSession",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof AttachSessionRequestSchema>) => toBinary(AttachSessionRequestSchema, create(AttachSessionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(AttachSessionRequestSchema,bytes),
-      responseStream: true, 
-    responseSerialize: (message: MessageInitShape<typeof SessionStateSchema>) => toBinary(SessionStateSchema, create(SessionStateSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(SessionStateSchema,bytes),
-    options: {},
-  },
-  /**
-   * Short-living transactions allow transactional execution of several queries, including support
-   * for interactive transactions. Transaction control can be implemented via flags in ExecuteQuery
-   * call (recommended), or via explicit calls to Begin/Commit/RollbackTransaction.
-   *
-   * @generated from rpc Ydb.Query.V1.QueryService.BeginTransaction
-   */
-  beginTransaction: {
-    path: "/Ydb.Query.V1.QueryService/BeginTransaction",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof BeginTransactionRequestSchema>) => toBinary(BeginTransactionRequestSchema, create(BeginTransactionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(BeginTransactionRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof BeginTransactionResponseSchema>) => toBinary(BeginTransactionResponseSchema, create(BeginTransactionResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(BeginTransactionResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * @generated from rpc Ydb.Query.V1.QueryService.CommitTransaction
-   */
-  commitTransaction: {
-    path: "/Ydb.Query.V1.QueryService/CommitTransaction",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof CommitTransactionRequestSchema>) => toBinary(CommitTransactionRequestSchema, create(CommitTransactionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(CommitTransactionRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof CommitTransactionResponseSchema>) => toBinary(CommitTransactionResponseSchema, create(CommitTransactionResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(CommitTransactionResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * @generated from rpc Ydb.Query.V1.QueryService.RollbackTransaction
-   */
-  rollbackTransaction: {
-    path: "/Ydb.Query.V1.QueryService/RollbackTransaction",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof RollbackTransactionRequestSchema>) => toBinary(RollbackTransactionRequestSchema, create(RollbackTransactionRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(RollbackTransactionRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof RollbackTransactionResponseSchema>) => toBinary(RollbackTransactionResponseSchema, create(RollbackTransactionResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(RollbackTransactionResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Execute interactive query in a specified short-living transaction.
-   * YDB query can contain DML, DDL and DCL statements. Supported mix of different statement types depends
-   * on the chosen transaction type.
-   * In case of error, including transport errors such as interrupted stream, whole transaction
-   * needs to be retried. For non-idempotent transaction, a custom client logic is required to
-   * retry conditionally retriable statuses, when transaction execution state is unknown.
-   *
-   * @generated from rpc Ydb.Query.V1.QueryService.ExecuteQuery
-   */
-  executeQuery: {
-    path: "/Ydb.Query.V1.QueryService/ExecuteQuery",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ExecuteQueryRequestSchema>) => toBinary(ExecuteQueryRequestSchema, create(ExecuteQueryRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteQueryRequestSchema,bytes),
-      responseStream: true, 
-    responseSerialize: (message: MessageInitShape<typeof ExecuteQueryResponsePartSchema>) => toBinary(ExecuteQueryResponsePartSchema, create(ExecuteQueryResponsePartSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteQueryResponsePartSchema,bytes),
-    options: {},
-  },
-  /**
-   * Execute long-running script.
-   * YDB scripts can contain all type of statements, including TCL statements. This way you can execute multiple
-   * transactions in a single YDB script.
-   * ExecuteScript call returns long-running Ydb.Operation object with:
-   *   operation.metadata = ExecuteScriptMetadata
-   *   operation.result = Empty
-   * Script execution metadata contains all information about current execution state, including
-   * execution_id, execution statistics and result sets info.
-   * You can use standard operation methods such as Get/Cancel/Forget/ListOperations to work with script executions.
-   * Script can be executed as persistent, in which case all execution information and results will be stored
-   * persistently and available after successful or unsuccessful execution.
-   *
-   * @generated from rpc Ydb.Query.V1.QueryService.ExecuteScript
-   */
-  executeScript: {
-    path: "/Ydb.Query.V1.QueryService/ExecuteScript",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ExecuteScriptRequestSchema>) => toBinary(ExecuteScriptRequestSchema, create(ExecuteScriptRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteScriptRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof OperationSchema>) => toBinary(OperationSchema, create(OperationSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(OperationSchema,bytes),
-    options: {},
-  },
-  /**
-   * Fetch results for script execution using fetch_token for continuation.
-   * For script with multiple result sets, parts of different results sets are interleaved in responses.
-   * For persistent scripts, you can fetch results in specific position of specific result set using
-   * position instead of fetch_token.
-   *
-   * @generated from rpc Ydb.Query.V1.QueryService.FetchScriptResults
-   */
-  fetchScriptResults: {
-    path: "/Ydb.Query.V1.QueryService/FetchScriptResults",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof FetchScriptResultsRequestSchema>) => toBinary(FetchScriptResultsRequestSchema, create(FetchScriptResultsRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(FetchScriptResultsRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof FetchScriptResultsResponseSchema>) => toBinary(FetchScriptResultsResponseSchema, create(FetchScriptResultsResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(FetchScriptResultsResponseSchema,bytes),
-    options: {},
-  },
+	/**
+	 * Sessions are basic primitives for communicating with YDB Query Service. The are similar to
+	 * connections for classic relational DBs. Sessions serve three main purposes:
+	 * 1. Provide a flow control for DB requests with limited number of active channels.
+	 * 2. Distribute load evenly across multiple DB nodes.
+	 * 3. Store state for volatile stateful operations, such as short-living transactions.
+	 *
+	 * @generated from rpc Ydb.Query.V1.QueryService.CreateSession
+	 */
+	createSession: {
+		path: '/Ydb.Query.V1.QueryService/CreateSession',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof CreateSessionRequestSchema>
+		) =>
+			toBinary(
+				CreateSessionRequestSchema,
+				create(CreateSessionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateSessionRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof CreateSessionResponseSchema>
+		) =>
+			toBinary(
+				CreateSessionResponseSchema,
+				create(CreateSessionResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateSessionResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * @generated from rpc Ydb.Query.V1.QueryService.DeleteSession
+	 */
+	deleteSession: {
+		path: '/Ydb.Query.V1.QueryService/DeleteSession',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof DeleteSessionRequestSchema>
+		) =>
+			toBinary(
+				DeleteSessionRequestSchema,
+				create(DeleteSessionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DeleteSessionRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof DeleteSessionResponseSchema>
+		) =>
+			toBinary(
+				DeleteSessionResponseSchema,
+				create(DeleteSessionResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DeleteSessionResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * @generated from rpc Ydb.Query.V1.QueryService.AttachSession
+	 */
+	attachSession: {
+		path: '/Ydb.Query.V1.QueryService/AttachSession',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof AttachSessionRequestSchema>
+		) =>
+			toBinary(
+				AttachSessionRequestSchema,
+				create(AttachSessionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AttachSessionRequestSchema, bytes),
+		responseStream: true,
+		responseSerialize: (
+			message: MessageInitShape<typeof SessionStateSchema>
+		) => toBinary(SessionStateSchema, create(SessionStateSchema, message)),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(SessionStateSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Short-living transactions allow transactional execution of several queries, including support
+	 * for interactive transactions. Transaction control can be implemented via flags in ExecuteQuery
+	 * call (recommended), or via explicit calls to Begin/Commit/RollbackTransaction.
+	 *
+	 * @generated from rpc Ydb.Query.V1.QueryService.BeginTransaction
+	 */
+	beginTransaction: {
+		path: '/Ydb.Query.V1.QueryService/BeginTransaction',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof BeginTransactionRequestSchema>
+		) =>
+			toBinary(
+				BeginTransactionRequestSchema,
+				create(BeginTransactionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(BeginTransactionRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof BeginTransactionResponseSchema>
+		) =>
+			toBinary(
+				BeginTransactionResponseSchema,
+				create(BeginTransactionResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(BeginTransactionResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * @generated from rpc Ydb.Query.V1.QueryService.CommitTransaction
+	 */
+	commitTransaction: {
+		path: '/Ydb.Query.V1.QueryService/CommitTransaction',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof CommitTransactionRequestSchema>
+		) =>
+			toBinary(
+				CommitTransactionRequestSchema,
+				create(CommitTransactionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CommitTransactionRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof CommitTransactionResponseSchema>
+		) =>
+			toBinary(
+				CommitTransactionResponseSchema,
+				create(CommitTransactionResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CommitTransactionResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * @generated from rpc Ydb.Query.V1.QueryService.RollbackTransaction
+	 */
+	rollbackTransaction: {
+		path: '/Ydb.Query.V1.QueryService/RollbackTransaction',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof RollbackTransactionRequestSchema>
+		) =>
+			toBinary(
+				RollbackTransactionRequestSchema,
+				create(RollbackTransactionRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(RollbackTransactionRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof RollbackTransactionResponseSchema>
+		) =>
+			toBinary(
+				RollbackTransactionResponseSchema,
+				create(RollbackTransactionResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(RollbackTransactionResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Execute interactive query in a specified short-living transaction.
+	 * YDB query can contain DML, DDL and DCL statements. Supported mix of different statement types depends
+	 * on the chosen transaction type.
+	 * In case of error, including transport errors such as interrupted stream, whole transaction
+	 * needs to be retried. For non-idempotent transaction, a custom client logic is required to
+	 * retry conditionally retriable statuses, when transaction execution state is unknown.
+	 *
+	 * @generated from rpc Ydb.Query.V1.QueryService.ExecuteQuery
+	 */
+	executeQuery: {
+		path: '/Ydb.Query.V1.QueryService/ExecuteQuery',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExecuteQueryRequestSchema>
+		) =>
+			toBinary(
+				ExecuteQueryRequestSchema,
+				create(ExecuteQueryRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteQueryRequestSchema, bytes),
+		responseStream: true,
+		responseSerialize: (
+			message: MessageInitShape<typeof ExecuteQueryResponsePartSchema>
+		) =>
+			toBinary(
+				ExecuteQueryResponsePartSchema,
+				create(ExecuteQueryResponsePartSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteQueryResponsePartSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Execute long-running script.
+	 * YDB scripts can contain all type of statements, including TCL statements. This way you can execute multiple
+	 * transactions in a single YDB script.
+	 * ExecuteScript call returns long-running Ydb.Operation object with:
+	 *   operation.metadata = ExecuteScriptMetadata
+	 *   operation.result = Empty
+	 * Script execution metadata contains all information about current execution state, including
+	 * execution_id, execution statistics and result sets info.
+	 * You can use standard operation methods such as Get/Cancel/Forget/ListOperations to work with script executions.
+	 * Script can be executed as persistent, in which case all execution information and results will be stored
+	 * persistently and available after successful or unsuccessful execution.
+	 *
+	 * @generated from rpc Ydb.Query.V1.QueryService.ExecuteScript
+	 */
+	executeScript: {
+		path: '/Ydb.Query.V1.QueryService/ExecuteScript',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExecuteScriptRequestSchema>
+		) =>
+			toBinary(
+				ExecuteScriptRequestSchema,
+				create(ExecuteScriptRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteScriptRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof OperationSchema>
+		) => toBinary(OperationSchema, create(OperationSchema, message)),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(OperationSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Fetch results for script execution using fetch_token for continuation.
+	 * For script with multiple result sets, parts of different results sets are interleaved in responses.
+	 * For persistent scripts, you can fetch results in specific position of specific result set using
+	 * position instead of fetch_token.
+	 *
+	 * @generated from rpc Ydb.Query.V1.QueryService.FetchScriptResults
+	 */
+	fetchScriptResults: {
+		path: '/Ydb.Query.V1.QueryService/FetchScriptResults',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof FetchScriptResultsRequestSchema>
+		) =>
+			toBinary(
+				FetchScriptResultsRequestSchema,
+				create(FetchScriptResultsRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(FetchScriptResultsRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof FetchScriptResultsResponseSchema>
+		) =>
+			toBinary(
+				FetchScriptResultsResponseSchema,
+				create(FetchScriptResultsResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(FetchScriptResultsResponseSchema, bytes),
+		options: {},
+	},
 } as const satisfies ServiceDefinition
 //@ts-expect-error
-QueryServiceDefinition["name"] = "QueryService";
+QueryServiceDefinition['name'] = 'QueryService'
 //@ts-expect-error
-QueryServiceDefinition["fullName"] = "Ydb.Query.V1.QueryService";
+QueryServiceDefinition['fullName'] = 'Ydb.Query.V1.QueryService'

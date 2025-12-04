@@ -2,47 +2,80 @@
 // @generated from file ydb_monitoring_v1.proto (package Ydb.Monitoring.V1, syntax proto3)
 /* eslint-disable */
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { NodeCheckRequestSchema, NodeCheckResponseSchema, SelfCheckRequestSchema, SelfCheckResponseSchema } from "./protos/ydb_monitoring_pb.js";
-import type { ServiceDefinition } from "nice-grpc";
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import {
+	NodeCheckRequestSchema,
+	NodeCheckResponseSchema,
+	SelfCheckRequestSchema,
+	SelfCheckResponseSchema,
+} from './protos/ydb_monitoring_pb.js'
+import type { ServiceDefinition } from 'nice-grpc'
 
 /**
  * @generated from service Ydb.Monitoring.V1.MonitoringService
  */
 export const MonitoringServiceDefinition = {
-  /**
-   * Gets the health status of the database.
-   *
-   * @generated from rpc Ydb.Monitoring.V1.MonitoringService.SelfCheck
-   */
-  selfCheck: {
-    path: "/Ydb.Monitoring.V1.MonitoringService/SelfCheck",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof SelfCheckRequestSchema>) => toBinary(SelfCheckRequestSchema, create(SelfCheckRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(SelfCheckRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof SelfCheckResponseSchema>) => toBinary(SelfCheckResponseSchema, create(SelfCheckResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(SelfCheckResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Checks current node health
-   *
-   * @generated from rpc Ydb.Monitoring.V1.MonitoringService.NodeCheck
-   */
-  nodeCheck: {
-    path: "/Ydb.Monitoring.V1.MonitoringService/NodeCheck",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof NodeCheckRequestSchema>) => toBinary(NodeCheckRequestSchema, create(NodeCheckRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(NodeCheckRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof NodeCheckResponseSchema>) => toBinary(NodeCheckResponseSchema, create(NodeCheckResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(NodeCheckResponseSchema,bytes),
-    options: {},
-  },
+	/**
+	 * Gets the health status of the database.
+	 *
+	 * @generated from rpc Ydb.Monitoring.V1.MonitoringService.SelfCheck
+	 */
+	selfCheck: {
+		path: '/Ydb.Monitoring.V1.MonitoringService/SelfCheck',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof SelfCheckRequestSchema>
+		) =>
+			toBinary(
+				SelfCheckRequestSchema,
+				create(SelfCheckRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(SelfCheckRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof SelfCheckResponseSchema>
+		) =>
+			toBinary(
+				SelfCheckResponseSchema,
+				create(SelfCheckResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(SelfCheckResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Checks current node health
+	 *
+	 * @generated from rpc Ydb.Monitoring.V1.MonitoringService.NodeCheck
+	 */
+	nodeCheck: {
+		path: '/Ydb.Monitoring.V1.MonitoringService/NodeCheck',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof NodeCheckRequestSchema>
+		) =>
+			toBinary(
+				NodeCheckRequestSchema,
+				create(NodeCheckRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(NodeCheckRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof NodeCheckResponseSchema>
+		) =>
+			toBinary(
+				NodeCheckResponseSchema,
+				create(NodeCheckResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(NodeCheckResponseSchema, bytes),
+		options: {},
+	},
 } as const satisfies ServiceDefinition
 //@ts-expect-error
-MonitoringServiceDefinition["name"] = "MonitoringService";
+MonitoringServiceDefinition['name'] = 'MonitoringService'
 //@ts-expect-error
-MonitoringServiceDefinition["fullName"] = "Ydb.Monitoring.V1.MonitoringService";
+MonitoringServiceDefinition['fullName'] = 'Ydb.Monitoring.V1.MonitoringService'

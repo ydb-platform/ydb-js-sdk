@@ -62,9 +62,7 @@ const raw = await sql`SELECT 1`.raw()
 ### Изоляция одиночного вызова {#examples-isolation}
 
 ```ts
-await sql`SELECT * FROM users`
-  .isolation('snapshotReadOnly')
-  .timeout(3000)
+await sql`SELECT * FROM users`.isolation('snapshotReadOnly').timeout(3000)
 ```
 
 ### Обработка ошибок {#examples-errors}
@@ -113,9 +111,7 @@ await q
 const ac = new AbortController()
 setTimeout(() => ac.abort('user cancelled'), 1000)
 
-await sql`SELECT pg_sleep(10)`
-  .timeout(5000)
-  .signal(ac.signal)
+await sql`SELECT pg_sleep(10)`.timeout(5000).signal(ac.signal)
 ```
 
 ### Режимы изоляции {#examples-isolation-modes}
@@ -125,8 +121,9 @@ await sql`SELECT pg_sleep(10)`
 await sql`SELECT COUNT(*) FROM users`.isolation('snapshotReadOnly')
 
 // Online read-only с разрешением неконсистентных чтений
-await sql`SELECT COUNT(*) FROM users`
-  .isolation('onlineReadOnly', { allowInconsistentReads: true })
+await sql`SELECT COUNT(*) FROM users`.isolation('onlineReadOnly', {
+  allowInconsistentReads: true,
+})
 ```
 
 ### Syntax и pool {#examples-syntax-pool}

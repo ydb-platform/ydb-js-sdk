@@ -2,58 +2,106 @@
 // @generated from file ydb_scripting_v1.proto (package Ydb.Scripting.V1, syntax proto3)
 /* eslint-disable */
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { ExecuteYqlPartialResponseSchema, ExecuteYqlRequestSchema, ExecuteYqlResponseSchema, ExplainYqlRequestSchema, ExplainYqlResponseSchema } from "./protos/ydb_scripting_pb.js";
-import type { ServiceDefinition } from "nice-grpc";
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import {
+	ExecuteYqlPartialResponseSchema,
+	ExecuteYqlRequestSchema,
+	ExecuteYqlResponseSchema,
+	ExplainYqlRequestSchema,
+	ExplainYqlResponseSchema,
+} from './protos/ydb_scripting_pb.js'
+import type { ServiceDefinition } from 'nice-grpc'
 
 /**
  * @generated from service Ydb.Scripting.V1.ScriptingService
  */
 export const ScriptingServiceDefinition = {
-  /**
-   * @generated from rpc Ydb.Scripting.V1.ScriptingService.ExecuteYql
-   */
-  executeYql: {
-    path: "/Ydb.Scripting.V1.ScriptingService/ExecuteYql",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ExecuteYqlRequestSchema>) => toBinary(ExecuteYqlRequestSchema, create(ExecuteYqlRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteYqlRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof ExecuteYqlResponseSchema>) => toBinary(ExecuteYqlResponseSchema, create(ExecuteYqlResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteYqlResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Executes yql request with streaming result.
-   *
-   * @generated from rpc Ydb.Scripting.V1.ScriptingService.StreamExecuteYql
-   */
-  streamExecuteYql: {
-    path: "/Ydb.Scripting.V1.ScriptingService/StreamExecuteYql",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ExecuteYqlRequestSchema>) => toBinary(ExecuteYqlRequestSchema, create(ExecuteYqlRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteYqlRequestSchema,bytes),
-      responseStream: true, 
-    responseSerialize: (message: MessageInitShape<typeof ExecuteYqlPartialResponseSchema>) => toBinary(ExecuteYqlPartialResponseSchema, create(ExecuteYqlPartialResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ExecuteYqlPartialResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * @generated from rpc Ydb.Scripting.V1.ScriptingService.ExplainYql
-   */
-  explainYql: {
-    path: "/Ydb.Scripting.V1.ScriptingService/ExplainYql",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ExplainYqlRequestSchema>) => toBinary(ExplainYqlRequestSchema, create(ExplainYqlRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ExplainYqlRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof ExplainYqlResponseSchema>) => toBinary(ExplainYqlResponseSchema, create(ExplainYqlResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ExplainYqlResponseSchema,bytes),
-    options: {},
-  },
+	/**
+	 * @generated from rpc Ydb.Scripting.V1.ScriptingService.ExecuteYql
+	 */
+	executeYql: {
+		path: '/Ydb.Scripting.V1.ScriptingService/ExecuteYql',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExecuteYqlRequestSchema>
+		) =>
+			toBinary(
+				ExecuteYqlRequestSchema,
+				create(ExecuteYqlRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteYqlRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ExecuteYqlResponseSchema>
+		) =>
+			toBinary(
+				ExecuteYqlResponseSchema,
+				create(ExecuteYqlResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteYqlResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Executes yql request with streaming result.
+	 *
+	 * @generated from rpc Ydb.Scripting.V1.ScriptingService.StreamExecuteYql
+	 */
+	streamExecuteYql: {
+		path: '/Ydb.Scripting.V1.ScriptingService/StreamExecuteYql',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExecuteYqlRequestSchema>
+		) =>
+			toBinary(
+				ExecuteYqlRequestSchema,
+				create(ExecuteYqlRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteYqlRequestSchema, bytes),
+		responseStream: true,
+		responseSerialize: (
+			message: MessageInitShape<typeof ExecuteYqlPartialResponseSchema>
+		) =>
+			toBinary(
+				ExecuteYqlPartialResponseSchema,
+				create(ExecuteYqlPartialResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExecuteYqlPartialResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * @generated from rpc Ydb.Scripting.V1.ScriptingService.ExplainYql
+	 */
+	explainYql: {
+		path: '/Ydb.Scripting.V1.ScriptingService/ExplainYql',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExplainYqlRequestSchema>
+		) =>
+			toBinary(
+				ExplainYqlRequestSchema,
+				create(ExplainYqlRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExplainYqlRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ExplainYqlResponseSchema>
+		) =>
+			toBinary(
+				ExplainYqlResponseSchema,
+				create(ExplainYqlResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExplainYqlResponseSchema, bytes),
+		options: {},
+	},
 } as const satisfies ServiceDefinition
 //@ts-expect-error
-ScriptingServiceDefinition["name"] = "ScriptingService";
+ScriptingServiceDefinition['name'] = 'ScriptingService'
 //@ts-expect-error
-ScriptingServiceDefinition["fullName"] = "Ydb.Scripting.V1.ScriptingService";
+ScriptingServiceDefinition['fullName'] = 'Ydb.Scripting.V1.ScriptingService'

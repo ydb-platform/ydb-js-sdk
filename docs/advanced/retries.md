@@ -37,13 +37,16 @@ Inside `sql.begin`/`sql.transaction`, the per-call idempotency flag is ignored; 
 ```ts
 import { retry, defaultRetryConfig, strategies } from '@ydbjs/retry'
 
-await retry({
-  ...defaultRetryConfig,
-  budget: 5,
-  strategy: strategies.exponential(200),
-}, async (signal) => {
-  return await sql`SELECT 1`.signal(signal)
-})
+await retry(
+  {
+    ...defaultRetryConfig,
+    budget: 5,
+    strategy: strategies.exponential(200),
+  },
+  async (signal) => {
+    return await sql`SELECT 1`.signal(signal)
+  }
+)
 ```
 
 ## Topic streaming

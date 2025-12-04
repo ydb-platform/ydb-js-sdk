@@ -55,12 +55,20 @@ import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
 const sql = query(driver)
 await sql.begin(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'c1' })
+  const reader = createTopicTxReader(tx, driver, {
+    topic: '/Root/my-topic',
+    consumer: 'c1',
+  })
+
   for await (const batch of reader.read({ signal })) {
     // processing inside the transaction
   }
 
-  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, {
+    topic: '/Root/my-topic',
+    producer: 'p1',
+  })
+
   writer.write(new TextEncoder().encode('in-tx'))
 })
 ```

@@ -19,7 +19,10 @@ export class TopicWriter implements AsyncDisposable {
 		this.#subscription = this.#actor.subscribe((snapshot) => {
 			// When all messages are processed (buffer and inflight empty),
 			// resolve current flush promise if it exists
-			if (snapshot.context.bufferLength === 0 && snapshot.context.inflightLength === 0) {
+			if (
+				snapshot.context.bufferLength === 0 &&
+				snapshot.context.inflightLength === 0
+			) {
 				this.#promise?.resolve(this.#seqNoManager.getState().lastSeqNo)
 				this.#promise = null
 			}
@@ -50,11 +53,14 @@ export class TopicWriter implements AsyncDisposable {
 	 * @param extra Optional message metadata
 	 * @returns Sequence number of the message
 	 */
-	write(data: Uint8Array, extra?: {
-		seqNo?: bigint
-		createdAt?: Date
-		metadataItems?: Record<string, Uint8Array>
-	}): bigint {
+	write(
+		data: Uint8Array,
+		extra?: {
+			seqNo?: bigint
+			createdAt?: Date
+			metadataItems?: Record<string, Uint8Array>
+		}
+	): bigint {
 		// Get seqNo from SeqNoManager (handles auto/manual modes)
 		let seqNo = this.#seqNoManager.getNext(extra?.seqNo)
 
@@ -64,8 +70,10 @@ export class TopicWriter implements AsyncDisposable {
 				data,
 				seqNo,
 				...(extra?.createdAt && { createdAt: extra.createdAt }),
-				...(extra?.metadataItems && { metadataItems: extra.metadataItems })
-			}
+				...(extra?.metadataItems && {
+					metadataItems: extra.metadataItems,
+				}),
+			},
 		})
 
 		return seqNo
@@ -89,7 +97,10 @@ export class TopicWriter implements AsyncDisposable {
 
 		// Check if already flushed
 		let snapshot = this.#actor.getSnapshot()
-		if (snapshot.context.bufferLength === 0 && snapshot.context.inflightLength === 0) {
+		if (
+			snapshot.context.bufferLength === 0 &&
+			snapshot.context.inflightLength === 0
+		) {
 			// Already flushed, return immediately
 			return Promise.resolve(this.#seqNoManager.getState().lastSeqNo)
 		}
@@ -110,7 +121,7 @@ export class TopicWriter implements AsyncDisposable {
 
 	/**
 	 * Get current writer statistics
-	 */	get stats() {
+	 */ get stats() {
 		let snapshot = this.#actor.getSnapshot()
 		let seqNoState = this.#seqNoManager.getState()
 
@@ -139,10 +150,9 @@ export class TopicWriter implements AsyncDisposable {
 
 		this.#actor.send({ type: 'writer.close' })
 
-		return (signal ? abortable(signal, promise) : promise)
-			.finally(() => {
-				subscription.unsubscribe()
-			})
+		return (signal ? abortable(signal, promise) : promise).finally(() => {
+			subscription.unsubscribe()
+		})
 	}
 
 	/**
@@ -170,5 +180,4 @@ export class TopicWriter implements AsyncDisposable {
 		await this.close()
 		this.destroy()
 	}
-
 }

@@ -16,14 +16,25 @@ export * as strategies from './strategy.js'
 
 let dbg = loggers.retry
 
-export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R | Promise<R>): Promise<R> {
+export async function retry<R>(
+	cfg: RetryConfig,
+	fn: (signal: AbortSignal) => R | Promise<R>
+): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
 	let ctx: RetryContext = { attempt: 0, error: null }
 
 	let budget: number
-	while (ctx.attempt < (budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))) {
+	while (
+		ctx.attempt <
+		(budget =
+			typeof config.budget === 'number'
+				? config.budget
+				: config.budget!(ctx, config))
+	) {
 		let ac = new AbortController()
-		let signal = cfg.signal ? AbortSignal.any([cfg.signal, ac.signal]) : ac.signal
+		let signal = cfg.signal
+			? AbortSignal.any([cfg.signal, ac.signal])
+			: ac.signal
 
 		let start = Date.now()
 
@@ -52,11 +63,16 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 			if (typeof config.retry === 'boolean') {
 				retry = config.retry
 			} else {
-				retry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
+				retry =
+					config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
 			}
 
 			if (!retry || ctx.attempt >= budget) {
-				dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
+				dbg.log(
+					'attempt %d: not retrying, error: %O',
+					ctx.attempt,
+					error
+				)
 				break
 			}
 
@@ -73,7 +89,11 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 				continue
 			}
 
-			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
+			dbg.log(
+				'attempt %d: waiting %d ms before next retry',
+				ctx.attempt,
+				remaining
+			)
 			// oxlint-disable no-await-in-loop
 			await setTimeout(remaining, void 0, { signal: cfg.signal })
 
@@ -85,7 +105,11 @@ export async function retry<R>(cfg: RetryConfig, fn: (signal: AbortSignal) => R 
 		}
 	}
 
-	dbg.log('retry failed after %d attempts, last error: %O', ctx.attempt, ctx.error)
+	dbg.log(
+		'retry failed after %d attempts, last error: %O',
+		ctx.attempt,
+		ctx.error
+	)
 	throw ctx.error
 }
 
@@ -100,7 +124,10 @@ export function isRetryableError(error: unknown, idempotent = false): boolean {
 	}
 
 	if (error instanceof YDBError) {
-		return error.retryable === true || (error.retryable === 'conditionally' && idempotent)
+		return (
+			error.retryable === true ||
+			(error.retryable === 'conditionally' && idempotent)
+		)
 	}
 
 	if (error instanceof CommitError) {
@@ -114,23 +141,38 @@ export const defaultRetryConfig: RetryConfig = {
 	retry: isRetryableError,
 	budget: Infinity,
 	strategy: (ctx, cfg) => {
-		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.BAD_SESSION) {
+		if (
+			ctx.error instanceof YDBError &&
+			ctx.error.code === StatusIds_StatusCode.BAD_SESSION
+		) {
 			return fixed(0)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.SESSION_EXPIRED) {
+		if (
+			ctx.error instanceof YDBError &&
+			ctx.error.code === StatusIds_StatusCode.SESSION_EXPIRED
+		) {
 			return fixed(0)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof ClientError && ctx.error.code === Status.ABORTED) {
+		if (
+			ctx.error instanceof ClientError &&
+			ctx.error.code === Status.ABORTED
+		) {
 			return fixed(0)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
+		if (
+			ctx.error instanceof YDBError &&
+			ctx.error.code === StatusIds_StatusCode.OVERLOADED
+		) {
 			return exponential(1000)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
+		if (
+			ctx.error instanceof ClientError &&
+			ctx.error.code === Status.RESOURCE_EXHAUSTED
+		) {
 			return exponential(1000)(ctx, cfg)
 		}
 

@@ -4,7 +4,11 @@ import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { credentials } from '@grpc/grpc-js'
 import { abortable } from '@ydbjs/abortable'
-import { DiscoveryServiceDefinition, EndpointInfoSchema, ListEndpointsResultSchema } from '@ydbjs/api/discovery'
+import {
+	DiscoveryServiceDefinition,
+	EndpointInfoSchema,
+	ListEndpointsResultSchema,
+} from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
@@ -100,15 +104,25 @@ export class Driver implements Disposable {
 	#connection: Connection
 	#middleware: ClientMiddleware
 
-	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
+	#credentialsProvider: CredentialsProvider =
+		new AnonymousCredentialsProvider()
 	#discoveryClient!: Client<typeof DiscoveryServiceDefinition>
 	#rediscoverTimer?: NodeJS.Timeout
 
-	constructor(connectionString: string, options: Readonly<DriverOptions> = defaultOptions) {
-		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, options)
+	constructor(
+		connectionString: string,
+		options: Readonly<DriverOptions> = defaultOptions
+	) {
+		dbg.log(
+			'Driver(connectionString: %s, options: %o)',
+			connectionString,
+			options
+		)
 
 		if (!connectionString) {
-			throw new Error('Invalid connection string. Must be a non-empty string')
+			throw new Error(
+				'Invalid connection string. Must be a non-empty string'
+			)
 		}
 
 		this.cs = new URL(connectionString.replace(/^grpc/, 'http'))
@@ -116,28 +130,51 @@ export class Driver implements Disposable {
 		this.options.secureOptions ??= this.options.ssl
 
 		// Merge default channel options with user-provided options
-		this.options.channelOptions = Object.assign({}, defaultChannelOptions, this.options.channelOptions)
+		this.options.channelOptions = Object.assign(
+			{},
+			defaultChannelOptions,
+			this.options.channelOptions
+		)
 
-		if (['grpc:', 'grpcs:', 'http:', 'https:'].includes(this.cs.protocol) === false) {
-			throw new Error('Invalid connection string protocol. Must be one of grpc, grpcs, http, https')
+		if (
+			['grpc:', 'grpcs:', 'http:', 'https:'].includes(
+				this.cs.protocol
+			) === false
+		) {
+			throw new Error(
+				'Invalid connection string protocol. Must be one of grpc, grpcs, http, https'
+			)
 		}
 
-		if (this.cs.pathname === '' && this.cs.searchParams.has('database') === false) {
-			throw new Error('Invalid connection string. Database name is required')
+		if (
+			this.cs.pathname === '' &&
+			this.cs.searchParams.has('database') === false
+		) {
+			throw new Error(
+				'Invalid connection string. Database name is required'
+			)
 		}
 
 		if (this.cs.searchParams.has('application') === false) {
-			this.cs.searchParams.set('application', this.options['ydb.sdk.application'] || '')
+			this.cs.searchParams.set(
+				'application',
+				this.options['ydb.sdk.application'] || ''
+			)
 		} else {
-			this.options['ydb.sdk.application'] ??= this.cs.searchParams.get('application') || ''
+			this.options['ydb.sdk.application'] ??=
+				this.cs.searchParams.get('application') || ''
 		}
 
 		let discoveryInterval =
-			this.options['ydb.sdk.discovery_interval_ms'] ?? defaultOptions['ydb.sdk.discovery_interval_ms']!
+			this.options['ydb.sdk.discovery_interval_ms'] ??
+			defaultOptions['ydb.sdk.discovery_interval_ms']!
 		let discoveryTimeout =
-			this.options['ydb.sdk.discovery_timeout_ms'] ?? defaultOptions['ydb.sdk.discovery_timeout_ms']!
+			this.options['ydb.sdk.discovery_timeout_ms'] ??
+			defaultOptions['ydb.sdk.discovery_timeout_ms']!
 		if (discoveryInterval < discoveryTimeout) {
-			throw new Error('Discovery interval must be greater than discovery timeout.')
+			throw new Error(
+				'Discovery interval must be greater than discovery timeout.'
+			)
 		}
 
 		let endpoint = create(EndpointInfoSchema, {
@@ -148,28 +185,49 @@ export class Driver implements Disposable {
 		})
 
 		let channelCredentials = this.options.secureOptions
-			? credentials.createFromSecureContext(tls.createSecureContext(this.options.secureOptions))
+			? credentials.createFromSecureContext(
+					tls.createSecureContext(this.options.secureOptions)
+				)
 			: this.isSecure
 				? credentials.createSsl()
 				: credentials.createInsecure()
 
-		this.#connection = new LazyConnection(endpoint, channelCredentials, this.options.channelOptions)
+		this.#connection = new LazyConnection(
+			endpoint,
+			channelCredentials,
+			this.options.channelOptions
+		)
 
 		this.#middleware = debug
-		this.#middleware = composeClientMiddleware(this.#middleware, (call, options) => {
-			let metadata = Metadata(options.metadata)
-				.set('x-ydb-database', this.database)
-				.set('x-ydb-application-name', this.options['ydb.sdk.application'] || '')
+		this.#middleware = composeClientMiddleware(
+			this.#middleware,
+			(call, options) => {
+				let metadata = Metadata(options.metadata)
+					.set('x-ydb-database', this.database)
+					.set(
+						'x-ydb-application-name',
+						this.options['ydb.sdk.application'] || ''
+					)
 
-			return call.next(call.request, Object.assign(options, { metadata }))
-		})
+				return call.next(
+					call.request,
+					Object.assign(options, { metadata })
+				)
+			}
+		)
 
 		if (this.options.credentialsProvider) {
 			this.#credentialsProvider = this.options.credentialsProvider
-			this.#middleware = composeClientMiddleware(this.#middleware, this.#credentialsProvider.middleware)
+			this.#middleware = composeClientMiddleware(
+				this.#middleware,
+				this.#credentialsProvider.middleware
+			)
 		}
 
-		this.#pool = new ConnectionPool(channelCredentials, this.options.channelOptions)
+		this.#pool = new ConnectionPool(
+			channelCredentials,
+			this.options.channelOptions
+		)
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
@@ -182,8 +240,15 @@ export class Driver implements Disposable {
 			dbg.log('discovery enabled, using connection pool')
 
 			// Initial discovery
-			dbg.log('starting initial discovery with timeout %d ms', this.options['ydb.sdk.discovery_timeout_ms'])
-			this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+			dbg.log(
+				'starting initial discovery with timeout %d ms',
+				this.options['ydb.sdk.discovery_timeout_ms']
+			)
+			this.#discovery(
+				AbortSignal.timeout(
+					this.options['ydb.sdk.discovery_timeout_ms']!
+				)
+			)
 				.then(() => {
 					dbg.log('initial discovery completed successfully')
 					return this.#ready.resolve()
@@ -196,11 +261,16 @@ export class Driver implements Disposable {
 			// Periodic discovery
 			dbg.log(
 				'setting up periodic discovery every %d ms',
-				this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!
+				this.options['ydb.sdk.discovery_interval_ms'] ||
+					defaultOptions['ydb.sdk.discovery_interval_ms']!
 			)
 			this.#rediscoverTimer = setInterval(() => {
 				dbg.log('starting periodic discovery')
-				void this.#discovery(AbortSignal.timeout(this.options['ydb.sdk.discovery_timeout_ms']!))
+				void this.#discovery(
+					AbortSignal.timeout(
+						this.options['ydb.sdk.discovery_timeout_ms']!
+					)
+				)
 			}, this.options['ydb.sdk.discovery_interval_ms'] || defaultOptions['ydb.sdk.discovery_interval_ms']!)
 
 			// Unref the timer so it doesn't keep the process running
@@ -209,7 +279,9 @@ export class Driver implements Disposable {
 	}
 
 	get token(): Promise<string> {
-		let signal = AbortSignal.timeout(this.options['ydb.sdk.token_timeout_ms']!)
+		let signal = AbortSignal.timeout(
+			this.options['ydb.sdk.token_timeout_ms']!
+		)
 
 		return this.#credentialsProvider.getToken(false, signal)
 	}
@@ -243,13 +315,23 @@ export class Driver implements Disposable {
 			...defaultRetryConfig,
 			signal,
 			onRetry: (ctx) => {
-				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
+				dbg.log(
+					'retrying discovery, attempt %d, error: %O',
+					ctx.attempt,
+					ctx.error
+				)
 			},
 		}
 
 		let result = await retry(retryConfig, async (signal) => {
-			dbg.log('attempting to list endpoints for database: %s', this.database)
-			let response = await this.#getDiscoveryClient().listEndpoints({ database: this.database }, { signal })
+			dbg.log(
+				'attempting to list endpoints for database: %s',
+				this.database
+			)
+			let response = await this.#getDiscoveryClient().listEndpoints(
+				{ database: this.database },
+				{ signal }
+			)
 			if (!response.operation) {
 				throw new ClientError(
 					DiscoveryServiceDefinition.listEndpoints.path,
@@ -259,10 +341,16 @@ export class Driver implements Disposable {
 			}
 
 			if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
-				throw new YDBError(response.operation.status, response.operation.issues)
+				throw new YDBError(
+					response.operation.status,
+					response.operation.issues
+				)
 			}
 
-			let result = anyUnpack(response.operation.result!, ListEndpointsResultSchema)
+			let result = anyUnpack(
+				response.operation.result!,
+				ListEndpointsResultSchema
+			)
 			if (!result) {
 				throw new ClientError(
 					DiscoveryServiceDefinition.listEndpoints.path,
@@ -271,7 +359,11 @@ export class Driver implements Disposable {
 				)
 			}
 
-			dbg.log('discovery successful, received %d endpoints: %O', result.endpoints.length, result.endpoints)
+			dbg.log(
+				'discovery successful, received %d endpoints: %O',
+				result.endpoints.length,
+				result.endpoints
+			)
 			return result
 		})
 
@@ -293,8 +385,14 @@ export class Driver implements Disposable {
 			await abortable(effectiveSignal, this.#ready.promise)
 
 			if (this.options['ydb.sdk.enable_discovery'] === false) {
-				dbg.log('checking channel connectivity for single endpoint mode')
-				await this.#checkChannelConnectivity(this.#connection.channel, timeoutMs, effectiveSignal)
+				dbg.log(
+					'checking channel connectivity for single endpoint mode'
+				)
+				await this.#checkChannelConnectivity(
+					this.#connection.channel,
+					timeoutMs,
+					effectiveSignal
+				)
 			}
 
 			dbg.log('driver is ready')
@@ -304,12 +402,19 @@ export class Driver implements Disposable {
 		}
 	}
 
-	async #checkChannelConnectivity(channel: Channel, timeoutMs: number, signal: AbortSignal): Promise<void> {
+	async #checkChannelConnectivity(
+		channel: Channel,
+		timeoutMs: number,
+		signal: AbortSignal
+	): Promise<void> {
 		let deadline = new Date(Date.now() + timeoutMs)
 
 		while (true) {
 			if (signal.aborted) {
-				throw signal.reason || new Error('Aborted while waiting for channel connectivity')
+				throw (
+					signal.reason ||
+					new Error('Aborted while waiting for channel connectivity')
+				)
 			}
 
 			let state = channel.getConnectivityState(true) // true = try to connect
@@ -327,7 +432,10 @@ export class Driver implements Disposable {
 			let { promise, resolve, reject } = Promise.withResolvers<void>()
 			channel.watchConnectivityState(state, deadline, (err?: Error) => {
 				if (err) {
-					dbg.log('channel connectivity state change timeout: %O', err)
+					dbg.log(
+						'channel connectivity state change timeout: %O',
+						err
+					)
 					reject(err)
 				} else {
 					dbg.log('channel connectivity state changed')
@@ -353,7 +461,10 @@ export class Driver implements Disposable {
 		dbg.log('driver closed')
 	}
 
-	createClient<Service extends CompatServiceDefinition>(service: Service, preferNodeId?: bigint): Client<Service> {
+	createClient<Service extends CompatServiceDefinition>(
+		service: Service,
+		preferNodeId?: bigint
+	): Client<Service> {
 		dbg.log(
 			`creating client for %s${preferNodeId ? ` with preferNodeId: ${preferNodeId}` : ''}`,
 			service.fullName || service.name

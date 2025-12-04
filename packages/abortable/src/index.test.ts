@@ -149,8 +149,12 @@ test('creates AbortError when signal aborted with reason', async () => {
 test('handles concurrent abortable calls with same signal', async () => {
 	let controller = new AbortController()
 
-	let promise1 = new Promise((resolve) => setTimeout(() => resolve('result1'), 50))
-	let promise2 = new Promise((resolve) => setTimeout(() => resolve('result2'), 50))
+	let promise1 = new Promise((resolve) =>
+		setTimeout(() => resolve('result1'), 50)
+	)
+	let promise2 = new Promise((resolve) =>
+		setTimeout(() => resolve('result2'), 50)
+	)
 
 	let result1 = abortable(controller.signal, promise1)
 	let result2 = abortable(controller.signal, promise2)

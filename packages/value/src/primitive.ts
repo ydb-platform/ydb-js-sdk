@@ -46,7 +46,10 @@ export class Primitive implements Value<PrimitiveType> {
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
 	#valueInstance?: Ydb.Value
 
-	constructor(value: MessageInitShape<GenMessage<Ydb.Value>>, type: PrimitiveType) {
+	constructor(
+		value: MessageInitShape<GenMessage<Ydb.Value>>,
+		type: PrimitiveType
+	) {
 		this.type = type
 		this.value = value?.value?.value
 		this.#value = value
@@ -129,7 +132,10 @@ export class Uint16 extends Primitive implements Value<Uint16Type> {
 			throw new Error('Value must be greater than or equal to 0')
 		}
 
-		super({ value: { case: 'uint32Value', value: value } }, new Uint16Type())
+		super(
+			{ value: { case: 'uint32Value', value: value } },
+			new Uint16Type()
+		)
 	}
 }
 
@@ -157,7 +163,10 @@ export class Uint32 extends Primitive implements Value<Uint32Type> {
 			throw new Error('Value must be greater than or equal to 0')
 		}
 
-		super({ value: { case: 'uint32Value', value: value } }, new Uint32Type())
+		super(
+			{ value: { case: 'uint32Value', value: value } },
+			new Uint32Type()
+		)
 	}
 }
 
@@ -185,7 +194,10 @@ export class Uint64 extends Primitive implements Value<Uint64Type> {
 			throw new Error('Value must be greater than or equal to 0')
 		}
 
-		super({ value: { case: 'uint64Value', value: value } }, new Uint64Type())
+		super(
+			{ value: { case: 'uint64Value', value: value } },
+			new Uint64Type()
+		)
 	}
 }
 
@@ -209,7 +221,10 @@ export class DoubleType extends PrimitiveType {
 
 export class Double extends Primitive implements Value<DoubleType> {
 	constructor(value: number) {
-		super({ value: { case: 'doubleValue', value: value } }, new DoubleType())
+		super(
+			{ value: { case: 'doubleValue', value: value } },
+			new DoubleType()
+		)
 	}
 }
 
@@ -286,7 +301,10 @@ export class Uuid extends Primitive implements Value<UuidType> {
 	constructor(value: string) {
 		let { low128, high128 } = bigIntsFromUuid(value)
 
-		super({ value: { case: 'low128', value: low128 }, high128 }, new UuidType())
+		super(
+			{ value: { case: 'low128', value: low128 }, high128 },
+			new UuidType()
+		)
 
 		this.low128 = low128
 		this.high128 = high128
@@ -307,7 +325,10 @@ export class Date extends Primitive implements Value<DateType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let datesFromEpoch = Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
 
-		super({ value: { case: 'uint32Value', value: datesFromEpoch } }, new DateType())
+		super(
+			{ value: { case: 'uint32Value', value: datesFromEpoch } },
+			new DateType()
+		)
 	}
 }
 
@@ -321,7 +342,15 @@ export class TzDate extends Primitive implements Value<TzDateType> {
 	constructor(value: TZDate) {
 		let date = formatISO9075(value, { representation: 'date' })
 
-		super({ value: { case: 'textValue', value: `${date},${value.timeZone}` } }, new TzDateType())
+		super(
+			{
+				value: {
+					case: 'textValue',
+					value: `${date},${value.timeZone}`,
+				},
+			},
+			new TzDateType()
+		)
 	}
 }
 
@@ -335,7 +364,10 @@ export class Datetime extends Primitive implements Value<DatetimeType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let secondsFromEpoch = Math.floor(value.getTime() / 1000)
 
-		super({ value: { case: 'uint32Value', value: secondsFromEpoch } }, new DatetimeType())
+		super(
+			{ value: { case: 'uint32Value', value: secondsFromEpoch } },
+			new DatetimeType()
+		)
 	}
 }
 
@@ -350,7 +382,15 @@ export class TzDatetime extends Primitive implements Value<TzDatetimeType> {
 		let date = formatISO9075(value, { representation: 'date' })
 		let time = formatISO9075(value, { representation: 'time' })
 
-		super({ value: { case: 'textValue', value: `${date}T${time},${value.timeZone}` } }, new TzDatetimeType())
+		super(
+			{
+				value: {
+					case: 'textValue',
+					value: `${date}T${time},${value.timeZone}`,
+				},
+			},
+			new TzDatetimeType()
+		)
 	}
 }
 
@@ -362,7 +402,10 @@ export class IntervalType extends PrimitiveType {
 
 export class Interval extends Primitive implements Value<IntervalType> {
 	constructor(value: number) {
-		super({ value: { case: 'int32Value', value: value } }, new IntervalType())
+		super(
+			{ value: { case: 'int32Value', value: value } },
+			new IntervalType()
+		)
 	}
 }
 
@@ -376,7 +419,10 @@ export class Timestamp extends Primitive implements Value<TimestampType> {
 	constructor(value: InstanceType<GenericDateConstructor>) {
 		let microSecondsFromEpoch = BigInt(value.getTime()) * 1000n
 
-		super({ value: { case: 'uint64Value', value: microSecondsFromEpoch } }, new TimestampType())
+		super(
+			{ value: { case: 'uint64Value', value: microSecondsFromEpoch } },
+			new TimestampType()
+		)
 	}
 }
 
@@ -392,7 +438,15 @@ export class TzTimestamp extends Primitive implements Value<TzTimestampType> {
 		let time = formatISO9075(value, { representation: 'time' })
 		let micro = value.getMilliseconds() * 1000
 
-		super({ value: { case: 'textValue', value: `${date}T${time}.${micro},${value.timeZone}` } }, new TzTimestampType())
+		super(
+			{
+				value: {
+					case: 'textValue',
+					value: `${date}T${time}.${micro},${value.timeZone}`,
+				},
+			},
+			new TzTimestampType()
+		)
 	}
 }
 
@@ -404,6 +458,9 @@ export class JsonDocumentType extends PrimitiveType {
 
 export class JsonDocument extends Primitive implements Value<JsonDocumentType> {
 	constructor(value: string) {
-		super({ value: { case: 'textValue', value: value } }, new JsonDocumentType())
+		super(
+			{ value: { case: 'textValue', value: value } },
+			new JsonDocumentType()
+		)
 	}
 }

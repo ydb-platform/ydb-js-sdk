@@ -1,6 +1,6 @@
-import type { RetryConfig } from "@ydbjs/retry"
-import type { CompressionCodec } from "../codec.js"
-import type { TX } from "../tx.js"
+import type { RetryConfig } from '@ydbjs/retry'
+import type { CompressionCodec } from '../codec.js'
+import type { TX } from '../tx.js'
 
 export type ThroughputSettings = {
 	maxBufferBytes: bigint
@@ -43,7 +43,10 @@ export type TopicWriterOptions = {
 	// Retry configuration for the writer.
 	retryConfig?(signal: AbortSignal): RetryConfig
 	// Callback that is called when writer receives an acknowledgment for a message.
-	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
+	onAck?: (
+		seqNo: bigint,
+		status?: 'skipped' | 'written' | 'writtenInTx'
+	) => void
 }
 
 export interface TopicWriter extends AsyncDisposable {
@@ -51,7 +54,11 @@ export interface TopicWriter extends AsyncDisposable {
 	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
 	write(
 		payload: Uint8Array,
-		extra?: { seqNo?: bigint; createdAt?: Date; metadataItems?: Record<string, Uint8Array> }
+		extra?: {
+			seqNo?: bigint
+			createdAt?: Date
+			metadataItems?: Record<string, Uint8Array>
+		}
 	): bigint
 	// Flush the buffer and send all messages to the topic.
 	// Returns a promise that resolves to the last sequence number of the topic after flushing.
@@ -66,7 +73,11 @@ export interface TopicWriter extends AsyncDisposable {
 export interface TopicTxWriter {
 	write(
 		payload: Uint8Array,
-		extra?: { seqNo?: bigint; createdAt?: Date; metadataItems?: Record<string, Uint8Array> }
+		extra?: {
+			seqNo?: bigint
+			createdAt?: Date
+			metadataItems?: Record<string, Uint8Array>
+		}
 	): bigint
 	flush(): Promise<bigint | undefined>
 	close(): Promise<void>

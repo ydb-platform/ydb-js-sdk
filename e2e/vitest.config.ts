@@ -9,7 +9,7 @@ export default defineProject({
 		testTimeout: 60000,
 		hookTimeout: 30000,
 		benchmark: {
-			include: ['**/*.bench.ts']
-		}
+			include: ['**/*.bench.ts'],
+		},
 	},
 })

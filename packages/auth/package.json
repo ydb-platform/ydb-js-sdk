@@ -47,7 +47,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.10.0",
+		"@bufbuild/protobuf": "2.10.1",
 		"@grpc/grpc-js": "^1.14.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/debug": "^6.0.0",

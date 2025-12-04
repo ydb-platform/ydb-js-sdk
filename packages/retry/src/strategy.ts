@@ -1,5 +1,5 @@
-import type { RetryConfig } from "./config.js";
-import type { RetryContext } from "./context.js";
+import type { RetryConfig } from './config.js'
+import type { RetryContext } from './context.js'
 
 /**
  * Strategy to calculate delay.
@@ -17,7 +17,7 @@ import type { RetryContext } from "./context.js";
  * ```
  */
 export interface RetryStrategy {
-	(ctx: RetryContext, cfg: RetryConfig): number;
+	(ctx: RetryContext, cfg: RetryConfig): number
 }
 
 export function fixed(ms: number): RetryStrategy {
@@ -45,9 +45,14 @@ export function backoff(base: number, max: number): RetryStrategy {
 }
 
 export function combine(...strategies: RetryStrategy[]): RetryStrategy {
-	return (ctx, cfg) => strategies.reduce((acc, strategy) => acc + strategy(ctx, cfg), 0)
+	return (ctx, cfg) =>
+		strategies.reduce((acc, strategy) => acc + strategy(ctx, cfg), 0)
 }
 
 export function compose(...strategies: RetryStrategy[]): RetryStrategy {
-	return (ctx, cfg) => strategies.reduce((acc, strategy) => Math.max(acc, strategy(ctx, cfg)), 0)
+	return (ctx, cfg) =>
+		strategies.reduce(
+			(acc, strategy) => Math.max(acc, strategy(ctx, cfg)),
+			0
+		)
 }

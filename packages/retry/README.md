@@ -26,24 +26,26 @@ npm install @ydbjs/retry@6.0.0-alpha.2
 Here is an example of how to use the `@ydbjs/retry` package to implement retry logic:
 
 ```ts
-import { retry, defaultRetryConfig } from '@ydbjs/retry';
+import { retry, defaultRetryConfig } from '@ydbjs/retry'
 
 async function fetchData() {
-    return await retry(defaultRetryConfig, async () => {
-        // Your operation that might fail
-        const response = await fetch('https://example.com/api');
-        if (!response.ok) {
-            throw new Error('Failed to fetch data');
-        }
-        return response.json();
-    });
+  return await retry(defaultRetryConfig, async () => {
+    // Your operation that might fail
+    const response = await fetch('https://example.com/api')
+    if (!response.ok) {
+      throw new Error('Failed to fetch data')
+    }
+    return response.json()
+  })
 }
 
-fetchData().then(data => {
-    console.log('Data fetched successfully:', data);
-}).catch(error => {
-    console.error('Failed to fetch data:', error);
-});
+fetchData()
+  .then((data) => {
+    console.log('Data fetched successfully:', data)
+  })
+  .catch((error) => {
+    console.error('Failed to fetch data:', error)
+  })
 ```
 
 ### Configuration Options
@@ -83,20 +85,23 @@ const options: RetryConfig = {
 You can define your own retry strategy to control the delay between attempts:
 
 ```ts
-import { retry } from '@ydbjs/retry';
+import { retry } from '@ydbjs/retry'
 
 const customStrategy = (ctx, cfg) => {
-    // Exponential backoff with a cap
-    return Math.min(1000 * 2 ** ctx.attempt, 10000);
-};
+  // Exponential backoff with a cap
+  return Math.min(1000 * 2 ** ctx.attempt, 10000)
+}
 
-await retry({
+await retry(
+  {
     strategy: customStrategy,
     budget: 5,
     retry: (error) => error instanceof Error,
-}, async () => {
+  },
+  async () => {
     // Your operation
-});
+  }
+)
 ```
 
 ### Dynamic Retry Budget
@@ -105,17 +110,22 @@ Budgets can be dynamic, based on error type or context:
 
 ```ts
 const dynamicBudget = (ctx, cfg) => {
-    // Allow more attempts for network errors
-    if (ctx.error && ctx.error.message.includes('network')) {
-        return 10;
-    }
-    return 3;
-};
+  // Allow more attempts for network errors
+  if (ctx.error && ctx.error.message.includes('network')) {
+    return 10
+  }
+  return 3
+}
 
-await retry({
+await retry(
+  {
     budget: dynamicBudget,
     // ...other config
-}, async () => { /* ... */ });
+  },
+  async () => {
+    /* ... */
+  }
+)
 ```
 
 ### onRetry Hook
@@ -123,12 +133,17 @@ await retry({
 You can use the `onRetry` hook to log or perform side effects on each retry:
 
 ```ts
-await retry({
+await retry(
+  {
     onRetry: (ctx) => {
-        console.log(`Retry attempt #${ctx.attempt} after error:`, ctx.error);
+      console.log(`Retry attempt #${ctx.attempt} after error:`, ctx.error)
     },
     // ...other config
-}, async () => { /* ... */ });
+  },
+  async () => {
+    /* ... */
+  }
+)
 ```
 
 ### Combining Strategies
@@ -136,17 +151,22 @@ await retry({
 You can compose multiple strategies for more advanced control:
 
 ```ts
-import { strategies, retry } from '@ydbjs/retry';
+import { strategies, retry } from '@ydbjs/retry'
 
 const combined = strategies.compose(
-    strategies.exponential(500),
-    strategies.jitter(100)
-);
+  strategies.exponential(500),
+  strategies.jitter(100)
+)
 
-await retry({
+await retry(
+  {
     strategy: combined,
     budget: 5,
-}, async () => { /* ... */ });
+  },
+  async () => {
+    /* ... */
+  }
+)
 ```
 
 ### Using AbortSignal in Retry Callback
@@ -154,20 +174,23 @@ await retry({
 You can use the `AbortSignal` provided to the retried function to support cancellation with custom clients (for example, a YDB driver from the core package):
 
 ```ts
-import { retry } from '@ydbjs/retry';
-import { Driver } from '@ydbjs/core';
+import { retry } from '@ydbjs/retry'
+import { Driver } from '@ydbjs/core'
 
-const driver = new Driver('grpc://localhost:2135?database=/local');
+const driver = new Driver('grpc://localhost:2135?database=/local')
 
-await retry({
+await retry(
+  {
     budget: 5,
-}, async (signal) => {
+  },
+  async (signal) => {
     // Pass the signal to a method that supports AbortSignal, e.g., driver.ready
-    await driver.ready(signal);
+    await driver.ready(signal)
     // Or, if using a generated client:
     // const client = driver.createClient(SomeServiceDefinition);
     // return await client.someMethod(request, { signal });
-});
+  }
+)
 ```
 
 ## Development

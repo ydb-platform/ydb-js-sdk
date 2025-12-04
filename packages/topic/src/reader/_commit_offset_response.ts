@@ -1,8 +1,8 @@
-import * as assert from "node:assert"
-import { loggers } from "@ydbjs/debug"
-import type { StreamReadMessage_CommitOffsetResponse } from "@ydbjs/api/topic"
-import type { TopicPartitionSession } from "../partition-session.js"
-import type { TopicCommitPromise, onCommittedOffsetCallback } from "./types.js"
+import * as assert from 'node:assert'
+import { loggers } from '@ydbjs/debug'
+import type { StreamReadMessage_CommitOffsetResponse } from '@ydbjs/api/topic'
+import type { TopicPartitionSession } from '../partition-session.js'
+import type { TopicCommitPromise, onCommittedOffsetCallback } from './types.js'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -14,13 +14,21 @@ export let _on_commit_offset_response = function on_commit_offset_response(
 	},
 	input: StreamReadMessage_CommitOffsetResponse
 ): void {
-	assert.ok(input.partitionsCommittedOffsets, 'commitOffsetResponse must have partitionsCommittedOffsets')
+	assert.ok(
+		input.partitionsCommittedOffsets,
+		'commitOffsetResponse must have partitionsCommittedOffsets'
+	)
 
 	if (ctx.onCommittedOffset) {
 		for (let part of input.partitionsCommittedOffsets) {
-			let partitionSession = ctx.partitionSessions.get(part.partitionSessionId)
+			let partitionSession = ctx.partitionSessions.get(
+				part.partitionSessionId
+			)
 			if (!partitionSession) {
-				dbg.log('error: commitOffsetResponse for unknown partitionSessionId=%s', part.partitionSessionId)
+				dbg.log(
+					'error: commitOffsetResponse for unknown partitionSessionId=%s',
+					part.partitionSessionId
+				)
 				continue
 			}
 

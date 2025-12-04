@@ -77,8 +77,14 @@ const userType = new Struct({
 
 // List<Struct<...>> со значениями
 const users = new List(
-  new Struct({ id: 1, name: new Optional(null, new TextType()) }, userType.type),
-  new Struct({ id: 2, name: new Optional('Bob', new TextType()) }, userType.type),
+  new Struct(
+    { id: 1, name: new Optional(null, new TextType()) },
+    userType.type
+  ),
+  new Struct(
+    { id: 2, name: new Optional('Bob', new TextType()) },
+    userType.type
+  )
 )
 
 await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`

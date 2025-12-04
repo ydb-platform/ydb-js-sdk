@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
 import { create } from '@bufbuild/protobuf'
-import { CreateTopicRequestSchema, DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
+import {
+	CreateTopicRequestSchema,
+	DropTopicRequestSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import type { TopicMessage } from '@ydbjs/topic/message'
@@ -91,7 +95,9 @@ test('writes and reads in tx', async () => {
 		// Read messages inside the transaction.
 		// Expect to see the message written outside the transaction (1).
 		// Expect NOT to see the message written in the transaction (2).
-		for await (let batch of readerTx.read({ signal: AbortSignal.timeout(5000) })) {
+		for await (let batch of readerTx.read({
+			signal: AbortSignal.timeout(5000),
+		})) {
 			batchInsideTx = batch
 			break
 		}
@@ -114,7 +120,9 @@ test('writes and reads in tx', async () => {
 	// Expect to see the message written in the transaction (2).
 	// Expect NOT to see the message written outside the transaction (1).
 	let batchOutsideTx: TopicMessage[] | undefined
-	for await (let batch of reader.read({ signal: AbortSignal.timeout(5000) })) {
+	for await (let batch of reader.read({
+		signal: AbortSignal.timeout(5000),
+	})) {
 		batchOutsideTx = batch
 		await reader.commit(batch)
 		break

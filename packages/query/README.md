@@ -83,9 +83,12 @@ const result = await sql.begin(async (tx) => {
 })
 
 // With isolation and idempotency options
-await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) => {
-  return await tx`SELECT COUNT(*) FROM users`
-})
+await sql.begin(
+  { isolation: 'snapshotReadOnly', idempotent: true },
+  async (tx) => {
+    return await tx`SELECT COUNT(*) FROM users`
+  }
+)
 ```
 
 ### Advanced: Multiple Result Sets, Streaming, and Events
@@ -94,7 +97,8 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 import { StatsMode } from '@ydbjs/api/query'
 // Multiple result sets
 type Result = [[{ id: number }], [{ count: number }]]
-const [rows, [{ count }]] = await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
+const [rows, [{ count }]] =
+  await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
 
 // Listen for query statistics and retries
 const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)

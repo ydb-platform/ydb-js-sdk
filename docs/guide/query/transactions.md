@@ -10,6 +10,7 @@ title: Query — Transactions
 - `transaction(options?, fn)` — alias to `begin`.
 
 Options:
+
 - `isolation?: 'serializableReadWrite' | 'snapshotReadOnly'` — isolation level (default `serializableReadWrite`).
 - `idempotent?: boolean` — enables retries for conditionally retryable errors. Ensure business logic is idempotent.
 
@@ -27,9 +28,15 @@ const result = await sql.begin(async (tx) => {
 ## Isolation and idempotency options
 
 ```ts
-await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) => {
-  return await tx`SELECT COUNT(*) FROM users`
-})
+await sql.begin(
+  {
+    isolation: 'snapshotReadOnly',
+    idempotent: true,
+  },
+  async (tx) => {
+    return await tx`SELECT COUNT(*) FROM users`
+  }
+)
 ```
 
 ## Topic integration (without using)
@@ -41,12 +48,20 @@ import { createTopicTxReader } from '@ydbjs/topic/reader'
 import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
 await sql.transaction(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'svc-a' })
+  const reader = createTopicTxReader(tx, driver, {
+    topic: '/Root/my-topic',
+    consumer: 'svc-a',
+  })
+
   for await (const batch of reader.read({ signal })) {
     // processing
   }
 
-  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, {
+    topic: '/Root/my-topic',
+    producer: 'p1',
+  })
+
   writer.write(new TextEncoder().encode('message'))
 })
 ```

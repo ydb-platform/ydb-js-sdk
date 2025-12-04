@@ -18,6 +18,7 @@ title: Topic — семантика
   - `onCommittedOffset(session, committedOffset)` — уведомления об ack.
 
 Буферизация:
+
 - Внутренний буфер ограничивается `maxBufferBytes`.
 - `codecMap` управляет распаковкой полезной нагрузки.
 

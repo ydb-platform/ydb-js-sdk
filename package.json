@@ -42,26 +42,5 @@
 		"@grpc/proto-loader": "npm:dry-uninstall",
 		"esbuild": "^0.25.0"
 	},
-	"packageManager": "npm@11.5.1",
-	"prettier": {
-		"printWidth": 120,
-		"tabWidth": 4,
-		"useTabs": true,
-		"semi": false,
-		"singleQuote": true,
-		"trailingComma": "es5",
-		"bracketSpacing": true,
-		"bracketSameLine": false,
-		"arrowParens": "always",
-		"endOfLine": "lf",
-		"overrides": [
-			{
-				"files": "*.{md,yml,yaml}",
-				"options": {
-					"tabWidth": 2,
-					"useTabs": false
-				}
-			}
-		]
-	}
+	"packageManager": "npm@11.5.1"
 }

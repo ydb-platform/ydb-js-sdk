@@ -7,7 +7,9 @@ import { Uint64, Uint64Type } from '@ydbjs/value/primitive'
 
 import { query } from '../src/index.js'
 
-let driver = new Driver(inject('connectionString'), { 'ydb.sdk.enable_discovery': false })
+let driver = new Driver(inject('connectionString'), {
+	'ydb.sdk.enable_discovery': false,
+})
 await driver.ready()
 
 test('executes simple query', async () => {
@@ -42,7 +44,10 @@ test('executes query with parameters', async () => {
 test('executes query with named parameters', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT $param1 as id`.parameter('param1', fromJs(1))
+	let resultSets = await sql`SELECT $param1 as id`.parameter(
+		'param1',
+		fromJs(1)
+	)
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
 		  [
@@ -57,7 +62,10 @@ test('executes query with named parameters', async () => {
 test('executes query with named parameters and types', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT $param1 as id`.parameter('param1', new Uint64(1n))
+	let resultSets = await sql`SELECT $param1 as id`.parameter(
+		'param1',
+		new Uint64(1n)
+	)
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
 		  [
@@ -72,7 +80,11 @@ test('executes query with named parameters and types', async () => {
 test('executes query with multiple parameters', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT $param1 as id, ${'Neo'} as name`.parameter('param1', fromJs(1))
+	let resultSets =
+		await sql`SELECT $param1 as id, ${'Neo'} as name`.parameter(
+			'param1',
+			fromJs(1)
+		)
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
 		  [
@@ -131,7 +143,10 @@ test('executes query with multiple result sets and parameters', async () => {
 test('executes query with CAST', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT CAST($param1 as Uint64) AS id`.parameter('param1', fromJs(1))
+	let resultSets = await sql`SELECT CAST($param1 as Uint64) AS id`.parameter(
+		'param1',
+		fromJs(1)
+	)
 
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
@@ -162,7 +177,8 @@ test('executes query with typed value', async () => {
 test('executes query with optional value', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT CAST(${new Optional(null, new Uint64Type())} AS Uint64?) AS id`
+	let resultSets =
+		await sql`SELECT CAST(${new Optional(null, new Uint64Type())} AS Uint64?) AS id`
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
 		  [
@@ -177,7 +193,8 @@ test('executes query with optional value', async () => {
 test('executes query with table parameter using AS_TABLE', async () => {
 	let sql = query(driver)
 
-	let resultSets = await sql`SELECT * FROM AS_TABLE(${[{ id: 1, name: 'Neo' }]})`
+	let resultSets =
+		await sql`SELECT * FROM AS_TABLE(${[{ id: 1, name: 'Neo' }]})`
 	expect(resultSets).toMatchInlineSnapshot(`
 		[
 		  [
@@ -276,10 +293,18 @@ test('executes parallel transactions and queries', async () => {
 
 	let results = await Promise.all([
 		sql.begin(async (tx) => {
-			return await Promise.all([tx`SELECT 1 AS id`, tx`SELECT 2 AS id`, tx`SELECT 3 AS id`])
+			return await Promise.all([
+				tx`SELECT 1 AS id`,
+				tx`SELECT 2 AS id`,
+				tx`SELECT 3 AS id`,
+			])
 		}),
 		sql.begin(async (tx) => {
-			return await Promise.all([tx`SELECT 4 AS id`, tx`SELECT 5 AS id`, tx`SELECT 6 AS id`])
+			return await Promise.all([
+				tx`SELECT 4 AS id`,
+				tx`SELECT 5 AS id`,
+				tx`SELECT 6 AS id`,
+			])
 		}),
 	])
 

@@ -1,3 +1,7 @@
 {
-	"recommendations": ["oxc.oxc-vscode", "vitest.explorer", "prettier.prettier-vscode"]
+	"recommendations": [
+		"oxc.oxc-vscode",
+		"vitest.explorer",
+		"prettier.prettier-vscode"
+	]
 }

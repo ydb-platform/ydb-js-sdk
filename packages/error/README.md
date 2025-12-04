@@ -21,17 +21,17 @@ npm install @ydbjs/error@6.0.0-alpha.2
 ### Handling YDB Errors
 
 ```ts
-import { YDBError } from '@ydbjs/error';
-import { StatusIds_StatusCode } from '@ydbjs/api/operation';
+import { YDBError } from '@ydbjs/error'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 
 try {
   throw new YDBError(StatusIds_StatusCode.ABORTED, [
     { severity: 0, issueCode: 14, message: 'Some error message' },
-  ]);
+  ])
 } catch (error) {
   if (error instanceof YDBError) {
-    console.error('YDB Error:', error.message);
-    console.error('Error Code:', error.code);
+    console.error('YDB Error:', error.message)
+    console.error('Error Code:', error.code)
   }
 }
 ```

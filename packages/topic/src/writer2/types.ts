@@ -1,9 +1,13 @@
-import type { Driver } from "@ydbjs/core"
-import type { ActorRef, CallbackSnapshot } from "xstate"
-import type { CompressionCodec } from "../codec.js"
-import type { TX } from "../tx.js"
-import type { WriterStreamEmittedEvent, WriterStreamInput, WriterStreamReceiveEvent } from "./stream.ts"
-import type { YDBDebugLogger } from "@ydbjs/debug"
+import type { Driver } from '@ydbjs/core'
+import type { ActorRef, CallbackSnapshot } from 'xstate'
+import type { CompressionCodec } from '../codec.js'
+import type { TX } from '../tx.js'
+import type {
+	WriterStreamEmittedEvent,
+	WriterStreamInput,
+	WriterStreamReceiveEvent,
+} from './stream.ts'
+import type { YDBDebugLogger } from '@ydbjs/debug'
 
 export type TopicWriterOptions = {
 	// Transaction identity.
@@ -79,7 +83,7 @@ export type WriterContext = {
 	readonly sessionId?: string
 
 	// Message buffers - single array with sliding window approach
-	readonly messages: import("@ydbjs/api/topic").StreamWriteMessage_WriteRequest_MessageData[]
+	readonly messages: import('@ydbjs/api/topic').StreamWriteMessage_WriteRequest_MessageData[]
 
 	// Buffer window: [bufferStart, bufferStart + bufferLength)
 	readonly bufferStart: number
@@ -97,12 +101,18 @@ export type WriterContext = {
 	readonly lastError?: unknown
 
 	// Reference to the stream actor
-	readonly streamRef?: ActorRef<CallbackSnapshot<WriterStreamInput>, WriterStreamReceiveEvent, WriterStreamEmittedEvent> | undefined
+	readonly streamRef?:
+		| ActorRef<
+				CallbackSnapshot<WriterStreamInput>,
+				WriterStreamReceiveEvent,
+				WriterStreamEmittedEvent
+		  >
+		| undefined
 }
 
 export type MessageToSend = {
 	data: Uint8Array
-	seqNo: bigint  // Now required - TopicWriter always provides it
+	seqNo: bigint // Now required - TopicWriter always provides it
 	createdAt?: Date
 	metadataItems?: Record<string, Uint8Array>
 }
@@ -122,10 +132,13 @@ export type WriterEmitted =
 	| { type: 'writer.error'; error: unknown }
 	| { type: 'writer.close'; reason?: unknown }
 	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint }
-	| { type: 'writer.acknowledgments'; acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'> }
+	| {
+			type: 'writer.acknowledgments'
+			acknowledgments: Map<bigint, 'skipped' | 'written' | 'writtenInTx'>
+	  }
 
 export type WriterInput = {
-	driver: Driver;
+	driver: Driver
 	options: TopicWriterOptions
 }
 

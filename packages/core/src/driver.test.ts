@@ -23,17 +23,33 @@ test('validates default channel options for long-lived streams', () => {
 		'ydb.sdk.enable_discovery': false,
 	})
 
-	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(30_000)
-	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(5_000)
-	expect(driver.options.channelOptions?.['grpc.keepalive_permit_without_calls']).toBe(1)
+	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(
+		30_000
+	)
+	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(
+		5_000
+	)
+	expect(
+		driver.options.channelOptions?.['grpc.keepalive_permit_without_calls']
+	).toBe(1)
 
-	expect(driver.options.channelOptions?.['grpc.max_send_message_length']).toBe(64 * 1024 * 1024)
-	expect(driver.options.channelOptions?.['grpc.max_receive_message_length']).toBe(64 * 1024 * 1024)
+	expect(
+		driver.options.channelOptions?.['grpc.max_send_message_length']
+	).toBe(64 * 1024 * 1024)
+	expect(
+		driver.options.channelOptions?.['grpc.max_receive_message_length']
+	).toBe(64 * 1024 * 1024)
 
-	expect(driver.options.channelOptions?.['grpc.max_connection_age_ms']).toBeUndefined()
+	expect(
+		driver.options.channelOptions?.['grpc.max_connection_age_ms']
+	).toBeUndefined()
 
-	expect(driver.options.channelOptions?.['grpc.initial_reconnect_backoff_ms']).toBe(50)
-	expect(driver.options.channelOptions?.['grpc.max_reconnect_backoff_ms']).toBe(5_000)
+	expect(
+		driver.options.channelOptions?.['grpc.initial_reconnect_backoff_ms']
+	).toBe(50)
+	expect(
+		driver.options.channelOptions?.['grpc.max_reconnect_backoff_ms']
+	).toBe(5_000)
 
 	driver.close()
 })
@@ -49,10 +65,16 @@ test('allows custom channel options override', () => {
 
 	let driver = new Driver('grpc://localhost:2136/test', customOptions)
 
-	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(60_000)
-	expect(driver.options.channelOptions?.['grpc.max_send_message_length']).toBe(32 * 1024 * 1024)
+	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(
+		60_000
+	)
+	expect(
+		driver.options.channelOptions?.['grpc.max_send_message_length']
+	).toBe(32 * 1024 * 1024)
 
-	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(5_000)
+	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(
+		5_000
+	)
 
 	driver.close()
 })

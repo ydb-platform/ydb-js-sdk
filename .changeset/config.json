@@ -1,6 +1,9 @@
 {
 	"$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
-	"changelog": ["@changesets/changelog-github", { "repo": "ydb-platform/ydb-js-sdk" }],
+	"changelog": [
+		"@changesets/changelog-github",
+		{ "repo": "ydb-platform/ydb-js-sdk" }
+	],
 	"commit": false,
 	"fixed": [],
 	"linked": [],

@@ -1,6 +1,6 @@
-import { type Value, fromJs } from "@ydbjs/value"
+import { type Value, fromJs } from '@ydbjs/value'
 
-const SymbolUnsafe = Symbol("unsafe")
+const SymbolUnsafe = Symbol('unsafe')
 
 function isObject(value: unknown): boolean {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -11,19 +11,19 @@ function validateValue(value: unknown, index: number): void {
 	if (value === undefined) {
 		throw new Error(
 			`❌ Undefined value at position ${index} in yql template. ` +
-			`This usually means:\n` +
-			`  • A variable wasn't initialized\n` +
-			`  • A function returned undefined\n` +
-			`  • An object property doesn't exist\n` +
-			`For intentional null database values, use YDB Optional type.`
+				`This usually means:\n` +
+				`  • A variable wasn't initialized\n` +
+				`  • A function returned undefined\n` +
+				`  • An object property doesn't exist\n` +
+				`For intentional null database values, use YDB Optional type.`
 		)
 	}
 
 	if (value === null) {
 		throw new Error(
 			`❌ Null value at position ${index} in yql template. ` +
-			`JavaScript null is not directly supported in YDB queries.\n` +
-			`For null database values, use YDB Optional type instead.`
+				`JavaScript null is not directly supported in YDB queries.\n` +
+				`For null database values, use YDB Optional type instead.`
 		)
 	}
 }
@@ -35,7 +35,7 @@ export class UnsafeString extends String {
 export function yql<P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
 	...values: P
-): { text: string, params: Record<string, Value> } {
+): { text: string; params: Record<string, Value> } {
 	let text = ''
 	let params: Record<string, Value> = Object.assign({}, null)
 
@@ -58,7 +58,12 @@ export function yql<P extends any[] = unknown[]>(
 				return
 			}
 
-			let ydbValue = isObject(value) && 'type' in value && 'kind' in (value as any)['type'] ? value as Value : fromJs(value as any)
+			let ydbValue =
+				isObject(value) &&
+				'type' in value &&
+				'kind' in (value as any)['type']
+					? (value as Value)
+					: fromJs(value as any)
 			params[`$p${i - skipCount}`] = ydbValue
 		})
 
@@ -89,8 +94,8 @@ export function unsafe(value: string | { toString(): string }) {
 }
 
 export function identifier(path: string) {
-    // Escape backticks inside identifier by doubling them
-    // Example: my`table -> my``table
-    let escaped = path.replaceAll('`', '``')
-    return unsafe("`" + escaped + "`")
+	// Escape backticks inside identifier by doubling them
+	// Example: my`table -> my``table
+	let escaped = path.replaceAll('`', '``')
+	return unsafe('`' + escaped + '`')
 }

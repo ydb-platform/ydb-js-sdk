@@ -5,7 +5,13 @@ import { loggers } from '@ydbjs/debug'
 import { AsyncPriorityQueue } from '../queue.js'
 import { defaultCodecMap } from '../codec.js'
 
-import type { TopicReader, TopicReaderOptions, TopicReaderState, TopicTxReader, TopicTxReaderState } from './types.js'
+import type {
+	TopicReader,
+	TopicReaderOptions,
+	TopicReaderState,
+	TopicTxReader,
+	TopicTxReaderState,
+} from './types.js'
 import { _send_update_token_request } from './_update_token.js'
 import { _parse_topics_read_settings } from './_topics_config.js'
 import { _consume_stream } from './_consume_stream.js'
@@ -13,7 +19,11 @@ import { _consume_stream_tx } from './_consume_stream_tx.js'
 import { _read } from './_read.js'
 import { _commit } from './_commit.js'
 import { _update_offsets_in_transaction } from './_update_offsets_in_transaction.js'
-import { _create_disposal_functions, _initialize_codecs, _start_background_token_refresher } from './_shared.js'
+import {
+	_create_disposal_functions,
+	_initialize_codecs,
+	_start_background_token_refresher,
+} from './_shared.js'
 import type { TX } from '../tx.js'
 
 let dbg = loggers.topic.extend('reader')
@@ -21,7 +31,10 @@ let dbg = loggers.topic.extend('reader')
 // Timeout for graceful shutdown waiting for pending commits
 let GRACEFUL_SHUTDOWN_TIMEOUT_MS = 30_000
 
-export const createTopicReader = function createTopicReader(driver: Driver, options: TopicReaderOptions): TopicReader {
+export const createTopicReader = function createTopicReader(
+	driver: Driver,
+	options: TopicReaderOptions
+): TopicReader {
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
 
 	let state: TopicReaderState = {
@@ -105,7 +118,9 @@ export const createTopicReader = function createTopicReader(driver: Driver, opti
 				// Wait for all pending commits or timeout after 30 seconds
 				await Promise.race([
 					Promise.all(pendingCommitPromises),
-					new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS)),
+					new Promise<void>((resolve) =>
+						setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS)
+					),
 				])
 			} catch (err) {
 				dbg.log('error during close: %O', err)
@@ -204,7 +219,8 @@ export const createTopicTxReader = function createTopicTxReader(
 		let updates = []
 
 		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
-			let partitionSession = state.partitionSessions.get(partitionSessionId)
+			let partitionSession =
+				state.partitionSessions.get(partitionSessionId)
 			if (partitionSession) {
 				updates.push({
 					partitionSession,
@@ -213,10 +229,18 @@ export const createTopicTxReader = function createTopicTxReader(
 			}
 		}
 
-		dbg.log('Updating offsets in transaction for %d partitions', updates.length)
+		dbg.log(
+			'Updating offsets in transaction for %d partitions',
+			updates.length
+		)
 
 		if (updates.length > 0) {
-			await _update_offsets_in_transaction(tx, state.driver, state.options.consumer, updates)
+			await _update_offsets_in_transaction(
+				tx,
+				state.driver,
+				state.options.consumer,
+				updates
+			)
 		}
 
 		closeWithReason('Transaction committed')

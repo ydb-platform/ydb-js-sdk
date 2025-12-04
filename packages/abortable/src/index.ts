@@ -1,6 +1,12 @@
-export async function abortable<T>(signal: AbortSignal, promise: Promise<T>): Promise<T> {
+export async function abortable<T>(
+	signal: AbortSignal,
+	promise: Promise<T>
+): Promise<T> {
 	if (signal.aborted) {
-		throw new DOMException('AbortError', { name: 'AbortError', cause: signal.reason })
+		throw new DOMException('AbortError', {
+			name: 'AbortError',
+			cause: signal.reason,
+		})
 	}
 
 	let abortHandler: () => void
@@ -8,12 +14,14 @@ export async function abortable<T>(signal: AbortSignal, promise: Promise<T>): Pr
 	return Promise.race<T>([
 		promise,
 		new Promise((_, reject) => {
-			let reason = new DOMException('AbortError', { name: 'AbortError', cause: signal.reason })
+			let reason = new DOMException('AbortError', {
+				name: 'AbortError',
+				cause: signal.reason,
+			})
 			abortHandler = () => reject(reason)
 			signal.addEventListener('abort', abortHandler, { once: true })
 		}),
-	])
-		.finally(() => {
-			signal.removeEventListener('abort', abortHandler)
-		})
+	]).finally(() => {
+		signal.removeEventListener('abort', abortHandler)
+	})
 }

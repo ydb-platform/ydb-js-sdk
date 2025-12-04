@@ -18,6 +18,7 @@ title: Topic — Semantics
   - `onCommittedOffset(session, committedOffset)` — ack notifications.
 
 Buffering:
+
 - Internal buffer limited by `maxBufferBytes`.
 - `codecMap` controls payload decompression.
 

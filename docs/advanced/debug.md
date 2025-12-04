@@ -50,4 +50,3 @@ ydbjs:topic:writer connected successfully +45ms
 ```
 
 Tip: combine with application-level correlation IDs in log messages to trace flows across services.
-

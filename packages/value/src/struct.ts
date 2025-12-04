@@ -35,10 +35,15 @@ export class StructType implements Type {
 		if (!this.#typeInstance) {
 			let members: { name: string; type: Ydb.Type }[] = []
 			for (let i = 0; i < this.names.length; i++) {
-				members.push({ name: this.names[i]!, type: this.types[i]!.encode() })
+				members.push({
+					name: this.names[i]!,
+					type: this.types[i]!.encode(),
+				})
 			}
 
-			this.#typeInstance = create(Ydb.TypeSchema, { type: { case: 'structType', value: { members } } })
+			this.#typeInstance = create(Ydb.TypeSchema, {
+				type: { case: 'structType', value: { members } },
+			})
 		}
 
 		return this.#typeInstance
@@ -51,7 +56,9 @@ export class StructType implements Type {
 	}
 }
 
-export class Struct<T extends Record<string, Value | null> = Record<string, Value>> implements Value<StructType> {
+export class Struct<
+	T extends Record<string, Value | null> = Record<string, Value>,
+> implements Value<StructType> {
 	readonly type: StructType
 	readonly items: Value[] = []
 	#valueInstance?: Ydb.Value
@@ -63,7 +70,9 @@ export class Struct<T extends Record<string, Value | null> = Record<string, Valu
 			for (let [name, type] of def) {
 				let value = obj[name]
 				if (value && value.type.kind !== type.kind) {
-					throw new Error(`Invalid type for ${name}: expected ${type.kind}, got ${value.type.kind}`)
+					throw new Error(
+						`Invalid type for ${name}: expected ${type.kind}, got ${value.type.kind}`
+					)
 				}
 
 				this.items.push(new Optional((value ??= null), type))
@@ -83,7 +92,9 @@ export class Struct<T extends Record<string, Value | null> = Record<string, Valu
 		for (let i of indices) {
 			let key = keys[i]!
 			if (obj[key] === null) {
-				throw new Error(`Invalid value for ${key}: expected a value, got null. Please provide a type definition.`)
+				throw new Error(
+					`Invalid value for ${key}: expected a value, got null. Please provide a type definition.`
+				)
 			}
 
 			names.push(key)
@@ -96,7 +107,9 @@ export class Struct<T extends Record<string, Value | null> = Record<string, Valu
 
 	encode(): Ydb.Value {
 		if (!this.#valueInstance) {
-			this.#valueInstance = create(Ydb.ValueSchema, { items: this.items.map((i) => i.encode()) })
+			this.#valueInstance = create(Ydb.ValueSchema, {
+				items: this.items.map((i) => i.encode()),
+			})
 		}
 
 		return this.#valueInstance

@@ -31,4 +31,3 @@ await sql`SELECT * FROM users WHERE id = ${userId}` // безопасно
 ## Ссылки
 
 - Подробный гайд: `packages/query/SECURITY.md` в репозитории.
-

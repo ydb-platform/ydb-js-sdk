@@ -5,10 +5,7 @@
 			"label": "Test: All Unit Tests",
 			"type": "shell",
 			"command": "npm",
-			"args": [
-				"run",
-				"test:uni"
-			],
+			"args": ["run", "test:uni"],
 			"group": {
 				"kind": "test",
 				"isDefault": true
@@ -25,10 +22,7 @@
 			"label": "Test: All Integration Tests",
 			"type": "shell",
 			"command": "npm",
-			"args": [
-				"run",
-				"test:int"
-			],
+			"args": ["run", "test:int"],
 			"group": "test",
 			"presentation": {
 				"echo": true,
@@ -42,10 +36,7 @@
 			"label": "Test: All E2E Tests",
 			"type": "shell",
 			"command": "npm",
-			"args": [
-				"run",
-				"test:e2e"
-			],
+			"args": ["run", "test:e2e"],
 			"group": "test",
 			"presentation": {
 				"echo": true,
@@ -59,10 +50,7 @@
 			"label": "Test: Everything",
 			"type": "shell",
 			"command": "npm",
-			"args": [
-				"run",
-				"test:all"
-			],
+			"args": ["run", "test:all"],
 			"group": "test",
 			"presentation": {
 				"echo": true,
@@ -76,16 +64,12 @@
 			"label": "Test: UI Mode",
 			"type": "shell",
 			"command": "npx",
-			"args": [
-				"vitest",
-				"--standalone",
-				"--ui",
-			],
+			"args": ["vitest", "--standalone", "--ui"],
 			"options": {
 				"env": {
 					"DEBUG": "ydbjs:*",
 					"FORCE_COLOR": "3",
-					"DEBUG_COLORS": "1",
+					"DEBUG_COLORS": "1"
 				}
 			},
 			"group": "test",

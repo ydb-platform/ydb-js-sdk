@@ -22,22 +22,22 @@ npm install @ydbjs/value@alpha
 ### Encoding JavaScript Values to YDB Values
 
 ```ts
-import { fromJs } from '@ydbjs/value';
-const ydbValue = fromJs({ key: 'value' });
+import { fromJs } from '@ydbjs/value'
+const ydbValue = fromJs({ key: 'value' })
 ```
 
 ### Decoding YDB Values to JavaScript
 
 ```ts
-import { toJs } from '@ydbjs/value';
-const jsValue = toJs(ydbValue);
+import { toJs } from '@ydbjs/value'
+const jsValue = toJs(ydbValue)
 ```
 
 ### Working with YDB Types
 
 ```ts
-import { Int32Type } from '@ydbjs/value/primitive';
-const intType = new Int32Type();
+import { Int32Type } from '@ydbjs/value/primitive'
+const intType = new Int32Type()
 ```
 
 ## Conversion Stages
@@ -59,20 +59,20 @@ This multi-stage process ensures type safety, correct serialization, and compati
 
 The conversion between JavaScript and YDB types in `@ydbjs/value` is automatic and based on the structure and type of the input value. Below is a summary of how different JavaScript values are converted:
 
-| JavaScript Value         | YDB Type/Class      | Notes |
-|-------------------------|---------------------|-------|
-| `boolean`               | Bool                |       |
-| `number` (integer)      | Int32               | Uses Int32 for integers |
-| `number` (float)        | Double              | Uses Double for non-integers |
-| `bigint`                | Int64               |       |
-| `string`                | Text                |       |
-| `Date`                  | Datetime            |       |
-| `Uint8Array`            | Bytes               |       |
-| `null`                  | Null                |       |
-| `Array`                 | List                | Elements converted recursively. Special handling for arrays of objects, see below |
-| `Set`                   | Tuple               | Elements converted recursively |
-| `Map`                   | Dict                | Keys and values converted recursively |
-| Plain object            | Struct              | Each property converted recursively |
+| JavaScript Value   | YDB Type/Class | Notes                                                                             |
+| ------------------ | -------------- | --------------------------------------------------------------------------------- |
+| `boolean`          | Bool           |                                                                                   |
+| `number` (integer) | Int32          | Uses Int32 for integers                                                           |
+| `number` (float)   | Double         | Uses Double for non-integers                                                      |
+| `bigint`           | Int64          |                                                                                   |
+| `string`           | Text           |                                                                                   |
+| `Date`             | Datetime       |                                                                                   |
+| `Uint8Array`       | Bytes          |                                                                                   |
+| `null`             | Null           |                                                                                   |
+| `Array`            | List           | Elements converted recursively. Special handling for arrays of objects, see below |
+| `Set`              | Tuple          | Elements converted recursively                                                    |
+| `Map`              | Dict           | Keys and values converted recursively                                             |
+| Plain object       | Struct         | Each property converted recursively                                               |
 
 ### Special Handling for Arrays of Objects
 
@@ -82,10 +82,11 @@ If you pass an array of objects with different sets of fields, the converter wil
 
 ```js
 fromJs([
-  {id: 1, name: 'Alice'},
-  {id: 2, age: 30}
+  { id: 1, name: 'Alice' },
+  { id: 2, age: 30 },
 ])
 ```
+
 This will produce a YDB List where each element is a Struct with fields: `id`, `name`, and `age`. Fields not present in an object will be set to null (Optional).
 
 ### Utility Exports
@@ -106,47 +107,47 @@ This will produce a YDB List where each element is a Struct with fields: `id`, `
 ### Primitives
 
 ```ts
-import { fromJs, toJs } from '@ydbjs/value';
+import { fromJs, toJs } from '@ydbjs/value'
 
-const intValue = fromJs(42);
-const boolValue = fromJs(true);
-const stringValue = fromJs('hello');
+const intValue = fromJs(42)
+const boolValue = fromJs(true)
+const stringValue = fromJs('hello')
 
-console.log(toJs(intValue)); // 42
-console.log(toJs(boolValue)); // true
-console.log(toJs(stringValue)); // 'hello'
+console.log(toJs(intValue)) // 42
+console.log(toJs(boolValue)) // true
+console.log(toJs(stringValue)) // 'hello'
 ```
 
 ### Container Types (List, Dict, Tuple, Optional)
 
 ```ts
-import { fromJs, toJs } from '@ydbjs/value';
+import { fromJs, toJs } from '@ydbjs/value'
 
 // List of integers
-const ydbList = fromJs([1, 2, 3]);
-console.log(toJs(ydbList)); // [1, 2, 3]
+const ydbList = fromJs([1, 2, 3])
+console.log(toJs(ydbList)) // [1, 2, 3]
 
 // Dictionary (map) from string to int
-const ydbDict = fromJs({ a: 1, b: 2 });
-console.log(toJs(ydbDict)); // { a: 1, b: 2 }
+const ydbDict = fromJs({ a: 1, b: 2 })
+console.log(toJs(ydbDict)) // { a: 1, b: 2 }
 
 // Optional value
-const ydbOptional = fromJs(null);
-console.log(toJs(ydbOptional)); // null
+const ydbOptional = fromJs(null)
+console.log(toJs(ydbOptional)) // null
 ```
 
 ### Complex Values (Struct, Tuple)
 
 ```ts
-import { fromJs, toJs } from '@ydbjs/value';
+import { fromJs, toJs } from '@ydbjs/value'
 
 // Struct
-const ydbStruct = fromJs({ id: 123, name: 'Alice' });
-console.log(toJs(ydbStruct)); // { id: 123, name: 'Alice' }
+const ydbStruct = fromJs({ id: 123, name: 'Alice' })
+console.log(toJs(ydbStruct)) // { id: 123, name: 'Alice' }
 
 // Tuple (represented as array)
-const ydbTuple = fromJs([42, 'foo']);
-console.log(toJs(ydbTuple)); // [42, 'foo']
+const ydbTuple = fromJs([42, 'foo'])
+console.log(toJs(ydbTuple)) // [42, 'foo']
 ```
 
 ---

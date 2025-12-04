@@ -4,8 +4,8 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 import { WriterMachine } from './machine.ts'
 
 let originalRandom = Math.random
-beforeAll(() => Math.random = () => 0)
-afterAll(() => Math.random = originalRandom)
+beforeAll(() => (Math.random = () => 0))
+afterAll(() => (Math.random = originalRandom))
 
 test('retryDelay returns exponential backoff with jitter based on attempts', () => {
 	let retryDelay = WriterMachine.implementations.delays.retryDelay!
@@ -36,7 +36,8 @@ test('flushInterval returns flushIntervalMs from options', () => {
 })
 
 test('gracefulShutdownTimeout returns gracefulShutdownTimeoutMs from options', () => {
-	let gracefulShutdownTimeout = WriterMachine.implementations.delays.gracefulShutdownTimeout!
+	let gracefulShutdownTimeout =
+		WriterMachine.implementations.delays.gracefulShutdownTimeout!
 	assert.ok(typeof gracefulShutdownTimeout === 'function')
 
 	let context = { options: { gracefulShutdownTimeoutMs: 100500 } }

@@ -2,107 +2,208 @@
 // @generated from file ydb_cms_v1.proto (package Ydb.Cms.V1, syntax proto3)
 /* eslint-disable */
 
-import type { MessageInitShape } from "@bufbuild/protobuf";
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { AlterDatabaseRequestSchema, AlterDatabaseResponseSchema, CreateDatabaseRequestSchema, CreateDatabaseResponseSchema, DescribeDatabaseOptionsRequestSchema, DescribeDatabaseOptionsResponseSchema, GetDatabaseStatusRequestSchema, GetDatabaseStatusResponseSchema, ListDatabasesRequestSchema, ListDatabasesResponseSchema, RemoveDatabaseRequestSchema, RemoveDatabaseResponseSchema } from "./protos/ydb_cms_pb.js";
-import type { ServiceDefinition } from "nice-grpc";
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
+import {
+	AlterDatabaseRequestSchema,
+	AlterDatabaseResponseSchema,
+	CreateDatabaseRequestSchema,
+	CreateDatabaseResponseSchema,
+	DescribeDatabaseOptionsRequestSchema,
+	DescribeDatabaseOptionsResponseSchema,
+	GetDatabaseStatusRequestSchema,
+	GetDatabaseStatusResponseSchema,
+	ListDatabasesRequestSchema,
+	ListDatabasesResponseSchema,
+	RemoveDatabaseRequestSchema,
+	RemoveDatabaseResponseSchema,
+} from './protos/ydb_cms_pb.js'
+import type { ServiceDefinition } from 'nice-grpc'
 
 /**
  * @generated from service Ydb.Cms.V1.CmsService
  */
 export const CmsServiceDefinition = {
-  /**
-   * Create a new database.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.CreateDatabase
-   */
-  createDatabase: {
-    path: "/Ydb.Cms.V1.CmsService/CreateDatabase",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof CreateDatabaseRequestSchema>) => toBinary(CreateDatabaseRequestSchema, create(CreateDatabaseRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(CreateDatabaseRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof CreateDatabaseResponseSchema>) => toBinary(CreateDatabaseResponseSchema, create(CreateDatabaseResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(CreateDatabaseResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Get current database's status.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.GetDatabaseStatus
-   */
-  getDatabaseStatus: {
-    path: "/Ydb.Cms.V1.CmsService/GetDatabaseStatus",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof GetDatabaseStatusRequestSchema>) => toBinary(GetDatabaseStatusRequestSchema, create(GetDatabaseStatusRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(GetDatabaseStatusRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof GetDatabaseStatusResponseSchema>) => toBinary(GetDatabaseStatusResponseSchema, create(GetDatabaseStatusResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(GetDatabaseStatusResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Alter database resources.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.AlterDatabase
-   */
-  alterDatabase: {
-    path: "/Ydb.Cms.V1.CmsService/AlterDatabase",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof AlterDatabaseRequestSchema>) => toBinary(AlterDatabaseRequestSchema, create(AlterDatabaseRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(AlterDatabaseRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof AlterDatabaseResponseSchema>) => toBinary(AlterDatabaseResponseSchema, create(AlterDatabaseResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(AlterDatabaseResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * List all databases.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.ListDatabases
-   */
-  listDatabases: {
-    path: "/Ydb.Cms.V1.CmsService/ListDatabases",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof ListDatabasesRequestSchema>) => toBinary(ListDatabasesRequestSchema, create(ListDatabasesRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(ListDatabasesRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof ListDatabasesResponseSchema>) => toBinary(ListDatabasesResponseSchema, create(ListDatabasesResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(ListDatabasesResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Remove database.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.RemoveDatabase
-   */
-  removeDatabase: {
-    path: "/Ydb.Cms.V1.CmsService/RemoveDatabase",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof RemoveDatabaseRequestSchema>) => toBinary(RemoveDatabaseRequestSchema, create(RemoveDatabaseRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(RemoveDatabaseRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof RemoveDatabaseResponseSchema>) => toBinary(RemoveDatabaseResponseSchema, create(RemoveDatabaseResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(RemoveDatabaseResponseSchema,bytes),
-    options: {},
-  },
-  /**
-   * Describe supported database options.
-   *
-   * @generated from rpc Ydb.Cms.V1.CmsService.DescribeDatabaseOptions
-   */
-  describeDatabaseOptions: {
-    path: "/Ydb.Cms.V1.CmsService/DescribeDatabaseOptions",
-    requestStream: false,
-    requestSerialize: (message: MessageInitShape<typeof DescribeDatabaseOptionsRequestSchema>) => toBinary(DescribeDatabaseOptionsRequestSchema, create(DescribeDatabaseOptionsRequestSchema, message)),
-    requestDeserialize: (bytes: Uint8Array) => fromBinary(DescribeDatabaseOptionsRequestSchema,bytes),
-      responseStream: false, 
-    responseSerialize: (message: MessageInitShape<typeof DescribeDatabaseOptionsResponseSchema>) => toBinary(DescribeDatabaseOptionsResponseSchema, create(DescribeDatabaseOptionsResponseSchema, message)),
-    responseDeserialize: (bytes: Uint8Array) => fromBinary(DescribeDatabaseOptionsResponseSchema,bytes),
-    options: {},
-  },
+	/**
+	 * Create a new database.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.CreateDatabase
+	 */
+	createDatabase: {
+		path: '/Ydb.Cms.V1.CmsService/CreateDatabase',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof CreateDatabaseRequestSchema>
+		) =>
+			toBinary(
+				CreateDatabaseRequestSchema,
+				create(CreateDatabaseRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateDatabaseRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof CreateDatabaseResponseSchema>
+		) =>
+			toBinary(
+				CreateDatabaseResponseSchema,
+				create(CreateDatabaseResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(CreateDatabaseResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Get current database's status.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.GetDatabaseStatus
+	 */
+	getDatabaseStatus: {
+		path: '/Ydb.Cms.V1.CmsService/GetDatabaseStatus',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof GetDatabaseStatusRequestSchema>
+		) =>
+			toBinary(
+				GetDatabaseStatusRequestSchema,
+				create(GetDatabaseStatusRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(GetDatabaseStatusRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof GetDatabaseStatusResponseSchema>
+		) =>
+			toBinary(
+				GetDatabaseStatusResponseSchema,
+				create(GetDatabaseStatusResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(GetDatabaseStatusResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Alter database resources.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.AlterDatabase
+	 */
+	alterDatabase: {
+		path: '/Ydb.Cms.V1.CmsService/AlterDatabase',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof AlterDatabaseRequestSchema>
+		) =>
+			toBinary(
+				AlterDatabaseRequestSchema,
+				create(AlterDatabaseRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AlterDatabaseRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof AlterDatabaseResponseSchema>
+		) =>
+			toBinary(
+				AlterDatabaseResponseSchema,
+				create(AlterDatabaseResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(AlterDatabaseResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * List all databases.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.ListDatabases
+	 */
+	listDatabases: {
+		path: '/Ydb.Cms.V1.CmsService/ListDatabases',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ListDatabasesRequestSchema>
+		) =>
+			toBinary(
+				ListDatabasesRequestSchema,
+				create(ListDatabasesRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListDatabasesRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ListDatabasesResponseSchema>
+		) =>
+			toBinary(
+				ListDatabasesResponseSchema,
+				create(ListDatabasesResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListDatabasesResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Remove database.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.RemoveDatabase
+	 */
+	removeDatabase: {
+		path: '/Ydb.Cms.V1.CmsService/RemoveDatabase',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof RemoveDatabaseRequestSchema>
+		) =>
+			toBinary(
+				RemoveDatabaseRequestSchema,
+				create(RemoveDatabaseRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(RemoveDatabaseRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof RemoveDatabaseResponseSchema>
+		) =>
+			toBinary(
+				RemoveDatabaseResponseSchema,
+				create(RemoveDatabaseResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(RemoveDatabaseResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Describe supported database options.
+	 *
+	 * @generated from rpc Ydb.Cms.V1.CmsService.DescribeDatabaseOptions
+	 */
+	describeDatabaseOptions: {
+		path: '/Ydb.Cms.V1.CmsService/DescribeDatabaseOptions',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<
+				typeof DescribeDatabaseOptionsRequestSchema
+			>
+		) =>
+			toBinary(
+				DescribeDatabaseOptionsRequestSchema,
+				create(DescribeDatabaseOptionsRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeDatabaseOptionsRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<
+				typeof DescribeDatabaseOptionsResponseSchema
+			>
+		) =>
+			toBinary(
+				DescribeDatabaseOptionsResponseSchema,
+				create(DescribeDatabaseOptionsResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeDatabaseOptionsResponseSchema, bytes),
+		options: {},
+	},
 } as const satisfies ServiceDefinition
 //@ts-expect-error
-CmsServiceDefinition["name"] = "CmsService";
+CmsServiceDefinition['name'] = 'CmsService'
 //@ts-expect-error
-CmsServiceDefinition["fullName"] = "Ydb.Cms.V1.CmsService";
+CmsServiceDefinition['fullName'] = 'Ydb.Cms.V1.CmsService'

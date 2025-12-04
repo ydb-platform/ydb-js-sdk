@@ -21,37 +21,40 @@ npm install @ydbjs/api@alpha
 ### Importing Services
 
 ```ts
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery';
-import { CmsServiceDefinition } from '@ydbjs/api/cms';
-import { QueryServiceDefinition } from '@ydbjs/api/query';
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { CmsServiceDefinition } from '@ydbjs/api/cms'
+import { QueryServiceDefinition } from '@ydbjs/api/query'
 ```
 
 ### Example: Using a Service
 
 ```ts
-import { createClientFactory, createChannel } from 'nice-grpc';
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery';
+import { createClientFactory, createChannel } from 'nice-grpc'
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const clientFactory = createClientFactory();
-const discoveryClient = clientFactory.create(DiscoveryServiceDefinition, createChannel('http://localhost:2136'));
+const clientFactory = createClientFactory()
+const discoveryClient = clientFactory.create(
+  DiscoveryServiceDefinition,
+  createChannel('http://localhost:2136')
+)
 
 async function listEndpoints() {
-  const response = await discoveryClient.listEndpoints({ database: '/local' });
-  console.log(response);
+  const response = await discoveryClient.listEndpoints({ database: '/local' })
+  console.log(response)
 }
 
-listEndpoints().catch(console.error);
+listEndpoints().catch(console.error)
 ```
 
 ### Using with @ydbjs/core
 
 ```ts
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery';
-import { Driver } from '@ydbjs/core';
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { Driver } from '@ydbjs/core'
 
-const driver = new Driver('grpc://localhost:2136');
-const client = driver.createClient(DiscoveryServiceDefinition);
-client.listEndpoints({ database: '/local' });
+const driver = new Driver('grpc://localhost:2136')
+const client = driver.createClient(DiscoveryServiceDefinition)
+client.listEndpoints({ database: '/local' })
 ```
 
 ## Development

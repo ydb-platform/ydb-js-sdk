@@ -1,9 +1,9 @@
-import type { StreamReadMessage_InitRequest_TopicReadSettings } from "@ydbjs/api/topic"
-import type { Driver } from "@ydbjs/core"
-import type { StringValue } from "ms"
-import type { CodecMap } from "../codec.js"
-import type { TopicPartitionSession } from "../partition-session.js"
-import type { TX } from "../tx.js"
+import type { StreamReadMessage_InitRequest_TopicReadSettings } from '@ydbjs/api/topic'
+import type { Driver } from '@ydbjs/core'
+import type { StringValue } from 'ms'
+import type { CodecMap } from '../codec.js'
+import type { TopicPartitionSession } from '../partition-session.js'
+import type { TX } from '../tx.js'
 
 export type TopicReaderSource = {
 	/**
@@ -19,12 +19,12 @@ export type TopicReaderSource = {
 	 * Skip all messages that has write timestamp smaller than now - max_lag.
 	 * Zero means infinite lag.
 	 */
-	maxLag?: number | StringValue | import("@bufbuild/protobuf/wkt").Duration
+	maxLag?: number | StringValue | import('@bufbuild/protobuf/wkt').Duration
 	/**
 	 * Read data only after this timestamp from this topic.
 	 * Read only messages with 'written_at' value greater or equal than this timestamp.
 	 */
-	readFrom?: number | Date | import("@bufbuild/protobuf/wkt").Timestamp
+	readFrom?: number | Date | import('@bufbuild/protobuf/wkt').Timestamp
 }
 
 export type onPartitionSessionStartCallback = (
@@ -34,16 +34,16 @@ export type onPartitionSessionStartCallback = (
 		start: bigint
 		end: bigint
 	}
-) => Promise<void | undefined | { readOffset?: bigint, commitOffset?: bigint }>
+) => Promise<void | undefined | { readOffset?: bigint; commitOffset?: bigint }>
 
 export type onPartitionSessionStopCallback = (
 	partitionSession: TopicPartitionSession,
-	committedOffset: bigint,
+	committedOffset: bigint
 ) => Promise<void>
 
 export type onCommittedOffsetCallback = (
 	partitionSession: TopicPartitionSession,
-	committedOffset: bigint,
+	committedOffset: bigint
 ) => void
 
 export type TopicReaderOptions = {
@@ -72,9 +72,17 @@ export type TopicReaderOptions = {
 
 export interface TopicReader extends AsyncDisposable {
 	// Read messages from the topic stream.
-	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
+	read(options?: {
+		limit?: number
+		waitMs?: number
+		signal?: AbortSignal
+	}): AsyncIterable<import('../message.js').TopicMessage[]>
 	// Commit offsets for the provided messages.
-	commit(input: import("../message.js").TopicMessage | import("../message.js").TopicMessage[]): Promise<void>
+	commit(
+		input:
+			| import('../message.js').TopicMessage
+			| import('../message.js').TopicMessage[]
+	): Promise<void>
 	// Gracefully close the reader.
 	close(): Promise<void>
 	// Immediately destroy the reader and release all resources.
@@ -83,7 +91,11 @@ export interface TopicReader extends AsyncDisposable {
 
 export interface TopicTxReader {
 	// Read messages from the topic stream within a transaction.
-	read(options?: { limit?: number, waitMs?: number, signal?: AbortSignal }): AsyncIterable<import("../message.js").TopicMessage[]>
+	read(options?: {
+		limit?: number
+		waitMs?: number
+		signal?: AbortSignal
+	}): AsyncIterable<import('../message.js').TopicMessage[]>
 	// Gracefully close the reader.
 	close(): Promise<void>
 	// Immediately destroy the reader and release all resources.
@@ -104,8 +116,10 @@ export type TopicBaseReaderState = {
 	disposed: boolean
 
 	// Data structures
-	readonly outgoingQueue: import("../queue.js").AsyncPriorityQueue<import("@ydbjs/api/topic").StreamReadMessage_FromClient>
-	readonly buffer: import("@ydbjs/api/topic").StreamReadMessage_ReadResponse[]
+	readonly outgoingQueue: import('../queue.js').AsyncPriorityQueue<
+		import('@ydbjs/api/topic').StreamReadMessage_FromClient
+	>
+	readonly buffer: import('@ydbjs/api/topic').StreamReadMessage_ReadResponse[]
 	readonly partitionSessions: Map<bigint, TopicPartitionSession>
 	readonly codecs: CodecMap
 
@@ -118,7 +132,10 @@ export type TopicTxReaderState = TopicBaseReaderState & {
 	readonly tx: TX
 	readonly options: TopicReaderOptions
 	// Transaction support - track read offsets for commit hook
-	readonly readOffsets: Map<bigint, { firstOffset: bigint, lastOffset: bigint }> // partitionSessionId -> first and last read offsets
+	readonly readOffsets: Map<
+		bigint,
+		{ firstOffset: bigint; lastOffset: bigint }
+	> // partitionSessionId -> first and last read offsets
 }
 
 export type TopicCommitPromise = {

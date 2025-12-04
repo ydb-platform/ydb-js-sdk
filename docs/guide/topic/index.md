@@ -35,7 +35,11 @@ await writer.flush()
 ### Reader with batching and timeouts {#examples-reader-batching}
 
 ```ts
-await using reader = t.createReader({ topic: '/Root/my-topic', consumer: 'svc-a' })
+await using reader = t.createReader({
+  topic: '/Root/my-topic',
+  consumer: 'svc-a',
+})
+
 for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
   if (!batch.length) continue // periodic tick without blocking the loop
   // process batch
@@ -70,12 +74,20 @@ import { createTopicTxReader, createTopicTxWriter } from '@ydbjs/topic'
 
 const sql = query(driver)
 await sql.begin(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'svc-a' })
+  const reader = createTopicTxReader(tx, driver, {
+    topic: '/Root/my-topic',
+    consumer: 'svc-a',
+  })
+
   for await (const batch of reader.read({ signal })) {
     // inside tx
   }
 
-  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, {
+    topic: '/Root/my-topic',
+    producer: 'p1',
+  })
+
   writer.write(new TextEncoder().encode('in-tx'))
 })
 ```
@@ -100,9 +112,13 @@ await writer.flush()
 
 ```ts
 await using reader = t.createReader({
-  topic: [{ path: '/Root/topic-a', partitionIds: [0n, 1n] }, { path: '/Root/topic-b' }],
+  topic: [
+    { path: '/Root/topic-a', partitionIds: [0n, 1n] },
+    { path: '/Root/topic-b' },
+  ],
   consumer: 'svc-a',
 })
+
 for await (const batch of reader.read({ waitMs: 500 })) {
   // process messages from both topics, filtered partitions
 }
@@ -119,7 +135,12 @@ await using reader = t.createReader({
     return { readOffset: committed }
   },
   onPartitionSessionStop: async (session, committed) => {
-    console.log('partition closed', session.partitionSessionId, 'committed', committed)
+    console.log(
+      'partition closed',
+      session.partitionSessionId,
+      'committed',
+      committed
+    )
   },
   onCommittedOffset: (session, committed) => {
     // observe commits (useful with fire-and-forget commit())

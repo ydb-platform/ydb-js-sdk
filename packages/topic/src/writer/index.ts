@@ -23,9 +23,17 @@ import { _send_init_request } from './_init_request.js'
 import { _send_update_token_request } from './_update_token.js'
 import { _write } from './_write.js'
 import { _on_write_response } from './_write_response.js'
-import type { ThroughputSettings, TopicTxWriter, TopicWriter, TopicWriterOptions } from './types.js'
+import type {
+	ThroughputSettings,
+	TopicTxWriter,
+	TopicWriter,
+	TopicWriterOptions,
+} from './types.js'
 
-export const createTopicWriter = function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
+export const createTopicWriter = function createTopicWriter(
+	driver: Driver,
+	options: TopicWriterOptions
+): TopicWriter {
 	options.producer ??= _get_producer_id()
 	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
 
@@ -39,7 +47,8 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	let dbg = loggers.topic.extend('writer')
 
 	// If the user does not provide a compression codec, use the RAW codec by default.
-	let codec: CompressionCodec = options.codec ?? defaultCodecMap.get(Codec.RAW)!
+	let codec: CompressionCodec =
+		options.codec ?? defaultCodecMap.get(Codec.RAW)!
 
 	// Last sequence number of the topic.
 	// Automatically get the last sequence number of the topic before starting to write messages.
@@ -96,7 +105,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// The flush interval is configurable and defaults to 60 seconds.
 	void (async function backgroundFlusher() {
 		try {
-			for await (let _ of setInterval(options.flushIntervalMs, void 0, { signal })) {
+			for await (let _ of setInterval(options.flushIntervalMs, void 0, {
+				signal,
+			})) {
 				_flush({
 					queue: outgoing,
 					codec: codec,
@@ -120,7 +131,11 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// The update token interval is configurable and defaults to 60 seconds.
 	void (async function backgroundTokenRefresher() {
 		try {
-			for await (let _ of setInterval(options.updateTokenIntervalMs, void 0, { signal })) {
+			for await (let _ of setInterval(
+				options.updateTokenIntervalMs,
+				void 0,
+				{ signal }
+			)) {
 				_send_update_token_request({
 					queue: outgoing,
 					token: await driver.token,
@@ -150,7 +165,11 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			budget: Infinity,
 			strategy: combine(backoff(50, 5000), jitter(50)),
 			onRetry(ctx) {
-				dbg.log('retrying stream connection, attempt %d, error: %O', ctx.attempt, ctx.error)
+				dbg.log(
+					'retrying stream connection, attempt %d, error: %O',
+					ctx.attempt,
+					ctx.error
+				)
 			},
 		}
 
@@ -160,12 +179,18 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 			await retry(retryConfig, async (signal) => {
 				// Close old queue and create new empty one for retry
 				outgoing.dispose()
-				outgoing = new AsyncPriorityQueue<StreamWriteMessage_FromClient>()
+				outgoing =
+					new AsyncPriorityQueue<StreamWriteMessage_FromClient>()
 
-				let stream = driver.createClient(TopicServiceDefinition).streamWrite(outgoing, { signal })
+				let stream = driver
+					.createClient(TopicServiceDefinition)
+					.streamWrite(outgoing, { signal })
 
 				// Send the initial request to the server to initialize the stream.
-				dbg.log('sending init request to server, producer: %s', options.producer)
+				dbg.log(
+					'sending init request to server, producer: %s',
+					options.producer
+				)
 
 				_send_init_request({
 					queue: outgoing,
@@ -182,13 +207,21 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				let dbgrpc = dbg.extend('grpc')
 
 				for await (const chunk of stream) {
-					dbgrpc.log('receive %s with status %d', chunk.serverMessage.value?.$typeName, chunk.status)
+					dbgrpc.log(
+						'receive %s with status %d',
+						chunk.serverMessage.value?.$typeName,
+						chunk.status
+					)
 
 					if (chunk.status !== StatusIds_StatusCode.SUCCESS) {
-						console.error('error occurred while streaming: %O', chunk.issues)
+						console.error(
+							'error occurred while streaming: %O',
+							chunk.issues
+						)
 
 						let error = new YDBError(
-							chunk.status || StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
+							chunk.status ||
+								StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
 							chunk.issues || []
 						)
 						throw error
@@ -206,7 +239,7 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 									updateLastSeqNo,
 									updateBufferSize,
 									...(options.tx && { tx: options.tx }),
-									...(lastSeqNo && { lastSeqNo })
+									...(lastSeqNo && { lastSeqNo }),
 								},
 								chunk.serverMessage.value
 							)
@@ -224,7 +257,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 									throughputSettings,
 									updateBufferSize,
 									...(options.tx && { tx: options.tx }),
-									...(options.onAck && { onAck: options.onAck }),
+									...(options.onAck && {
+										onAck: options.onAck,
+									}),
 								},
 								chunk.serverMessage.value
 							)
@@ -242,7 +277,11 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		}
 	})()
 
-	dbg.log('creating writer with producer: %s, topic: %s', options.producer, options.topic)
+	dbg.log(
+		'creating writer with producer: %s, topic: %s',
+		options.producer,
+		options.topic
+	)
 
 	// outgoing queue pause/resume
 	let originalPause = outgoing.pause.bind(outgoing)
@@ -264,14 +303,20 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 	// If the sequence number is not provided, it will use the last sequence number of the topic.
 	function write(
 		payload: Uint8Array,
-		extra: { seqNo?: bigint; createdAt?: Date; metadataItems?: { [key: string]: Uint8Array } } = {}
+		extra: {
+			seqNo?: bigint
+			createdAt?: Date
+			metadataItems?: { [key: string]: Uint8Array }
+		} = {}
 	): bigint {
 		if (isDisposed) {
 			throw new Error('Writer is destroyed, cannot write messages')
 		}
 
 		if (isFlushing) {
-			throw new Error('Writer is flushing, cannot write messages during flush')
+			throw new Error(
+				'Writer is flushing, cannot write messages during flush'
+			)
 		}
 
 		if (isClosed) {
@@ -301,7 +346,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				data: payload,
 				...(extra.seqNo && { seqNo: extra.seqNo }),
 				...(extra.createdAt && { createdAt: extra.createdAt }),
-				...(extra.metadataItems && { metadataItems: extra.metadataItems }),
+				...(extra.metadataItems && {
+					metadataItems: extra.metadataItems,
+				}),
 			}
 		)
 	}
@@ -345,7 +392,11 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 		try {
 			let prevBuffer = buffer.length
 			let prevInflight = inflight.length
-			dbg.log('flush: starting, buffer: %d, inflight: %d', buffer.length, inflight.length)
+			dbg.log(
+				'flush: starting, buffer: %d, inflight: %d',
+				buffer.length,
+				inflight.length
+			)
 
 			while (buffer.length > 0 || inflight.length > 0) {
 				if (isDisposed) {
@@ -353,11 +404,20 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				}
 
 				if (signal?.aborted) {
-					throw new Error('Flush was aborted', { cause: signal.reason })
+					throw new Error('Flush was aborted', {
+						cause: signal.reason,
+					})
 				}
 
-				if (buffer.length !== prevBuffer || inflight.length !== prevInflight) {
-					dbg.log('flush progress: inflight: %d, buffer: %d', inflight.length, buffer.length)
+				if (
+					buffer.length !== prevBuffer ||
+					inflight.length !== prevInflight
+				) {
+					dbg.log(
+						'flush progress: inflight: %d, buffer: %d',
+						inflight.length,
+						buffer.length
+					)
 					prevBuffer = buffer.length
 					prevInflight = inflight.length
 				}
@@ -373,7 +433,9 @@ export const createTopicWriter = function createTopicWriter(driver: Driver, opti
 				})
 
 				// eslint-disable-next-line
-				await setTimeout(throughputSettings.flushIntervalMs, void 0, { signal })
+				await setTimeout(throughputSettings.flushIntervalMs, void 0, {
+					signal,
+				})
 			}
 			dbg.log('flush: complete, lastSeqNo: %s', lastSeqNo)
 			return lastSeqNo
@@ -503,4 +565,4 @@ export const createTopicTxWriter = function createTopicTxWriter(
 }
 
 // Re-export types for compatibility
-export type { TopicTxWriter, TopicWriter, TopicWriterOptions } from "./types.js"
+export type { TopicTxWriter, TopicWriter, TopicWriterOptions } from './types.js'

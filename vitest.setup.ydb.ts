@@ -24,10 +24,22 @@ let containerID: string | null = null
  */
 export async function setup(project: TestProject) {
 	if (process.env['YDB_CONNECTION_STRING']) {
-		project.provide('connectionString', process.env['YDB_CONNECTION_STRING'])
-		project.provide('credentialsUsername', process.env['YDB_STATIC_CREDENTIALS_USER']!)
-		project.provide('credentialsPassword', process.env['YDB_STATIC_CREDENTIALS_PASSWORD']!)
-		project.provide('credentialsEndpoint', process.env['YDB_STATIC_CREDENTIALS_ENDPOINT']!)
+		project.provide(
+			'connectionString',
+			process.env['YDB_CONNECTION_STRING']
+		)
+		project.provide(
+			'credentialsUsername',
+			process.env['YDB_STATIC_CREDENTIALS_USER']!
+		)
+		project.provide(
+			'credentialsPassword',
+			process.env['YDB_STATIC_CREDENTIALS_PASSWORD']!
+		)
+		project.provide(
+			'credentialsEndpoint',
+			process.env['YDB_STATIC_CREDENTIALS_ENDPOINT']!
+		)
 
 		return
 	}
@@ -37,7 +49,11 @@ export async function setup(project: TestProject) {
 	containerID = container.trim()
 
 	let signal = AbortSignal.timeout(30 * 1000)
-	while ((await $`docker inspect -f {{.State.Health.Status}} ${containerID}`.text()).trim() !== 'healthy') {
+	while (
+		(
+			await $`docker inspect -f {{.State.Health.Status}} ${containerID}`.text()
+		).trim() !== 'healthy'
+	) {
 		signal.throwIfAborted()
 		await $`sleep 1`
 	}

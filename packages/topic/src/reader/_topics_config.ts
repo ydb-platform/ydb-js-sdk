@@ -1,22 +1,32 @@
-import { create, protoInt64 } from "@bufbuild/protobuf";
-import { type Duration, DurationSchema, type Timestamp, timestampFromDate } from "@bufbuild/protobuf/wkt";
-import { type StreamReadMessage_InitRequest_TopicReadSettings, StreamReadMessage_InitRequest_TopicReadSettingsSchema } from "@ydbjs/api/topic";
-import type { StringValue } from "ms";
-import ms from "ms";
-import type { TopicReaderSource } from "./types.js";
+import { create, protoInt64 } from '@bufbuild/protobuf'
+import {
+	type Duration,
+	DurationSchema,
+	type Timestamp,
+	timestampFromDate,
+} from '@bufbuild/protobuf/wkt'
+import {
+	type StreamReadMessage_InitRequest_TopicReadSettings,
+	StreamReadMessage_InitRequest_TopicReadSettingsSchema,
+} from '@ydbjs/api/topic'
+import type { StringValue } from 'ms'
+import ms from 'ms'
+import type { TopicReaderSource } from './types.js'
 
 export let _parse_topics_read_settings = function parse_topics_read_settings(
 	topic: string | TopicReaderSource | TopicReaderSource[]
 ): StreamReadMessage_InitRequest_TopicReadSettings[] {
 	let settings: StreamReadMessage_InitRequest_TopicReadSettings[] = []
 
-	let parseDuration = function parseDuration(duration: number | StringValue | Duration): Duration {
+	let parseDuration = function parseDuration(
+		duration: number | StringValue | Duration
+	): Duration {
 		if (typeof duration === 'string') {
-			duration = ms(duration);
+			duration = ms(duration)
 		}
 
 		if (typeof duration === 'number') {
-			let seconds = Math.floor(duration / 1000);
+			let seconds = Math.floor(duration / 1000)
 
 			return create(DurationSchema, {
 				seconds: protoInt64.parse(seconds),
@@ -24,25 +34,27 @@ export let _parse_topics_read_settings = function parse_topics_read_settings(
 			})
 		}
 
-		return duration;
+		return duration
 	}
 
-	let parseTimestamp = function parseTimestamp(timestamp: number | Date | Timestamp): Timestamp {
+	let parseTimestamp = function parseTimestamp(
+		timestamp: number | Date | Timestamp
+	): Timestamp {
 		if (typeof timestamp === 'number') {
-			timestamp = new Date(timestamp);
+			timestamp = new Date(timestamp)
 		}
 
 		if (timestamp instanceof Date) {
-			timestamp = timestampFromDate(timestamp);
+			timestamp = timestampFromDate(timestamp)
 		}
 
-		return timestamp;
+		return timestamp
 	}
 
-	if (typeof topic === "string") {
+	if (typeof topic === 'string') {
 		settings.push(
 			create(StreamReadMessage_InitRequest_TopicReadSettingsSchema, {
-				path: topic
+				path: topic,
 			})
 		)
 	} else if (!Array.isArray(topic)) {
@@ -54,13 +66,19 @@ export let _parse_topics_read_settings = function parse_topics_read_settings(
 			settings.push(
 				create(StreamReadMessage_InitRequest_TopicReadSettingsSchema, {
 					path: topicSource.path,
-					...(topicSource.maxLag && { maxLag: parseDuration(topicSource.maxLag) }),
-					...(topicSource.readFrom && { readFrom: parseTimestamp(topicSource.readFrom) }),
-					...(topicSource.partitionIds && { partitionIds: topicSource.partitionIds }),
+					...(topicSource.maxLag && {
+						maxLag: parseDuration(topicSource.maxLag),
+					}),
+					...(topicSource.readFrom && {
+						readFrom: parseTimestamp(topicSource.readFrom),
+					}),
+					...(topicSource.partitionIds && {
+						partitionIds: topicSource.partitionIds,
+					}),
 				})
 			)
 		}
 	}
 
-	return settings;
+	return settings
 }

@@ -24,9 +24,14 @@ npm install @ydbjs/auth-yandex-cloud
 import { Driver } from '@ydbjs/core'
 import { ServiceAccountCredentialsProvider } from '@ydbjs/auth-yandex-cloud'
 
-let driver = new Driver('grpcs://ydb.serverless.yandexcloud.net:2135/database', {
-  credentialsProvider: ServiceAccountCredentialsProvider.fromFile('./authorized_key.json'),
-})
+let driver = new Driver(
+  'grpcs://ydb.serverless.yandexcloud.net:2135/database',
+  {
+    credentialsProvider: ServiceAccountCredentialsProvider.fromFile(
+      './authorized_key.json'
+    ),
+  }
+)
 
 await driver.ready()
 ```

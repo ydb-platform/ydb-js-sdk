@@ -1,9 +1,9 @@
-import { expect, test } from "vitest";
+import { expect, test } from 'vitest'
 
-import { AccessTokenCredentialsProvider } from "./access-token.ts";
+import { AccessTokenCredentialsProvider } from './access-token.ts'
 
 test('parses valid token', async () => {
-	let provider = new AccessTokenCredentialsProvider({ token: 'test-token' });
-	let token = await provider.getToken();
-	expect(token).eq('test-token');
-});
+	let provider = new AccessTokenCredentialsProvider({ token: 'test-token' })
+	let token = await provider.getToken()
+	expect(token).eq('test-token')
+})

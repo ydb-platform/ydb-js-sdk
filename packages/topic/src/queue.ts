@@ -19,7 +19,12 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 			throw new Error('Queue closed')
 		}
 
-		dbg.log('pushing item %o with priority %d, current size: %d', value, priority, this.heap.length)
+		dbg.log(
+			'pushing item %o with priority %d, current size: %d',
+			value,
+			priority,
+			this.heap.length
+		)
 
 		let left = 0
 		let right = this.heap.length
@@ -35,7 +40,10 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 		this.heap.splice(left, 0, { value, priority })
 
 		if (this.pendingShift && this.heap.length > 0) {
-			dbg.log('resolving pending shift operation with item %o', this.heap[0])
+			dbg.log(
+				'resolving pending shift operation with item %o',
+				this.heap[0]
+			)
 			const next = this.heap.shift()!
 			const resolve = this.pendingShift
 			delete this.pendingShift
@@ -62,7 +70,12 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 
 		if (this.heap.length > 0) {
 			let next = this.heap.shift()!
-			dbg.log('returning item %o with priority %d, remaining size: %d', next.value, next.priority, this.heap.length)
+			dbg.log(
+				'returning item %o with priority %d, remaining size: %d',
+				next.value,
+				next.priority,
+				this.heap.length
+			)
 			return { value: next.value, done: false }
 		}
 

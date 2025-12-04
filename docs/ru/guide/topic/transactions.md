@@ -18,12 +18,20 @@ const sql = query(driver)
 await sql.transaction(async (tx, signal) => {
   // ВАЖНО: не используйте `using` в транзакции.
   // Reader/Writer управляются хуками транзакции и корректно завершаются автоматически.
-  const reader = createTopicTxReader(tx, driver, { topic: '/Root/my-topic', consumer: 'c1' })
+  const reader = createTopicTxReader(tx, driver, {
+    topic: '/Root/my-topic',
+    consumer: 'c1',
+  })
+
   for await (const batch of reader.read({ signal })) {
     // обработка
   }
 
-  const writer = createTopicTxWriter(tx, driver, { topic: '/Root/my-topic', producer: 'p1' })
+  const writer = createTopicTxWriter(tx, driver, {
+    topic: '/Root/my-topic',
+    producer: 'p1',
+  })
+
   writer.write(new TextEncoder().encode('message'))
   // Ничего явно не закрывайте — writer дождётся флаша в onCommit
 })

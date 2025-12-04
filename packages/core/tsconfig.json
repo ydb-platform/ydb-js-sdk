@@ -5,9 +5,5 @@
 		"rootDir": "./src",
 		"outDir": "./dist"
 	},
-	"exclude": [
-		"dist/**/*",
-		"**/*.test.ts",
-		"vitest.config.ts"
-	]
+	"exclude": ["dist/**/*", "**/*.test.ts", "vitest.config.ts"]
 }
