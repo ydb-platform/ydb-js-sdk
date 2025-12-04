@@ -20,8 +20,10 @@
 		"attw": "turbo run attw",
 		"test": "vitest --run",
 		"lint": "oxlint",
+		"format": "prettier . --ignore-unknown --write",
 		"version": "npx changeset version && npm install",
-		"publish": "npx changeset publish"
+		"publish": "npx changeset publish",
+		"prepare": "git config core.hooksPath scripts/hooks"
 	},
 	"dependencies": {
 		"@types/node": "^24.10.0"
@@ -30,7 +32,7 @@
 		"@vitest/coverage-v8": "^4.0.7",
 		"@vitest/ui": "^4.0.7",
 		"oxlint": "^1.25.0",
-		"prettier": "^3.6.2",
+		"prettier": "^3.7.4",
 		"turbo": "^2.6.0",
 		"typescript": "^5.9.3",
 		"vitest": "^4.0.7",

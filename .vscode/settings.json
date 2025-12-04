@@ -1,4 +1,22 @@
 {
+	"[yaml]": {
+		"editor.defaultFormatter": "prettier.prettier-vscode"
+	},
+	"[json]": {
+		"editor.defaultFormatter": "prettier.prettier-vscode"
+	},
+	"[jsonc]": {
+		"editor.defaultFormatter": "prettier.prettier-vscode"
+	},
+	"[proto3]": {
+		"editor.defaultFormatter": "zxh404.vscode-proto3"
+	},
+	"[javascript]": {
+		"editor.defaultFormatter": "prettier.prettier-vscode"
+	},
+	"[typescript]": {
+		"editor.defaultFormatter": "prettier.prettier-vscode"
+	},
 	"files.exclude": {
 		"**/.git": true,
 		"**/.svn": true,
@@ -13,8 +31,8 @@
 		"**/vitest/dist": true
 	},
 	"oxc.enable": true,
+	"oxc.fmt.experimental": true,
 	"vitest.rootConfig": "./vitest.config.ts",
 	"vitest.workspaceConfig": "./vitest.config.ts",
-	"github.copilot.chat.codeGeneration.useInstructionFiles": true,
 	"explorerExclude.backup": {}
 }

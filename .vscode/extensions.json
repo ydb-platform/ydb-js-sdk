@@ -1,7 +1,3 @@
 {
-	"recommendations": [
-		"vitest.explorer",
-		"ms-vscode.vscode-typescript-next",
-		"esbenp.prettier-vscode"
-	]
+	"recommendations": ["oxc.oxc-vscode", "vitest.explorer", "prettier.prettier-vscode"]
 }

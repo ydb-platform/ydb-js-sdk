@@ -6,13 +6,9 @@
 	"dockerComposeFile": "compose.yml",
 	"workspaceFolder": "/workspaces/ydb-js-sdk",
 	// Allows the container to use ptrace, which is useful for debugging.
-	"capAdd": [
-		"SYS_PTRACE"
-	],
+	"capAdd": ["SYS_PTRACE"],
 	// Disables seccomp, which can be necessary for some debugging tools to function correctly.
-	"securityOpt": [
-		"seccomp=unconfined"
-	],
+	"securityOpt": ["seccomp=unconfined"],
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
 		"ghcr.io/devcontainers/features/git": {},
@@ -21,12 +17,7 @@
 		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [
-		"ydb:2135",
-		"ydb:2136",
-		"ydb:8765",
-		"prometheus:9090"
-	],
+	"forwardPorts": ["ydb:2135", "ydb:2136", "ydb:8765", "prometheus:9090"],
 	"otherPortsAttributes": {
 		"onAutoForward": "ignore"
 	},
@@ -40,12 +31,12 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"esbenp.prettier-vscode",
 				"mikestead.dotenv",
 				"oven.bun-vscode",
 				"oxc.oxc-vscode",
 				"PeterSchmalfeldt.explorer-exclude",
 				"vitest.explorer",
+				"prettier.prettier-vscode"
 			]
 		}
 	},
