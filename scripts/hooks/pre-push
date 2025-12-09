@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${SKIP_HOOKS:-}" == "true" ]]; then
+	exit 0
+fi
+
 npx turbo run build --filter=...[origin/main]
 
 npx turbo run test --filter=...[origin/main]

@@ -33,5 +33,6 @@ jobs:
           version: npm run version
           publish: npm run publish
         env:
+          SKIP_HOOKS: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ''

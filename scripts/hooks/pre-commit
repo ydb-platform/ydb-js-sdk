@@ -6,7 +6,7 @@ FILES=$(git diff --cached --name-only --diff-filter=ACMR | sed 's| |\\ |g')
 
 git stash --keep-index --include-untracked -q
 cleanup() {
-    git stash pop -q 2>/dev/null || true
+	git stash pop -q 2>/dev/null || true
 }
 trap cleanup EXIT
 
