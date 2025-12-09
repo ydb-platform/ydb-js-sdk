@@ -1,5 +1,42 @@
 # @ydbjs/topic
 
+## 6.1.0
+
+### Minor Changes
+
+- [#545](https://github.com/ydb-platform/ydb-js-sdk/pull/545) [`4a8ebba`](https://github.com/ydb-platform/ydb-js-sdk/commit/4a8ebba603527b10a9ffa9f1f7be244a99c72451) Thanks [@polRk](https://github.com/polRk)! - Fix seqNo renumbering bug in both writer implementations and simplify TopicWriter API.
+
+  **Bug fix:**
+  - Fixed issue where messages written before session initialization were not renumbered after receiving `lastSeqNo` from server. Previously, auto-generated seqNo started from 0 and were not updated when server provided actual `lastSeqNo`, causing seqNo conflicts. Now messages are properly renumbered to continue from server's `lastSeqNo + 1`.
+  - Fixed in both `writer` (legacy) and `writer2` implementations
+
+  **API changes:**
+  - `TopicWriter.write()` no longer returns sequence number (now returns `void`) to simplify API and prevent confusion about temporary vs final seqNo values
+
+  **Migration guide:**
+  - If you were storing seqNo from `write()` return value, use `flush()` instead to get final seqNo:
+
+    ```typescript
+    // Before
+    let seqNo = writer.write(data)
+
+    // After
+    writer.write(data)
+    let lastSeqNo = await writer.flush() // Get final seqNo
+    ```
+
+  - User-provided seqNo (via `extra.seqNo`) remain final and unchanged - no migration needed for this case.
+
+### Patch Changes
+
+- [#547](https://github.com/ydb-platform/ydb-js-sdk/pull/547) [`a0f39b6`](https://github.com/ydb-platform/ydb-js-sdk/commit/a0f39b6e3cf974feb1345c9f6eeca25d82ed1aeb) Thanks [@polRk](https://github.com/polRk)! - Fix memory leaks in topic reader implementation.
+  - Fixed memory leaks in AsyncPriorityQueue by properly clearing items and resetting state
+  - Improved abort signal handling to prevent memory accumulation from composite signals
+  - Enhanced resource cleanup in TopicReader and TopicTxReader destroy methods
+  - Added proper disposal of outgoing queue and message buffers
+  - Added both sync and async disposal support with proper cleanup
+  - Added memory leak test to prevent regressions
+
 ## 6.0.7
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/topic",
-	"version": "6.0.7",
+	"version": "6.1.0",
 	"description": "YDB Topics client for publish-subscribe messaging. Provides at-least-once delivery, exactly-once publishing, FIFO guarantees, and scalable message processing for unstructured data.",
 	"keywords": [
 		"ydb",
