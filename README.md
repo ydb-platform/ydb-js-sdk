@@ -1,5 +1,7 @@
 # YDB JavaScript SDK
 
+[![Docs](https://ydb.js.org/)](https://ydb.js.org/)
+
 Modern, modular SDK for YDB in TypeScript/JavaScript.
 
 - Type‑safe YQL queries with tagged templates
