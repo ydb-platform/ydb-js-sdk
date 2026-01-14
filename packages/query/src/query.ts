@@ -73,6 +73,7 @@ export class Query<T extends any[] = unknown[]>
 		| 'implicit'
 		| 'serializableReadWrite'
 		| 'snapshotReadOnly'
+		| 'snapshotReadWrite'
 		| 'onlineReadOnly'
 		| 'staleReadOnly' = 'implicit'
 	#isolationSettings: { allowInconsistentReads: boolean } | {} = {}
@@ -434,6 +435,7 @@ export class Query<T extends any[] = unknown[]>
 	 * @param mode Transaction isolation level:
 	 *  - 'serializableReadWrite' — serializable read/write
 	 *  - 'snapshotReadOnly' — snapshot read-only
+	 *  - 'snapshotReadWrite' — snapshot read/write
 	 *  - 'onlineReadOnly' — online read-only
 	 *  - 'staleReadOnly' — stale read-only
 	 *  - 'implicit' — isolation is not set, server decides
@@ -446,6 +448,7 @@ export class Query<T extends any[] = unknown[]>
 			| 'implicit'
 			| 'serializableReadWrite'
 			| 'snapshotReadOnly'
+			| 'snapshotReadWrite'
 			| 'onlineReadOnly'
 			| 'staleReadOnly',
 		settings: { allowInconsistentReads: boolean } | {} | undefined = {}

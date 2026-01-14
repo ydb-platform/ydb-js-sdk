@@ -38,7 +38,10 @@ interface SessionContextCallback<T> {
 }
 
 interface TransactionExecuteOptions extends Abortable {
-	isolation?: 'serializableReadWrite' | 'snapshotReadOnly'
+	isolation?:
+		| 'serializableReadWrite'
+		| 'snapshotReadOnly'
+		| 'snapshotReadWrite'
 	idempotent?: boolean
 }
 
