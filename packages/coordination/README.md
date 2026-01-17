@@ -6,6 +6,7 @@ High-level coordination client for YDB. Supports coordination nodes, distributed
 
 - Coordination node management (create, alter, drop, describe)
 - Distributed semaphores with acquire/release operations
+- Automatic resource cleanup with TypeScript `using` keyword
 - Automatic session lifecycle with keep-alive and reconnection
 - Watch notifications for semaphore changes via EventEmitter
 - Automatic session recreation on session expiring
@@ -40,6 +41,13 @@ let session = await client.session('/local/my-coordination-node', {
   description: 'My application session',
 })
 
+// Or with timeout for session creation
+let sessionWithTimeout = await client.session(
+  '/local/my-coordination-node',
+  { timeoutMillis: 10000 },
+  AbortSignal.timeout(5000) // 5 second timeout for session creation
+)
+
 // Work with semaphores
 await session.createSemaphore({ name: 'my-semaphore', limit: 1 })
 await session.acquireSemaphore({ name: 'my-semaphore', count: 1 })
@@ -48,6 +56,25 @@ await session.deleteSemaphore({ name: 'my-semaphore' })
 
 // Close session
 await session.close()
+```
+
+### Automatic Resource Management
+
+```typescript
+// Session and lock are automatically cleaned up
+await using session = await client.session('/local/my-coordination-node')
+
+await session.createSemaphore({ name: 'my-lock', limit: 1 })
+
+{
+  await using lock = await session.acquireSemaphore({ name: 'my-lock' })
+  if (lock.acquired) {
+    // Critical section - lock is held
+  }
+  // Lock automatically released here
+}
+
+// Session automatically closed here
 ```
 
 ## Session Events

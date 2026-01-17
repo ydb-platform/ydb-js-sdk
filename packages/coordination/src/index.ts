@@ -1,5 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
+import { abortable } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { Entry } from '@ydbjs/api/scheme'
 import {
@@ -85,11 +86,6 @@ export interface SessionOptions {
 	 * Timeout in milliseconds during which client may restore a detached session
 	 */
 	timeoutMillis?: number | bigint
-
-	/**
-	 * Client-side timeout in milliseconds for establishing the session connection (default: 5000)
-	 */
-	startTimeoutMillis?: number
 
 	/**
 	 * User-defined description that may be used to describe the client
@@ -179,12 +175,14 @@ export interface CoordinationClient {
 	 *
 	 * @param path - Path to the coordination node
 	 * @param options - Optional session configuration
+	 * @param signal - Optional abort signal to timeout session creation
 	 * @returns A coordination session instance
 	 * @throws {YDBError} If the operation fails
 	 */
 	session(
 		path: string,
-		options?: SessionOptions
+		options?: SessionOptions,
+		signal?: AbortSignal
 	): Promise<CoordinationSession>
 }
 
@@ -257,9 +255,9 @@ export function coordination(driver: Driver): CoordinationClient {
 				response.operation?.status
 			)
 			throw new YDBError(
-				response.operation?.status ||
+				response.operation?.status ??
 					StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
-				response.operation?.issues || []
+				response.operation?.issues ?? []
 			)
 		}
 
@@ -292,9 +290,9 @@ export function coordination(driver: Driver): CoordinationClient {
 				response.operation?.status
 			)
 			throw new YDBError(
-				response.operation?.status ||
+				response.operation?.status ??
 					StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
-				response.operation?.issues || []
+				response.operation?.issues ?? []
 			)
 		}
 
@@ -320,9 +318,9 @@ export function coordination(driver: Driver): CoordinationClient {
 				response.operation?.status
 			)
 			throw new YDBError(
-				response.operation?.status ||
+				response.operation?.status ??
 					StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
-				response.operation?.issues || []
+				response.operation?.issues ?? []
 			)
 		}
 
@@ -351,9 +349,9 @@ export function coordination(driver: Driver): CoordinationClient {
 				response.operation?.status
 			)
 			throw new YDBError(
-				response.operation?.status ||
+				response.operation?.status ??
 					StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
-				response.operation?.issues || []
+				response.operation?.issues ?? []
 			)
 		}
 
@@ -376,13 +374,25 @@ export function coordination(driver: Driver): CoordinationClient {
 
 	async function session(
 		path: string,
-		options?: SessionOptions
+		options?: SessionOptions,
+		signal?: AbortSignal
 	): Promise<CoordinationSession> {
 		dbg.log('creating coordination session for node: %s', path)
 		let session = new CoordinationSession(driver, path, options)
-		await session.ready()
-		dbg.log('coordination session ready for node: %s', path)
-		return session
+
+		try {
+			if (signal) {
+				await abortable(signal, session.ready())
+			} else {
+				await session.ready()
+			}
+			dbg.log('coordination session ready for node: %s', path)
+			return session
+		} catch (error) {
+			dbg.log('session creation failed, closing session: %O', error)
+			await session.close()
+			throw error
+		}
 	}
 
 	return {

@@ -36,6 +36,10 @@ import type { SessionOptions } from './index.js'
 
 let dbg = loggers.driver.extend('coordination').extend('session')
 
+// Timeout for waiting SessionStarted response during session initialization
+// Retry loop will handle reconnection if this timeout is exceeded
+let SESSION_START_TIMEOUT_MS = 5000
+
 /**
  * Result type for session responses
  */
@@ -238,6 +242,179 @@ export const CoordinationSessionEvents = {
 } as const
 
 /**
+ * Semaphore semaphore handle that provides convenient access to semaphore operations
+ *
+ * This class represents a semaphore semaphore and provides methods to update and describe
+ * the semaphore without repeating the semaphore name. It implements the AsyncDisposable,
+ * so the semaphore automatically releases the semaphore when disposed, making it safe to use
+ * with explicit resource management (TypeScript 5.2+).
+ *
+ * @example
+ * ```typescript
+ * // Automatic release with using keyword (TypeScript)
+ * await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+ * if (semaphore.acquired) {
+ *   // Critical section - semaphore is held
+ *   await semaphore.update(new Uint8Array([1, 2, 3]))
+ *   let info = await semaphore.describe()
+ * }
+ * // Semaphore automatically released here
+ * ```
+ */
+export class Semaphore implements AsyncDisposable {
+	#session: CoordinationSession
+	#name: string
+	#acquired: boolean
+
+	constructor(session: CoordinationSession, name: string, acquired: boolean) {
+		this.#session = session
+		this.#name = name
+		this.#acquired = acquired
+	}
+
+	/**
+	 * Returns true if the semaphore was successfully acquired
+	 */
+	get acquired(): boolean {
+		return this.#acquired
+	}
+
+	/**
+	 * Returns the semaphore name
+	 */
+	get name(): string {
+		return this.#name
+	}
+
+	/**
+	 * Updates the semaphore data
+	 *
+	 * @param data - User-defined data to attach to the semaphore
+	 * @param signal - AbortSignal to timeout the operation
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * await using semaphore = await session.acquireSemaphore({ name: 'config-lock' })
+	 * if (semaphore.acquired) {
+	 *   await semaphore.update(new TextEncoder().encode('new config'))
+	 * }
+	 * ```
+	 */
+	async update(data: Uint8Array, signal?: AbortSignal): Promise<void> {
+		await this.#session.updateSemaphore({ name: this.#name, data }, signal)
+	}
+
+	/**
+	 * Describes the semaphore
+	 *
+	 * @param options - Options for describing the semaphore (name is automatically set)
+	 * @param signal - AbortSignal to timeout the operation
+	 * @returns Semaphore description and watch status
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 * let info = await semaphore.describe({ includeOwners: true })
+	 * console.log('Owners:', info.description?.owners)
+	 * ```
+	 */
+	async describe(
+		options?: Omit<DescribeSemaphoreOptions, 'name'>,
+		signal?: AbortSignal
+	): Promise<DescribeSemaphoreResult> {
+		return await this.#session.describeSemaphore(
+			{ name: this.#name, ...options },
+			signal
+		)
+	}
+
+	/**
+	 * Manually releases the semaphore
+	 *
+	 * This method can be called explicitly to release the semaphore.
+	 * Useful when not using the `await using` keyword.
+	 *
+	 * @param signal - AbortSignal to timeout the operation
+	 * @returns True if released, false if not acquired
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * let semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 * try {
+	 *   if (semaphore.acquired) {
+	 *     // do work with lock
+	 *   }
+	 * } finally {
+	 *   await semaphore.release()
+	 * }
+	 * ```
+	 */
+	async release(signal?: AbortSignal): Promise<boolean> {
+		if (!this.#acquired) {
+			return false
+		}
+		let result = await this.#session.releaseSemaphore(
+			{ name: this.#name },
+			signal
+		)
+
+		this.#acquired = false
+
+		return result
+	}
+
+	/**
+	 * Deletes the semaphore
+	 *
+	 * This is a convenience method that calls deleteSemaphore on the session.
+	 *
+	 * @param options - Options for deleting the semaphore (name is automatically set)
+	 * @param signal - AbortSignal to timeout the operation
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * let semaphore = await session.acquireSemaphore({ name: 'temp-lock', ephemeral: false })
+	 * try {
+	 *   if (semaphore.acquired) {
+	 *     // do work
+	 *   }
+	 * } finally {
+	 *   await semaphore.release()
+	 *   await semaphore.delete() // Clean up the semaphore
+	 * }
+	 * ```
+	 */
+	async delete(
+		options?: Omit<DeleteSemaphoreOptions, 'name'>,
+		signal?: AbortSignal
+	): Promise<void> {
+		await this.#session.deleteSemaphore(
+			{ name: this.#name, ...options },
+			signal
+		)
+	}
+
+	/**
+	 * Automatically releases the semaphore when disposed
+	 *
+	 * This method is called automatically when using the `await using` keyword.
+	 */
+	async [Symbol.asyncDispose](): Promise<void> {
+		if (this.#acquired) {
+			dbg.log(
+				'auto-releasing semaphore via Symbol.asyncDispose: %s',
+				this.#name
+			)
+			await this.release()
+		}
+	}
+}
+
+/**
  * Coordination session for working with semaphores
  *
  * Provides methods for acquiring, releasing, creating, updating, deleting,
@@ -249,9 +426,17 @@ export const CoordinationSessionEvents = {
  * Emits 'semaphoreChanged' events when watched semaphores change.
  * Emits 'sessionExpired' events when session expires and new session is created.
  *
+ * Implements AsyncDisposable for automatic cleanup with `using` keyword.
+ *
  * @example
  * ```typescript
+ * // Manual session management
  * let session = await client.session('/local/node')
+ * await session.close()
+ *
+ * // Automatic cleanup with using keyword
+ * await using session = await client.session('/local/node')
+ * // session is automatically closed when leaving scope
  *
  * // Watch for semaphore changes
  * session.on('semaphoreChanged', (event) => {
@@ -271,11 +456,13 @@ export const CoordinationSessionEvents = {
  * })
  * ```
  */
-export class CoordinationSession extends EventEmitter {
+export class CoordinationSession
+	extends EventEmitter
+	implements AsyncDisposable
+{
 	#driver: Driver
 	#path: string
 	#timeoutMillis: number | bigint
-	#startTimeoutMillis: number
 	#description: string
 	#sessionId: bigint = 0n
 	#reqIdCounter: bigint = 0n
@@ -303,9 +490,8 @@ export class CoordinationSession extends EventEmitter {
 		super()
 		this.#driver = driver
 		this.#path = path
-		this.#timeoutMillis = options?.timeoutMillis || 30000
-		this.#startTimeoutMillis = options?.startTimeoutMillis || 5000
-		this.#description = options?.description || ''
+		this.#timeoutMillis = options?.timeoutMillis ?? 30000
+		this.#description = options?.description ?? ''
 
 		this.#stream = new BidirectionalStream({
 			onResponse: (response) => this.#handleResponse(response),
@@ -372,6 +558,7 @@ export class CoordinationSession extends EventEmitter {
 						expiredSessionId
 					)
 					this.#sessionId = 0n
+					this.#watchedSemaphores.clear()
 
 					// Emit sessionExpired event to notify user
 					let event: SessionExpiredEvent = {
@@ -381,8 +568,9 @@ export class CoordinationSession extends EventEmitter {
 					this.emit(CoordinationSessionEvents.SESSION_EXPIRED, event)
 				}
 
-				// Throw error to trigger reconnection
-				throw new YDBError(failure.status, failure.issues)
+				// Disconnect stream to trigger reconnection
+				this.#stream.disconnect()
+				break
 			}
 
 			case 'sessionStarted':
@@ -440,6 +628,8 @@ export class CoordinationSession extends EventEmitter {
 						CoordinationSessionEvents.SEMAPHORE_CHANGED,
 						event
 					)
+
+					this.#watchedSemaphores.delete(change.reqId)
 				}
 				break
 			}
@@ -469,18 +659,18 @@ export class CoordinationSession extends EventEmitter {
 				},
 			},
 			async () => {
-				dbg.log('connection loop: starting session')
-				await this.#startSession()
-
-				await this.#stream.waitForClose()
-				dbg.log('connection loop: stream closed')
-
 				if (this.#closed) {
 					return
 				}
 
+				dbg.log('connection loop: starting session')
+				await this.#startSession()
+
+				await this.#stream.waitForDisconnect()
+				dbg.log('connection loop: stream disconnected')
+
 				// Throw error to trigger retry with backoff
-				throw new Error('Stream closed, reconnecting')
+				throw new Error('Stream disconnected, reconnecting')
 			}
 		)
 		dbg.log('connection loop: exited')
@@ -528,18 +718,18 @@ export class CoordinationSession extends EventEmitter {
 		// Wait for SessionStarted response with timeout
 		try {
 			await abortable(
-				AbortSignal.timeout(this.#startTimeoutMillis),
+				AbortSignal.timeout(SESSION_START_TIMEOUT_MS),
 				sessionStartedPromise
 			)
 		} catch (error) {
-			// Close stream on error to reset state for next start() attempt
-			await this.#stream.close()
+			// Disconnect stream on error to reset state for next start() attempt
+			this.#stream.disconnect()
 
 			// Convert AbortError to regular Error so retry mechanism can handle it
 			// AbortError is not retryable by default, but session start timeout should be retried
 			if (error instanceof Error && error.name === 'AbortError') {
 				throw new Error(
-					`Failed to start session: no SessionStarted response within ${this.#startTimeoutMillis}ms`,
+					`Failed to start session: no SessionStarted response within ${SESSION_START_TIMEOUT_MS}ms`,
 					{ cause: error }
 				)
 			}
@@ -597,20 +787,32 @@ export class CoordinationSession extends EventEmitter {
 	}
 
 	/**
-	 * Acquires a semaphore
+	 * Acquires a semaphore and returns a semaphore handle for use with `await using` keyword
+	 *
+	 * This method combines acquire and release into a single disposable resource,
+	 * enabling automatic cleanup with TypeScript's explicit resource management.
 	 *
 	 * @param options - Options for acquiring the semaphore
-	 * @param signal - AbortSignal to timeout the operation.
-	 *   Useful for setting operation timeout during long reconnections.
-	 *   Note: Aborting removes the request from retry queue, but if the request
-	 *   was already sent to the server, it may still be processed.
-	 * @returns True if acquired, false if timed out
+	 * @param signal - AbortSignal to timeout the operation
+	 * @returns A Semaphore that automatically releases on disposal
 	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * {
+	 *   // Automatic release with using keyword (TypeScript 5.2+)
+	 *   await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 *   if (semaphore.acquired) {
+	 *     // do work with lock
+	 *   }
+	 * }
+	 * // semaphore is automatically released here
+	 * ```
 	 */
 	async acquireSemaphore(
 		options: AcquireSemaphoreOptions,
 		signal?: AbortSignal
-	): Promise<boolean> {
+	): Promise<Semaphore> {
 		if (this.#closed) {
 			throw new Error('Session is closed')
 		}
@@ -627,15 +829,15 @@ export class CoordinationSession extends EventEmitter {
 					count:
 						typeof options.count === 'bigint'
 							? options.count
-							: BigInt(options.count || 1),
+							: BigInt(options.count ?? 1),
 					timeoutMillis:
 						typeof options.timeoutMillis === 'bigint'
 							? options.timeoutMillis
 							: BigInt(
-									options.timeoutMillis || this.#timeoutMillis
+									options.timeoutMillis ?? this.#timeoutMillis
 								),
-					data: options.data || new Uint8Array(),
-					ephemeral: options.ephemeral || false,
+					data: options.data ?? new Uint8Array(),
+					ephemeral: options.ephemeral ?? false,
 				}),
 			},
 		})
@@ -645,7 +847,8 @@ export class CoordinationSession extends EventEmitter {
 			request,
 			signal
 		)) as SessionResponse_AcquireSemaphoreResult
-		return result.acquired
+
+		return new Semaphore(this, options.name, result.acquired)
 	}
 
 	/**
@@ -719,7 +922,7 @@ export class CoordinationSession extends EventEmitter {
 						typeof options.limit === 'bigint'
 							? options.limit
 							: BigInt(options.limit),
-					data: options.data || new Uint8Array(),
+					data: options.data ?? new Uint8Array(),
 				}),
 			},
 		})
@@ -789,7 +992,7 @@ export class CoordinationSession extends EventEmitter {
 				value: create(SessionRequest_DeleteSemaphoreSchema, {
 					reqId,
 					name: options.name,
-					force: options.force || false,
+					force: options.force ?? false,
 				}),
 			},
 		})
@@ -825,10 +1028,10 @@ export class CoordinationSession extends EventEmitter {
 				value: create(SessionRequest_DescribeSemaphoreSchema, {
 					reqId,
 					name: options.name,
-					includeOwners: options.includeOwners || false,
-					includeWaiters: options.includeWaiters || false,
-					watchData: options.watchData || false,
-					watchOwners: options.watchOwners || false,
+					includeOwners: options.includeOwners ?? false,
+					includeWaiters: options.includeWaiters ?? false,
+					watchData: options.watchData ?? false,
+					watchOwners: options.watchOwners ?? false,
 				}),
 			},
 		})
@@ -869,6 +1072,8 @@ export class CoordinationSession extends EventEmitter {
 
 		this.#closed = true
 
+		this.#watchedSemaphores.clear()
+
 		// Create promise for waiting SessionStopped response
 		let sessionStoppedPromise = new Promise<void>((resolve) => {
 			this.#sessionStoppedResolve = resolve
@@ -902,6 +1107,20 @@ export class CoordinationSession extends EventEmitter {
 	}
 
 	/**
+	 * Automatically closes the session when disposed
+	 *
+	 * This method is called automatically when using the `using` keyword.
+	 * It provides the same functionality as close() but with a default timeout.
+	 */
+	async [Symbol.asyncDispose](): Promise<void> {
+		dbg.log(
+			'auto-closing session via Symbol.asyncDispose: %s',
+			this.#sessionId
+		)
+		await this.close()
+	}
+
+	/**
 	 * Gets the session ID
 	 */
 	get sessionId(): bigint {
@@ -924,6 +1143,6 @@ export class CoordinationSession extends EventEmitter {
 	 * @internal This method is intended for testing purposes only
 	 */
 	forceReconnect(): void {
-		this.#stream.forceDisconnect()
+		this.#stream.disconnect()
 	}
 }

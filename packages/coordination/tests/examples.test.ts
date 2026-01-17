@@ -113,12 +113,13 @@ test('leader election example', { timeout: 30000 }, async () => {
 			}
 
 			// Try to acquire leadership (will wait indefinitely in queue)
-			let isLeader = await session.acquireSemaphore({
+			let semaphore = await session.acquireSemaphore({
 				name: 'my-service-leader',
 				count: 1,
 				timeoutMillis: MAX_UINT64,
 				data: new TextEncoder().encode(endpoint),
 			})
+			let isLeader = semaphore.acquired
 
 			if (isLeader) {
 				// This instance is now the leader
@@ -246,12 +247,12 @@ test('service discovery example', { timeout: 30000 }, async () => {
 			expect(watchAdded).toBe(true)
 
 			// Register this instance by acquiring semaphore with endpoint in Data
-			let acquired = await session.acquireSemaphore({
+			let semaphore = await session.acquireSemaphore({
 				name: 'my-service-endpoints',
 				count: 1,
 				data: new TextEncoder().encode(endpoint),
 			})
-			expect(acquired).toBe(true)
+			expect(semaphore.acquired).toBe(true)
 
 			// Keep session alive (simulating running service)
 			await sleep(500)

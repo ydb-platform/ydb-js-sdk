@@ -4,6 +4,16 @@ import { loggers } from '@ydbjs/debug'
 let dbg = loggers.driver.extend('coordination').extend('stream')
 
 /**
+ * Error thrown when trying to push to a closed queue
+ */
+class QueueClosedError extends Error {
+	constructor() {
+		super('Queue is closed')
+		this.name = 'QueueClosedError'
+	}
+}
+
+/**
  * Pending request waiting for response
  */
 interface PendingRequest<T, TRequest> {
@@ -22,7 +32,7 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 
 	push(item: T): void {
 		if (this.#closed) {
-			throw new Error('Queue is closed')
+			throw new QueueClosedError()
 		}
 		this.#queue.push(item)
 		if (this.#waiter) {
@@ -73,6 +83,7 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 	#fireAndForgetRequests: TRequest[] = []
 	#processorPromise: Promise<void> | null = null
 	#abortController: AbortController | null = null
+	#disconnected: boolean = false
 	#closed: boolean = false
 
 	// Callbacks for handling different aspects
@@ -109,25 +120,21 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 			requests: AsyncIterable<TRequest>,
 			signal?: AbortSignal
 		) => AsyncIterable<TResponse>,
-		initialRequest: TRequest,
-		signal?: AbortSignal
+		initialRequest: TRequest
 	): void {
+		if (this.#closed) {
+			throw new Error('Cannot start a closed stream')
+		}
+
 		dbg.log('starting bidirectional stream')
 
 		// In case of reconnecting reopen stream
-		this.#closed = false
+		this.#disconnected = false
 
 		// Create fresh request queue for this stream
 		this.#requestQueue = new AsyncQueue<TRequest>()
 
 		this.#abortController = new AbortController()
-
-		// If external signal provided, forward abort to our controller
-		if (signal) {
-			signal.addEventListener('abort', () =>
-				this.#abortController?.abort()
-			)
-		}
 
 		this.#requestQueue.push(initialRequest)
 
@@ -186,7 +193,7 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 
 		try {
 			for await (let response of this.#responseStream) {
-				if (this.#closed) {
+				if (this.#disconnected || this.#closed) {
 					break
 				}
 
@@ -217,12 +224,7 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 			}
 		} catch (error) {
 			dbg.log('error processing responses: %O', error)
-			this.#closed = true
-			this.#requestQueue.close()
-			if (this.#abortController) {
-				this.#abortController.abort()
-				this.#abortController = null
-			}
+			this.disconnect()
 		}
 	}
 
@@ -241,6 +243,10 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 		request: TRequest,
 		signal?: AbortSignal
 	): Promise<TResult | null> {
+		if (this.#closed) {
+			throw new Error('Cannot send request on a closed stream')
+		}
+
 		dbg.log('sending request with reqId: %s', reqId)
 
 		let resultPromise = new Promise<TResult | null>((resolve, reject) => {
@@ -249,8 +255,18 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 
 		// During reconnection queue may be closed
 		// request will be retried after reconnection in start method
-		if (!this.#requestQueue.isClosed) {
+		try {
 			this.#requestQueue.push(request)
+		} catch (error) {
+			if (error instanceof QueueClosedError) {
+				// Request stays in pendingRequests for retry on reconnect
+				dbg.log(
+					'queue closed, request %s will be retried on reconnect',
+					reqId
+				)
+			} else {
+				throw error
+			}
 		}
 
 		// If signal provided, wrap with abortable and cleanup on abort
@@ -276,17 +292,25 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 	 * Request will be retried after reconnection if queue is closed.
 	 */
 	send(request: TRequest): void {
-		if (!this.#requestQueue.isClosed) {
+		if (this.#closed) {
+			throw new Error('Cannot send request on a closed stream')
+		}
+
+		try {
 			this.#requestQueue.push(request)
-		} else {
-			// Queue is closed during reconnection - save for retry
-			this.#fireAndForgetRequests.push(request)
-			dbg.log('queued fire-and-forget request for retry')
+		} catch (error) {
+			if (error instanceof QueueClosedError) {
+				// Queue is closed during reconnection - save for retry
+				this.#fireAndForgetRequests.push(request)
+				dbg.log('queued fire-and-forget request for retry')
+			} else {
+				throw error
+			}
 		}
 	}
 
 	/**
-	 * Waits for processor to finish and cleans up
+	 * Waits for processor to finish
 	 */
 	async #waitForProcessor(): Promise<void> {
 		if (this.#processorPromise) {
@@ -295,16 +319,20 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 	}
 
 	/**
-	 * Closes the stream
+	 * Disconnects the stream for reconnection
+	 *
+	 * Closes the queue and aborts the stream, but preserves pending requests
+	 * for retry on next start(). This is used for temporary disconnections
+	 * during reconnection attempts.
 	 */
-	async close(): Promise<void> {
-		if (this.#closed) {
+	disconnect(): void {
+		if (this.#disconnected || this.#closed) {
 			return
 		}
 
-		dbg.log('closing bidirectional stream')
+		dbg.log('disconnecting bidirectional stream for reconnection')
 
-		this.#closed = true
+		this.#disconnected = true
 		this.#requestQueue.close()
 
 		// Abort the stream to unblock processor
@@ -313,14 +341,41 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 			this.#abortController = null
 		}
 
-		// Reject all pending requests - stream is being closed explicitly
+		dbg.log(
+			'bidirectional stream disconnected, pending requests preserved for retry'
+		)
+	}
+
+	/**
+	 * Closes the stream permanently
+	 *
+	 * Rejects all pending requests and clears state. This is used for
+	 * final cleanup when the stream is being disposed.
+	 */
+	async close(): Promise<void> {
+		if (this.#closed) {
+			return
+		}
+
+		dbg.log('closing bidirectional stream permanently')
+
+		this.#closed = true
+		this.#disconnected = true
+		this.#requestQueue.close()
+
+		// Abort the stream to unblock processor
+		if (this.#abortController) {
+			this.#abortController.abort()
+			this.#abortController = null
+		}
+
+		// Reject all pending requests - stream is being closed permanently
 		for (let [_, pendingRequest] of this.#pendingRequests) {
 			pendingRequest.reject(new Error('Stream closed'))
 		}
 		this.#pendingRequests.clear()
 		this.#fireAndForgetRequests = []
 
-		// Wait for processor to finish
 		await this.#waitForProcessor()
 		this.#processorPromise = null
 		this.#responseStream = null
@@ -331,33 +386,7 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 	/**
 	 * Waits for the stream to close
 	 */
-	async waitForClose(): Promise<void> {
-		if (this.#closed) {
-			return
-		}
-
+	async waitForDisconnect(): Promise<void> {
 		await this.#waitForProcessor()
-	}
-
-	/**
-	 * Forces stream disconnection by aborting the current stream
-	 *
-	 * This triggers reconnection logic in the connection loop.
-	 * Pending requests are preserved and will be retried on reconnect.
-	 *
-	 * @internal This method is intended for testing purposes only
-	 */
-	forceDisconnect(): void {
-		if (this.#closed) {
-			return
-		}
-
-		dbg.log('forcing stream disconnect via abort')
-
-		// Abort the stream - this will cause #processResponses to throw
-		// which closes the queue and preserves pending requests for retry
-		if (this.#abortController) {
-			this.#abortController.abort()
-		}
 	}
 }
