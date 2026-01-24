@@ -29,8 +29,9 @@ import {
 } from 'nice-grpc'
 import pkg from '../package.json' with { type: 'json' }
 import { type Connection, LazyConnection } from './conn.js'
+import { detectLocalDC } from './local-dc.js'
 import { debug } from './middleware.js'
-import { ConnectionPool } from './pool.js'
+import { type ClientOptions, ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
 import { ConnectivityState } from '@grpc/grpc-js/build/src/connectivity-state.js'
 
@@ -53,6 +54,18 @@ export type DriverOptions = {
 	'ydb.sdk.enable_discovery'?: boolean
 	'ydb.sdk.discovery_timeout_ms'?: number
 	'ydb.sdk.discovery_interval_ms'?: number
+
+	/**
+	 * Enable local DC detection via RTT measurement
+	 * @default false
+	 */
+	'ydb.sdk.enable_local_dc_detection'?: boolean
+
+	/**
+	 * Timeout for local DC detection in milliseconds
+	 * @default 5000
+	 */
+	'ydb.sdk.local_dc_detection_timeout_ms'?: number
 }
 
 const defaultOptions: DriverOptions = {
@@ -61,6 +74,8 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.enable_discovery': true,
 	'ydb.sdk.discovery_timeout_ms': 10_000,
 	'ydb.sdk.discovery_interval_ms': 60_000,
+	'ydb.sdk.enable_local_dc_detection': false,
+	'ydb.sdk.local_dc_detection_timeout_ms': 5_000,
 } as const satisfies DriverOptions
 
 const defaultChannelOptions: ChannelOptions = {
@@ -367,6 +382,24 @@ export class Driver implements Disposable {
 			return result
 		})
 
+		if (
+			this.options['ydb.sdk.enable_local_dc_detection'] &&
+			result.endpoints.length > 0
+		) {
+			dbg.log('detecting local DC via RTT measurement')
+			try {
+				let localDC = await detectLocalDC(
+					result.endpoints,
+					this.options['ydb.sdk.local_dc_detection_timeout_ms']!
+				)
+				if (localDC) {
+					this.#pool.setLocalDC(localDC)
+				}
+			} catch (error) {
+				dbg.log('failed to detect local DC: %O', error)
+			}
+		}
+
 		for (let endpoint of result.endpoints) {
 			this.#pool.add(endpoint)
 		}
@@ -490,6 +523,64 @@ export class Driver implements Disposable {
 
 	[Symbol.dispose](): void {
 		this.close()
+	}
+
+	/**
+	 * Create a gRPC client with advanced options
+	 *
+	 * @param service - Service definition
+	 * @param options - Client options (balancing, preferences, etc.)
+	 * @returns gRPC client instance
+	 *
+	 * @example
+	 * ```typescript
+	 * // Prefer local DC
+	 * let client = driver.createClientWithOptions(QueryService, {
+	 *     preferLocalDC: true
+	 * })
+	 *
+	 * // Prefer specific locations
+	 * let client = driver.createClientWithOptions(QueryService, {
+	 *     preferredLocations: ['VLA', 'SAS'],
+	 *     allowFallback: false
+	 * })
+	 *
+	 * // Prefer node in local DC
+	 * let client = driver.createClientWithOptions(QueryService, {
+	 *     preferNodeId: 12345n,
+	 *     preferLocalDC: true
+	 * })
+	 * ```
+	 */
+	createClientWithOptions<Service extends CompatServiceDefinition>(
+		service: Service,
+		options?: ClientOptions
+	): Client<Service> {
+		let opts = options ?? {}
+
+		dbg.log(
+			'creating client with options for %s: %O',
+			service.fullName || service.name,
+			opts
+		)
+
+		return createClientFactory()
+			.use(this.#middleware)
+			.create(
+				service,
+				new Proxy(this.#connection.channel, {
+					get: (target, propertyKey) => {
+						let channel = this.options['ydb.sdk.enable_discovery']
+							? this.#pool.acquireWithOptions(opts).channel
+							: target
+
+						return Reflect.get(channel, propertyKey, channel)
+					},
+				}),
+				{
+					'*': this.options.channelOptions,
+				}
+			)
 	}
 
 	[Symbol.asyncDispose](): PromiseLike<void> {

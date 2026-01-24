@@ -7,12 +7,37 @@ let dbg = loggers.driver.extend('pool')
 
 const PESSIMIZATION_TIMEOUT_MS = 60_000
 
+export interface ClientOptions {
+	/**
+	 * Prefer specific node ID
+	 */
+	preferNodeId?: bigint
+
+	/**
+	 * Prefer endpoints in local DC (auto-detected by RTT)
+	 */
+	preferLocalDC?: boolean
+
+	/**
+	 * Prefer specific locations (e.g., ['VLA', 'SAS'])
+	 * Takes precedence over preferLocalDC
+	 */
+	preferredLocations?: string[]
+
+	/**
+	 * Allow fallback to other DCs if preferred unavailable
+	 * @default true
+	 */
+	allowFallback?: boolean
+}
+
 export class ConnectionPool implements Disposable {
 	protected connections: Set<Connection> = new Set()
 	protected pessimized: Set<Connection> = new Set()
 
 	#channelOptions?: ChannelOptions
 	#channelCredentials: ChannelCredentials
+	#localDC: string | null = null
 
 	constructor(
 		channelCredentials: ChannelCredentials,
@@ -27,16 +52,65 @@ export class ConnectionPool implements Disposable {
 	}
 
 	/**
+	 * Set detected local DC location
+	 */
+	setLocalDC(location: string): void {
+		this.#localDC = location
+		dbg.log('local DC set to: %s', location)
+	}
+
+	/**
 	 * Get a channel based on load balancing rules
 	 * @param preferNodeId The preferred node id to use
 	 * @returns A connection from the pool
 	 */
 	acquire(preferNodeId?: Connection['nodeId']): Connection {
-		let candidate: Connection | null = null
+		this.#refreshPessimizedChannels()
+		return this.#selectConnection(
+			Array.from(this.connections),
+			preferNodeId
+		)
+	}
+
+	/**
+	 * Acquire connection with advanced balancing options
+	 * @param options Client balancing options
+	 * @returns A connection from the pool
+	 */
+	acquireWithOptions(options: ClientOptions): Connection {
 		this.#refreshPessimizedChannels()
 
+		let candidates = this.#filterByLocation(
+			Array.from(this.connections),
+			options
+		)
+
+		if (candidates.length === 0) {
+			if (options.allowFallback !== false) {
+				dbg.log('no preferred connections, using fallback')
+				candidates = Array.from(this.connections)
+			} else {
+				throw new Error('No connections matching client options')
+			}
+		}
+
+		return this.#selectConnection(candidates, options.preferNodeId)
+	}
+
+	/**
+	 * Select connection from candidates with fallback to pessimized
+	 * @param candidates Array of candidate connections
+	 * @param preferNodeId Optional preferred node ID
+	 * @returns Selected connection
+	 */
+	#selectConnection(
+		candidates: Connection[],
+		preferNodeId?: Connection['nodeId']
+	): Connection {
+		let candidate: Connection | null = null
+
 		// Try to find preferred node or any good connection
-		for (let connection of this.connections) {
+		for (let connection of candidates) {
 			candidate ??= connection
 
 			if (connection.nodeId === preferNodeId) {
@@ -89,6 +163,40 @@ export class ConnectionPool implements Disposable {
 
 		dbg.log('no connections available in pool')
 		throw new Error('No connection available')
+	}
+
+	/**
+	 * Filter connections by location preferences
+	 */
+	#filterByLocation(
+		connections: Connection[],
+		options: ClientOptions
+	): Connection[] {
+		if (options.preferredLocations?.length) {
+			let filtered = connections.filter((conn) =>
+				options.preferredLocations!.includes(conn.endpoint.location)
+			)
+			dbg.log(
+				'filtered to %d endpoints in locations: %s',
+				filtered.length,
+				options.preferredLocations.join(', ')
+			)
+			return filtered
+		}
+
+		if (options.preferLocalDC && this.#localDC) {
+			let filtered = connections.filter(
+				(conn) => conn.endpoint.location === this.#localDC
+			)
+			dbg.log(
+				'filtered to %d endpoints in local DC: %s',
+				filtered.length,
+				this.#localDC
+			)
+			return filtered
+		}
+
+		return connections
 	}
 
 	/**

@@ -12,6 +12,7 @@ let dbg = loggers.driver.extend('conn')
 export interface Connection {
 	readonly nodeId: bigint
 	readonly address: string
+	readonly endpoint: EndpointInfo
 	readonly channel: Channel
 	pessimizedUntil?: number
 
@@ -37,6 +38,10 @@ export class LazyConnection implements Connection {
 			'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
 		}
 		this.#channelCredentials = channelCredentials
+	}
+
+	get endpoint(): EndpointInfo {
+		return this.#endpoint
 	}
 
 	get nodeId(): bigint {
