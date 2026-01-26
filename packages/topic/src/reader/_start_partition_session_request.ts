@@ -39,7 +39,16 @@ export let _on_start_partition_session_request =
 			input.partitionSession.path
 		)
 
-		// save partition session.
+		// Initialize partition session state from server data.
+		// nextCommitStartOffset fills gaps when messages are deleted by retention.
+		partitionSession.nextCommitStartOffset = input.committedOffset
+		partitionSession.partitionCommittedOffset = input.committedOffset
+		partitionSession.partitionOffsets = {
+			start: input.partitionOffsets.start,
+			end: input.partitionOffsets.end,
+		}
+
+		// Save partition session.
 		ctx.partitionSessions.set(
 			partitionSession.partitionSessionId,
 			partitionSession

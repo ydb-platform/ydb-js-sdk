@@ -26,8 +26,9 @@ export let _commit = function commit(
 		return Promise.resolve()
 	}
 
-	// Group offsets by partition session
+	// Group offsets by partition session, track sessions for nextCommitStartOffset
 	let offsets = new Map<bigint, OffsetsRange[]>()
+	let sessions = new Map<bigint, (typeof messages)[0]['partitionSession']>()
 	let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] =
 		[]
 
@@ -42,11 +43,14 @@ export let _commit = function commit(
 			throw new Error('Cannot commit message with dead partition session')
 		}
 
-		if (!offsets.has(partitionSession.partitionSessionId)) {
-			offsets.set(partitionSession.partitionSessionId, [])
+		let partitionSessionId = partitionSession.partitionSessionId
+
+		if (!offsets.has(partitionSessionId)) {
+			offsets.set(partitionSessionId, [])
+			sessions.set(partitionSessionId, message.partitionSession)
 		}
 
-		let partOffsets = offsets.get(partitionSession.partitionSessionId)!
+		let partOffsets = offsets.get(partitionSessionId)!
 		let offset = message.offset
 		if (offset === undefined) {
 			throw new Error('Cannot commit message without offset')
@@ -73,14 +77,31 @@ export let _commit = function commit(
 			} else {
 				// If offset <= last.end, it's either out of order or a duplicate.
 				throw new Error(
-					`Message with offset ${offset} is out of order or duplicate for partition session ${partitionSession.partitionSessionId}`
+					`Message with offset ${offset} is out of order or duplicate for partition session ${partitionSessionId}`
 				)
 			}
 		} else {
-			// First offset for this partition, create initial range
+			// First offset for this partition - use nextCommitStartOffset as start
+			// to fill gap between committedOffset and first message offset.
+			// This handles retention policy deleting old messages.
+			let startOffset = partitionSession.nextCommitStartOffset
 			partOffsets.push(
-				create(OffsetsRangeSchema, { start: offset, end: offset + 1n })
+				create(OffsetsRangeSchema, {
+					start: startOffset,
+					end: offset + 1n,
+				})
 			)
+		}
+	}
+
+	// Update nextCommitStartOffset for each partition session
+	// This ensures subsequent commits continue from the correct offset
+	for (let [partitionSessionId, partOffsets] of offsets.entries()) {
+		let sessionRef = sessions.get(partitionSessionId)
+		let partitionSession = sessionRef?.deref()
+		if (partitionSession && partOffsets.length > 0) {
+			let lastRange = partOffsets[partOffsets.length - 1]!
+			partitionSession.nextCommitStartOffset = lastRange.end
 		}
 	}
 

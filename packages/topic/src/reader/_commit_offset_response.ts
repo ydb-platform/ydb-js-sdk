@@ -41,6 +41,12 @@ export let _on_commit_offset_response = function on_commit_offset_response(
 		let partitionSessionId = part.partitionSessionId
 		let committedOffset = part.committedOffset
 
+		// Update partition session's committed offset for consistency
+		let partitionSession = ctx.partitionSessions.get(partitionSessionId)
+		if (partitionSession) {
+			partitionSession.partitionCommittedOffset = committedOffset
+		}
+
 		// Resolve all pending commits for this partition session.
 		let pendingCommits = ctx.pendingCommits.get(partitionSessionId)
 		if (pendingCommits) {
