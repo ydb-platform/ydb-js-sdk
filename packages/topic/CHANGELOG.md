@@ -1,5 +1,11 @@
 # @ydbjs/topic
 
+## 6.1.1
+
+### Patch Changes
+
+- [#554](https://github.com/ydb-platform/ydb-js-sdk/pull/554) [`85b2ea0`](https://github.com/ydb-platform/ydb-js-sdk/commit/85b2ea05092e96943ccc2ed2fe1164d67345a910) Thanks [@polRk](https://github.com/polRk)! - Fix commit hanging indefinitely when there's a gap between committedOffset and first available message offset (e.g., due to retention policy deleting old messages).
+
 ## 6.1.0
 
 ### Minor Changes
