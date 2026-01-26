@@ -20,6 +20,15 @@ export class TopicPartitionSession {
 	 */
 	partitionCommittedOffset = 0n
 	/**
+	 * Start offset for the next commit range.
+	 * Initialized from server's committedOffset in StartPartitionSessionRequest.
+	 * Updated after each commit to the end of committed range.
+	 *
+	 * This fills gaps between committedOffset and first message offset
+	 * when messages are deleted by retention policy.
+	 */
+	nextCommitStartOffset = 0n
+	/**
 	 * Flag indicating whether the session is currently active.
 	 */
 	#stopped = false

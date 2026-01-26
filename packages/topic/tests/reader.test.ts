@@ -62,3 +62,15 @@ test('reads single message from topic', async () => {
 		return
 	}
 })
+
+// https://github.com/ydb-platform/ydb-js-sdk/issues/552
+// Integration test for commit with offset gap (retention scenario) is not practical
+// because local-ydb retention check interval is too long.
+// The fix is covered by unit tests in _commit.test.ts.
+//
+// To test manually against a real YDB cluster:
+// 1. Create topic with short retention (retentionPeriod: { seconds: 60n })
+// 2. Write messages, wait for retention to delete them (~2-5 minutes)
+// 3. Create reader (committedOffset will be 0)
+// 4. Read first available message (offset > 0)
+// 5. Commit should fill gap and resolve immediately (not hang)

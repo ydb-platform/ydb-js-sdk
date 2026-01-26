@@ -64,7 +64,18 @@ export let _handle_server_message = async function handle_server_message(
 			message.serverMessage.value.partitionSession.path
 		)
 
-		// save partition session.
+		// Initialize partition session state from server data.
+		// nextCommitStartOffset fills gaps when messages are deleted by retention.
+		partitionSession.nextCommitStartOffset =
+			message.serverMessage.value.committedOffset
+		partitionSession.partitionCommittedOffset =
+			message.serverMessage.value.committedOffset
+		partitionSession.partitionOffsets = {
+			start: message.serverMessage.value.partitionOffsets.start,
+			end: message.serverMessage.value.partitionOffsets.end,
+		}
+
+		// Save partition session.
 		ctx.partitionSessions.set(
 			partitionSession.partitionSessionId,
 			partitionSession
@@ -261,6 +272,12 @@ export let _handle_server_message = async function handle_server_message(
 			.partitionsCommittedOffsets) {
 			let partitionSessionId = part.partitionSessionId
 			let committedOffset = part.committedOffset
+
+			// Update partition session's committed offset for consistency
+			let partitionSession = ctx.partitionSessions.get(partitionSessionId)
+			if (partitionSession) {
+				partitionSession.partitionCommittedOffset = committedOffset
+			}
 
 			// Resolve all pending commits for this partition session.
 			let pendingCommits = ctx.pendingCommits.get(partitionSessionId)
