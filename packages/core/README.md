@@ -61,6 +61,21 @@ await driver.ready()
 
 You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from `@ydbjs/auth`.
 
+### Location-Aware Balancing
+
+For multi-datacenter deployments, enable local DC detection and prefer specific locations:
+
+```ts
+let driver = new Driver('grpcs://ydb.example.com:2135/mydb', {
+  'ydb.sdk.enable_local_dc_detection': true,
+})
+
+let client = driver.createClientWithOptions(QueryServiceDefinition, {
+  preferLocalDC: true, // or preferredLocations: ['VLA', 'SAS']
+  allowFallback: true,
+})
+```
+
 ### Closing the Driver
 
 Always close the driver when done to release resources:
