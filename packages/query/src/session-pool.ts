@@ -66,11 +66,13 @@ export class SessionPool implements Disposable {
 		let idle = 0
 		let busy = 0
 		let closed = 0
+		let invalidated = 0
 
 		for (let session of this.#sessions) {
 			if (session.isIdle) idle++
 			else if (session.isBusy) busy++
 			else if (session.isClosed) closed++
+			else if (session.isInvalidated) invalidated++
 		}
 
 		return {
@@ -78,6 +80,7 @@ export class SessionPool implements Disposable {
 			idle,
 			busy,
 			closed,
+			invalidated,
 			waiting: this.#waitQueue.length,
 			maxSize: this.#options.maxSize,
 		}
@@ -97,7 +100,7 @@ export class SessionPool implements Disposable {
 
 		let session = this.#findIdleSession()
 		if (session) {
-			session.acquire()
+			await session.acquire(signal)
 			dbg.log(
 				'acquired existing session %s (pool stats: %o)',
 				session.id,
@@ -121,16 +124,26 @@ export class SessionPool implements Disposable {
 			let createError: unknown
 
 			try {
-				session = await Session.create(this.#driver, signal)
+				let session = await Session.create(this.#driver, signal)
 
-				this.#sessions.push(session)
-				session.acquire()
+				session.onInvalidated(() => {
+					dbg.log(
+						'session %s invalidated, removing from pool',
+						session.id
+					)
+					this.#removeSession(session)
+					this.#rejectAllWaiters(new Error('Session invalidated'))
+				})
+
+				await session.acquire(signal)
 
 				dbg.log(
 					'acquired new session %s (pool stats: %o)',
 					session.id,
 					this.stats
 				)
+
+				this.#sessions.push(session)
 
 				return session
 			} catch (error) {
@@ -168,6 +181,14 @@ export class SessionPool implements Disposable {
 		if (this.#closed) {
 			dbg.log(
 				'pool is closed, ignoring release of session %s',
+				session.id
+			)
+			return
+		}
+
+		if (session.isInvalidated) {
+			dbg.log(
+				'session %s is invalidated, ignoring its release',
 				session.id
 			)
 			return
