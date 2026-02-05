@@ -1,6 +1,5 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
-import type { SessionState as SessionStateProto } from '@ydbjs/api/query'
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
@@ -24,7 +23,6 @@ export class Session {
 	#state: SessionState = SESSION_STATE.IDLE
 	#createdAt: number = Date.now()
 	#lastUsedAt: number = Date.now()
-	#attachIterator?: AsyncIterator<SessionStateProto> | undefined
 	#attachController?: AbortController | undefined
 	#onInvalidated?: () => void
 
@@ -97,7 +95,6 @@ export class Session {
 		if (this.#attachController) {
 			this.#attachController.abort()
 			this.#attachController = undefined
-			this.#attachIterator = undefined
 		}
 
 		if (this.#onInvalidated) {
@@ -117,7 +114,7 @@ export class Session {
 		this.#lastUsedAt = Date.now()
 		dbg.log('acquired session %s', this.#sessionId)
 
-		if (!this.#attachIterator) {
+		if (!this.#attachController) {
 			try {
 				await this.#attach(signal)
 			} catch (error) {
@@ -144,11 +141,13 @@ export class Session {
 			{ sessionId: this.#sessionId },
 			{ signal: this.#attachController.signal }
 		)
-		this.#attachIterator = attachStream[Symbol.asyncIterator]()
+
+		let attachIterator = attachStream[Symbol.asyncIterator]()
 
 		let attachSessionResult = signal
-			? await abortable(signal, this.#attachIterator.next())
-			: await this.#attachIterator.next()
+			? await abortable(signal, attachIterator.next())
+			: await attachIterator.next()
+
 		if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
 			dbg.log(
 				'failed to attach session, status: %d',
@@ -163,41 +162,34 @@ export class Session {
 
 		dbg.log('attached to session %s', this.#sessionId)
 
-		this.#monitorAttachStream()
+		this.#monitorAttachStream(attachStream)
 	}
 
 	/**
 	 * Monitor attach stream for session invalidation
-	 * Runs in background and marks session as closed when stream ends or errors
+	 * Runs in background and marks session as invalidated when stream ends or errors
 	 */
-	async #monitorAttachStream(): Promise<void> {
+	async #monitorAttachStream(
+		attachStream: AsyncIterable<any>
+	): Promise<void> {
 		dbg.log(
 			'starting attach stream monitor for session %s',
 			this.#sessionId
 		)
 
 		try {
-			while (this.#attachIterator) {
-				// eslint-disable-next-line no-await-in-loop
-				let result = await this.#attachIterator.next()
-
-				if (result.done) {
-					dbg.log(
-						'attach stream closed for session %s',
-						this.#sessionId
-					)
-					break
-				}
-
-				if (result.value.status !== StatusIds_StatusCode.SUCCESS) {
+			for await (let message of attachStream) {
+				if (message.status !== StatusIds_StatusCode.SUCCESS) {
 					dbg.log(
 						'attach stream error for session %s, status: %d',
 						this.#sessionId,
-						result.value.status
+						message.status
 					)
 					break
 				}
 			}
+
+			dbg.log('attach stream closed for session %s', this.#sessionId)
 		} catch (error) {
 			dbg.log(
 				'attach stream error for session %s: %O',
@@ -254,7 +246,6 @@ export class Session {
 				)
 				this.#attachController.abort()
 				this.#attachController = undefined
-				this.#attachIterator = undefined
 			}
 		} catch (error) {
 			dbg.log('failed to delete session %s: %O', this.#sessionId, error)
