@@ -105,13 +105,13 @@ test('reuses idle session (Session.create called once)', async () => {
 	const s1 = createMockSession('s1')
 	vi.spyOn(Session, 'create').mockResolvedValue(s1)
 
-	const a1 = await pool.acquire()
+	const a1 = await pool.acquireSession()
 	pool.release(a1)
 
 	expect(pool.stats.idle).toBe(1)
 	expect(pool.stats.busy).toBe(0)
 
-	const a2 = await pool.acquire()
+	const a2 = await pool.acquireSession()
 	expect(a2).toBe(a1)
 	expect(Session.create).toHaveBeenCalledTimes(1)
 
@@ -130,7 +130,11 @@ test('does not create more than maxSize', async () => {
 		return s
 	})
 
-	const [a, b, c] = [pool.acquire(), pool.acquire(), pool.acquire()]
+	const [a, b, c] = [
+		pool.acquireSession(),
+		pool.acquireSession(),
+		pool.acquireSession(),
+	]
 
 	expect(pool.stats.waiting).toBe(1)
 
@@ -156,11 +160,11 @@ test('waiters are served in FIFO order', async () => {
 	const s1 = createMockSession('s1')
 	vi.spyOn(Session, 'create').mockResolvedValue(s1)
 
-	const acquired = await pool.acquire()
+	const acquired = await pool.acquireSession()
 
-	const w1 = pool.acquire()
-	const w2 = pool.acquire()
-	const w3 = pool.acquire()
+	const w1 = pool.acquireSession()
+	const w2 = pool.acquireSession()
+	const w3 = pool.acquireSession()
 
 	expect(pool.stats.waiting).toBe(3)
 
@@ -187,10 +191,10 @@ test('abort during waiting removes waiter from queue', async () => {
 	const s1 = createMockSession('s1')
 	vi.spyOn(Session, 'create').mockResolvedValue(s1)
 
-	await pool.acquire() // occupy the only session
+	await pool.acquireSession() // occupy the only session
 
 	const controller = new AbortController()
-	const p = pool.acquire(controller.signal)
+	const p = pool.acquireSession(controller.signal)
 
 	expect(pool.stats.waiting).toBe(1)
 
@@ -211,8 +215,8 @@ test('session creation failure rejects waiters but allows retry', async () => {
 		return createMockSession(`s${attempt}`)
 	})
 
-	const p1 = pool.acquire()
-	const p2 = pool.acquire()
+	const p1 = pool.acquireSession()
+	const p2 = pool.acquireSession()
 
 	await expect(p1).rejects.toThrow('create failed')
 	await expect(p2).rejects.toThrow(/session creation failed|create failed/i)
@@ -233,7 +237,7 @@ test('session acquire failure (after create) does not add session to pool', asyn
 		throw new Error('attach failed')
 	})
 
-	await expect(pool.acquire()).rejects.toThrow('attach failed')
+	await expect(pool.acquireSession()).rejects.toThrow('attach failed')
 	expect(pool.stats.total).toBe(0)
 })
 
@@ -244,9 +248,9 @@ test('invalidated session is removed from pool and waiters are rejected', async 
 	const s1 = createMockSession('s1')
 	vi.spyOn(Session, 'create').mockResolvedValue(s1)
 
-	const acquired = await pool.acquire()
+	const acquired = await pool.acquireSession()
 
-	const waiter = pool.acquire()
+	const waiter = pool.acquireSession()
 
 	expect(pool.stats.waiting).toBe(1)
 	expect(pool.stats.total).toBe(1)
@@ -272,7 +276,7 @@ test('invalidating idle session allows creating a new one next time', async () =
 		.mockResolvedValueOnce(s1)
 		.mockResolvedValueOnce(s2)
 
-	const a1 = await pool.acquire()
+	const a1 = await pool.acquireSession()
 	pool.release(a1)
 
 	expect(pool.stats.idle).toBe(1)
@@ -282,7 +286,7 @@ test('invalidating idle session allows creating a new one next time', async () =
 	s1.markInvalidated()
 	expect(pool.stats.total).toBe(0)
 
-	const a2 = await pool.acquire()
+	const a2 = await pool.acquireSession()
 	expect(a2).toBe(s2)
 	expect(Session.create).toHaveBeenCalledTimes(2)
 })
@@ -297,10 +301,10 @@ test('close(): rejects waiters and deletes all sessions (and does not throw on d
 		.mockResolvedValueOnce(s1)
 		.mockResolvedValueOnce(s2)
 
-	const a1 = await pool.acquire()
-	const a2 = await pool.acquire()
+	const a1 = await pool.acquireSession()
+	const a2 = await pool.acquireSession()
 
-	const waiter = pool.acquire()
+	const waiter = pool.acquireSession()
 
 	vi.spyOn(a2, 'delete').mockRejectedValueOnce(new Error('delete failed'))
 
@@ -312,4 +316,23 @@ test('close(): rejects waiters and deletes all sessions (and does not throw on d
 
 	expect(pool.stats.total).toBe(0)
 	expect(pool.stats.waiting).toBe(0)
+})
+
+test('using sessionLease automatically releases session', async () => {
+	const driver = createMockDriver()
+	pool = new SessionPool(driver, { maxSize: 1 })
+
+	const s1 = createMockSession('s1')
+	vi.spyOn(Session, 'create').mockResolvedValue(s1)
+
+	{
+		using sessionLease = await pool.acquire()
+		expect(sessionLease.id).toBe('s1')
+		expect(pool.stats.busy).toBe(1)
+		expect(pool.stats.idle).toBe(0)
+	}
+
+	// After exiting the block, session should be released automatically
+	expect(pool.stats.busy).toBe(0)
+	expect(pool.stats.idle).toBe(1)
 })
