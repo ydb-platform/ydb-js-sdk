@@ -14,6 +14,13 @@ import { SessionPool, type SessionPoolOptions } from './session-pool.js'
 
 let dbg = loggers.query
 
+export type QueryOptions = {
+	/**
+	 * Session pool configuration
+	 */
+	poolOptions?: SessionPoolOptions
+}
+
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
 	...values: P
@@ -121,11 +128,8 @@ const doImpl = function <T = unknown>(): Promise<T> {
  *
  * @see {@link QueryClient}
  */
-export function query(
-	driver: Driver,
-	poolOptions?: SessionPoolOptions
-): QueryClient {
-	let sessionPool = new SessionPool(driver, poolOptions)
+export function query(driver: Driver, options?: QueryOptions): QueryClient {
+	let sessionPool = new SessionPool(driver, options?.poolOptions)
 
 	function yqlQuery<P extends any[] = unknown[], T extends any[] = unknown[]>(
 		strings: string | TemplateStringsArray,
@@ -200,16 +204,16 @@ export function query(
 			},
 			async (signal) => {
 				dbg.log('acquiring session from pool for transaction')
-				let session = await sessionPool.acquire(signal)
-				dbg.log('session %s acquired for transaction', session.id)
+				using sessionLease = await sessionPool.acquire(signal)
+				dbg.log('session %s acquired for transaction', sessionLease.id)
 
 				store.signal = signal
-				store.nodeId = session.nodeId
-				store.sessionId = session.id
+				store.nodeId = sessionLease.nodeId
+				store.sessionId = sessionLease.id
 
 				let client = driver.createClient(
 					QueryServiceDefinition,
-					session.nodeId
+					sessionLease.nodeId
 				)
 
 				let beginTransactionResult = await client.beginTransaction(
@@ -229,7 +233,6 @@ export function query(
 						'failed to begin transaction, status: %d',
 						beginTransactionResult.status
 					)
-					sessionPool.release(session)
 					throw new YDBError(
 						beginTransactionResult.status,
 						beginTransactionResult.issues
@@ -332,9 +335,6 @@ export function query(
 
 					throw error
 				} finally {
-					dbg.log('releasing session %s back to pool', session.id)
-					sessionPool.release(session)
-
 					dbg.log('executing %d close hooks', closeHooks.length)
 					await Promise.all(
 						closeHooks.map(async (hook, i) => {

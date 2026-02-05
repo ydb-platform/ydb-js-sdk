@@ -22,7 +22,7 @@ npm install @ydbjs/core@alpha @ydbjs/query@alpha
 ## How It Works
 
 - **Query Client**: Create a query client with `query(driver)`. This provides a tagged template function for YQL queries and helpers for transactions.
-- **Session Pool**: Sessions are automatically pooled and reused between queries and transactions (default pool size: 50). Configure with `query(driver, { maxSize: 100 })`.
+- **Session Pool**: Sessions are automatically pooled and reused between queries and transactions (default pool size: 50). Configure with `query(driver, { poolOptions: { maxSize: 100 } })`.
 - **Sessions & Transactions**: Sessions and transactions are managed automatically. You can run single queries or group multiple queries in a transaction with `begin`/`transaction`.
 - **Parameter Binding**: Parameters are bound by interpolation (`${}`) in the template string. Native JS types, YDB value classes, and arrays/objects are all supported. Use `.parameter()`/`.param()` for named parameters.
 - **Type Safety**: All values are converted using `@ydbjs/value` (see its docs for details). Complex/nested types and arrays are handled automatically.

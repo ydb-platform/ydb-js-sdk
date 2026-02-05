@@ -4,6 +4,51 @@ import { Session } from './session.js'
 
 let dbg = loggers.query.extend('pool')
 
+if (!Promise.withResolvers) {
+	Promise.withResolvers = function <T>(): {
+		promise: Promise<T>
+		resolve: (value: T | PromiseLike<T>) => void
+		reject: (reason?: any) => void
+	} {
+		let resolve: (value: T | PromiseLike<T>) => void
+		let reject: (reason?: any) => void
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res
+			reject = rej
+		})
+		return { promise, resolve: resolve!, reject: reject! }
+	}
+}
+
+/**
+ * Wrapper for acquired session that automatically releases it when disposed
+ */
+export class SessionLease implements Disposable {
+	#session: Session
+	#pool: SessionPool
+
+	constructor(session: Session, pool: SessionPool) {
+		this.#session = session
+		this.#pool = pool
+	}
+
+	get session(): Session {
+		return this.#session
+	}
+
+	get id(): string {
+		return this.#session.id
+	}
+
+	get nodeId(): bigint {
+		return this.#session.nodeId
+	}
+
+	[Symbol.dispose](): void {
+		this.#pool.release(this.#session)
+	}
+}
+
 export type SessionPoolOptions = {
 	/**
 	 * Maximum number of sessions in the pool
@@ -87,9 +132,17 @@ export class SessionPool implements Disposable {
 	}
 
 	/**
-	 * Acquire a session from the pool
+	 * Acquire a session from the pool with automatic release on dispose
 	 */
-	async acquire(signal?: AbortSignal): Promise<Session> {
+	async acquire(signal?: AbortSignal): Promise<SessionLease> {
+		let session = await this.acquireSession(signal)
+		return new SessionLease(session, this)
+	}
+
+	/**
+	 * Acquire a session from the pool (manual release required)
+	 */
+	async acquireSession(signal?: AbortSignal): Promise<Session> {
 		if (this.#closed) {
 			throw new Error('Session pool is closed')
 		}
@@ -223,39 +276,39 @@ export class SessionPool implements Disposable {
 	 * Wait for a session to become available
 	 */
 	#waitForSession(signal?: AbortSignal): Promise<Session> {
-		return new Promise<Session>((resolve, reject) => {
-			let waiter = { resolve, reject }
+		let { promise, resolve, reject } = Promise.withResolvers<Session>()
+		let waiter = { resolve, reject }
 
-			if (signal) {
-				let cleanup = () => {
-					let index = this.#waitQueue.indexOf(waiter)
-					if (index !== -1) {
-						this.#waitQueue.splice(index, 1)
-					}
-				}
-
-				let abortHandler = () => {
-					cleanup()
-					reject(signal.reason || new Error('Aborted'))
-				}
-				signal.addEventListener('abort', abortHandler, { once: true })
-
-				let removeListener = () =>
-					signal.removeEventListener('abort', abortHandler)
-
-				waiter.resolve = (value) => {
-					removeListener()
-					resolve(value)
-				}
-
-				waiter.reject = (error) => {
-					removeListener()
-					reject(error)
+		if (signal) {
+			let cleanup = () => {
+				let index = this.#waitQueue.indexOf(waiter)
+				if (index !== -1) {
+					this.#waitQueue.splice(index, 1)
 				}
 			}
 
-			this.#waitQueue.push(waiter)
-		})
+			let abortHandler = () => {
+				cleanup()
+				reject(signal.reason || new Error('Aborted'))
+			}
+			signal.addEventListener('abort', abortHandler, { once: true })
+
+			let removeListener = () =>
+				signal.removeEventListener('abort', abortHandler)
+
+			waiter.resolve = (value) => {
+				removeListener()
+				resolve(value)
+			}
+
+			waiter.reject = (error) => {
+				removeListener()
+				reject(error)
+			}
+		}
+
+		this.#waitQueue.push(waiter)
+		return promise
 	}
 
 	/**

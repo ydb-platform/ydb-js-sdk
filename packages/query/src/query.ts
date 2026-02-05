@@ -51,7 +51,6 @@ export class Query<T extends any[] = unknown[]>
 	#driver: Driver
 	#sessionPool: SessionPool
 	#promise: Promise<ArrayifyTuple<T>> | null = null
-	#cleanup: (() => Promise<unknown>)[] = []
 
 	#text: string
 	#parameters: Record<string, Value>
@@ -159,30 +158,21 @@ export class Query<T extends any[] = unknown[]>
 		await this.#driver.ready(signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
+			using sessionLease = !sessionId
+				? await this.#sessionPool.acquire(signal)
+				: undefined
+
+			if (sessionLease) {
+				dbg.log('acquired session %s from pool', sessionLease.id)
+				nodeId = sessionLease.nodeId
+				sessionId = sessionLease.id
+			}
+
 			dbg.log('creating query client for nodeId: %s', nodeId)
 			let client = this.#driver.createClient(
 				QueryServiceDefinition,
 				nodeId
 			)
-
-			if (!sessionId) {
-				dbg.log('acquiring session from pool')
-				let session = await this.#sessionPool.acquire(signal)
-				dbg.log('acquired session %s from pool', sessionId)
-
-				nodeId = session.nodeId
-				sessionId = session.id
-
-				client = this.#driver.createClient(
-					QueryServiceDefinition,
-					nodeId
-				)
-
-				this.#cleanup.push(async () => {
-					dbg.log('releasing session %s back to pool', sessionId)
-					this.#sessionPool.release(session)
-				})
-			}
 
 			let parameters: Record<string, TypedValue> = {}
 			for (let key in this.#parameters) {
@@ -219,7 +209,7 @@ export class Query<T extends any[] = unknown[]>
 
 			let stream = client.executeQuery(
 				{
-					sessionId,
+					sessionId: sessionId!,
 					execMode: ExecMode.EXECUTE,
 					query: {
 						case: 'queryContent',
@@ -308,9 +298,6 @@ export class Query<T extends any[] = unknown[]>
 			.finally(async () => {
 				this.#active = false
 				this.#controller.abort('Query completed.')
-
-				this.#cleanup.forEach((fn) => void fn())
-				this.#cleanup = []
 			})
 
 		return this.#promise
@@ -504,8 +491,6 @@ export class Query<T extends any[] = unknown[]>
 		}
 
 		this.#controller.abort('Query disposed.')
-		await Promise.all(this.#cleanup.map((fn) => fn()))
-		this.#cleanup = []
 		this.#promise = null
 		this.#disposed = true
 	}
