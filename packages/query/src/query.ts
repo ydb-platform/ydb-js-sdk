@@ -26,6 +26,7 @@ import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
+import type { SessionPool } from './session-pool.js'
 
 let dbg = loggers.query
 
@@ -48,8 +49,8 @@ export class Query<T extends any[] = unknown[]>
 	implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable
 {
 	#driver: Driver
+	#sessionPool: SessionPool
 	#promise: Promise<ArrayifyTuple<T>> | null = null
-	#cleanup: (() => Promise<unknown>)[] = []
 
 	#text: string
 	#parameters: Record<string, Value>
@@ -81,11 +82,17 @@ export class Query<T extends any[] = unknown[]>
 	#raw: boolean = false
 	#values: boolean = false
 
-	constructor(driver: Driver, text: string, params: Record<string, Value>) {
+	constructor(
+		driver: Driver,
+		text: string,
+		params: Record<string, Value>,
+		sessionPool: SessionPool
+	) {
 		super()
 
 		this.#text = text
 		this.#driver = driver
+		this.#sessionPool = sessionPool
 		this.#parameters = {}
 
 		for (let key in params) {
@@ -152,57 +159,21 @@ export class Query<T extends any[] = unknown[]>
 		await this.#driver.ready(signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
+			using sessionLease = !sessionId
+				? await this.#sessionPool.acquire(signal)
+				: undefined
+
+			if (sessionLease) {
+				dbg.log('acquired session %s from pool', sessionLease.id)
+				nodeId = sessionLease.nodeId
+				sessionId = sessionLease.id
+			}
+
 			dbg.log('creating query client for nodeId: %s', nodeId)
 			let client = this.#driver.createClient(
 				QueryServiceDefinition,
 				nodeId
 			)
-
-			if (!sessionId) {
-				dbg.log('creating new session')
-				let sessionResponse = await client.createSession({}, { signal })
-				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log(
-						'failed to create session, status: %d',
-						sessionResponse.status
-					)
-					throw new YDBError(
-						sessionResponse.status,
-						sessionResponse.issues
-					)
-				}
-
-				nodeId = sessionResponse.nodeId
-				sessionId = sessionResponse.sessionId
-
-				client = this.#driver.createClient(
-					QueryServiceDefinition,
-					nodeId
-				)
-				this.#cleanup.push(async () => {
-					dbg.log('deleting session %s', sessionId)
-					await client.deleteSession({ sessionId: sessionId! })
-				})
-
-				let attachSession = client
-					.attachSession({ sessionId }, { signal })
-					[Symbol.asyncIterator]()
-				let attachSessionResult = await attachSession.next()
-				if (
-					attachSessionResult.value.status !==
-					StatusIds_StatusCode.SUCCESS
-				) {
-					dbg.log(
-						'failed to attach session, status: %d',
-						attachSessionResult.value.status
-					)
-					throw new YDBError(
-						attachSessionResult.value.status,
-						attachSessionResult.value.issues
-					)
-				}
-				dbg.log('session %s created and attached', sessionId)
-			}
 
 			let parameters: Record<string, TypedValue> = {}
 			for (let key in this.#parameters) {
@@ -239,7 +210,7 @@ export class Query<T extends any[] = unknown[]>
 
 			let stream = client.executeQuery(
 				{
-					sessionId,
+					sessionId: sessionId!,
 					execMode: ExecMode.EXECUTE,
 					query: {
 						case: 'queryContent',
@@ -328,9 +299,6 @@ export class Query<T extends any[] = unknown[]>
 			.finally(async () => {
 				this.#active = false
 				this.#controller.abort('Query completed.')
-
-				this.#cleanup.forEach((fn) => void fn())
-				this.#cleanup = []
 			})
 
 		return this.#promise
@@ -526,8 +494,6 @@ export class Query<T extends any[] = unknown[]>
 		}
 
 		this.#controller.abort('Query disposed.')
-		await Promise.all(this.#cleanup.map((fn) => fn()))
-		this.#cleanup = []
 		this.#promise = null
 		this.#disposed = true
 	}
