@@ -49,10 +49,10 @@ let sessionWithTimeout = await client.session(
 )
 
 // Work with semaphores
-await session.createSemaphore({ name: 'my-semaphore', limit: 1 })
-await session.acquireSemaphore({ name: 'my-semaphore', count: 1 })
-await session.releaseSemaphore({ name: 'my-semaphore' })
-await session.deleteSemaphore({ name: 'my-semaphore' })
+await session.create('my-semaphore', { limit: 1 })
+await session.acquire('my-semaphore', { count: 1 })
+await session.release('my-semaphore')
+await session.delete('my-semaphore')
 
 // Close session
 await session.close()
@@ -64,10 +64,10 @@ await session.close()
 // Session and lock are automatically cleaned up
 await using session = await client.session('/local/my-coordination-node')
 
-await session.createSemaphore({ name: 'my-lock', limit: 1 })
+await session.create('my-lock', { limit: 1 })
 
 {
-  await using lock = await session.acquireSemaphore({ name: 'my-lock' })
+  await using lock = await session.acquire('my-lock')
   if (lock.acquired) {
     // Critical section - lock is held
   }

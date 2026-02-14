@@ -68,12 +68,10 @@ test('leader election example', { timeout: 30000 }, async () => {
 						event.ownersChanged
 					) {
 						try {
-							let { description } =
-								await session.describeSemaphore({
-									name: 'my-service-leader',
-									includeOwners: true,
-									watchOwners: true,
-								})
+							let { description } = await session.describe(
+								'my-service-leader',
+								{ includeOwners: true, watchOwners: true }
+							)
 
 							if (
 								description &&
@@ -93,11 +91,10 @@ test('leader election example', { timeout: 30000 }, async () => {
 			)
 
 			//  Set watcher and get initial state
-			let { description, watchAdded } = await session.describeSemaphore({
-				name: 'my-service-leader',
-				includeOwners: true,
-				watchOwners: true,
-			})
+			let { description, watchAdded } = await session.describe(
+				'my-service-leader',
+				{ includeOwners: true, watchOwners: true }
+			)
 			expect(watchAdded).toBe(true)
 
 			// Record initial leader if exists
@@ -113,8 +110,7 @@ test('leader election example', { timeout: 30000 }, async () => {
 			}
 
 			// Try to acquire leadership (will wait indefinitely in queue)
-			let semaphore = await session.acquireSemaphore({
-				name: 'my-service-leader',
+			let semaphore = await session.acquire('my-service-leader', {
 				count: 1,
 				timeoutMillis: MAX_UINT64,
 				data: new TextEncoder().encode(endpoint),
@@ -127,7 +123,7 @@ test('leader election example', { timeout: 30000 }, async () => {
 				await sleep(100)
 
 				// Release leadership
-				await session.releaseSemaphore({ name: 'my-service-leader' })
+				await session.release('my-service-leader')
 			}
 
 			// Wait a bit to observe leader changes
@@ -140,10 +136,7 @@ test('leader election example', { timeout: 30000 }, async () => {
 	try {
 		// Create leader semaphore with Limit=1
 		let setupSession = await client.session(nodePath)
-		await setupSession.createSemaphore({
-			name: 'my-service-leader',
-			limit: 1,
-		})
+		await setupSession.create('my-service-leader', { limit: 1 })
 		await setupSession.close()
 
 		// Run 3 instances competing for leadership
@@ -217,12 +210,10 @@ test('service discovery example', { timeout: 30000 }, async () => {
 						event.ownersChanged
 					) {
 						try {
-							let { description } =
-								await session.describeSemaphore({
-									name: 'my-service-endpoints',
-									includeOwners: true,
-									watchOwners: true,
-								})
+							let { description } = await session.describe(
+								'my-service-endpoints',
+								{ includeOwners: true, watchOwners: true }
+							)
 
 							if (description && description.owners) {
 								let endpoints = description.owners.map(
@@ -239,16 +230,14 @@ test('service discovery example', { timeout: 30000 }, async () => {
 			)
 
 			// Set watcher
-			let { watchAdded } = await session.describeSemaphore({
-				name: 'my-service-endpoints',
-				includeOwners: true,
-				watchOwners: true,
-			})
+			let { watchAdded } = await session.describe(
+				'my-service-endpoints',
+				{ includeOwners: true, watchOwners: true }
+			)
 			expect(watchAdded).toBe(true)
 
 			// Register this instance by acquiring semaphore with endpoint in Data
-			let semaphore = await session.acquireSemaphore({
-				name: 'my-service-endpoints',
+			let semaphore = await session.acquire('my-service-endpoints', {
 				count: 1,
 				data: new TextEncoder().encode(endpoint),
 			})
@@ -265,10 +254,7 @@ test('service discovery example', { timeout: 30000 }, async () => {
 	try {
 		// Create service discovery semaphore with very large limit
 		let setupSession = await client.session(nodePath)
-		await setupSession.createSemaphore({
-			name: 'my-service-endpoints',
-			limit: MAX_UINT64,
-		})
+		await setupSession.create('my-service-endpoints', { limit: MAX_UINT64 })
 		await setupSession.close()
 
 		// Start all instances - they register and discover each other
@@ -336,11 +322,10 @@ test('configuration publication example', { timeout: 30000 }, async () => {
 						event.dataChanged
 					) {
 						try {
-							let { description } =
-								await session.describeSemaphore({
-									name: 'my-service-config',
-									watchData: true,
-								})
+							let { description } = await session.describe(
+								'my-service-config',
+								{ watchData: true }
+							)
 
 							if (description && description.data) {
 								let config = new TextDecoder().decode(
@@ -356,10 +341,10 @@ test('configuration publication example', { timeout: 30000 }, async () => {
 			)
 
 			// Set watcher and get initial configuration
-			let { description, watchAdded } = await session.describeSemaphore({
-				name: 'my-service-config',
-				watchData: true,
-			})
+			let { description, watchAdded } = await session.describe(
+				'my-service-config',
+				{ watchData: true }
+			)
 			expect(watchAdded).toBe(true)
 
 			// Store initial configuration
@@ -377,8 +362,7 @@ test('configuration publication example', { timeout: 30000 }, async () => {
 
 	try {
 		let publisherSession = await client.session(nodePath)
-		await publisherSession.createSemaphore({
-			name: 'my-service-config',
+		await publisherSession.create('my-service-config', {
 			limit: 1,
 			data: new TextEncoder().encode('config-v1'),
 		})
@@ -392,17 +376,17 @@ test('configuration publication example', { timeout: 30000 }, async () => {
 
 		await sleep(200)
 
-		await publisherSession.updateSemaphore({
-			name: 'my-service-config',
-			data: new TextEncoder().encode('config-v2'),
-		})
+		await publisherSession.update(
+			'my-service-config',
+			new TextEncoder().encode('config-v2')
+		)
 
 		await sleep(200)
 
-		await publisherSession.updateSemaphore({
-			name: 'my-service-config',
-			data: new TextEncoder().encode('config-v3'),
-		})
+		await publisherSession.update(
+			'my-service-config',
+			new TextEncoder().encode('config-v3')
+		)
 
 		await sleep(200)
 

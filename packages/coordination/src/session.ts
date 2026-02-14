@@ -56,11 +56,6 @@ type SessionResult =
  */
 export interface AcquireSemaphoreOptions {
 	/**
-	 * Name of the semaphore to acquire
-	 */
-	name: string
-
-	/**
 	 * Number of tokens to acquire (default: 1)
 	 */
 	count?: number | bigint
@@ -84,24 +79,9 @@ export interface AcquireSemaphoreOptions {
 }
 
 /**
- * Options for releasing a semaphore
- */
-export interface ReleaseSemaphoreOptions {
-	/**
-	 * Name of the semaphore to release
-	 */
-	name: string
-}
-
-/**
  * Options for creating a semaphore
  */
 export interface CreateSemaphoreOptions {
-	/**
-	 * Name of the semaphore to create
-	 */
-	name: string
-
 	/**
 	 * Number of tokens that may be acquired by sessions
 	 */
@@ -114,29 +94,9 @@ export interface CreateSemaphoreOptions {
 }
 
 /**
- * Options for updating a semaphore
- */
-export interface UpdateSemaphoreOptions {
-	/**
-	 * Name of the semaphore to update
-	 */
-	name: string
-
-	/**
-	 * User-defined data that is attached to the semaphore
-	 */
-	data: Uint8Array
-}
-
-/**
  * Options for deleting a semaphore
  */
 export interface DeleteSemaphoreOptions {
-	/**
-	 * Name of the semaphore to delete
-	 */
-	name: string
-
 	/**
 	 * Will delete semaphore even if currently acquired by sessions
 	 */
@@ -147,11 +107,6 @@ export interface DeleteSemaphoreOptions {
  * Options for describing a semaphore
  */
 export interface DescribeSemaphoreOptions {
-	/**
-	 * Name of the semaphore to describe
-	 */
-	name: string
-
 	/**
 	 * Include owners list in the response
 	 */
@@ -302,7 +257,7 @@ export class Semaphore implements AsyncDisposable {
 	 * ```
 	 */
 	async update(data: Uint8Array, signal?: AbortSignal): Promise<void> {
-		await this.#session.updateSemaphore({ name: this.#name, data }, signal)
+		await this.#session.update(this.#name, data, signal)
 	}
 
 	/**
@@ -315,19 +270,16 @@ export class Semaphore implements AsyncDisposable {
 	 *
 	 * @example
 	 * ```typescript
-	 * await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 * await using semaphore = await session.acquire('my-lock')
 	 * let info = await semaphore.describe({ includeOwners: true })
 	 * console.log('Owners:', info.description?.owners)
 	 * ```
 	 */
 	async describe(
-		options?: Omit<DescribeSemaphoreOptions, 'name'>,
+		options?: DescribeSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<DescribeSemaphoreResult> {
-		return await this.#session.describeSemaphore(
-			{ name: this.#name, ...options },
-			signal
-		)
+		return await this.#session.describe(this.#name, options, signal)
 	}
 
 	/**
@@ -342,7 +294,7 @@ export class Semaphore implements AsyncDisposable {
 	 *
 	 * @example
 	 * ```typescript
-	 * let semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 * let semaphore = await session.acquire('my-lock')
 	 * try {
 	 *   if (semaphore.acquired) {
 	 *     // do work with lock
@@ -356,10 +308,7 @@ export class Semaphore implements AsyncDisposable {
 		if (!this.#acquired) {
 			return false
 		}
-		let result = await this.#session.releaseSemaphore(
-			{ name: this.#name },
-			signal
-		)
+		let result = await this.#session.release(this.#name, signal)
 
 		this.#acquired = false
 
@@ -369,7 +318,7 @@ export class Semaphore implements AsyncDisposable {
 	/**
 	 * Deletes the semaphore
 	 *
-	 * This is a convenience method that calls deleteSemaphore on the session.
+	 * This is a convenience method that calls delete on the session.
 	 *
 	 * @param options - Options for deleting the semaphore (name is automatically set)
 	 * @param signal - AbortSignal to timeout the operation
@@ -377,7 +326,7 @@ export class Semaphore implements AsyncDisposable {
 	 *
 	 * @example
 	 * ```typescript
-	 * let semaphore = await session.acquireSemaphore({ name: 'temp-lock', ephemeral: false })
+	 * let semaphore = await session.acquire('temp-lock', { ephemeral: false })
 	 * try {
 	 *   if (semaphore.acquired) {
 	 *     // do work
@@ -389,13 +338,10 @@ export class Semaphore implements AsyncDisposable {
 	 * ```
 	 */
 	async delete(
-		options?: Omit<DeleteSemaphoreOptions, 'name'>,
+		options?: DeleteSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<void> {
-		await this.#session.deleteSemaphore(
-			{ name: this.#name, ...options },
-			signal
-		)
+		await this.#session.delete(this.#name, options, signal)
 	}
 
 	/**
@@ -449,8 +395,7 @@ export class Semaphore implements AsyncDisposable {
  * })
  *
  * // Describe with watch
- * await session.describeSemaphore({
- *   name: 'my-lock',
+ * await session.describe('my-lock', {
  *   watchData: true,
  *   watchOwners: true
  * })
@@ -792,6 +737,7 @@ export class CoordinationSession
 	 * This method combines acquire and release into a single disposable resource,
 	 * enabling automatic cleanup with TypeScript's explicit resource management.
 	 *
+	 * @param name - Name of the semaphore to acquire
 	 * @param options - Options for acquiring the semaphore
 	 * @param signal - AbortSignal to timeout the operation
 	 * @returns A Semaphore that automatically releases on disposal
@@ -801,7 +747,7 @@ export class CoordinationSession
 	 * ```typescript
 	 * {
 	 *   // Automatic release with using keyword (TypeScript 5.2+)
-	 *   await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
+	 *   await using semaphore = await session.acquire('my-lock')
 	 *   if (semaphore.acquired) {
 	 *     // do work with lock
 	 *   }
@@ -809,8 +755,9 @@ export class CoordinationSession
 	 * // semaphore is automatically released here
 	 * ```
 	 */
-	async acquireSemaphore(
-		options: AcquireSemaphoreOptions,
+	async acquire(
+		name: string,
+		options?: AcquireSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<Semaphore> {
 		if (this.#closed) {
@@ -818,27 +765,27 @@ export class CoordinationSession
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('acquiring semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('acquiring semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'acquireSemaphore',
 				value: create(SessionRequest_AcquireSemaphoreSchema, {
 					reqId,
-					name: options.name,
+					name,
 					count:
-						typeof options.count === 'bigint'
+						typeof options?.count === 'bigint'
 							? options.count
-							: BigInt(options.count ?? 1),
+							: BigInt(options?.count ?? 1),
 					timeoutMillis:
-						typeof options.timeoutMillis === 'bigint'
+						typeof options?.timeoutMillis === 'bigint'
 							? options.timeoutMillis
 							: BigInt(
-									options.timeoutMillis ??
+									options?.timeoutMillis ??
 										this.#recoveryWindowMs
 								),
-					data: options.data ?? new Uint8Array(),
-					ephemeral: options.ephemeral ?? false,
+					data: options?.data ?? new Uint8Array(),
+					ephemeral: options?.ephemeral ?? false,
 				}),
 			},
 		})
@@ -849,13 +796,13 @@ export class CoordinationSession
 			signal
 		)) as SessionResponse_AcquireSemaphoreResult
 
-		return new Semaphore(this, options.name, result.acquired)
+		return new Semaphore(this, name, result.acquired)
 	}
 
 	/**
 	 * Releases a semaphore
 	 *
-	 * @param options - Options for releasing the semaphore
+	 * @param name - Name of the semaphore to release
 	 * @param signal - AbortSignal to timeout the operation.
 	 *   Useful for setting operation timeout during long reconnections.
 	 *   Note: Aborting removes the request from retry queue, but if the request
@@ -863,23 +810,20 @@ export class CoordinationSession
 	 * @returns True if released, false if not acquired
 	 * @throws {YDBError} If the operation fails
 	 */
-	async releaseSemaphore(
-		options: ReleaseSemaphoreOptions,
-		signal?: AbortSignal
-	): Promise<boolean> {
+	async release(name: string, signal?: AbortSignal): Promise<boolean> {
 		if (this.#closed) {
 			throw new Error('Session is closed')
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('releasing semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('releasing semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'releaseSemaphore',
 				value: create(SessionRequest_ReleaseSemaphoreSchema, {
 					reqId,
-					name: options.name,
+					name,
 				}),
 			},
 		})
@@ -895,6 +839,7 @@ export class CoordinationSession
 	/**
 	 * Creates a new semaphore
 	 *
+	 * @param name - Name of the semaphore to create
 	 * @param options - Options for creating the semaphore
 	 * @param signal - AbortSignal to timeout the operation.
 	 *   Useful for setting operation timeout during long reconnections.
@@ -902,7 +847,8 @@ export class CoordinationSession
 	 *   was already sent to the server, it may still be processed.
 	 * @throws {YDBError} If the operation fails
 	 */
-	async createSemaphore(
+	async create(
+		name: string,
 		options: CreateSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<void> {
@@ -911,14 +857,14 @@ export class CoordinationSession
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('creating semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('creating semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'createSemaphore',
 				value: create(SessionRequest_CreateSemaphoreSchema, {
 					reqId,
-					name: options.name,
+					name,
 					limit:
 						typeof options.limit === 'bigint'
 							? options.limit
@@ -934,15 +880,17 @@ export class CoordinationSession
 	/**
 	 * Updates a semaphore's data
 	 *
-	 * @param options - Options for updating the semaphore
+	 * @param name - Name of the semaphore to update
+	 * @param data - User-defined data to attach to the semaphore
 	 * @param signal - AbortSignal to timeout the operation.
 	 *   Useful for setting operation timeout during long reconnections.
 	 *   Note: Aborting removes the request from retry queue, but if the request
 	 *   was already sent to the server, it may still be processed.
 	 * @throws {YDBError} If the operation fails
 	 */
-	async updateSemaphore(
-		options: UpdateSemaphoreOptions,
+	async update(
+		name: string,
+		data: Uint8Array,
 		signal?: AbortSignal
 	): Promise<void> {
 		if (this.#closed) {
@@ -950,15 +898,15 @@ export class CoordinationSession
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('updating semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('updating semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'updateSemaphore',
 				value: create(SessionRequest_UpdateSemaphoreSchema, {
 					reqId,
-					name: options.name,
-					data: options.data,
+					name,
+					data,
 				}),
 			},
 		})
@@ -969,6 +917,7 @@ export class CoordinationSession
 	/**
 	 * Deletes a semaphore
 	 *
+	 * @param name - Name of the semaphore to delete
 	 * @param options - Options for deleting the semaphore
 	 * @param signal - AbortSignal to timeout the operation.
 	 *   Useful for setting operation timeout during long reconnections.
@@ -976,8 +925,9 @@ export class CoordinationSession
 	 *   was already sent to the server, it may still be processed.
 	 * @throws {YDBError} If the operation fails
 	 */
-	async deleteSemaphore(
-		options: DeleteSemaphoreOptions,
+	async delete(
+		name: string,
+		options?: DeleteSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<void> {
 		if (this.#closed) {
@@ -985,15 +935,15 @@ export class CoordinationSession
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('deleting semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('deleting semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'deleteSemaphore',
 				value: create(SessionRequest_DeleteSemaphoreSchema, {
 					reqId,
-					name: options.name,
-					force: options.force ?? false,
+					name,
+					force: options?.force ?? false,
 				}),
 			},
 		})
@@ -1004,6 +954,7 @@ export class CoordinationSession
 	/**
 	 * Describes a semaphore
 	 *
+	 * @param name - Name of the semaphore to describe
 	 * @param options - Options for describing the semaphore
 	 * @param signal - AbortSignal to timeout the operation.
 	 *   Useful for setting operation timeout during long reconnections.
@@ -1012,8 +963,9 @@ export class CoordinationSession
 	 * @returns Semaphore description and watch status
 	 * @throws {YDBError} If the operation fails
 	 */
-	async describeSemaphore(
-		options: DescribeSemaphoreOptions,
+	async describe(
+		name: string,
+		options?: DescribeSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<DescribeSemaphoreResult> {
 		if (this.#closed) {
@@ -1021,18 +973,18 @@ export class CoordinationSession
 		}
 
 		let reqId = this.#nextReqId()
-		dbg.log('describing semaphore: %s (reqId: %s)', options.name, reqId)
+		dbg.log('describing semaphore: %s (reqId: %s)', name, reqId)
 
 		let request = create(SessionRequestSchema, {
 			request: {
 				case: 'describeSemaphore',
 				value: create(SessionRequest_DescribeSemaphoreSchema, {
 					reqId,
-					name: options.name,
-					includeOwners: options.includeOwners ?? false,
-					includeWaiters: options.includeWaiters ?? false,
-					watchData: options.watchData ?? false,
-					watchOwners: options.watchOwners ?? false,
+					name,
+					includeOwners: options?.includeOwners ?? false,
+					includeWaiters: options?.includeWaiters ?? false,
+					watchData: options?.watchData ?? false,
+					watchOwners: options?.watchOwners ?? false,
 				}),
 			},
 		})
@@ -1044,9 +996,9 @@ export class CoordinationSession
 		)) as SessionResponse_DescribeSemaphoreResult
 
 		// Track this watch if enabled
-		if (result.watchAdded && (options.watchData || options.watchOwners)) {
-			this.#watchedSemaphores.set(reqId, options.name)
-			dbg.log('watching semaphore: %s (reqId: %s)', options.name, reqId)
+		if (result.watchAdded && (options?.watchData || options?.watchOwners)) {
+			this.#watchedSemaphores.set(reqId, name)
+			dbg.log('watching semaphore: %s (reqId: %s)', name, reqId)
 		}
 
 		return {

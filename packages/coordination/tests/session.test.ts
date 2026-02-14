@@ -35,17 +35,14 @@ test(
 
 		try {
 			// Acquire ephemeral semaphore (created automatically)
-			let semaphore = await session.acquireSemaphore({
-				name: 'test-lock',
+			let semaphore = await session.acquire('test-lock', {
 				count: 1,
 				ephemeral: true,
 			})
 			expect(semaphore.acquired).toBe(true)
 
 			// Release semaphore (deleted automatically)
-			let released = await session.releaseSemaphore({
-				name: 'test-lock',
-			})
+			let released = await session.release('test-lock')
 			expect(released).toBe(true)
 		} finally {
 			await session.close()
@@ -64,25 +61,15 @@ test(
 		let session = await client.session(nodePath)
 
 		try {
-			await session.createSemaphore({
-				name: 'test-lock',
-				limit: 1,
-			})
+			await session.create('test-lock', { limit: 1 })
 
-			let semaphore = await session.acquireSemaphore({
-				name: 'test-lock',
-				count: 1,
-			})
+			let semaphore = await session.acquire('test-lock', { count: 1 })
 			expect(semaphore.acquired).toBe(true)
 
-			let released = await session.releaseSemaphore({
-				name: 'test-lock',
-			})
+			let released = await session.release('test-lock')
 			expect(released).toBe(true)
 
-			await session.deleteSemaphore({
-				name: 'test-lock',
-			})
+			await session.delete('test-lock')
 		} finally {
 			await session.close()
 			await dropCoordinationNode(nodePath)
@@ -97,20 +84,13 @@ test('creates semaphore with initial count', { timeout: 30000 }, async () => {
 	let session = await client.session(nodePath)
 
 	try {
-		await session.createSemaphore({
-			name: 'test-semaphore',
-			limit: 5,
-		})
+		await session.create('test-semaphore', { limit: 5 })
 
-		let { description } = await session.describeSemaphore({
-			name: 'test-semaphore',
-		})
+		let { description } = await session.describe('test-semaphore')
 		expect(description!.count).toBe(0n) // 0 tokens acquired
 		expect(description!.limit).toBe(5n) // limit is 5
 
-		await session.deleteSemaphore({
-			name: 'test-semaphore',
-		})
+		await session.delete('test-semaphore')
 	} finally {
 		await session.close()
 		await dropCoordinationNode(nodePath)
@@ -124,25 +104,17 @@ test('updates semaphore data', { timeout: 30000 }, async () => {
 	let session = await client.session(nodePath)
 
 	try {
-		await session.createSemaphore({
-			name: 'test-semaphore',
+		await session.create('test-semaphore', {
 			limit: 3,
 			data: new Uint8Array([1, 2, 3]),
 		})
 
-		await session.updateSemaphore({
-			name: 'test-semaphore',
-			data: new Uint8Array([4, 5, 6]),
-		})
+		await session.update('test-semaphore', new Uint8Array([4, 5, 6]))
 
-		let { description } = await session.describeSemaphore({
-			name: 'test-semaphore',
-		})
+		let { description } = await session.describe('test-semaphore')
 		expect(Array.from(description!.data)).toEqual([4, 5, 6])
 
-		await session.deleteSemaphore({
-			name: 'test-semaphore',
-		})
+		await session.delete('test-semaphore')
 	} finally {
 		await session.close()
 		await dropCoordinationNode(nodePath)
@@ -158,44 +130,28 @@ test('multiple clients compete for semaphore', { timeout: 30000 }, async () => {
 
 	try {
 		// Create semaphore with limit 1
-		await session1.createSemaphore({
-			name: 'exclusive-lock',
-			limit: 1,
-		})
+		await session1.create('exclusive-lock', { limit: 1 })
 
 		// Session 1 acquires
-		let semaphore1 = await session1.acquireSemaphore({
-			name: 'exclusive-lock',
-			count: 1,
-		})
+		let semaphore1 = await session1.acquire('exclusive-lock', { count: 1 })
 		expect(semaphore1.acquired).toBe(true)
 
 		// Session 2 tries to acquire with timeout (should fail)
-		let semaphore2 = await session2.acquireSemaphore({
-			name: 'exclusive-lock',
+		let semaphore2 = await session2.acquire('exclusive-lock', {
 			count: 1,
 			timeoutMillis: 100,
 		})
 		expect(semaphore2.acquired).toBe(false)
 
 		// Session 1 releases
-		await session1.releaseSemaphore({
-			name: 'exclusive-lock',
-		})
+		await session1.release('exclusive-lock')
 
 		// Session 2 can now acquire
-		let semaphore3 = await session2.acquireSemaphore({
-			name: 'exclusive-lock',
-			count: 1,
-		})
+		let semaphore3 = await session2.acquire('exclusive-lock', { count: 1 })
 		expect(semaphore3.acquired).toBe(true)
 
-		await session2.releaseSemaphore({
-			name: 'exclusive-lock',
-		})
-		await session1.deleteSemaphore({
-			name: 'exclusive-lock',
-		})
+		await session2.release('exclusive-lock')
+		await session1.delete('exclusive-lock')
 	} finally {
 		await session1.close()
 		await session2.close()
@@ -211,21 +167,12 @@ test('close rejects pending requests', { timeout: 30000 }, async () => {
 	let session2 = await client.session(nodePath)
 
 	try {
-		await session1.createSemaphore({
-			name: 'test-lock',
-			limit: 1,
-		})
+		await session1.create('test-lock', { limit: 1 })
 
-		await session1.acquireSemaphore({
-			name: 'test-lock',
-			count: 1,
-		})
+		await session1.acquire('test-lock', { count: 1 })
 
 		// Session 2 tries to acquire (will wait indefinitely)
-		let acquirePromise = session2.acquireSemaphore({
-			name: 'test-lock',
-			count: 1,
-		})
+		let acquirePromise = session2.acquire('test-lock', { count: 1 })
 
 		// Wait a bit to ensure request is sent and pending
 		await sleep(100)
@@ -235,8 +182,8 @@ test('close rejects pending requests', { timeout: 30000 }, async () => {
 
 		await expect(acquirePromise).rejects.toThrow('Stream closed')
 
-		await session1.releaseSemaphore({ name: 'test-lock' })
-		await session1.deleteSemaphore({ name: 'test-lock' })
+		await session1.release('test-lock')
+		await session1.delete('test-lock')
 	} finally {
 		await session1.close()
 		await dropCoordinationNode(nodePath)
@@ -250,41 +197,25 @@ test('multiple operations in sequence', { timeout: 30000 }, async () => {
 	let session = await client.session(nodePath)
 
 	try {
-		await session.createSemaphore({
-			name: 'sem1',
-			limit: 2,
-		})
-		await session.createSemaphore({
-			name: 'sem2',
-			limit: 3,
-		})
+		await session.create('sem1', { limit: 2 })
+		await session.create('sem2', { limit: 3 })
 
-		let semaphore1 = await session.acquireSemaphore({
-			name: 'sem1',
-			count: 1,
-		})
-		let semaphore2 = await session.acquireSemaphore({
-			name: 'sem2',
-			count: 2,
-		})
+		let semaphore1 = await session.acquire('sem1', { count: 1 })
+		let semaphore2 = await session.acquire('sem2', { count: 2 })
 		expect(semaphore1.acquired).toBe(true)
 		expect(semaphore2.acquired).toBe(true)
 
-		let { description: desc1 } = await session.describeSemaphore({
-			name: 'sem1',
-		})
-		let { description: desc2 } = await session.describeSemaphore({
-			name: 'sem2',
-		})
+		let { description: desc1 } = await session.describe('sem1')
+		let { description: desc2 } = await session.describe('sem2')
 
 		expect(desc1!.count).toBe(1n)
 		expect(desc2!.count).toBe(2n)
 
-		await session.releaseSemaphore({ name: 'sem1' })
-		await session.releaseSemaphore({ name: 'sem2' })
+		await session.release('sem1')
+		await session.release('sem2')
 
-		await session.deleteSemaphore({ name: 'sem1' })
-		await session.deleteSemaphore({ name: 'sem2' })
+		await session.delete('sem1')
+		await session.delete('sem2')
 	} finally {
 		await session.close()
 		await dropCoordinationNode(nodePath)
@@ -305,19 +236,12 @@ test(
 			let session1IdBefore = session1.sessionId
 			let session2IdBefore = session2.sessionId
 
-			await session1.createSemaphore({
-				name: 'exclusive-lock',
-				limit: 1,
-			})
+			await session1.create('exclusive-lock', { limit: 1 })
 
-			await session1.acquireSemaphore({
-				name: 'exclusive-lock',
-				count: 1,
-			})
+			await session1.acquire('exclusive-lock', { count: 1 })
 
 			// Session 2 tries to acquire (will be pending because session1 holds it)
-			let pendingSemaphore = session2.acquireSemaphore({
-				name: 'exclusive-lock',
+			let pendingSemaphore = session2.acquire('exclusive-lock', {
 				count: 1,
 			})
 
@@ -325,8 +249,7 @@ test(
 			await sleep(100)
 
 			// Describe with owners and waiters
-			let { description } = await session1.describeSemaphore({
-				name: 'exclusive-lock',
+			let { description } = await session1.describe('exclusive-lock', {
 				includeOwners: true,
 				includeWaiters: true,
 			})
@@ -346,7 +269,7 @@ test(
 			session2.forceReconnect()
 
 			// Session 1 sends request to release the lock
-			session1.releaseSemaphore({ name: 'exclusive-lock' })
+			session1.release('exclusive-lock')
 
 			// Wait to ensure request is sent and becomes pending on client
 			await sleep(100)
@@ -357,12 +280,10 @@ test(
 			expect(semaphore.acquired).toBe(true)
 
 			// Describe with owners and waiters
-			let { description: newDescription } =
-				await session2.describeSemaphore({
-					name: 'exclusive-lock',
-					includeOwners: true,
-					includeWaiters: true,
-				})
+			let { description: newDescription } = await session2.describe(
+				'exclusive-lock',
+				{ includeOwners: true, includeWaiters: true }
+			)
 
 			expect(newDescription!.count).toBe(1n)
 			expect(newDescription!.limit).toBe(1n)
@@ -377,8 +298,8 @@ test(
 			expect(session1.sessionId).toBe(session1IdBefore)
 			expect(session2.sessionId).toBe(session2IdBefore)
 
-			await session2.releaseSemaphore({ name: 'exclusive-lock' })
-			await session1.deleteSemaphore({ name: 'exclusive-lock' })
+			await session2.release('exclusive-lock')
+			await session1.delete('exclusive-lock')
 		} finally {
 			await session1.close()
 			await session2.close()
@@ -403,14 +324,10 @@ test(
 		])
 
 		try {
-			await sessions[0].createSemaphore({
-				name: 'limited-resource',
-				limit: 2,
-			})
+			await sessions[0].create('limited-resource', { limit: 2 })
 
 			let acquirePromises = sessions.map((session) =>
-				session.acquireSemaphore({
-					name: 'limited-resource',
+				session.acquire('limited-resource', {
 					count: 1,
 					timeoutMillis: 500,
 				})
@@ -426,13 +343,11 @@ test(
 			for (let i = 0; i < sessions.length; i++) {
 				if (results[i] && sessions[i]) {
 					// eslint-disable-next-line no-await-in-loop
-					await sessions[i]!.releaseSemaphore({
-						name: 'limited-resource',
-					})
+					await sessions[i]!.release('limited-resource')
 				}
 			}
 
-			await sessions[0].deleteSemaphore({ name: 'limited-resource' })
+			await sessions[0].delete('limited-resource')
 		} finally {
 			await Promise.all(sessions.map((s) => s.close()))
 			await dropCoordinationNode(nodePath)
@@ -447,8 +362,7 @@ test('watch semaphore changes', { timeout: 30000 }, async () => {
 	let session = await client.session(nodePath)
 
 	try {
-		await session.createSemaphore({
-			name: 'watched-sem',
+		await session.create('watched-sem', {
 			limit: 1,
 			data: new Uint8Array([1, 2, 3]),
 		})
@@ -462,18 +376,14 @@ test('watch semaphore changes', { timeout: 30000 }, async () => {
 		)
 
 		// Describe with watch enabled
-		let desc = await session.describeSemaphore({
-			name: 'watched-sem',
+		let desc = await session.describe('watched-sem', {
 			watchData: true,
 			watchOwners: true,
 		})
 		expect(desc).toBeDefined()
 
 		// Update semaphore data - should trigger change event
-		await session.updateSemaphore({
-			name: 'watched-sem',
-			data: new Uint8Array([4, 5, 6]),
-		})
+		await session.update('watched-sem', new Uint8Array([4, 5, 6]))
 
 		await sleep(100)
 
@@ -482,7 +392,7 @@ test('watch semaphore changes', { timeout: 30000 }, async () => {
 		expect(changedEvents[0]?.name).toBe('watched-sem')
 		expect(changedEvents[0]?.dataChanged).toBe(true)
 
-		await session.deleteSemaphore({ name: 'watched-sem' })
+		await session.delete('watched-sem')
 	} finally {
 		await session.close()
 		await dropCoordinationNode(nodePath)
@@ -498,34 +408,23 @@ test('rejects request on operation error', { timeout: 30000 }, async () => {
 	try {
 		// Try to acquire non-existent semaphore without ephemeral flag
 		await expect(
-			session.acquireSemaphore({
-				name: 'non-existent-sem',
-				count: 1,
-				ephemeral: false,
-			})
+			session.acquire('non-existent-sem', { count: 1, ephemeral: false })
 		).rejects.toThrow(YDBError)
 
 		// Try to delete non-existent semaphore
-		await expect(
-			session.deleteSemaphore({
-				name: 'non-existent-sem',
-			})
-		).rejects.toThrow(YDBError)
+		await expect(session.delete('non-existent-sem')).rejects.toThrow(
+			YDBError
+		)
 
 		// Try to update non-existent semaphore
 		await expect(
-			session.updateSemaphore({
-				name: 'non-existent-sem',
-				data: new Uint8Array([1, 2, 3]),
-			})
+			session.update('non-existent-sem', new Uint8Array([1, 2, 3]))
 		).rejects.toThrow(YDBError)
 
 		// Try to describe non-existent semaphore
-		await expect(
-			session.describeSemaphore({
-				name: 'non-existent-sem',
-			})
-		).rejects.toThrow(YDBError)
+		await expect(session.describe('non-existent-sem')).rejects.toThrow(
+			YDBError
+		)
 	} finally {
 		await session.close()
 		await dropCoordinationNode(nodePath)
@@ -540,16 +439,13 @@ test(
 		await createCoordinationNode(nodePath)
 
 		// Create session with very short timeout
-		let session = await client.session(nodePath, {
-			recoveryWindowMs: 1,
-		})
+		let session = await client.session(nodePath, { recoveryWindowMs: 1 })
 
 		try {
 			let initialSessionId = session.sessionId
 			expect(initialSessionId).toBeGreaterThan(0n)
 
-			let semaphore = await session.acquireSemaphore({
-				name: 'test-sem',
+			let semaphore = await session.acquire('test-sem', {
 				ephemeral: true,
 			})
 			expect(semaphore.acquired).toBe(true)
@@ -560,11 +456,7 @@ test(
 			await sleep(100)
 
 			// Session expired, so semaphore from old session won't exist
-			await expect(
-				session.describeSemaphore({
-					name: 'test-sem',
-				})
-			).rejects.toThrow(YDBError)
+			await expect(session.describe('test-sem')).rejects.toThrow(YDBError)
 
 			// After reconnection with SESSION_EXPIRED, sessionId should be different
 			// (new session was created because old one expired)
@@ -589,27 +481,19 @@ test(
 		let session2 = await client.session(nodePath)
 
 		try {
-			await session1.createSemaphore({
-				name: 'exclusive-lock',
-				limit: 1,
-			})
-			await session1.acquireSemaphore({
-				name: 'exclusive-lock',
-				count: 1,
-			})
+			await session1.create('exclusive-lock', { limit: 1 })
+			await session1.acquire('exclusive-lock', { count: 1 })
 
 			// Session2 tries to acquire with short timeout - will be pending and then abort
 			await expect(
-				session2.acquireSemaphore(
-					{
-						name: 'exclusive-lock',
-						count: 1,
-					},
+				session2.acquire(
+					'exclusive-lock',
+					{ count: 1 },
 					AbortSignal.timeout(1)
 				)
 			).rejects.toThrow('AbortError')
 
-			await session1.releaseSemaphore({ name: 'exclusive-lock' })
+			await session1.release('exclusive-lock')
 		} finally {
 			await session1.close()
 			await session2.close()
@@ -627,42 +511,36 @@ test(
 
 		await using session = await client.session(nodePath)
 
-		await session.createSemaphore({ name: 'sem1', limit: 1 })
-		await session.createSemaphore({ name: 'sem2', limit: 1 })
+		await session.create('sem1', { limit: 1 })
+		await session.create('sem2', { limit: 1 })
 
 		{
-			await using lock1 = await session.acquireSemaphore({
-				name: 'sem1',
-				count: 1,
-			})
+			await using lock1 = await session.acquire('sem1', { count: 1 })
 			expect(lock1.acquired).toBe(true)
 
 			{
-				await using lock2 = await session.acquireSemaphore({
-					name: 'sem2',
-					count: 1,
-				})
+				await using lock2 = await session.acquire('sem2', { count: 1 })
 				expect(lock2.acquired).toBe(true)
 
-				let desc1 = await session.describeSemaphore({ name: 'sem1' })
-				let desc2 = await session.describeSemaphore({ name: 'sem2' })
+				let desc1 = await session.describe('sem1')
+				let desc2 = await session.describe('sem2')
 				expect(desc1.description!.count).toBe(1n)
 				expect(desc2.description!.count).toBe(1n)
 			}
 
-			let desc1 = await session.describeSemaphore({ name: 'sem1' })
-			let desc2 = await session.describeSemaphore({ name: 'sem2' })
+			let desc1 = await session.describe('sem1')
+			let desc2 = await session.describe('sem2')
 			expect(desc1.description!.count).toBe(1n)
 			expect(desc2.description!.count).toBe(0n)
 		}
 
-		let desc1 = await session.describeSemaphore({ name: 'sem1' })
-		let desc2 = await session.describeSemaphore({ name: 'sem2' })
+		let desc1 = await session.describe('sem1')
+		let desc2 = await session.describe('sem2')
 		expect(desc1.description!.count).toBe(0n)
 		expect(desc2.description!.count).toBe(0n)
 
-		await session.deleteSemaphore({ name: 'sem1' })
-		await session.deleteSemaphore({ name: 'sem2' })
+		await session.delete('sem1')
+		await session.delete('sem2')
 
 		await dropCoordinationNode(nodePath)
 	}
@@ -674,16 +552,12 @@ test('semaphore update and describe methods', { timeout: 30000 }, async () => {
 
 	await using session = await client.session(nodePath)
 
-	await session.createSemaphore({
-		name: 'test-sem',
+	await session.create('test-sem', {
 		limit: 1,
 		data: new Uint8Array([1, 2, 3]),
 	})
 
-	await using semaphore = await session.acquireSemaphore({
-		name: 'test-sem',
-		count: 1,
-	})
+	await using semaphore = await session.acquire('test-sem', { count: 1 })
 
 	expect(semaphore.acquired).toBe(true)
 	expect(semaphore.name).toBe('test-sem')

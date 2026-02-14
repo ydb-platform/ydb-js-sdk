@@ -113,10 +113,10 @@ export interface SessionOptions {
  * const session = await client.session('/local/my-coordination-node');
  *
  * // Acquire a semaphore
- * await session.acquireSemaphore({ name: 'my-semaphore', count: 1 });
+ * await session.acquire('my-semaphore', { count: 1 });
  *
  * // Release the semaphore
- * await session.releaseSemaphore({ name: 'my-semaphore' });
+ * await session.release('my-semaphore');
  *
  * // Close the session
  * await session.close();
@@ -410,9 +410,7 @@ export function coordination(driver: Driver): CoordinationClient {
 // CoordinationSession is not exported - use coordination(driver).session() instead
 export type {
 	AcquireSemaphoreOptions,
-	ReleaseSemaphoreOptions,
 	CreateSemaphoreOptions,
-	UpdateSemaphoreOptions,
 	DeleteSemaphoreOptions,
 	DescribeSemaphoreOptions,
 	DescribeSemaphoreResult,

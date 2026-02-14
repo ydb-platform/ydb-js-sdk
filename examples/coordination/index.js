@@ -46,28 +46,18 @@ async function main() {
 		console.log(`   Is closed: ${session.isClosed}\n`)
 
 		console.log('5. Manual semaphore acquire/release...')
-		await session.createSemaphore({
-			name: 'example-lock',
-			limit: 1,
-		})
+		await session.create('example-lock', { limit: 1 })
 		console.log(`   ✓ Created semaphore 'example-lock' with limit 1`)
 
-		let semaphore = await session.acquireSemaphore({
-			name: 'example-lock',
-			count: 1,
-		})
+		let semaphore = await session.acquire('example-lock', { count: 1 })
 		console.log(
 			`   ✓ Acquired semaphore 'example-lock': ${semaphore.acquired}`
 		)
 
-		let released = await session.releaseSemaphore({
-			name: 'example-lock',
-		})
+		let released = await session.release('example-lock')
 		console.log(`   ✓ Released semaphore 'example-lock': ${released}`)
 
-		await session.deleteSemaphore({
-			name: 'example-lock',
-		})
+		await session.delete('example-lock')
 		console.log(`   ✓ Deleted semaphore 'example-lock'\n`)
 
 		console.log('6. Closing session...')
