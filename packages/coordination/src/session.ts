@@ -462,7 +462,7 @@ export class CoordinationSession
 {
 	#driver: Driver
 	#path: string
-	#timeoutMillis: number | bigint
+	#recoveryWindowMs: number | bigint
 	#description: string
 	#sessionId: bigint = 0n
 	#reqIdCounter: bigint = 0n
@@ -490,7 +490,7 @@ export class CoordinationSession
 		super()
 		this.#driver = driver
 		this.#path = path
-		this.#timeoutMillis = options?.timeoutMillis ?? 30000
+		this.#recoveryWindowMs = options?.recoveryWindowMs ?? 30000
 		this.#description = options?.description ?? ''
 
 		this.#stream = new BidirectionalStream({
@@ -697,7 +697,7 @@ export class CoordinationSession
 				value: create(SessionRequest_SessionStartSchema, {
 					path: this.#path,
 					sessionId: this.#sessionId,
-					timeoutMillis: BigInt(this.#timeoutMillis),
+					timeoutMillis: BigInt(this.#recoveryWindowMs),
 					description: this.#description,
 					seqNo: this.#seqNo++,
 				}),
@@ -834,7 +834,8 @@ export class CoordinationSession
 						typeof options.timeoutMillis === 'bigint'
 							? options.timeoutMillis
 							: BigInt(
-									options.timeoutMillis ?? this.#timeoutMillis
+									options.timeoutMillis ??
+										this.#recoveryWindowMs
 								),
 					data: options.data ?? new Uint8Array(),
 					ephemeral: options.ephemeral ?? false,

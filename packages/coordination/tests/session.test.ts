@@ -541,7 +541,7 @@ test(
 
 		// Create session with very short timeout
 		let session = await client.session(nodePath, {
-			timeoutMillis: 1,
+			recoveryWindowMs: 1,
 		})
 
 		try {

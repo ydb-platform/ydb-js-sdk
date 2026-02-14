@@ -36,7 +36,7 @@ async function main() {
 
 		console.log('3. Creating coordination session...')
 		let session = await client.session(nodePath, {
-			timeoutMillis: 10000,
+			recoveryWindowMs: 10000,
 			description: 'Example coordination session',
 		})
 		console.log(`   ✓ Session created with ID: ${session.sessionId}\n`)

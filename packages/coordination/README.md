@@ -37,14 +37,14 @@ await client.createNode('/local/my-coordination-node')
 
 // Create a session
 let session = await client.session('/local/my-coordination-node', {
-  timeoutMillis: 10000,
+  recoveryWindowMs: 10000,
   description: 'My application session',
 })
 
 // Or with timeout for session creation
 let sessionWithTimeout = await client.session(
   '/local/my-coordination-node',
-  { timeoutMillis: 10000 },
+  { recoveryWindowMs: 10000 },
   AbortSignal.timeout(5000) // 5 second timeout for session creation
 )
 
@@ -71,9 +71,8 @@ await session.createSemaphore({ name: 'my-lock', limit: 1 })
   if (lock.acquired) {
     // Critical section - lock is held
   }
-  // Lock automatically released here
 }
-
+// Lock automatically released here
 // Session automatically closed here
 ```
 

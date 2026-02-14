@@ -83,9 +83,12 @@ export interface CoordinationNodeDescription {
  */
 export interface SessionOptions {
 	/**
-	 * Timeout in milliseconds during which client may restore a detached session
+	 * Recovery window in milliseconds during which client may restore a detached session.
+	 * If the client reconnects within this window, the session will be restored with the same session ID.
+	 *
+	 * Default: 30000 (30 seconds)
 	 */
-	timeoutMillis?: number | bigint
+	recoveryWindowMs?: number | bigint
 
 	/**
 	 * User-defined description that may be used to describe the client
