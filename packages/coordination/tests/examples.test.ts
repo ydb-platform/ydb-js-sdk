@@ -15,9 +15,6 @@ let driver = new Driver(inject('connectionString'), {
 
 let client = coordination(driver)
 
-// Maximum value for uint64 (2^64 - 1) - wait indefinitely
-let MAX_UINT64 = 2n ** 64n - 1n
-
 async function createCoordinationNode(path: string): Promise<void> {
 	await client.createNode(path)
 }
@@ -112,7 +109,7 @@ test('leader election example', { timeout: 30000 }, async () => {
 			// Try to acquire leadership (will wait indefinitely in queue)
 			let semaphore = await session.acquire('my-service-leader', {
 				count: 1,
-				timeoutMillis: MAX_UINT64,
+				timeoutMillis: Infinity,
 				data: new TextEncoder().encode(endpoint),
 			})
 			let isLeader = semaphore.acquired
@@ -254,7 +251,7 @@ test('service discovery example', { timeout: 30000 }, async () => {
 	try {
 		// Create service discovery semaphore with very large limit
 		let setupSession = await client.session(nodePath)
-		await setupSession.create('my-service-endpoints', { limit: MAX_UINT64 })
+		await setupSession.create('my-service-endpoints', { limit: Infinity })
 		await setupSession.close()
 
 		// Start all instances - they register and discover each other

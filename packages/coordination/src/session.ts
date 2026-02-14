@@ -40,6 +40,19 @@ let dbg = loggers.driver.extend('coordination').extend('session')
 // Retry loop will handle reconnection if this timeout is exceeded
 let SESSION_START_TIMEOUT_MS = 5000
 
+// Maximum value for uint64 in protobuf
+let MAX_UINT64 = 2n ** 64n - 1n
+
+/**
+ * Converts a number to bigint, handling Infinity as MAX_UINT64
+ */
+function toBigInt(value: number): bigint {
+	if (value === Infinity) {
+		return MAX_UINT64
+	}
+	return BigInt(Math.floor(value))
+}
+
 /**
  * Result type for session responses
  */
@@ -58,13 +71,13 @@ export interface AcquireSemaphoreOptions {
 	/**
 	 * Number of tokens to acquire (default: 1)
 	 */
-	count?: number | bigint
+	count?: number
 
 	/**
 	 * Timeout in milliseconds after which operation will fail if it's still waiting in the waiters queue.
-	 * Use  2n ** 64n - 1n for no timeout
+	 * Use Infinity for no timeout
 	 */
-	timeoutMillis?: number | bigint
+	timeoutMillis?: number
 
 	/**
 	 * User-defined binary data that may be attached to the operation
@@ -85,7 +98,7 @@ export interface CreateSemaphoreOptions {
 	/**
 	 * Number of tokens that may be acquired by sessions
 	 */
-	limit: number | bigint
+	limit: number
 
 	/**
 	 * User-defined data that is attached to the semaphore
@@ -407,7 +420,7 @@ export class CoordinationSession
 {
 	#driver: Driver
 	#path: string
-	#recoveryWindowMs: number | bigint
+	#recoveryWindowMs: number
 	#description: string
 	#sessionId: bigint = 0n
 	#reqIdCounter: bigint = 0n
@@ -642,7 +655,7 @@ export class CoordinationSession
 				value: create(SessionRequest_SessionStartSchema, {
 					path: this.#path,
 					sessionId: this.#sessionId,
-					timeoutMillis: BigInt(this.#recoveryWindowMs),
+					timeoutMillis: toBigInt(this.#recoveryWindowMs),
 					description: this.#description,
 					seqNo: this.#seqNo++,
 				}),
@@ -773,17 +786,10 @@ export class CoordinationSession
 				value: create(SessionRequest_AcquireSemaphoreSchema, {
 					reqId,
 					name,
-					count:
-						typeof options?.count === 'bigint'
-							? options.count
-							: BigInt(options?.count ?? 1),
-					timeoutMillis:
-						typeof options?.timeoutMillis === 'bigint'
-							? options.timeoutMillis
-							: BigInt(
-									options?.timeoutMillis ??
-										this.#recoveryWindowMs
-								),
+					count: toBigInt(options?.count ?? 1),
+					timeoutMillis: toBigInt(
+						options?.timeoutMillis ?? this.#recoveryWindowMs
+					),
 					data: options?.data ?? new Uint8Array(),
 					ephemeral: options?.ephemeral ?? false,
 				}),
@@ -865,10 +871,7 @@ export class CoordinationSession
 				value: create(SessionRequest_CreateSemaphoreSchema, {
 					reqId,
 					name,
-					limit:
-						typeof options.limit === 'bigint'
-							? options.limit
-							: BigInt(options.limit),
+					limit: toBigInt(options.limit),
 					data: options.data ?? new Uint8Array(),
 				}),
 			},

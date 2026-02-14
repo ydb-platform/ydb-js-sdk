@@ -88,7 +88,7 @@ export interface SessionOptions {
 	 *
 	 * Default: 30000 (30 seconds)
 	 */
-	recoveryWindowMs?: number | bigint
+	recoveryWindowMs?: number
 
 	/**
 	 * User-defined description that may be used to describe the client
