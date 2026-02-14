@@ -1,4 +1,5 @@
 import { expect, inject, test } from 'vitest'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Driver } from '@ydbjs/core'
 
@@ -7,7 +8,6 @@ import {
 	type SemaphoreChangedEvent,
 	coordination,
 } from '../src/index.js'
-import { sleep } from './helpers.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,

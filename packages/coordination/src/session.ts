@@ -44,6 +44,12 @@ let SESSION_START_TIMEOUT_MS = 5000
 let MAX_UINT64 = 2n ** 64n - 1n
 
 /**
+ * Symbol for accessing test-only methods on CoordinationSession
+ * @internal This is for testing purposes only
+ */
+export const TEST_ONLY = Symbol('TEST_ONLY')
+
+/**
  * Converts a number to bigint, handling Infinity as MAX_UINT64
  */
 function toBigInt(value: number): bigint {
@@ -210,7 +216,7 @@ export const CoordinationSessionEvents = {
 } as const
 
 /**
- * Semaphore semaphore handle that provides convenient access to semaphore operations
+ * Semaphore handle that provides convenient access to semaphore operations
  *
  * This class represents a semaphore semaphore and provides methods to update and describe
  * the semaphore without repeating the semaphore name. It implements the AsyncDisposable,
@@ -1098,14 +1104,14 @@ export class CoordinationSession
 	}
 
 	/**
-	 * Forces stream disconnection to trigger reconnection
-	 *
-	 * This is useful for testing reconnection and retry behavior.
-	 * Pending requests are preserved and will be retried after reconnection.
-	 *
-	 * @internal This method is intended for testing purposes only
+	 * Test-only methods accessible via TEST_ONLY symbol
+	 * @internal
 	 */
-	forceReconnect(): void {
-		this.#stream.disconnect()
+	[TEST_ONLY]() {
+		return {
+			forceReconnect: () => {
+				this.#stream.disconnect()
+			},
+		}
 	}
 }

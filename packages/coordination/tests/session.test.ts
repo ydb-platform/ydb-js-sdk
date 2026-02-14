@@ -1,4 +1,5 @@
 import { expect, inject, test } from 'vitest'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
@@ -8,7 +9,7 @@ import {
 	type SemaphoreChangedEvent,
 	coordination,
 } from '../src/index.js'
-import { sleep } from './helpers.js'
+import { TEST_ONLY } from '../src/session.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -265,8 +266,7 @@ test(
 			expect(description!.waiters[0]!.sessionId).toBe(session2.sessionId)
 			expect(description!.waiters[0]!.count).toBe(1n)
 
-			// Force reconnection via forceReconnect()
-			session2.forceReconnect()
+			session2[TEST_ONLY]().forceReconnect()
 
 			// Session 1 sends request to release the lock
 			session1.release('exclusive-lock')
@@ -451,7 +451,7 @@ test(
 			expect(semaphore.acquired).toBe(true)
 
 			// Force disconnect to simulate network issue
-			session.forceReconnect()
+			session[TEST_ONLY]().forceReconnect()
 
 			await sleep(100)
 
