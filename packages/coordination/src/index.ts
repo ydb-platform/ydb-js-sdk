@@ -194,7 +194,13 @@ export interface CoordinationClient {
  * Note: path field is omitted as it's initialized by the server ("cannot be set")
  */
 function buildConfig(config?: CoordinationNodeConfig) {
-	let configInit: any = {}
+	let configInit: {
+		selfCheckPeriodMillis?: number
+		sessionGracePeriodMillis?: number
+		readConsistencyMode?: ConsistencyMode
+		attachConsistencyMode?: ConsistencyMode
+		rateLimiterCountersMode?: RateLimiterCountersMode
+	} = {}
 	if (config?.selfCheckPeriodMillis !== undefined) {
 		configInit.selfCheckPeriodMillis = config.selfCheckPeriodMillis
 	}

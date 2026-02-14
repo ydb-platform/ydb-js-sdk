@@ -274,12 +274,8 @@ export class BidirectionalStream<TRequest, TResponse, TResult = TResponse> {
 			try {
 				return await abortable(signal, resultPromise)
 			} catch (error) {
-				let pending = this.#pendingRequests.get(reqId)
-				if (pending) {
-					this.#pendingRequests.delete(reqId)
-					pending.reject(error as Error)
-					dbg.log('request %s aborted by signal', reqId)
-				}
+				this.#pendingRequests.delete(reqId)
+				throw error
 			}
 		}
 

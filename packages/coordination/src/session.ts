@@ -662,8 +662,10 @@ export class CoordinationSession
 			},
 		})
 
-		let sessionStartedPromise = new Promise<void>((resolve) => {
+		let sessionStartedReject: ((reason?: any) => void) | null = null
+		let sessionStartedPromise = new Promise<void>((resolve, reject) => {
 			this.#sessionStartedResolve = resolve
+			sessionStartedReject = reject
 		})
 
 		// Start stream (will automatically retry pending requests on reconnection)
@@ -680,6 +682,11 @@ export class CoordinationSession
 				sessionStartedPromise
 			)
 		} catch (error) {
+			// Reject the promise to prevent it from hanging on retry
+			if (sessionStartedReject) {
+				;(sessionStartedReject as (reason?: any) => void)(error)
+			}
+
 			// Disconnect stream on error to reset state for next start() attempt
 			this.#stream.disconnect()
 
