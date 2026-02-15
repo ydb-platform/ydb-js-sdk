@@ -4,12 +4,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 
-import {
-	CoordinationSessionEvents,
-	type SemaphoreChangedEvent,
-	coordination,
-} from '../src/index.js'
-import { TEST_ONLY } from '../src/session.js'
+import { CoordinationSessionEvents, coordination } from '../src/index.js'
+import { type SemaphoreChangedEvent, TEST_ONLY } from '../src/session.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -597,3 +593,127 @@ test(
 		}
 	}
 )
+
+test('watch stops on abort signal', { timeout: 30000 }, async () => {
+	let nodePath = '/local/test-node-watch-3'
+	await createCoordinationNode(nodePath)
+
+	await using session = await client.session(nodePath)
+
+	await session.create('test-sem', {
+		limit: 1,
+		data: new Uint8Array([1]),
+	})
+
+	let controller = new AbortController()
+	let updateCount = 0
+
+	let watchPromise = (async () => {
+		for await (let _ of session.watch(
+			'test-sem',
+			{ data: true },
+			controller.signal
+		)) {
+			updateCount++
+		}
+	})()
+
+	await sleep(100)
+
+	// Abort after initial value
+	controller.abort()
+
+	await sleep(100)
+
+	await session.update('test-sem', new TextEncoder().encode('data'))
+
+	await watchPromise
+
+	// Should only get initial value
+	expect(updateCount).toBe(1)
+
+	await session.delete('test-sem')
+	await dropCoordinationNode(nodePath)
+})
+
+test(
+	'watch requires at least one watch option',
+	{ timeout: 30000 },
+	async () => {
+		let nodePath = '/local/test-node-watch-4'
+		await createCoordinationNode(nodePath)
+
+		await using session = await client.session(nodePath)
+
+		await session.create('test-sem', { limit: 1 })
+
+		await expect(async () => {
+			for await (let _ of session.watch('test-sem', {})) {
+			}
+		}).rejects.toThrow(
+			'At least one of options.data or options.owners must be true'
+		)
+
+		await session.delete('test-sem')
+		await dropCoordinationNode(nodePath)
+	}
+)
+
+test('watch with both data and owners', { timeout: 30000 }, async () => {
+	let nodePath = '/local/test-node-watch-5'
+	await createCoordinationNode(nodePath)
+
+	let session1 = await client.session(nodePath)
+	let session2 = await client.session(nodePath)
+
+	try {
+		await session1.create('multi-sem', {
+			limit: 1,
+			data: new TextEncoder().encode('initial'),
+		})
+
+		let controller = new AbortController()
+		let updates: Array<{ data: string; owners: number }> = []
+
+		let watchPromise = (async () => {
+			for await (let desc of session1.watch(
+				'multi-sem',
+				{ data: true, owners: true },
+				controller.signal
+			)) {
+				updates.push({
+					data: new TextDecoder().decode(desc.data),
+					owners: desc.owners?.length ?? 0,
+				})
+
+				if (updates.length >= 3) {
+					break
+				}
+			}
+		})()
+
+		await sleep(100)
+
+		// Trigger owner change
+		await session2.acquire('multi-sem', { count: 1 })
+		await sleep(100)
+
+		// Trigger data change
+		await session1.update('multi-sem', new TextEncoder().encode('updated'))
+		await sleep(100)
+
+		await watchPromise
+
+		expect(updates.length).toBe(3)
+		expect(updates[0]).toEqual({ data: 'initial', owners: 0 })
+		expect(updates[1]).toEqual({ data: 'initial', owners: 1 })
+		expect(updates[2]).toEqual({ data: 'updated', owners: 1 })
+
+		await session2.release('multi-sem')
+		await session1.delete('multi-sem')
+	} finally {
+		await session1.close()
+		await session2.close()
+		await dropCoordinationNode(nodePath)
+	}
+})

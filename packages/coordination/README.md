@@ -8,7 +8,7 @@ High-level coordination client for YDB. Supports coordination nodes, distributed
 - Distributed semaphores with acquire/release operations
 - Automatic resource cleanup with TypeScript `using` keyword
 - Automatic session lifecycle with keep-alive and reconnection
-- Watch notifications for semaphore changes via EventEmitter
+- Watch semaphore changes with AsyncIterable
 - Automatic session recreation on session expiring
 
 ## Installation
@@ -76,24 +76,25 @@ await session.create('my-lock', { limit: 1 })
 // Session automatically closed here
 ```
 
-## Session Events
+## Watching Semaphore Changes
 
-Sessions extend `EventEmitter` and emit events for semaphore changes:
+```typescript
+// Watch for configuration changes
+for await (let desc of session.watch('config-sem', { data: true }, signal)) {
+  console.log('Config updated:', new TextDecoder().decode(desc.data))
+}
+```
+
+The `watch()` method automatically handles re-subscription when changes occur.
+
+## Session Events
 
 ```typescript
 import { CoordinationSessionEvents } from '@ydbjs/coordination'
 
-// Emitted when a watched semaphore changes
-session.on(CoordinationSessionEvents.SEMAPHORE_CHANGED, (event) => {
-  console.log(`Semaphore ${event.name} changed`)
-  if (event.dataChanged) console.log('Data changed')
-  if (event.ownersChanged) console.log('Owners changed')
-})
-
 // Emitted when session expires and new session is created
-// Important: All acquired semaphores are automatically released by the server
 session.on(CoordinationSessionEvents.SESSION_EXPIRED, (event) => {
-  console.log(`Session ${event.sessionId} expired at ${event.timestamp}`)
+  console.log(`Session ${event.sessionId} expired`)
   // Re-acquire semaphores if needed
 })
 ```

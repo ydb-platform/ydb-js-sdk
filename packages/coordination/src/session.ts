@@ -148,6 +148,32 @@ export interface DescribeSemaphoreOptions {
 }
 
 /**
+ * Options for watching a semaphore
+ */
+export interface WatchOptions {
+	/**
+	 * Watch for changes in semaphore data
+	 */
+	data?: boolean
+
+	/**
+	 * Watch for changes in semaphore owners
+	 */
+	owners?: boolean
+
+	/**
+	 * Include owners list in each update
+	 * (automatically enabled if owners is true)
+	 */
+	includeOwners?: boolean
+
+	/**
+	 * Include waiters list in each update
+	 */
+	includeWaiters?: boolean
+}
+
+/**
  * Result of describing a semaphore
  */
 export interface DescribeSemaphoreResult {
@@ -1020,6 +1046,148 @@ export class CoordinationSession
 		return {
 			description: result.semaphoreDescription,
 			watchAdded: result.watchAdded,
+		}
+	}
+
+	/**
+	 * Watches a semaphore for changes and yields descriptions on each change
+	 *
+	 * This method returns an AsyncIterable that automatically handles re-subscription
+	 * when the semaphore changes.
+	 *
+	 * The iterator yields the initial description immediately, then yields new descriptions
+	 * whenever the watched properties (data or owners) change.
+	 *
+	 * @param name - Name of the semaphore to watch
+	 * @param options - Options for watching (data, owners, includeOwners, includeWaiters)
+	 * @param signal - AbortSignal to stop watching
+	 * @returns AsyncIterable that yields semaphore descriptions
+	 *
+	 * @example
+	 * ```typescript
+	 * // Watch for data changes
+	 * for await (let desc of session.watch('config-sem', { data: true })) {
+	 *   console.log('Config updated:', new TextDecoder().decode(desc.data))
+	 *   if (shouldStop) {
+	 *     break
+	 *   }
+	 * }
+	 * ```
+	 *
+	 * @example
+	 * ```typescript
+	 * // Watch for owner changes
+	 * for await (let desc of session.watch('lock-sem', { owners: true })) {
+	 *   console.log('Lock owners:', desc.owners?.length)
+	 * }
+	 * ```
+	 */
+	async *watch(
+		name: string,
+		options?: WatchOptions,
+		signal?: AbortSignal
+	): AsyncIterable<SemaphoreDescription> {
+		if (this.#closed) {
+			throw new Error('Session is closed')
+		}
+
+		let watchData = options?.data ?? false
+		let watchOwners = options?.owners ?? false
+
+		if (!watchData && !watchOwners) {
+			throw new Error(
+				'At least one of options.data or options.owners must be true'
+			)
+		}
+
+		// Auto-enable includeOwners if watching owners
+		let includeOwners = options?.includeOwners ?? watchOwners
+		let includeWaiters = options?.includeWaiters ?? false
+
+		let getDescription = async (): Promise<SemaphoreDescription | null> => {
+			let result = await this.describe(
+				name,
+				{
+					includeOwners,
+					includeWaiters,
+					watchData,
+					watchOwners,
+				},
+				signal
+			)
+			return result.description ?? null
+		}
+
+		let changeResolve: (() => void) | null = null
+		let changeReject: ((error: Error) => void) | null = null
+
+		let changeHandler = (event: SemaphoreChangedEvent) => {
+			if (event.name !== name) {
+				return
+			}
+
+			// Check if the change matches what we're watching
+			let matches = false
+			if (watchData && event.dataChanged) {
+				matches = true
+			}
+			if (watchOwners && event.ownersChanged) {
+				matches = true
+			}
+
+			if (matches && changeResolve) {
+				changeResolve()
+				changeResolve = null
+				changeReject = null
+			}
+		}
+
+		let abortHandler = () => {
+			if (changeReject) {
+				changeReject(new Error('Aborted'))
+				changeResolve = null
+				changeReject = null
+			}
+		}
+
+		let waitForChange = (): Promise<void> => {
+			return new Promise((resolve, reject) => {
+				changeResolve = resolve
+				changeReject = reject
+			})
+		}
+
+		this.on(CoordinationSessionEvents.SEMAPHORE_CHANGED, changeHandler)
+		signal?.addEventListener('abort', abortHandler)
+
+		try {
+			// Yield initial description
+			let initial = await getDescription()
+			if (initial) {
+				yield initial
+			}
+
+			while (!signal?.aborted) {
+				// eslint-disable-next-line no-await-in-loop
+				await waitForChange()
+
+				// Re-subscribe and get updated description
+				// eslint-disable-next-line no-await-in-loop
+				let updated = await getDescription()
+				if (updated) {
+					yield updated
+				}
+			}
+		} catch (error) {
+			if (error instanceof Error && error.message === 'Aborted') {
+				dbg.log('watch: stopped watching semaphore: %s', name)
+				return
+			}
+			throw error
+		} finally {
+			this.off(CoordinationSessionEvents.SEMAPHORE_CHANGED, changeHandler)
+			signal?.removeEventListener('abort', abortHandler)
+			dbg.log('watch: cleanup completed for semaphore: %s', name)
 		}
 	}
 

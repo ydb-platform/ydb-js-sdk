@@ -420,8 +420,8 @@ export type {
 	DeleteSemaphoreOptions,
 	DescribeSemaphoreOptions,
 	DescribeSemaphoreResult,
-	SemaphoreChangedEvent,
 	SessionExpiredEvent,
+	WatchOptions,
 } from './session.js'
 
 export { CoordinationSessionEvents } from './session.js'
