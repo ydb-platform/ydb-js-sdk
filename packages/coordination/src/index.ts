@@ -15,7 +15,10 @@ import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 
+import type { AcquireSemaphoreOptions } from './session.js'
 import { CoordinationSession } from './session.js'
+import { SessionOwnedLock } from './semaphore.js'
+import type { Lock } from './semaphore.js'
 
 let dbg = loggers.driver.extend('coordination')
 
@@ -187,6 +190,47 @@ export interface CoordinationClient {
 		options?: SessionOptions,
 		signal?: AbortSignal
 	): Promise<CoordinationSession>
+
+	/**
+	 * Acquires a distributed lock with automatic session management
+	 *
+	 * This is a high-level convenience method that combines session creation,
+	 * semaphore acquisition, and automatic cleanup into a single operation.
+	 * The session is created internally and automatically closed when the lock is released.
+	 *
+	 * For more complex scenarios (multiple locks, long-lived sessions), use session() instead.
+	 *
+	 * @param path - Path to the coordination node
+	 * @param name - Name of the semaphore to acquire
+	 * @param options - Optional lock acquisition settings (combines AcquireSemaphoreOptions and SessionOptions)
+	 * @param signal - Optional abort signal to timeout lock acquisition
+	 * @returns A distributed lock that automatically manages session lifecycle
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * // Simple distributed lock
+	 * await using lock = await client.acquireLock('/local/node', 'my-lock')
+	 * // Session created, lock acquired
+	 * // Do work with lock
+	 * // Lock released and session closed automatically
+	 * ```
+	 *
+	 * @example
+	 * ```typescript
+	 * // With options
+	 * await using lock = await client.acquireLock('/local/node', 'my-lock', {
+	 *   timeoutMillis: 5000,
+	 *   ephemeral: true
+	 * })
+	 * ```
+	 */
+	acquireLock(
+		path: string,
+		name: string,
+		options?: AcquireSemaphoreOptions & SessionOptions,
+		signal?: AbortSignal
+	): Promise<Lock>
 }
 
 /**
@@ -404,12 +448,59 @@ export function coordination(driver: Driver): CoordinationClient {
 		}
 	}
 
+	async function acquireLock(
+		path: string,
+		name: string,
+		options?: AcquireSemaphoreOptions & SessionOptions,
+		signal?: AbortSignal
+	): Promise<Lock> {
+		dbg.log('acquiring distributed lock: %s on node: %s', name, path)
+
+		// Extract session options
+		let sessionOptions: SessionOptions = {}
+		if (options?.recoveryWindowMs !== undefined) {
+			sessionOptions.recoveryWindowMs = options.recoveryWindowMs
+		}
+		if (options?.description !== undefined) {
+			sessionOptions.description = options.description
+		}
+
+		// Extract acquire options
+		let acquireOptions: AcquireSemaphoreOptions = {}
+		if (options?.count !== undefined) {
+			acquireOptions.count = options.count
+		}
+		if (options?.timeoutMillis !== undefined) {
+			acquireOptions.timeoutMillis = options.timeoutMillis
+		}
+		if (options?.data !== undefined) {
+			acquireOptions.data = options.data
+		}
+		if (options?.ephemeral !== undefined) {
+			acquireOptions.ephemeral = options.ephemeral
+		}
+
+		let sess = await session(path, sessionOptions, signal)
+
+		try {
+			let lock = await sess.acquire(name, acquireOptions, signal)
+
+			// Wrap in SessionOwnedLock that owns the session
+			return new SessionOwnedLock(sess, lock)
+		} catch (error) {
+			dbg.log('failed to acquire lock, closing session: %O', error)
+			await sess.close()
+			throw error
+		}
+	}
+
 	return {
 		createNode,
 		alterNode,
 		dropNode,
 		describeNode,
 		session,
+		acquireLock,
 	}
 }
 

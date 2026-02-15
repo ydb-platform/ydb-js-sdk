@@ -431,7 +431,7 @@ test('rejects request on operation error', { timeout: 30000 }, async () => {
 })
 
 test(
-	'resets sessionId to 0 on SESSION_EXPIRED failure',
+	'handles session expiration - resets sessionId and aborts lock signal',
 	{ timeout: 30000 },
 	async () => {
 		let nodePath = '/local/test-node-16'
@@ -444,10 +444,11 @@ test(
 			let initialSessionId = session.sessionId
 			expect(initialSessionId).toBeGreaterThan(0n)
 
-			let semaphore = await session.acquire('test-sem', {
+			let lock = await session.acquire('test-sem', {
 				ephemeral: true,
 			})
-			expect(semaphore.name).toBe('test-sem')
+			expect(lock.name).toBe('test-sem')
+			expect(lock.signal.aborted).toBe(false)
 
 			// Set up promise to wait for sessionExpired event
 			let sessionExpiredPromise = new Promise<void>((resolve) => {
@@ -461,6 +462,11 @@ test(
 
 			// Wait for sessionExpired event
 			await sessionExpiredPromise
+
+			// Lock signal should be aborted now
+			expect(lock.signal.aborted).toBe(true)
+			expect(lock.signal.reason).toBeDefined()
+			expect(lock.signal.reason.message).toContain('Lock lost')
 
 			// Session expired, so semaphore from old session won't exist
 			await expect(session.describe('test-sem')).rejects.toThrow(YDBError)
@@ -476,43 +482,6 @@ test(
 		}
 	}
 )
-
-test('lock signal aborts on session expired', { timeout: 30000 }, async () => {
-	let nodePath = '/local/test-node-lock-signal'
-	await createCoordinationNode(nodePath)
-
-	// Create session with very short timeout
-	let session = await client.session(nodePath, { recoveryWindowMs: 1 })
-
-	try {
-		let lock = await session.acquire('test-lock', {
-			ephemeral: true,
-		})
-
-		expect(lock.signal.aborted).toBe(false)
-
-		// Set up promise to wait for sessionExpired event
-		let sessionExpiredPromise = new Promise<void>((resolve) => {
-			session.once('sessionExpired', () => {
-				resolve()
-			})
-		})
-
-		// Force disconnect to simulate network issue and trigger session expiration
-		session[TEST_ONLY]().forceReconnect()
-
-		// Wait for sessionExpired event
-		await sessionExpiredPromise
-
-		// Lock signal should be aborted now
-		expect(lock.signal.aborted).toBe(true)
-		expect(lock.signal.reason).toBeDefined()
-		expect(lock.signal.reason.message).toContain('Lock lost')
-	} finally {
-		await session.close()
-		await dropCoordinationNode(nodePath)
-	}
-})
 
 test(
 	'aborts semaphore operation with AbortSignal timeout',
@@ -727,6 +696,61 @@ test('watch with both data and owners', { timeout: 30000 }, async () => {
 	} finally {
 		await session1.close()
 		await session2.close()
+		await dropCoordinationNode(nodePath)
+	}
+})
+
+test('acquires distributed lock and releases on dispose', async () => {
+	let nodePath = '/local/test-node-acquire-lock-2'
+	await createCoordinationNode(nodePath)
+
+	try {
+		let lockName = 'dispose-lock'
+
+		// Acquire lock in a scope
+		{
+			await using lock = await client.acquireLock(nodePath, lockName, {
+				ephemeral: true,
+			})
+			expect(lock.name).toBe(lockName)
+		}
+		// Lock should be released here
+
+		// Try to acquire the same lock again - should succeed if properly released
+		await using lock2 = await client.acquireLock(nodePath, lockName, {
+			ephemeral: true,
+		})
+		expect(lock2.name).toBe(lockName)
+	} finally {
+		await dropCoordinationNode(nodePath)
+	}
+})
+
+test('acquireLock fails when semaphore is busy', async () => {
+	let nodePath = '/local/test-node-acquire-lock-3'
+	await createCoordinationNode(nodePath)
+
+	try {
+		// Create a non-ephemeral semaphore with limit 1
+		let session = await client.session(nodePath)
+		await session.create('limited-lock', { limit: 1 })
+
+		// Acquire the lock (without using, we'll manually release)
+		let lock1 = await session.acquire('limited-lock')
+		expect(lock1.name).toBe('limited-lock')
+
+		// Try to acquire with very short timeout - should fail
+		await expect(
+			client.acquireLock(nodePath, 'limited-lock', {
+				timeoutMillis: 100,
+			})
+		).rejects.toBeInstanceOf(YDBError)
+
+		// Clean up
+		await lock1.release()
+		await session.delete('limited-lock')
+		await session.close()
+	} finally {
 		await dropCoordinationNode(nodePath)
 	}
 })

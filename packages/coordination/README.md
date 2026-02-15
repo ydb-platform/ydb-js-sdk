@@ -21,6 +21,32 @@ Requires Node.js >= 20.19.
 
 ## Getting Started
 
+### Simple Distributed Lock
+
+```typescript
+import { Driver } from '@ydbjs/core'
+import { coordination } from '@ydbjs/coordination'
+
+let driver = new Driver('grpc://localhost:2136/local')
+let client = coordination(driver)
+
+// Create coordination node
+await client.createNode('/local/my-coordination-node')
+
+// Acquire lock with automatic session management
+await using lock = await client.acquireLock(
+  '/local/my-coordination-node',
+  'my-lock',
+  {
+    ephemeral: true,
+  }
+)
+// Lock acquired, do work
+// Lock and session automatically released
+```
+
+### Advanced Usage
+
 ```typescript
 import { Driver } from '@ydbjs/core'
 import { coordination } from '@ydbjs/coordination'

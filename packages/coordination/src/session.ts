@@ -33,7 +33,7 @@ import { backoff, combine, jitter } from '@ydbjs/retry/strategy'
 
 import { BidirectionalStream } from './stream.js'
 import type { Lock } from './semaphore.js'
-import { Semaphore } from './semaphore.js'
+import { SemaphoreLock } from './semaphore.js'
 import type { SessionOptions } from './index.js'
 
 let dbg = loggers.driver.extend('coordination').extend('session')
@@ -693,7 +693,7 @@ export class CoordinationSession
 			throw new YDBError(StatusIds_StatusCode.TIMEOUT, [])
 		}
 
-		return new Semaphore(this, name)
+		return new SemaphoreLock(this, name)
 	}
 
 	/**
@@ -732,7 +732,7 @@ export class CoordinationSession
 			return null
 		}
 
-		return new Semaphore(this, name)
+		return new SemaphoreLock(this, name)
 	}
 
 	/**
