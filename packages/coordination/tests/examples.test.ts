@@ -3,8 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Driver } from '@ydbjs/core'
 
-import { CoordinationSessionEvents, coordination } from '../src/index.js'
-import type { SemaphoreChangedEvent } from '../src/session.js'
+import { coordination } from '../src/index.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -53,55 +52,31 @@ test('leader election example', { timeout: 30000 }, async () => {
 			description: instanceId,
 		})
 
-		try {
-			session.on(
-				CoordinationSessionEvents.SEMAPHORE_CHANGED,
-				async (event: SemaphoreChangedEvent) => {
-					if (
-						event.name === 'my-service-leader' &&
-						event.ownersChanged
-					) {
-						try {
-							let { description } = await session.describe(
-								'my-service-leader',
-								{ includeOwners: true, watchOwners: true }
-							)
+		let abortController = new AbortController()
 
-							if (
-								description &&
-								description.owners &&
-								description.owners.length > 0
-							) {
-								let leaderEndpoint = new TextDecoder().decode(
-									description.owners[0]!.data
-								)
-								leaderLog.push(leaderEndpoint)
-							}
-						} catch {
-							// Semaphore might be deleted
+		try {
+			// Watch for leader changes in background
+			;(async () => {
+				try {
+					for await (let description of session.watch(
+						'my-service-leader',
+						{ owners: true },
+						abortController.signal
+					)) {
+						if (
+							description.owners &&
+							description.owners.length > 0
+						) {
+							let leaderEndpoint = new TextDecoder().decode(
+								description.owners[0]!.data
+							)
+							leaderLog.push(leaderEndpoint)
 						}
 					}
+				} catch {
+					// Watch stopped or semaphore deleted
 				}
-			)
-
-			//  Set watcher and get initial state
-			let { description, watchAdded } = await session.describe(
-				'my-service-leader',
-				{ includeOwners: true, watchOwners: true }
-			)
-			expect(watchAdded).toBe(true)
-
-			// Record initial leader if exists
-			if (
-				description &&
-				description.owners &&
-				description.owners.length > 0
-			) {
-				let leaderEndpoint = new TextDecoder().decode(
-					description.owners[0]!.data
-				)
-				leaderLog.push(leaderEndpoint)
-			}
+			})()
 
 			// Try to acquire leadership (will wait indefinitely in queue)
 			// Using acquire() guarantees we got the lock when it returns
@@ -121,6 +96,7 @@ test('leader election example', { timeout: 30000 }, async () => {
 			// Wait a bit to observe leader changes
 			await sleep(1500)
 		} finally {
+			abortController.abort()
 			await session.close()
 		}
 	}
@@ -193,40 +169,28 @@ test('service discovery example', { timeout: 30000 }, async () => {
 			description: instanceId,
 		})
 
-		try {
-			session.on(
-				CoordinationSessionEvents.SEMAPHORE_CHANGED,
-				async (event) => {
-					if (
-						event.name === 'my-service-endpoints' &&
-						event.ownersChanged
-					) {
-						try {
-							let { description } = await session.describe(
-								'my-service-endpoints',
-								{ includeOwners: true, watchOwners: true }
-							)
+		let abortController = new AbortController()
 
-							if (description && description.owners) {
-								let endpoints = description.owners.map(
-									(owner) =>
-										new TextDecoder().decode(owner.data)
-								)
-								endpointLog.push(endpoints)
-							}
-						} catch {
-							// Semaphore might be deleted
+		try {
+			// Watch for endpoint changes in background
+			;(async () => {
+				try {
+					for await (let description of session.watch(
+						'my-service-endpoints',
+						{ owners: true },
+						abortController.signal
+					)) {
+						if (description.owners) {
+							let endpoints = description.owners.map((owner) =>
+								new TextDecoder().decode(owner.data)
+							)
+							endpointLog.push(endpoints)
 						}
 					}
+				} catch {
+					// Watch stopped or semaphore deleted
 				}
-			)
-
-			// Set watcher
-			let { watchAdded } = await session.describe(
-				'my-service-endpoints',
-				{ includeOwners: true, watchOwners: true }
-			)
-			expect(watchAdded).toBe(true)
+			})()
 
 			// Register this instance by acquiring semaphore with endpoint in Data
 			// Using acquire() guarantees we got the lock when it returns
@@ -238,6 +202,7 @@ test('service discovery example', { timeout: 30000 }, async () => {
 			// Keep session alive (simulating running service)
 			await sleep(500)
 		} finally {
+			abortController.abort()
 			// When session closes, endpoint is automatically removed
 			await session.close()
 		}
@@ -305,49 +270,33 @@ test('configuration publication example', { timeout: 30000 }, async () => {
 			description: instanceId,
 		})
 
-		try {
-			session.on(
-				CoordinationSessionEvents.SEMAPHORE_CHANGED,
-				async (event: SemaphoreChangedEvent) => {
-					if (
-						event.name === 'my-service-config' &&
-						event.dataChanged
-					) {
-						try {
-							let { description } = await session.describe(
-								'my-service-config',
-								{ watchData: true }
-							)
+		let abortController = new AbortController()
 
-							if (description && description.data) {
-								let config = new TextDecoder().decode(
-									description.data
-								)
-								configLog.push(config)
-							}
-						} catch {
-							// Semaphore might be deleted
+		try {
+			// Watch for config changes in background
+			;(async () => {
+				try {
+					for await (let description of session.watch(
+						'my-service-config',
+						{ data: true },
+						abortController.signal
+					)) {
+						if (description.data) {
+							let config = new TextDecoder().decode(
+								description.data
+							)
+							configLog.push(config)
 						}
 					}
+				} catch {
+					// Watch stopped or semaphore deleted
 				}
-			)
-
-			// Set watcher and get initial configuration
-			let { description, watchAdded } = await session.describe(
-				'my-service-config',
-				{ watchData: true }
-			)
-			expect(watchAdded).toBe(true)
-
-			// Store initial configuration
-			if (description && description.data) {
-				let config = new TextDecoder().decode(description.data)
-				configLog.push(config)
-			}
+			})()
 
 			// Keep session alive (simulating running service)
 			await sleep(1000)
 		} finally {
+			abortController.abort()
 			await session.close()
 		}
 	}

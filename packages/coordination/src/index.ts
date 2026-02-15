@@ -420,8 +420,7 @@ export type {
 	DeleteSemaphoreOptions,
 	DescribeSemaphoreOptions,
 	DescribeSemaphoreResult,
-	SessionExpiredEvent,
 	WatchOptions,
 } from './session.js'
 
-export { CoordinationSessionEvents } from './session.js'
+export type { Lock } from './semaphore.js'

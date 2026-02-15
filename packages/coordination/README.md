@@ -80,12 +80,30 @@ await session.create('my-lock', { limit: 1 })
 {
   await using lock = await session.acquire('my-lock')
   // Critical section - lock is guaranteed to be held
+  console.log(`Acquired lock: ${lock.name}`)
 }
 // Lock automatically released here
 // Session automatically closed here
 ```
 
-## Watching Semaphore Changes
+### Lock Loss Detection
+
+The lock provides a signal that aborts when the lock is lost involuntarily (e.g., session expired):
+
+```typescript
+await using lock = await session.acquire('my-lock')
+
+// Use lock.signal to detect lock loss
+try {
+  await someOperation({ signal: lock.signal })
+} catch (error) {
+  if (lock.signal.aborted) {
+    console.error('Lock was lost:', lock.signal.reason)
+  }
+}
+```
+
+### Watching Semaphore Changes
 
 ```typescript
 // Watch for configuration changes
@@ -96,19 +114,7 @@ for await (let desc of session.watch('config-sem', { data: true }, signal)) {
 
 The `watch()` method automatically handles re-subscription when changes occur.
 
-## Session Events
-
-```typescript
-import { CoordinationSessionEvents } from '@ydbjs/coordination'
-
-// Emitted when session expires and new session is created
-session.on(CoordinationSessionEvents.SESSION_EXPIRED, (event) => {
-  console.log(`Session ${event.sessionId} expired`)
-  // Re-acquire semaphores if needed
-})
-```
-
-## Session Management
+### Session Management
 
 The coordination session implements automatic keep-alive and reconnection:
 

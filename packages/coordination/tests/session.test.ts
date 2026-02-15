@@ -4,8 +4,12 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 
-import { CoordinationSessionEvents, coordination } from '../src/index.js'
-import { type SemaphoreChangedEvent, TEST_ONLY } from '../src/session.js'
+import { coordination } from '../src/index.js'
+import {
+	CoordinationSessionEvents,
+	type SemaphoreChangedEvent,
+	TEST_ONLY,
+} from '../src/session.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -445,10 +449,18 @@ test(
 			})
 			expect(semaphore.name).toBe('test-sem')
 
+			// Set up promise to wait for sessionExpired event
+			let sessionExpiredPromise = new Promise<void>((resolve) => {
+				session.once('sessionExpired', () => {
+					resolve()
+				})
+			})
+
 			// Force disconnect to simulate network issue
 			session[TEST_ONLY]().forceReconnect()
 
-			await sleep(100)
+			// Wait for sessionExpired event
+			await sessionExpiredPromise
 
 			// Session expired, so semaphore from old session won't exist
 			await expect(session.describe('test-sem')).rejects.toThrow(YDBError)
@@ -464,6 +476,43 @@ test(
 		}
 	}
 )
+
+test('lock signal aborts on session expired', { timeout: 30000 }, async () => {
+	let nodePath = '/local/test-node-lock-signal'
+	await createCoordinationNode(nodePath)
+
+	// Create session with very short timeout
+	let session = await client.session(nodePath, { recoveryWindowMs: 1 })
+
+	try {
+		let lock = await session.acquire('test-lock', {
+			ephemeral: true,
+		})
+
+		expect(lock.signal.aborted).toBe(false)
+
+		// Set up promise to wait for sessionExpired event
+		let sessionExpiredPromise = new Promise<void>((resolve) => {
+			session.once('sessionExpired', () => {
+				resolve()
+			})
+		})
+
+		// Force disconnect to simulate network issue and trigger session expiration
+		session[TEST_ONLY]().forceReconnect()
+
+		// Wait for sessionExpired event
+		await sessionExpiredPromise
+
+		// Lock signal should be aborted now
+		expect(lock.signal.aborted).toBe(true)
+		expect(lock.signal.reason).toBeDefined()
+		expect(lock.signal.reason.message).toContain('Lock lost')
+	} finally {
+		await session.close()
+		await dropCoordinationNode(nodePath)
+	}
+})
 
 test(
 	'aborts semaphore operation with AbortSignal timeout',
@@ -540,40 +589,6 @@ test(
 		await dropCoordinationNode(nodePath)
 	}
 )
-
-test('semaphore update and describe methods', { timeout: 30000 }, async () => {
-	let nodePath = '/local/test-node-semaphore-methods'
-	await createCoordinationNode(nodePath)
-
-	await using session = await client.session(nodePath)
-
-	await session.create('test-sem', {
-		limit: 1,
-		data: new Uint8Array([1, 2, 3]),
-	})
-
-	await using semaphore = await session.acquire('test-sem', { count: 1 })
-
-	expect(semaphore.name).toBe('test-sem')
-
-	let desc = await semaphore.describe({ includeOwners: true })
-	expect(desc.description).toBeDefined()
-	expect(desc.description!.count).toBe(1n)
-	expect(Array.from(desc.description!.data)).toEqual([1, 2, 3])
-	expect(desc.description!.owners).toBeDefined()
-	expect(desc.description!.owners.length).toBe(1)
-
-	await semaphore.update(new Uint8Array([4, 5, 6]))
-
-	let updatedDesc = await semaphore.describe()
-	expect(Array.from(updatedDesc.description!.data)).toEqual([4, 5, 6])
-
-	await semaphore.release()
-
-	await semaphore.delete()
-
-	await dropCoordinationNode(nodePath)
-})
 
 test(
 	'aborts session creation with AbortSignal timeout',
