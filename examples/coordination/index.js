@@ -50,9 +50,7 @@ async function main() {
 		console.log(`   ✓ Created semaphore 'example-lock' with limit 1`)
 
 		let semaphore = await session.acquire('example-lock', { count: 1 })
-		console.log(
-			`   ✓ Acquired semaphore 'example-lock': ${semaphore.acquired}`
-		)
+		console.log(`   ✓ Acquired semaphore '${semaphore.name}'`)
 
 		let released = await session.release('example-lock')
 		console.log(`   ✓ Released semaphore 'example-lock': ${released}`)

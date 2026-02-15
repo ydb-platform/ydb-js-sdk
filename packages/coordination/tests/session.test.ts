@@ -36,11 +36,10 @@ test(
 				count: 1,
 				ephemeral: true,
 			})
-			expect(semaphore.acquired).toBe(true)
+			expect(semaphore.name).toBe('test-lock')
 
 			// Release semaphore (deleted automatically)
-			let released = await session.release('test-lock')
-			expect(released).toBe(true)
+			await session.release('test-lock')
 		} finally {
 			await session.close()
 			await dropCoordinationNode(nodePath)
@@ -61,10 +60,9 @@ test(
 			await session.create('test-lock', { limit: 1 })
 
 			let semaphore = await session.acquire('test-lock', { count: 1 })
-			expect(semaphore.acquired).toBe(true)
+			expect(semaphore.name).toBe('test-lock')
 
-			let released = await session.release('test-lock')
-			expect(released).toBe(true)
+			await session.release('test-lock')
 
 			await session.delete('test-lock')
 		} finally {
@@ -131,21 +129,22 @@ test('multiple clients compete for semaphore', { timeout: 30000 }, async () => {
 
 		// Session 1 acquires
 		let semaphore1 = await session1.acquire('exclusive-lock', { count: 1 })
-		expect(semaphore1.acquired).toBe(true)
+		expect(semaphore1.name).toBe('exclusive-lock')
 
-		// Session 2 tries to acquire with timeout (should fail)
-		let semaphore2 = await session2.acquire('exclusive-lock', {
-			count: 1,
-			timeoutMillis: 100,
-		})
-		expect(semaphore2.acquired).toBe(false)
+		// Session 2 tries to acquire with timeout (should throw YDBError)
+		await expect(
+			session2.acquire('exclusive-lock', {
+				count: 1,
+				timeoutMillis: 100,
+			})
+		).rejects.toThrow(YDBError)
 
 		// Session 1 releases
 		await session1.release('exclusive-lock')
 
 		// Session 2 can now acquire
 		let semaphore3 = await session2.acquire('exclusive-lock', { count: 1 })
-		expect(semaphore3.acquired).toBe(true)
+		expect(semaphore3.name).toBe('exclusive-lock')
 
 		await session2.release('exclusive-lock')
 		await session1.delete('exclusive-lock')
@@ -199,8 +198,8 @@ test('multiple operations in sequence', { timeout: 30000 }, async () => {
 
 		let semaphore1 = await session.acquire('sem1', { count: 1 })
 		let semaphore2 = await session.acquire('sem2', { count: 2 })
-		expect(semaphore1.acquired).toBe(true)
-		expect(semaphore2.acquired).toBe(true)
+		expect(semaphore1.name).toBe('sem1')
+		expect(semaphore2.name).toBe('sem2')
 
 		let { description: desc1 } = await session.describe('sem1')
 		let { description: desc2 } = await session.describe('sem2')
@@ -273,7 +272,7 @@ test(
 			// Session 2's pending request should be retried after reconnect
 			// and should succeed now that session 1 released the lock
 			let semaphore = await pendingSemaphore
-			expect(semaphore.acquired).toBe(true)
+			expect(semaphore.name).toBe('exclusive-lock')
 
 			// Describe with owners and waiters
 			let { description: newDescription } = await session2.describe(
@@ -323,7 +322,7 @@ test(
 			await sessions[0].create('limited-resource', { limit: 2 })
 
 			let acquirePromises = sessions.map((session) =>
-				session.acquire('limited-resource', {
+				session.tryAcquire('limited-resource', {
 					count: 1,
 					timeoutMillis: 500,
 				})
@@ -331,7 +330,7 @@ test(
 
 			let results = await Promise.all(acquirePromises)
 			let acquiredCount = results.filter(
-				(semaphore) => semaphore.acquired === true
+				(semaphore) => semaphore !== null
 			).length
 			// Only 2 should have acquired (others timed out)
 			expect(acquiredCount).toBe(2)
@@ -444,7 +443,7 @@ test(
 			let semaphore = await session.acquire('test-sem', {
 				ephemeral: true,
 			})
-			expect(semaphore.acquired).toBe(true)
+			expect(semaphore.name).toBe('test-sem')
 
 			// Force disconnect to simulate network issue
 			session[TEST_ONLY]().forceReconnect()
@@ -512,11 +511,11 @@ test(
 
 		{
 			await using lock1 = await session.acquire('sem1', { count: 1 })
-			expect(lock1.acquired).toBe(true)
+			expect(lock1.name).toBe('sem1')
 
 			{
 				await using lock2 = await session.acquire('sem2', { count: 1 })
-				expect(lock2.acquired).toBe(true)
+				expect(lock2.name).toBe('sem2')
 
 				let desc1 = await session.describe('sem1')
 				let desc2 = await session.describe('sem2')
@@ -555,7 +554,6 @@ test('semaphore update and describe methods', { timeout: 30000 }, async () => {
 
 	await using semaphore = await session.acquire('test-sem', { count: 1 })
 
-	expect(semaphore.acquired).toBe(true)
 	expect(semaphore.name).toBe('test-sem')
 
 	let desc = await semaphore.describe({ includeOwners: true })

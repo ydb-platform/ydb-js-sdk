@@ -3,11 +3,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Driver } from '@ydbjs/core'
 
-import {
-	CoordinationSessionEvents,
-	type SemaphoreChangedEvent,
-	coordination,
-} from '../src/index.js'
+import { CoordinationSessionEvents, coordination } from '../src/index.js'
+import type { SemaphoreChangedEvent } from '../src/session.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -107,21 +104,19 @@ test('leader election example', { timeout: 30000 }, async () => {
 			}
 
 			// Try to acquire leadership (will wait indefinitely in queue)
-			let semaphore = await session.acquire('my-service-leader', {
+			// Using acquire() guarantees we got the lock when it returns
+			await session.acquire('my-service-leader', {
 				count: 1,
 				timeoutMillis: Infinity,
 				data: new TextEncoder().encode(endpoint),
 			})
-			let isLeader = semaphore.acquired
 
-			if (isLeader) {
-				// This instance is now the leader
-				// Do some work as leader
-				await sleep(100)
+			// This instance is now the leader
+			// Do some work as leader
+			await sleep(100)
 
-				// Release leadership
-				await session.release('my-service-leader')
-			}
+			// Release leadership
+			await session.release('my-service-leader')
 
 			// Wait a bit to observe leader changes
 			await sleep(1500)
@@ -234,11 +229,11 @@ test('service discovery example', { timeout: 30000 }, async () => {
 			expect(watchAdded).toBe(true)
 
 			// Register this instance by acquiring semaphore with endpoint in Data
-			let semaphore = await session.acquire('my-service-endpoints', {
+			// Using acquire() guarantees we got the lock when it returns
+			await session.acquire('my-service-endpoints', {
 				count: 1,
 				data: new TextEncoder().encode(endpoint),
 			})
-			expect(semaphore.acquired).toBe(true)
 
 			// Keep session alive (simulating running service)
 			await sleep(500)

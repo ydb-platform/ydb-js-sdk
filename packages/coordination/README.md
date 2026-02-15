@@ -50,8 +50,19 @@ let sessionWithTimeout = await client.session(
 
 // Work with semaphores
 await session.create('my-semaphore', { limit: 1 })
-await session.acquire('my-semaphore', { count: 1 })
+
+// acquire() blocks until acquired or throws on timeout
+let semaphore = await session.acquire('my-semaphore', { count: 1 })
 await session.release('my-semaphore')
+
+// tryAcquire() returns null if not acquired
+let maybeSemaphore = await session.tryAcquire('my-semaphore', {
+  timeoutMillis: 1000,
+})
+if (maybeSemaphore) {
+  await session.release('my-semaphore')
+}
+
 await session.delete('my-semaphore')
 
 // Close session
@@ -68,9 +79,7 @@ await session.create('my-lock', { limit: 1 })
 
 {
   await using lock = await session.acquire('my-lock')
-  if (lock.acquired) {
-    // Critical section - lock is held
-  }
+  // Critical section - lock is guaranteed to be held
 }
 // Lock automatically released here
 // Session automatically closed here

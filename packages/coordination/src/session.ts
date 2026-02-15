@@ -244,39 +244,29 @@ export const CoordinationSessionEvents = {
 /**
  * Semaphore handle that provides convenient access to semaphore operations
  *
- * This class represents a semaphore semaphore and provides methods to update and describe
+ * This class represents an acquired semaphore and provides methods to update and describe
  * the semaphore without repeating the semaphore name. It implements the AsyncDisposable,
- * so the semaphore automatically releases the semaphore when disposed, making it safe to use
- * with explicit resource management (TypeScript 5.2+).
+ * so the semaphore automatically releases when disposed, making it safe to use
+ * with explicit resource management.
  *
  * @example
  * ```typescript
- * // Automatic release with using keyword (TypeScript)
- * await using semaphore = await session.acquireSemaphore({ name: 'my-lock' })
- * if (semaphore.acquired) {
- *   // Critical section - semaphore is held
- *   await semaphore.update(new Uint8Array([1, 2, 3]))
- *   let info = await semaphore.describe()
- * }
+ * // Automatic release with using keyword
+ * await using semaphore = await session.acquire('my-lock')
+ * // Critical section - semaphore is guaranteed to be held
+ * await semaphore.update(new Uint8Array([1, 2, 3]))
+ * let info = await semaphore.describe()
  * // Semaphore automatically released here
  * ```
  */
 export class Semaphore implements AsyncDisposable {
 	#session: CoordinationSession
 	#name: string
-	#acquired: boolean
+	#released: boolean = false
 
-	constructor(session: CoordinationSession, name: string, acquired: boolean) {
+	constructor(session: CoordinationSession, name: string) {
 		this.#session = session
 		this.#name = name
-		this.#acquired = acquired
-	}
-
-	/**
-	 * Returns true if the semaphore was successfully acquired
-	 */
-	get acquired(): boolean {
-		return this.#acquired
 	}
 
 	/**
@@ -295,10 +285,8 @@ export class Semaphore implements AsyncDisposable {
 	 *
 	 * @example
 	 * ```typescript
-	 * await using semaphore = await session.acquireSemaphore({ name: 'config-lock' })
-	 * if (semaphore.acquired) {
-	 *   await semaphore.update(new TextEncoder().encode('new config'))
-	 * }
+	 * await using semaphore = await session.acquire('config-lock')
+	 * await semaphore.update(new TextEncoder().encode('new config'))
 	 * ```
 	 */
 	async update(data: Uint8Array, signal?: AbortSignal): Promise<void> {
@@ -334,30 +322,24 @@ export class Semaphore implements AsyncDisposable {
 	 * Useful when not using the `await using` keyword.
 	 *
 	 * @param signal - AbortSignal to timeout the operation
-	 * @returns True if released, false if not acquired
 	 * @throws {YDBError} If the operation fails
 	 *
 	 * @example
 	 * ```typescript
 	 * let semaphore = await session.acquire('my-lock')
 	 * try {
-	 *   if (semaphore.acquired) {
-	 *     // do work with lock
-	 *   }
+	 *   // do work with lock
 	 * } finally {
 	 *   await semaphore.release()
 	 * }
 	 * ```
 	 */
-	async release(signal?: AbortSignal): Promise<boolean> {
-		if (!this.#acquired) {
-			return false
+	async release(signal?: AbortSignal): Promise<void> {
+		if (this.#released) {
+			return
 		}
-		let result = await this.#session.release(this.#name, signal)
-
-		this.#acquired = false
-
-		return result
+		await this.#session.release(this.#name, signal)
+		this.#released = true
 	}
 
 	/**
@@ -373,9 +355,7 @@ export class Semaphore implements AsyncDisposable {
 	 * ```typescript
 	 * let semaphore = await session.acquire('temp-lock', { ephemeral: false })
 	 * try {
-	 *   if (semaphore.acquired) {
-	 *     // do work
-	 *   }
+	 *   // do work
 	 * } finally {
 	 *   await semaphore.release()
 	 *   await semaphore.delete() // Clean up the semaphore
@@ -395,7 +375,7 @@ export class Semaphore implements AsyncDisposable {
 	 * This method is called automatically when using the `await using` keyword.
 	 */
 	async [Symbol.asyncDispose](): Promise<void> {
-		if (this.#acquired) {
+		if (!this.#released) {
 			dbg.log(
 				'auto-releasing semaphore via Symbol.asyncDispose: %s',
 				this.#name
@@ -784,34 +764,13 @@ export class CoordinationSession
 	}
 
 	/**
-	 * Acquires a semaphore and returns a semaphore handle for use with `await using` keyword
-	 *
-	 * This method combines acquire and release into a single disposable resource,
-	 * enabling automatic cleanup with TypeScript's explicit resource management.
-	 *
-	 * @param name - Name of the semaphore to acquire
-	 * @param options - Options for acquiring the semaphore
-	 * @param signal - AbortSignal to timeout the operation
-	 * @returns A Semaphore that automatically releases on disposal
-	 * @throws {YDBError} If the operation fails
-	 *
-	 * @example
-	 * ```typescript
-	 * {
-	 *   // Automatic release with using keyword (TypeScript 5.2+)
-	 *   await using semaphore = await session.acquire('my-lock')
-	 *   if (semaphore.acquired) {
-	 *     // do work with lock
-	 *   }
-	 * }
-	 * // semaphore is automatically released here
-	 * ```
+	 * Internal method to send acquire semaphore request
 	 */
-	async acquire(
+	async #makeAcquireRequest(
 		name: string,
 		options?: AcquireSemaphoreOptions,
 		signal?: AbortSignal
-	): Promise<Semaphore> {
+	): Promise<SessionResponse_AcquireSemaphoreResult> {
 		if (this.#closed) {
 			throw new Error('Session is closed')
 		}
@@ -835,13 +794,87 @@ export class CoordinationSession
 			},
 		})
 
-		let result = (await this.#stream.sendRequest(
+		return (await this.#stream.sendRequest(
 			reqId,
 			request,
 			signal
 		)) as SessionResponse_AcquireSemaphoreResult
+	}
 
-		return new Semaphore(this, name, result.acquired)
+	/**
+	 * Acquires a semaphore and returns a semaphore handle for use with `await using` keyword
+	 *
+	 * This method waits until the semaphore is acquired or the timeout expires.
+	 * If the semaphore cannot be acquired within the timeout, it throws an error.
+	 *
+	 * @param name - Name of the semaphore to acquire
+	 * @param options - Options for acquiring the semaphore
+	 * @param signal - AbortSignal to timeout the operation
+	 * @returns A Semaphore handle that automatically releases on disposal
+	 * @throws {YDBError} If the operation fails or semaphore cannot be acquired within timeout
+	 *
+	 * @example
+	 * ```typescript
+	 * {
+	 *   // Automatic release with using keyword
+	 *   await using semaphore = await session.acquire('my-lock')
+	 *   // Semaphore is guaranteed to be held here
+	 *   // do work with lock
+	 * }
+	 * // semaphore is automatically released here
+	 * ```
+	 */
+	async acquire(
+		name: string,
+		options?: AcquireSemaphoreOptions,
+		signal?: AbortSignal
+	): Promise<Semaphore> {
+		let result = await this.#makeAcquireRequest(name, options, signal)
+
+		if (!result.acquired) {
+			throw new YDBError(StatusIds_StatusCode.TIMEOUT, [])
+		}
+
+		return new Semaphore(this, name)
+	}
+
+	/**
+	 * Tries to acquire a semaphore without blocking
+	 *
+	 * This method attempts to acquire the semaphore and returns null if it cannot be acquired.
+	 *
+	 * @param name - Name of the semaphore to acquire
+	 * @param options - Options for acquiring the semaphore
+	 * @param signal - AbortSignal to timeout the operation
+	 * @returns A Semaphore handle if acquired, null otherwise
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * {
+	 *   await using semaphore = await session.tryAcquire('my-lock', { timeoutMillis: 1000 })
+	 *   if (semaphore) {
+	 *     // Semaphore was acquired, do work
+	 *   } else {
+	 *     // Semaphore was not acquired, handle gracefully
+	 *     console.log('Could not acquire lock, skipping work')
+	 *   }
+	 * }
+	 * // semaphore is automatically released here if it was acquired
+	 * ```
+	 */
+	async tryAcquire(
+		name: string,
+		options?: AcquireSemaphoreOptions,
+		signal?: AbortSignal
+	): Promise<Semaphore | null> {
+		let result = await this.#makeAcquireRequest(name, options, signal)
+
+		if (!result.acquired) {
+			return null
+		}
+
+		return new Semaphore(this, name)
 	}
 
 	/**
