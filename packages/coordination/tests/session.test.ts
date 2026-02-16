@@ -754,3 +754,91 @@ test('acquireLock fails when semaphore is busy', async () => {
 		await dropCoordinationNode(nodePath)
 	}
 })
+
+test('executes callback with withLock', async () => {
+	let nodePath = '/local/test-node-with-lock-1'
+	await createCoordinationNode(nodePath)
+
+	try {
+		let executed = false
+		let receivedSignal: AbortSignal | null = null
+
+		let result = await client.withLock(
+			nodePath,
+			'callback-lock',
+			async (signal) => {
+				executed = true
+				receivedSignal = signal
+				expect(signal.aborted).toBe(false)
+				return 'success'
+			},
+			{ ephemeral: true }
+		)
+
+		expect(executed).toBe(true)
+		expect(receivedSignal).not.toBeNull()
+		expect(result).toBe('success')
+	} finally {
+		await dropCoordinationNode(nodePath)
+	}
+})
+
+test('withLock releases lock after callback completes', async () => {
+	let nodePath = '/local/test-node-with-lock-2'
+	await createCoordinationNode(nodePath)
+
+	try {
+		// First withLock
+		await client.withLock(
+			nodePath,
+			'sequential-lock',
+			async (signal) => {
+				expect(signal.aborted).toBe(false)
+			},
+			{ ephemeral: true }
+		)
+
+		// Second withLock should succeed if first released properly
+		await client.withLock(
+			nodePath,
+			'sequential-lock',
+			async (signal) => {
+				expect(signal.aborted).toBe(false)
+			},
+			{ ephemeral: true }
+		)
+	} finally {
+		await dropCoordinationNode(nodePath)
+	}
+})
+
+test('withLock releases lock even if callback throws', async () => {
+	let nodePath = '/local/test-node-with-lock-3'
+	await createCoordinationNode(nodePath)
+
+	try {
+		// First withLock that throws
+		await expect(
+			client.withLock(
+				nodePath,
+				'error-lock',
+				async () => {
+					throw new Error('Callback error')
+				},
+				{ ephemeral: true }
+			)
+		).rejects.toThrow('Callback error')
+
+		// Second withLock should succeed if first released properly
+		await client.withLock(
+			nodePath,
+			'error-lock',
+			async (signal) => {
+				expect(signal.aborted).toBe(false)
+			},
+			{ ephemeral: true }
+		)
+	} finally {
+		await dropCoordinationNode(nodePath)
+	}
+})

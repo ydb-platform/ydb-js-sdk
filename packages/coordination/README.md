@@ -33,7 +33,17 @@ let client = coordination(driver)
 // Create coordination node
 await client.createNode('/local/my-coordination-node')
 
-// Acquire lock with automatic session management
+// Option 1: Callback style
+await client.withLock(
+  '/local/my-coordination-node',
+  'my-lock',
+  async (signal) => {
+    await doExpensiveWork(signal)
+  },
+  { ephemeral: true }
+)
+
+// Option 2: Using keyword style
 await using lock = await client.acquireLock(
   '/local/my-coordination-node',
   'my-lock',
@@ -42,6 +52,8 @@ await using lock = await client.acquireLock(
   }
 )
 // Lock acquired, do work
+// Use lock.signal to detect lock loss
+await doWork({ signal: lock.signal })
 // Lock and session automatically released
 ```
 

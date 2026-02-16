@@ -231,6 +231,40 @@ export interface CoordinationClient {
 		options?: AcquireSemaphoreOptions & SessionOptions,
 		signal?: AbortSignal
 	): Promise<Lock>
+
+	/**
+	 * Executes a callback with an acquired distributed lock
+	 *
+	 * This is a callback-style convenience method that ensures the lock signal
+	 * is always available to the callback. The session is created, lock is acquired,
+	 * callback is executed with the lock signal, and then lock is released and session
+	 * is closed automatically.
+	 *
+	 * If the lock is lost during callback execution (session expired), the signal
+	 * aborts and the callback should handle it gracefully.
+	 *
+	 * @param path - Path to the coordination node
+	 * @param name - Name of the semaphore to acquire
+	 * @param callback - Function to execute while holding the lock, receives AbortSignal
+	 * @param options - Optional lock acquisition settings
+	 * @returns Promise that resolves with the callback's return value
+	 * @throws {YDBError} If the operation fails
+	 *
+	 * @example
+	 * ```typescript
+	 * // Callback style
+	 * await client.withLock('/local/node', 'my-lock', async (signal) => {
+	 *   await doExpensiveWork(signal)
+	 *   // If lock is lost, signal aborts and work should stop
+	 * }, { ephemeral: true })
+	 * ```
+	 */
+	withLock<T>(
+		path: string,
+		name: string,
+		callback: (signal: AbortSignal) => Promise<T>,
+		options?: AcquireSemaphoreOptions & SessionOptions
+	): Promise<T>
 }
 
 /**
@@ -494,6 +528,19 @@ export function coordination(driver: Driver): CoordinationClient {
 		}
 	}
 
+	async function withLock<T>(
+		path: string,
+		name: string,
+		callback: (signal: AbortSignal) => Promise<T>,
+		options?: AcquireSemaphoreOptions & SessionOptions
+	): Promise<T> {
+		dbg.log('executing withLock: %s on node: %s', name, path)
+
+		await using lock = await acquireLock(path, name, options)
+
+		return await callback(lock.signal)
+	}
+
 	return {
 		createNode,
 		alterNode,
@@ -501,6 +548,7 @@ export function coordination(driver: Driver): CoordinationClient {
 		describeNode,
 		session,
 		acquireLock,
+		withLock,
 	}
 }
 
