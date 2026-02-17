@@ -20,122 +20,7 @@ async function dropCoordinationNode(path: string): Promise<void> {
 }
 
 /**
- * Example 1: Leader Election
- * https://ydb.tech/docs/ru/recipes/ydb-sdk/leader-election?version=v25.2
- *
- * Multiple application instances want to elect a leader and always know who it is.
- *
- * Algorithm:
- * 1. Create a semaphore (e.g., my-service-leader) with Limit=1
- * 2. All instances call AcquireSemaphore with Count=1, specifying their endpoint in Data
- * 3. Only one instance completes quickly and becomes the leader, others queue up
- * 4. All instances call DescribeSemaphore with WatchOwners=true and IncludeOwners=true
- *    to get the current leader's endpoint from Owners[0].Data
- * 5. When leader changes, OnChanged is called, and instances call DescribeSemaphore again
- */
-test('leader election example', { timeout: 30000 }, async () => {
-	let nodePath = '/local/leader-election-node'
-	await createCoordinationNode(nodePath)
-
-	// Shared state to track leader changes
-	let instance1Leaders: string[] = []
-	let instance2Leaders: string[] = []
-	let instance3Leaders: string[] = []
-
-	// Function that each application instance runs
-	async function runInstance(
-		instanceId: string,
-		endpoint: string,
-		leaderLog: string[]
-	): Promise<void> {
-		let session = await client.session(nodePath, {
-			description: instanceId,
-		})
-
-		let abortController = new AbortController()
-
-		try {
-			// Watch for leader changes in background
-			;(async () => {
-				try {
-					for await (let description of session.watch(
-						'my-service-leader',
-						{ owners: true },
-						abortController.signal
-					)) {
-						if (
-							description.owners &&
-							description.owners.length > 0
-						) {
-							let leaderEndpoint = new TextDecoder().decode(
-								description.owners[0]!.data
-							)
-							leaderLog.push(leaderEndpoint)
-						}
-					}
-				} catch {
-					// Watch stopped or semaphore deleted
-				}
-			})()
-
-			// Try to acquire leadership (will wait indefinitely in queue)
-			// Using acquire() guarantees we got the lock when it returns
-			await session.acquire('my-service-leader', {
-				count: 1,
-				timeoutMillis: Infinity,
-				data: new TextEncoder().encode(endpoint),
-			})
-
-			// This instance is now the leader
-			// Do some work as leader
-			await sleep(100)
-
-			// Release leadership
-			await session.release('my-service-leader')
-
-			// Wait a bit to observe leader changes
-			await sleep(1500)
-		} finally {
-			abortController.abort()
-			await session.close()
-		}
-	}
-
-	try {
-		// Create leader semaphore with Limit=1
-		let setupSession = await client.session(nodePath)
-		await setupSession.create('my-service-leader', { limit: 1 })
-		await setupSession.close()
-
-		// Run 3 instances competing for leadership
-		await Promise.all([
-			runInstance('instance-1', 'host1:8080', instance1Leaders),
-			runInstance('instance-2', 'host2:8080', instance2Leaders),
-			runInstance('instance-3', 'host3:8080', instance3Leaders),
-		])
-
-		// Verify: all instances observed at least some leaders
-		expect(instance1Leaders.length).toBeGreaterThanOrEqual(1)
-		expect(instance2Leaders.length).toBeGreaterThanOrEqual(1)
-		expect(instance3Leaders.length).toBeGreaterThanOrEqual(1)
-
-		// Verify: all 3 endpoints became leaders at some point
-		let allLeaders = new Set([
-			...instance1Leaders,
-			...instance2Leaders,
-			...instance3Leaders,
-		])
-		expect(allLeaders.size).toBe(3)
-		expect(allLeaders.has('host1:8080')).toBe(true)
-		expect(allLeaders.has('host2:8080')).toBe(true)
-		expect(allLeaders.has('host3:8080')).toBe(true)
-	} finally {
-		await dropCoordinationNode(nodePath)
-	}
-})
-
-/**
- * Example 2: Service Discovery
+ * Example 1: Service Discovery
  * https://ydb.tech/docs/ru/recipes/ydb-sdk/service-discovery?version=v25.2
  *
  * Application instances dynamically start up and publish their endpoints,
@@ -238,7 +123,7 @@ test('service discovery example', { timeout: 30000 }, async () => {
 })
 
 /**
- * Example 3: Configuration Publication
+ * Example 2: Configuration Publication
  * https://ydb.tech/docs/ru/recipes/ydb-sdk/config-publication?version=v25.2
  *
  * A scenario where a small configuration needs to be published for application instances

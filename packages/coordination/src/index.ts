@@ -19,6 +19,11 @@ import type { AcquireSemaphoreOptions } from './session.js'
 import { CoordinationSession } from './session.js'
 import { SessionOwnedLock } from './semaphore.js'
 import type { Lock } from './semaphore.js'
+import {
+	type ElectionOptions,
+	type LeaderState,
+	election as electionImpl,
+} from './election.js'
 
 let dbg = loggers.driver.extend('coordination')
 
@@ -265,6 +270,44 @@ export interface CoordinationClient {
 		callback: (signal: AbortSignal) => Promise<T>,
 		options?: AcquireSemaphoreOptions & SessionOptions
 	): Promise<T>
+
+	/**
+	 * Participates in leader election with automatic session management
+	 *
+	 * Returns an AsyncIterable that yields LeaderState on each leader change.
+	 * All participants know who the current leader is at all times.
+	 *
+	 * Uses a semaphore with limit=1 for leader election. All nodes try to acquire
+	 * the semaphore, but only one succeeds and becomes the leader. All nodes watch
+	 * the semaphore to know who the current leader is.
+	 *
+	 * @param path - Path to coordination node
+	 * @param name - Name of semaphore for election
+	 * @param options - Election options including data and signal
+	 * @returns AsyncIterable that yields LeaderState on each leader change
+	 *
+	 * @example
+	 * ```typescript
+	 * let election = client.election('/local/node', 'my-service', {
+	 *   data: new TextEncoder().encode('host1:8080'),
+	 *   signal: controller.signal
+	 * })
+	 *
+	 * for await (let leader of election) {
+	 *   if (leader.isMe) {
+	 *     console.log('I am the leader!')
+	 *     await doLeaderWork(leader.signal)
+	 *   } else {
+	 *     console.log('Leader:', new TextDecoder().decode(leader.data))
+	 *   }
+	 * }
+	 * ```
+	 */
+	election(
+		path: string,
+		name: string,
+		options: ElectionOptions
+	): AsyncIterable<LeaderState>
 }
 
 /**
@@ -541,6 +584,18 @@ export function coordination(driver: Driver): CoordinationClient {
 		return await callback(lock.signal)
 	}
 
+	async function* election(
+		path: string,
+		name: string,
+		options: ElectionOptions
+	): AsyncIterable<LeaderState> {
+		dbg.log('starting election: %s on node: %s', name, path)
+
+		await using sess = await session(path, options.sessionOptions)
+
+		yield* electionImpl(sess, name, options)
+	}
+
 	return {
 		createNode,
 		alterNode,
@@ -549,6 +604,7 @@ export function coordination(driver: Driver): CoordinationClient {
 		session,
 		acquireLock,
 		withLock,
+		election,
 	}
 }
 
@@ -563,3 +619,5 @@ export type {
 } from './session.js'
 
 export type { Lock } from './semaphore.js'
+
+export type { ElectionOptions, LeaderState } from './election.js'

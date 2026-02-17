@@ -66,6 +66,7 @@ export class SemaphoreLock implements Lock {
 	#name: string
 	#released: boolean = false
 	#abortController: AbortController
+	#sessionExpiredHandler: () => void
 
 	constructor(session: CoordinationSession, name: string) {
 		this.#session = session
@@ -73,7 +74,7 @@ export class SemaphoreLock implements Lock {
 		this.#abortController = new AbortController()
 
 		// Subscribe to session expiration to abort lock signal
-		this.#session.on('sessionExpired', () => {
+		this.#sessionExpiredHandler = () => {
 			if (!this.#abortController.signal.aborted) {
 				dbg.log(
 					'session expired, aborting lock signal for: %s',
@@ -85,7 +86,8 @@ export class SemaphoreLock implements Lock {
 			}
 			// Mark as released since server automatically released the semaphore
 			this.#released = true
-		})
+		}
+		this.#session.once('sessionExpired', this.#sessionExpiredHandler)
 	}
 
 	/**
@@ -125,6 +127,8 @@ export class SemaphoreLock implements Lock {
 		if (this.#released) {
 			return
 		}
+
+		this.#session.off('sessionExpired', this.#sessionExpiredHandler)
 		await this.#session.release(this.#name, signal)
 		this.#released = true
 	}
