@@ -1010,7 +1010,7 @@ export class CoordinationSession
 		}
 
 		let changeResolve: (() => void) | null = null
-		let changeReject: ((error: Error) => void) | null = null
+		let pendingChange = false
 
 		let changeHandler = (event: SemaphoreChangedEvent) => {
 			if (event.name !== name) {
@@ -1018,66 +1018,59 @@ export class CoordinationSession
 			}
 
 			// Check if the change matches what we're watching
-			let matches = false
-			if (watchData && event.dataChanged) {
-				matches = true
-			}
-			if (watchOwners && event.ownersChanged) {
-				matches = true
-			}
+			let matches =
+				(watchData && event.dataChanged) ||
+				(watchOwners && event.ownersChanged)
 
-			if (matches && changeResolve) {
-				changeResolve()
-				changeResolve = null
-				changeReject = null
-			}
-		}
-
-		let abortHandler = () => {
-			if (changeReject) {
-				changeReject(new Error('Aborted'))
-				changeResolve = null
-				changeReject = null
+			if (matches) {
+				if (changeResolve) {
+					changeResolve()
+					changeResolve = null
+				} else {
+					pendingChange = true
+				}
 			}
 		}
 
 		let waitForChange = (): Promise<void> => {
-			return new Promise((resolve, reject) => {
+			if (pendingChange) {
+				pendingChange = false
+				return Promise.resolve()
+			}
+
+			let promise = new Promise<void>((resolve) => {
 				changeResolve = resolve
-				changeReject = reject
 			})
+
+			return (signal ? abortable(signal, promise) : promise).finally(
+				() => {
+					changeResolve = null
+				}
+			)
 		}
 
 		this.on(CoordinationSessionEvents.SEMAPHORE_CHANGED, changeHandler)
-		signal?.addEventListener('abort', abortHandler)
 
 		try {
-			// Yield initial description
-			let initial = await getDescription()
-			if (initial) {
-				yield initial
-			}
-
 			while (!signal?.aborted) {
-				// eslint-disable-next-line no-await-in-loop
-				await waitForChange()
-
 				// Re-subscribe and get updated description
 				// eslint-disable-next-line no-await-in-loop
 				let updated = await getDescription()
 				if (updated) {
 					yield updated
 				}
+
+				// eslint-disable-next-line no-await-in-loop
+				await waitForChange()
 			}
 		} catch (error) {
-			if (error instanceof Error && error.message === 'Aborted') {
+			if (error instanceof Error && error.name === 'AbortError') {
 				dbg.log('watch: stopped watching semaphore: %s', name)
 				return
 			}
 			throw error
 		} finally {
 			this.off(CoordinationSessionEvents.SEMAPHORE_CHANGED, changeHandler)
-			signal?.removeEventListener('abort', abortHandler)
 			dbg.log('watch: cleanup completed for semaphore: %s', name)
 		}
 	}
