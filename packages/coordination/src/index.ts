@@ -234,7 +234,8 @@ export interface CoordinationClient {
 		path: string,
 		name: string,
 		callback: (signal: AbortSignal) => Promise<T>,
-		options?: AcquireSemaphoreOptions & SessionOptions
+		options?: AcquireSemaphoreOptions & SessionOptions,
+		signal?: AbortSignal
 	): Promise<T>
 
 	/**
@@ -392,11 +393,12 @@ export function coordination(driver: Driver): CoordinationClient {
 		path: string,
 		name: string,
 		callback: (signal: AbortSignal) => Promise<T>,
-		options?: AcquireSemaphoreOptions & SessionOptions
+		options?: AcquireSemaphoreOptions & SessionOptions,
+		signal?: AbortSignal
 	): Promise<T> {
 		dbg.log('executing withLock: %s on node: %s', name, path)
 
-		await using lock = await acquireLock(path, name, options)
+		await using lock = await acquireLock(path, name, options, signal)
 
 		return await callback(lock.signal)
 	}
@@ -408,7 +410,11 @@ export function coordination(driver: Driver): CoordinationClient {
 	): AsyncIterable<LeaderState> {
 		dbg.log('starting election: %s on node: %s', name, path)
 
-		await using sess = await session(path, options.sessionOptions)
+		await using sess = await session(
+			path,
+			options.sessionOptions,
+			options.signal
+		)
 
 		yield* electionImpl(sess, name, options)
 	}
