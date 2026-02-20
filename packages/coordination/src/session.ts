@@ -83,7 +83,7 @@ export interface AcquireSemaphoreOptions {
 
 	/**
 	 * Timeout in milliseconds after which operation will fail if it's still waiting in the waiters queue.
-	 * Use Infinity for no timeout
+	 * Default: Infinity (no timeout)
 	 */
 	timeoutMillis?: number
 
@@ -643,9 +643,7 @@ export class CoordinationSession
 					reqId,
 					name,
 					count: toBigInt(options?.count ?? 1),
-					timeoutMillis: toBigInt(
-						options?.timeoutMillis ?? this.#recoveryWindowMs
-					),
+					timeoutMillis: toBigInt(options?.timeoutMillis ?? Infinity),
 					data: options?.data ?? new Uint8Array(),
 					ephemeral: options?.ephemeral ?? false,
 				}),

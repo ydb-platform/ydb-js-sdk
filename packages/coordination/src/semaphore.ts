@@ -1,6 +1,9 @@
 import { loggers } from '@ydbjs/debug'
 
-import type { CoordinationSession } from './session.js'
+import {
+	type CoordinationSession,
+	CoordinationSessionEvents,
+} from './session.js'
 
 let dbg = loggers.driver.extend('coordination').extend('semaphore')
 
@@ -26,8 +29,10 @@ export interface Lock extends AsyncDisposable {
 	name: string
 
 	/**
-	 * AbortSignal that aborts when lock is lost involuntarily
-	 * (session died, server released it)
+	 * AbortSignal that aborts when the coordination session expires.
+	 *
+	 * When the session expires, the server automatically releases all locks held by that session.
+	 * This signal allows you to detect session expiration and stop ongoing operations gracefully.
 	 */
 	signal: AbortSignal
 
@@ -87,11 +92,17 @@ export class SemaphoreLock implements Lock {
 			// Mark as released since server automatically released the semaphore
 			this.#released = true
 		}
-		this.#session.once('sessionExpired', this.#sessionExpiredHandler)
+		this.#session.once(
+			CoordinationSessionEvents.SESSION_EXPIRED,
+			this.#sessionExpiredHandler
+		)
 	}
 
 	/**
-	 * AbortSignal that aborts when lock is lost involuntarily
+	 * AbortSignal that aborts when the coordination session expires.
+	 *
+	 * When the session expires, the server automatically releases all locks held by that session.
+	 * This signal allows you to detect session expiration and stop ongoing operations gracefully.
 	 */
 	get signal(): AbortSignal {
 		return this.#abortController.signal
@@ -128,7 +139,10 @@ export class SemaphoreLock implements Lock {
 			return
 		}
 
-		this.#session.off('sessionExpired', this.#sessionExpiredHandler)
+		this.#session.off(
+			CoordinationSessionEvents.SESSION_EXPIRED,
+			this.#sessionExpiredHandler
+		)
 		await this.#session.release(this.#name, signal)
 		this.#released = true
 	}

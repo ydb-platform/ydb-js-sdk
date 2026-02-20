@@ -353,7 +353,6 @@ export function coordination(driver: Driver): CoordinationClient {
 	): Promise<Lock> {
 		dbg.log('acquiring distributed lock: %s on node: %s', name, path)
 
-		// Extract session options
 		let sessionOptions: SessionOptions = {}
 		if (options?.recoveryWindowMs !== undefined) {
 			sessionOptions.recoveryWindowMs = options.recoveryWindowMs
@@ -362,7 +361,6 @@ export function coordination(driver: Driver): CoordinationClient {
 			sessionOptions.description = options.description
 		}
 
-		// Extract acquire options
 		let acquireOptions: AcquireSemaphoreOptions = {}
 		if (options?.count !== undefined) {
 			acquireOptions.count = options.count
