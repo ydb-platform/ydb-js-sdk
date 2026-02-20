@@ -20,6 +20,7 @@ Modern, modular SDK for YDB in TypeScript/JavaScript.
 
 - [`@ydbjs/core`](./packages/core): Core connection and utilities
 - [`@ydbjs/query`](./packages/query): YQL queries, transactions, parameters
+- [`@ydbjs/coordination`](./packages/coordination): Coordination nodes and distributed semaphores
 - [`@ydbjs/value`](./packages/value): YDB types and values
 - [`@ydbjs/api`](./packages/api): gRPC/Protobuf service definitions
 - [`@ydbjs/error`](./packages/error): YDB error handling
@@ -56,6 +57,7 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 
 - [@ydbjs/core](./packages/core/README.md)
 - [@ydbjs/query](./packages/query/README.md)
+- [@ydbjs/coordination](./packages/coordination/README.md)
 - [@ydbjs/value](./packages/value/README.md)
 - [@ydbjs/api](./packages/api/README.md)
 - [@ydbjs/error](./packages/error/README.md)
