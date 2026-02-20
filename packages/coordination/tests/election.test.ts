@@ -11,9 +11,6 @@ let driver = new Driver(inject('connectionString'), {
 
 let client = coordination(driver)
 
-/**
- * Leader Election Example
- */
 test('leader election example', { timeout: 30000 }, async () => {
 	let nodePath = '/local/leader-election-node'
 	await client.createNode(nodePath)
