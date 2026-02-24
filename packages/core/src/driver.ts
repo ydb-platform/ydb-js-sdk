@@ -29,7 +29,7 @@ import {
 } from 'nice-grpc'
 import pkg from '../package.json' with { type: 'json' }
 import { type Connection, LazyConnection } from './conn.js'
-import { debug } from './middleware.js'
+import { createTracingMiddleware, debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
 import { ConnectivityState } from '@grpc/grpc-js/build/src/connectivity-state.js'
@@ -198,7 +198,12 @@ export class Driver implements Disposable {
 			this.options.channelOptions
 		)
 
-		this.#middleware = debug
+		this.#middleware = createTracingMiddleware(
+			this.cs.hostname,
+			Number.parseInt(this.cs.port || '2135', 10),
+			this.database || undefined
+		)
+		this.#middleware = composeClientMiddleware(this.#middleware, debug)
 		this.#middleware = composeClientMiddleware(
 			this.#middleware,
 			(call, options) => {

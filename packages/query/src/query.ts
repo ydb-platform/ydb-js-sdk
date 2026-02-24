@@ -237,6 +237,8 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
+			let results = [] as ArrayifyTuple<T>
+
 			let stream = client.executeQuery(
 				{
 					sessionId,
@@ -260,8 +262,6 @@ export class Query<T extends any[] = unknown[]>
 					},
 				}
 			)
-
-			let results = [] as ArrayifyTuple<T>
 
 			for await (let part of stream) {
 				signal.throwIfAborted()

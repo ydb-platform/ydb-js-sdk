@@ -1,28 +1,24 @@
 {
-	"name": "@ydbjs/query",
-	"version": "6.0.7",
-	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
+	"name": "@ydbjs/tracing",
+	"version": "6.0.0",
+	"description": "OpenTelemetry tracing for YDB JavaScript SDK. Instrumentation for QueryService operations.",
 	"keywords": [
 		"ydb",
 		"database",
-		"query",
-		"yql",
-		"transaction",
+		"opentelemetry",
+		"tracing",
 		"typescript"
 	],
-	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/query#readme",
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
-		"directory": "packages/query"
+		"directory": "packages/tracing"
 	},
 	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
-	],
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
@@ -43,20 +39,11 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.10.1",
-		"@ydbjs/api": "^6.0.0",
-		"@ydbjs/core": "^6.0.7",
-		"@ydbjs/debug": "^6.0.0",
-		"@ydbjs/error": "^6.0.0",
-		"@ydbjs/retry": "^6.0.0",
-		"@ydbjs/value": "^6.0.0",
-		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.13"
+		"@opentelemetry/api": "^1.9.0",
+		"@ydbjs/error": "^6.0.0"
 	},
-	"devDependencies": {
-		"@opentelemetry/sdk-trace-base": "^1.28.0",
-		"@opentelemetry/sdk-trace-node": "^1.28.0",
-		"@types/debug": "^4.1.12"
+	"peerDependencies": {
+		"@ydbjs/api": "^6.0.0"
 	},
 	"files": [
 		"dist",
