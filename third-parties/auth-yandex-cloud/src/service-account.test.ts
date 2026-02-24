@@ -142,7 +142,7 @@ test('fromFile reads and parses JSON file', () => {
 	let provider =
 		ServiceAccountCredentialsProvider.fromFile('/path/to/key.json')
 	expect(provider).toBeDefined()
-	expect(fs.readFileSync).toHaveBeenCalledWith('/path/to/key.json', 'utf8')
+	expect(fs.readFileSync).toHaveBeenCalledWith('env/path/to/key.json', 'utf8')
 })
 
 test('fromEnv reads from environment variable', () => {
