@@ -45,6 +45,10 @@
 	"peerDependencies": {
 		"@ydbjs/api": "^6.0.0"
 	},
+	"devDependencies": {
+		"@opentelemetry/sdk-trace-base": "^1.28.0",
+		"@opentelemetry/sdk-trace-node": "^1.28.0"
+	},
 	"files": [
 		"dist",
 		"README.md",

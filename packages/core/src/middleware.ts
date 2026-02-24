@@ -46,10 +46,12 @@ export function createTracingMiddleware(
 			const result = yield* call.next(call.request, options)
 			span.end()
 			return result
-		} catch (error) {
+		} catch (error: unknown) {
 			const errAttrs = recordErrorAttributes(error)
 			span.setAttributes(errAttrs)
-			span.recordException(error)
+			span.recordException(
+				error instanceof Error ? error : new Error(String(error))
+			)
 			span.setStatus({ code: 2, message: String(error) })
 			span.end()
 			throw error
