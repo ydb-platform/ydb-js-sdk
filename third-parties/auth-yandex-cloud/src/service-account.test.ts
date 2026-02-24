@@ -137,26 +137,26 @@ test('handles IAM API error', async () => {
 })
 
 test('fromFile reads and parses JSON file', () => {
+	let filePath = '/path/to/key.json'
 	let mockFileContent = JSON.stringify(mockKey)
 	vi.mocked(fs.readFileSync).mockReturnValue(mockFileContent)
 
-	let filePath = '/path/to/key.json'
 	let provider = ServiceAccountCredentialsProvider.fromFile(filePath)
 	expect(provider).toBeDefined()
 	expect(fs.readFileSync).toHaveBeenCalledWith(path.resolve(filePath), 'utf8')
 })
 
 test('fromEnv reads from environment variable', () => {
+	let filePath = '/env/path/key.json'
 	let originalEnv = process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS
-	let keyPath = '/env/path/key.json'
-	process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = keyPath
+	process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = filePath
 
 	let mockFileContent = JSON.stringify(mockKey)
 	vi.mocked(fs.readFileSync).mockReturnValue(mockFileContent)
 
 	let provider = ServiceAccountCredentialsProvider.fromEnv()
 	expect(provider).toBeDefined()
-	expect(fs.readFileSync).toHaveBeenCalledWith(path.resolve(keyPath), 'utf8')
+	expect(fs.readFileSync).toHaveBeenCalledWith(path.resolve(filePath), 'utf8')
 
 	if (originalEnv) {
 		process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = originalEnv
