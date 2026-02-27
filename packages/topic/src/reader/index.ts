@@ -67,11 +67,13 @@ export const createTopicReader = function createTopicReader(
 		} catch (error) {
 			if (!state.controller.signal.aborted) {
 				dbg.log('error occurred while streaming: %O', error)
+				// Stream died unexpectedly (retry budget exhausted or non-retryable
+				// error). Destroy the reader so that any pending read() calls are
+				// unblocked rather than polling forever.
+				destroy(error)
 			}
 		} finally {
 			dbg.log('stream closed')
-			// Don't call destroy here - it's already being called by close/destroy
-			// and calling it again would be a no-op anyway due to disposed check
 		}
 	})()
 

@@ -33,7 +33,7 @@ import {
 	TransactionIdentitySchema,
 } from '@ydbjs/api/topic'
 import type { Driver } from '@ydbjs/core'
-import { isRetryableError } from '@ydbjs/retry'
+import { isRetryableStreamError } from '@ydbjs/retry'
 import { assign, enqueueActions, sendTo, setup } from 'xstate'
 import { defaultCodecMap } from '../codec.js'
 import { WriterStream, type WriterStreamReceiveEvent } from './stream.js'
@@ -791,14 +791,14 @@ let writerMachineFactory = setup({
 		},
 		retryableError: ({ context }) => {
 			if (context.lastError) {
-				return isRetryableError(context.lastError, true)
+				return isRetryableStreamError(context.lastError)
 			}
 
 			return false
 		},
 		nonRetryableError: ({ context }) => {
 			if (context.lastError) {
-				return !isRetryableError(context.lastError, true)
+				return !isRetryableStreamError(context.lastError)
 			}
 
 			return false

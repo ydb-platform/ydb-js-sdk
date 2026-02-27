@@ -19,7 +19,7 @@
 		"build": "turbo run build --output-logs=errors-only",
 		"attw": "turbo run attw",
 		"test": "vitest --run",
-		"lint": "oxlint",
+		"lint": "oxlint --fix",
 		"format": "prettier . --ignore-unknown --write",
 		"version": "npx changeset version && npm install",
 		"publish": "npx changeset publish",
