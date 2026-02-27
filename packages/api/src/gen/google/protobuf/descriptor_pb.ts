@@ -1173,7 +1173,8 @@ export type FileOptions = Message<'google.protobuf.FileOptions'> & {
  * Use `create(FileOptionsSchema)` to create a new message.
  */
 export const FileOptionsSchema: GenMessage<FileOptions> =
-	/*@__PURE__*/ messageDesc(file_google_protobuf_descriptor, 10)
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_descriptor, 10)
 
 /**
  * Generated classes can be optimized for speed or code size.
@@ -1812,7 +1813,8 @@ export type EnumOptions = Message<'google.protobuf.EnumOptions'> & {
  * Use `create(EnumOptionsSchema)` to create a new message.
  */
 export const EnumOptionsSchema: GenMessage<EnumOptions> =
-	/*@__PURE__*/ messageDesc(file_google_protobuf_descriptor, 14)
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_descriptor, 14)
 
 /**
  * @generated from message google.protobuf.EnumValueOptions
@@ -2136,7 +2138,8 @@ export type FeatureSet = Message<'google.protobuf.FeatureSet'> & {
  * Use `create(FeatureSetSchema)` to create a new message.
  */
 export const FeatureSetSchema: GenMessage<FeatureSet> =
-	/*@__PURE__*/ messageDesc(file_google_protobuf_descriptor, 19)
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_descriptor, 19)
 
 /**
  * @generated from message google.protobuf.FeatureSet.VisibilityFeature
@@ -2856,10 +2859,9 @@ export enum Edition {
 /**
  * Describes the enum google.protobuf.Edition.
  */
-export const EditionSchema: GenEnum<Edition> = /*@__PURE__*/ enumDesc(
-	file_google_protobuf_descriptor,
-	0
-)
+export const EditionSchema: GenEnum<Edition> =
+	/*@__PURE__*/
+	enumDesc(file_google_protobuf_descriptor, 0)
 
 /**
  * Describes the 'visibility' of a symbol with respect to the proto import

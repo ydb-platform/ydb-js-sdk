@@ -135,7 +135,6 @@ export type Duration = Message<'google.protobuf.Duration'> & {
  * Describes the message google.protobuf.Duration.
  * Use `create(DurationSchema)` to create a new message.
  */
-export const DurationSchema: GenMessage<Duration> = /*@__PURE__*/ messageDesc(
-	file_google_protobuf_duration,
-	0
-)
+export const DurationSchema: GenMessage<Duration> =
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_duration, 0)

@@ -47,7 +47,8 @@ export type StorageUnits = Message<'Ydb.Cms.StorageUnits'> & {
  * Use `create(StorageUnitsSchema)` to create a new message.
  */
 export const StorageUnitsSchema: GenMessage<StorageUnits> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_cms, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_cms, 0)
 
 /**
  * A set of uniform computational units.
@@ -150,10 +151,9 @@ export type Resources = Message<'Ydb.Cms.Resources'> & {
  * Describes the message Ydb.Cms.Resources.
  * Use `create(ResourcesSchema)` to create a new message.
  */
-export const ResourcesSchema: GenMessage<Resources> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_cms,
-	3
-)
+export const ResourcesSchema: GenMessage<Resources> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_cms, 3)
 
 /**
  * @generated from message Ydb.Cms.ServerlessResources
@@ -206,7 +206,8 @@ export type DatabaseOptions = Message<'Ydb.Cms.DatabaseOptions'> & {
  * Use `create(DatabaseOptionsSchema)` to create a new message.
  */
 export const DatabaseOptionsSchema: GenMessage<DatabaseOptions> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_cms, 5)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_cms, 5)
 
 /**
  * A set of quotas for schema operations
@@ -311,7 +312,8 @@ export type DatabaseQuotas = Message<'Ydb.Cms.DatabaseQuotas'> & {
  * Use `create(DatabaseQuotasSchema)` to create a new message.
  */
 export const DatabaseQuotasSchema: GenMessage<DatabaseQuotas> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_cms, 7)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_cms, 7)
 
 /**
  * Request to create a new database. For successfull creation

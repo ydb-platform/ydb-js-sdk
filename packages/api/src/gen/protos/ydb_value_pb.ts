@@ -40,7 +40,8 @@ export type DecimalType = Message<'Ydb.DecimalType'> & {
  * Use `create(DecimalTypeSchema)` to create a new message.
  */
 export const DecimalTypeSchema: GenMessage<DecimalType> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 0)
 
 /**
  * @generated from message Ydb.OptionalType
@@ -57,7 +58,8 @@ export type OptionalType = Message<'Ydb.OptionalType'> & {
  * Use `create(OptionalTypeSchema)` to create a new message.
  */
 export const OptionalTypeSchema: GenMessage<OptionalType> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 1)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 1)
 
 /**
  * @generated from message Ydb.ListType
@@ -73,10 +75,9 @@ export type ListType = Message<'Ydb.ListType'> & {
  * Describes the message Ydb.ListType.
  * Use `create(ListTypeSchema)` to create a new message.
  */
-export const ListTypeSchema: GenMessage<ListType> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	2
-)
+export const ListTypeSchema: GenMessage<ListType> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 2)
 
 /**
  * @generated from message Ydb.VariantType
@@ -108,7 +109,8 @@ export type VariantType = Message<'Ydb.VariantType'> & {
  * Use `create(VariantTypeSchema)` to create a new message.
  */
 export const VariantTypeSchema: GenMessage<VariantType> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 3)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 3)
 
 /**
  * @generated from message Ydb.TupleType
@@ -124,10 +126,9 @@ export type TupleType = Message<'Ydb.TupleType'> & {
  * Describes the message Ydb.TupleType.
  * Use `create(TupleTypeSchema)` to create a new message.
  */
-export const TupleTypeSchema: GenMessage<TupleType> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	4
-)
+export const TupleTypeSchema: GenMessage<TupleType> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 4)
 
 /**
  * @generated from message Ydb.StructMember
@@ -149,7 +150,8 @@ export type StructMember = Message<'Ydb.StructMember'> & {
  * Use `create(StructMemberSchema)` to create a new message.
  */
 export const StructMemberSchema: GenMessage<StructMember> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 5)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 5)
 
 /**
  * @generated from message Ydb.StructType
@@ -166,7 +168,8 @@ export type StructType = Message<'Ydb.StructType'> & {
  * Use `create(StructTypeSchema)` to create a new message.
  */
 export const StructTypeSchema: GenMessage<StructType> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 6)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 6)
 
 /**
  * @generated from message Ydb.DictType
@@ -187,10 +190,9 @@ export type DictType = Message<'Ydb.DictType'> & {
  * Describes the message Ydb.DictType.
  * Use `create(DictTypeSchema)` to create a new message.
  */
-export const DictTypeSchema: GenMessage<DictType> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	7
-)
+export const DictTypeSchema: GenMessage<DictType> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 7)
 
 /**
  * @generated from message Ydb.TaggedType
@@ -212,7 +214,8 @@ export type TaggedType = Message<'Ydb.TaggedType'> & {
  * Use `create(TaggedTypeSchema)` to create a new message.
  */
 export const TaggedTypeSchema: GenMessage<TaggedType> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 8)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 8)
 
 /**
  * @generated from message Ydb.PgType
@@ -253,10 +256,9 @@ export type PgType = Message<'Ydb.PgType'> & {
  * Describes the message Ydb.PgType.
  * Use `create(PgTypeSchema)` to create a new message.
  */
-export const PgTypeSchema: GenMessage<PgType> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	9
-)
+export const PgTypeSchema: GenMessage<PgType> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 9)
 
 /**
  * @generated from message Ydb.Type
@@ -377,10 +379,9 @@ export type Type = Message<'Ydb.Type'> & {
  * Describes the message Ydb.Type.
  * Use `create(TypeSchema)` to create a new message.
  */
-export const TypeSchema: GenMessage<Type> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	10
-)
+export const TypeSchema: GenMessage<Type> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 10)
 
 /**
  * @generated from enum Ydb.Type.PrimitiveTypeId
@@ -563,10 +564,9 @@ export type ValuePair = Message<'Ydb.ValuePair'> & {
  * Describes the message Ydb.ValuePair.
  * Use `create(ValuePairSchema)` to create a new message.
  */
-export const ValuePairSchema: GenMessage<ValuePair> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	11
-)
+export const ValuePairSchema: GenMessage<ValuePair> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 11)
 
 /**
  * @generated from message Ydb.Value
@@ -697,10 +697,9 @@ export type Value = Message<'Ydb.Value'> & {
  * Describes the message Ydb.Value.
  * Use `create(ValueSchema)` to create a new message.
  */
-export const ValueSchema: GenMessage<Value> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	12
-)
+export const ValueSchema: GenMessage<Value> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 12)
 
 /**
  * @generated from message Ydb.TypedValue
@@ -722,7 +721,8 @@ export type TypedValue = Message<'Ydb.TypedValue'> & {
  * Use `create(TypedValueSchema)` to create a new message.
  */
 export const TypedValueSchema: GenMessage<TypedValue> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_value, 13)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 13)
 
 /**
  * @generated from message Ydb.Column
@@ -747,10 +747,9 @@ export type Column = Message<'Ydb.Column'> & {
  * Describes the message Ydb.Column.
  * Use `create(ColumnSchema)` to create a new message.
  */
-export const ColumnSchema: GenMessage<Column> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	14
-)
+export const ColumnSchema: GenMessage<Column> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 14)
 
 /**
  * Represents table-like structure with ordered set of rows and columns
@@ -806,10 +805,9 @@ export type ResultSet = Message<'Ydb.ResultSet'> & {
  * Describes the message Ydb.ResultSet.
  * Use `create(ResultSetSchema)` to create a new message.
  */
-export const ResultSetSchema: GenMessage<ResultSet> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_value,
-	15
-)
+export const ResultSetSchema: GenMessage<ResultSet> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_value, 15)
 
 /**
  * @generated from enum Ydb.ResultSet.Format
@@ -841,4 +839,5 @@ export enum ResultSet_Format {
  * Describes the enum Ydb.ResultSet.Format.
  */
 export const ResultSet_FormatSchema: GenEnum<ResultSet_Format> =
-	/*@__PURE__*/ enumDesc(file_protos_ydb_value, 15, 0)
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_value, 15, 0)

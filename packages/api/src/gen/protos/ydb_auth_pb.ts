@@ -43,7 +43,8 @@ export type LoginRequest = Message<'Ydb.Auth.LoginRequest'> & {
  * Use `create(LoginRequestSchema)` to create a new message.
  */
 export const LoginRequestSchema: GenMessage<LoginRequest> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_auth, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_auth, 0)
 
 /**
  * @generated from message Ydb.Auth.LoginResponse
@@ -62,7 +63,8 @@ export type LoginResponse = Message<'Ydb.Auth.LoginResponse'> & {
  * Use `create(LoginResponseSchema)` to create a new message.
  */
 export const LoginResponseSchema: GenMessage<LoginResponse> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_auth, 1)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_auth, 1)
 
 /**
  * @generated from message Ydb.Auth.LoginResult
@@ -79,4 +81,5 @@ export type LoginResult = Message<'Ydb.Auth.LoginResult'> & {
  * Use `create(LoginResultSchema)` to create a new message.
  */
 export const LoginResultSchema: GenMessage<LoginResult> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_auth, 2)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_auth, 2)

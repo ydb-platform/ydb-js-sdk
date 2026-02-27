@@ -24,10 +24,9 @@ export type StatusIds = Message<'Ydb.StatusIds'> & {}
  * Describes the message Ydb.StatusIds.
  * Use `create(StatusIdsSchema)` to create a new message.
  */
-export const StatusIdsSchema: GenMessage<StatusIds> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_status_codes,
-	0
-)
+export const StatusIdsSchema: GenMessage<StatusIds> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_status_codes, 0)
 
 /**
  * reserved range [400000, 400999]

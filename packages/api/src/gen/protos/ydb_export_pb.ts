@@ -18,7 +18,7 @@ import type { Message } from '@bufbuild/protobuf'
 export const file_protos_ydb_export: GenFile =
 	/*@__PURE__*/
 	fileDesc(
-		'Chdwcm90b3MveWRiX2V4cG9ydC5wcm90bxIKWWRiLkV4cG9ydCKxAQoORXhwb3J0UHJvZ3Jlc3MingEKCFByb2dyZXNzEhgKFFBST0dSRVNTX1VOU1BFQ0lGSUVEEAASFgoSUFJPR1JFU1NfUFJFUEFSSU5HEAESGgoWUFJPR1JFU1NfVFJBTlNGRVJfREFUQRACEhEKDVBST0dSRVNTX0RPTkUQAxIZChVQUk9HUkVTU19DQU5DRUxMQVRJT04QBBIWChJQUk9HUkVTU19DQU5DRUxMRUQQBSKgAQoSRXhwb3J0SXRlbVByb2dyZXNzEhMKC3BhcnRzX3RvdGFsGAEgASgNEhcKD3BhcnRzX2NvbXBsZXRlZBgCIAEoDRIuCgpzdGFydF90aW1lGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIsCghlbmRfdGltZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAimAIKEkV4cG9ydFRvWXRTZXR0aW5ncxISCgRob3N0GAEgASgJQgSQ5ioBEgwKBHBvcnQYAiABKA0SEwoFdG9rZW4YAyABKAlCBJDmKgESOgoFaXRlbXMYBCADKAsyIy5ZZGIuRXhwb3J0LkV4cG9ydFRvWXRTZXR0aW5ncy5JdGVtQgaa5ioCKAESHAoLZGVzY3JpcHRpb24YBSABKAlCB6LmKgMYgAESGQoRbnVtYmVyX29mX3JldHJpZXMYBiABKA0SEwoLdXNlX3R5cGVfdjMYByABKAgaQQoESXRlbRIZCgtzb3VyY2VfcGF0aBgBIAEoCUIEkOYqARIeChBkZXN0aW5hdGlvbl9wYXRoGAIgASgJQgSQ5ioBIhIKEEV4cG9ydFRvWXRSZXN1bHQitQEKEkV4cG9ydFRvWXRNZXRhZGF0YRIwCghzZXR0aW5ncxgBIAEoCzIeLllkYi5FeHBvcnQuRXhwb3J0VG9ZdFNldHRpbmdzEjUKCHByb2dyZXNzGAIgASgOMiMuWWRiLkV4cG9ydC5FeHBvcnRQcm9ncmVzcy5Qcm9ncmVzcxI2Cg5pdGVtc19wcm9ncmVzcxgDIAMoCzIeLllkYi5FeHBvcnQuRXhwb3J0SXRlbVByb2dyZXNzIoYBChFFeHBvcnRUb1l0UmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEjYKCHNldHRpbmdzGAIgASgLMh4uWWRiLkV4cG9ydC5FeHBvcnRUb1l0U2V0dGluZ3NCBJDmKgEiQgoSRXhwb3J0VG9ZdFJlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiLBBgoSRXhwb3J0VG9TM1NldHRpbmdzEhYKCGVuZHBvaW50GAEgASgJQgSQ5ioBEjUKBnNjaGVtZRgCIAEoDjIlLllkYi5FeHBvcnQuRXhwb3J0VG9TM1NldHRpbmdzLlNjaGVtZRIUCgZidWNrZXQYAyABKAlCBJDmKgESGAoKYWNjZXNzX2tleRgEIAEoCUIEkOYqARIYCgpzZWNyZXRfa2V5GAUgASgJQgSQ5ioBEjIKBWl0ZW1zGAYgAygLMiMuWWRiLkV4cG9ydC5FeHBvcnRUb1MzU2V0dGluZ3MuSXRlbRIcCgtkZXNjcmlwdGlvbhgHIAEoCUIHouYqAxiAARIZChFudW1iZXJfb2ZfcmV0cmllcxgIIAEoDRJCCg1zdG9yYWdlX2NsYXNzGAkgASgOMisuWWRiLkV4cG9ydC5FeHBvcnRUb1MzU2V0dGluZ3MuU3RvcmFnZUNsYXNzEhMKC2NvbXByZXNzaW9uGAogASgJEg4KBnJlZ2lvbhgLIAEoCRIiChpkaXNhYmxlX3ZpcnR1YWxfYWRkcmVzc2luZxgMIAEoCBITCgtzb3VyY2VfcGF0aBgNIAEoCRIaChJkZXN0aW5hdGlvbl9wcmVmaXgYDiABKAkSOwoTZW5jcnlwdGlvbl9zZXR0aW5ncxgPIAEoCzIeLllkYi5FeHBvcnQuRW5jcnlwdGlvblNldHRpbmdzGj0KBEl0ZW0SGQoLc291cmNlX3BhdGgYASABKAlCBJDmKgESGgoSZGVzdGluYXRpb25fcHJlZml4GAIgASgJIi4KBlNjaGVtZRIPCgtVTlNQRUNJRklFRBAAEggKBEhUVFAQARIJCgVIVFRQUxACIroBCgxTdG9yYWdlQ2xhc3MSHQoZU1RPUkFHRV9DTEFTU19VTlNQRUNJRklFRBAAEgwKCFNUQU5EQVJEEAESFgoSUkVEVUNFRF9SRURVTkRBTkNZEAISDwoLU1RBTkRBUkRfSUEQAxIOCgpPTkVaT05FX0lBEAQSFwoTSU5URUxMSUdFTlRfVElFUklORxAFEgsKB0dMQUNJRVIQBhIQCgxERUVQX0FSQ0hJVkUQBxIMCghPVVRQT1NUUxAIIhIKEEV4cG9ydFRvUzNSZXN1bHQitQEKEkV4cG9ydFRvUzNNZXRhZGF0YRIwCghzZXR0aW5ncxgBIAEoCzIeLllkYi5FeHBvcnQuRXhwb3J0VG9TM1NldHRpbmdzEjUKCHByb2dyZXNzGAIgASgOMiMuWWRiLkV4cG9ydC5FeHBvcnRQcm9ncmVzcy5Qcm9ncmVzcxI2Cg5pdGVtc19wcm9ncmVzcxgDIAMoCzIeLllkYi5FeHBvcnQuRXhwb3J0SXRlbVByb2dyZXNzIoYBChFFeHBvcnRUb1MzUmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEjYKCHNldHRpbmdzGAIgASgLMh4uWWRiLkV4cG9ydC5FeHBvcnRUb1MzU2V0dGluZ3NCBJDmKgEiQgoSRXhwb3J0VG9TM1Jlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiKiAQoSRW5jcnlwdGlvblNldHRpbmdzEhwKFGVuY3J5cHRpb25fYWxnb3JpdGhtGAEgASgJEkQKDXN5bW1ldHJpY19rZXkYAiABKAsyKy5ZZGIuRXhwb3J0LkVuY3J5cHRpb25TZXR0aW5ncy5TeW1tZXRyaWNLZXlIABohCgxTeW1tZXRyaWNLZXkSEQoDa2V5GAEgASgMQgS45ioBQgUKA0tleUJVChV0ZWNoLnlkYi5wcm90by5leHBvcnRaOWdpdGh1Yi5jb20veWRiLXBsYXRmb3JtL3lkYi1nby1nZW5wcm90by9wcm90b3MvWWRiX0V4cG9ydPgBAWIGcHJvdG8z',
+		'Chdwcm90b3MveWRiX2V4cG9ydC5wcm90bxIKWWRiLkV4cG9ydCKxAQoORXhwb3J0UHJvZ3Jlc3MingEKCFByb2dyZXNzEhgKFFBST0dSRVNTX1VOU1BFQ0lGSUVEEAASFgoSUFJPR1JFU1NfUFJFUEFSSU5HEAESGgoWUFJPR1JFU1NfVFJBTlNGRVJfREFUQRACEhEKDVBST0dSRVNTX0RPTkUQAxIZChVQUk9HUkVTU19DQU5DRUxMQVRJT04QBBIWChJQUk9HUkVTU19DQU5DRUxMRUQQBSKgAQoSRXhwb3J0SXRlbVByb2dyZXNzEhMKC3BhcnRzX3RvdGFsGAEgASgNEhcKD3BhcnRzX2NvbXBsZXRlZBgCIAEoDRIuCgpzdGFydF90aW1lGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIsCghlbmRfdGltZRgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAisQIKEkV4cG9ydFRvWXRTZXR0aW5ncxISCgRob3N0GAEgASgJQgSQ5ioBEgwKBHBvcnQYAiABKA0SEwoFdG9rZW4YAyABKAlCBJDmKgESOgoFaXRlbXMYBCADKAsyIy5ZZGIuRXhwb3J0LkV4cG9ydFRvWXRTZXR0aW5ncy5JdGVtQgaa5ioCKAESHAoLZGVzY3JpcHRpb24YBSABKAlCB6LmKgMYgAESGQoRbnVtYmVyX29mX3JldHJpZXMYBiABKA0SEwoLdXNlX3R5cGVfdjMYByABKAgSFwoPZXhjbHVkZV9yZWdleHBzGAggAygJGkEKBEl0ZW0SGQoLc291cmNlX3BhdGgYASABKAlCBJDmKgESHgoQZGVzdGluYXRpb25fcGF0aBgCIAEoCUIEkOYqASISChBFeHBvcnRUb1l0UmVzdWx0IrUBChJFeHBvcnRUb1l0TWV0YWRhdGESMAoIc2V0dGluZ3MYASABKAsyHi5ZZGIuRXhwb3J0LkV4cG9ydFRvWXRTZXR0aW5ncxI1Cghwcm9ncmVzcxgCIAEoDjIjLllkYi5FeHBvcnQuRXhwb3J0UHJvZ3Jlc3MuUHJvZ3Jlc3MSNgoOaXRlbXNfcHJvZ3Jlc3MYAyADKAsyHi5ZZGIuRXhwb3J0LkV4cG9ydEl0ZW1Qcm9ncmVzcyKGAQoRRXhwb3J0VG9ZdFJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxI2CghzZXR0aW5ncxgCIAEoCzIeLllkYi5FeHBvcnQuRXhwb3J0VG9ZdFNldHRpbmdzQgSQ5ioBIkIKEkV4cG9ydFRvWXRSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24i9wYKEkV4cG9ydFRvUzNTZXR0aW5ncxIWCghlbmRwb2ludBgBIAEoCUIEkOYqARI1CgZzY2hlbWUYAiABKA4yJS5ZZGIuRXhwb3J0LkV4cG9ydFRvUzNTZXR0aW5ncy5TY2hlbWUSFAoGYnVja2V0GAMgASgJQgSQ5ioBEhgKCmFjY2Vzc19rZXkYBCABKAlCBJDmKgESGAoKc2VjcmV0X2tleRgFIAEoCUIEkOYqARIyCgVpdGVtcxgGIAMoCzIjLllkYi5FeHBvcnQuRXhwb3J0VG9TM1NldHRpbmdzLkl0ZW0SHAoLZGVzY3JpcHRpb24YByABKAlCB6LmKgMYgAESGQoRbnVtYmVyX29mX3JldHJpZXMYCCABKA0SQgoNc3RvcmFnZV9jbGFzcxgJIAEoDjIrLllkYi5FeHBvcnQuRXhwb3J0VG9TM1NldHRpbmdzLlN0b3JhZ2VDbGFzcxITCgtjb21wcmVzc2lvbhgKIAEoCRIOCgZyZWdpb24YCyABKAkSIgoaZGlzYWJsZV92aXJ0dWFsX2FkZHJlc3NpbmcYDCABKAgSEwoLc291cmNlX3BhdGgYDSABKAkSGgoSZGVzdGluYXRpb25fcHJlZml4GA4gASgJEjsKE2VuY3J5cHRpb25fc2V0dGluZ3MYDyABKAsyHi5ZZGIuRXhwb3J0LkVuY3J5cHRpb25TZXR0aW5ncxIbChNtYXRlcmlhbGl6ZV9pbmRleGVzGBAgASgIEhcKD2V4Y2x1ZGVfcmVnZXhwcxgRIAMoCRo9CgRJdGVtEhkKC3NvdXJjZV9wYXRoGAEgASgJQgSQ5ioBEhoKEmRlc3RpbmF0aW9uX3ByZWZpeBgCIAEoCSIuCgZTY2hlbWUSDwoLVU5TUEVDSUZJRUQQABIICgRIVFRQEAESCQoFSFRUUFMQAiK6AQoMU3RvcmFnZUNsYXNzEh0KGVNUT1JBR0VfQ0xBU1NfVU5TUEVDSUZJRUQQABIMCghTVEFOREFSRBABEhYKElJFRFVDRURfUkVEVU5EQU5DWRACEg8KC1NUQU5EQVJEX0lBEAMSDgoKT05FWk9ORV9JQRAEEhcKE0lOVEVMTElHRU5UX1RJRVJJTkcQBRILCgdHTEFDSUVSEAYSEAoMREVFUF9BUkNISVZFEAcSDAoIT1VUUE9TVFMQCCISChBFeHBvcnRUb1MzUmVzdWx0IrUBChJFeHBvcnRUb1MzTWV0YWRhdGESMAoIc2V0dGluZ3MYASABKAsyHi5ZZGIuRXhwb3J0LkV4cG9ydFRvUzNTZXR0aW5ncxI1Cghwcm9ncmVzcxgCIAEoDjIjLllkYi5FeHBvcnQuRXhwb3J0UHJvZ3Jlc3MuUHJvZ3Jlc3MSNgoOaXRlbXNfcHJvZ3Jlc3MYAyADKAsyHi5ZZGIuRXhwb3J0LkV4cG9ydEl0ZW1Qcm9ncmVzcyKGAQoRRXhwb3J0VG9TM1JlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxI2CghzZXR0aW5ncxgCIAEoCzIeLllkYi5FeHBvcnQuRXhwb3J0VG9TM1NldHRpbmdzQgSQ5ioBIkIKEkV4cG9ydFRvUzNSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iogEKEkVuY3J5cHRpb25TZXR0aW5ncxIcChRlbmNyeXB0aW9uX2FsZ29yaXRobRgBIAEoCRJECg1zeW1tZXRyaWNfa2V5GAIgASgLMisuWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MuU3ltbWV0cmljS2V5SAAaIQoMU3ltbWV0cmljS2V5EhEKA2tleRgBIAEoDEIEuOYqAUIFCgNLZXki1wIKEkV4cG9ydFRvRnNTZXR0aW5ncxIXCgliYXNlX3BhdGgYASABKAlCBJDmKgESMgoFaXRlbXMYAiADKAsyIy5ZZGIuRXhwb3J0LkV4cG9ydFRvRnNTZXR0aW5ncy5JdGVtEhwKC2Rlc2NyaXB0aW9uGAMgASgJQgei5ioDGIABEhkKEW51bWJlcl9vZl9yZXRyaWVzGAQgASgNEhMKC2NvbXByZXNzaW9uGAUgASgJEjsKE2VuY3J5cHRpb25fc2V0dGluZ3MYBiABKAsyHi5ZZGIuRXhwb3J0LkVuY3J5cHRpb25TZXR0aW5ncxITCgtzb3VyY2VfcGF0aBgHIAEoCRIXCg9leGNsdWRlX3JlZ2V4cHMYCCADKAkaOwoESXRlbRIZCgtzb3VyY2VfcGF0aBgBIAEoCUIEkOYqARIYChBkZXN0aW5hdGlvbl9wYXRoGAIgASgJIhIKEEV4cG9ydFRvRnNSZXN1bHQitQEKEkV4cG9ydFRvRnNNZXRhZGF0YRIwCghzZXR0aW5ncxgBIAEoCzIeLllkYi5FeHBvcnQuRXhwb3J0VG9Gc1NldHRpbmdzEjUKCHByb2dyZXNzGAIgASgOMiMuWWRiLkV4cG9ydC5FeHBvcnRQcm9ncmVzcy5Qcm9ncmVzcxI2Cg5pdGVtc19wcm9ncmVzcxgDIAMoCzIeLllkYi5FeHBvcnQuRXhwb3J0SXRlbVByb2dyZXNzIoYBChFFeHBvcnRUb0ZzUmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEjYKCHNldHRpbmdzGAIgASgLMh4uWWRiLkV4cG9ydC5FeHBvcnRUb0ZzU2V0dGluZ3NCBJDmKgEiQgoSRXhwb3J0VG9Gc1Jlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbkJVChV0ZWNoLnlkYi5wcm90by5leHBvcnRaOWdpdGh1Yi5jb20veWRiLXBsYXRmb3JtL3lkYi1nby1nZW5wcm90by9wcm90b3MvWWRiX0V4cG9ydPgBAWIGcHJvdG8z',
 		[
 			file_protos_annotations_sensitive,
 			file_protos_annotations_validation,
@@ -39,7 +39,8 @@ export type ExportProgress = Message<'Ydb.Export.ExportProgress'> & {}
  * Use `create(ExportProgressSchema)` to create a new message.
  */
 export const ExportProgressSchema: GenMessage<ExportProgress> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_export, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 0)
 
 /**
  * @generated from enum Ydb.Export.ExportProgress.Progress
@@ -156,6 +157,15 @@ export type ExportToYtSettings = Message<'Ydb.Export.ExportToYtSettings'> & {
 	 * @generated from field: bool use_type_v3 = 7;
 	 */
 	useTypeV3: boolean
+
+	/**
+	 * Patterns (PCRE) for paths excluded from export operation.
+	 * - Patterns are matched against the object path relative to database root path.
+	 * - Object is excluded from export operation if it matches any of the specified exclude regexps.
+	 *
+	 * @generated from field: repeated string exclude_regexps = 8;
+	 */
+	excludeRegexps: string[]
 }
 
 /**
@@ -202,7 +212,8 @@ export type ExportToYtResult = Message<'Ydb.Export.ExportToYtResult'> & {}
  * Use `create(ExportToYtResultSchema)` to create a new message.
  */
 export const ExportToYtResultSchema: GenMessage<ExportToYtResult> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_export, 3)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 3)
 
 /**
  * @generated from message Ydb.Export.ExportToYtMetadata
@@ -356,7 +367,7 @@ export type ExportToS3Settings = Message<'Ydb.Export.ExportToS3Settings'> & {
 	disableVirtualAddressing: boolean
 
 	/**
-	 * Database root if not provided.
+	 * Defaults to database root if not provided.
 	 * All object names are calculated and written relative to this path.
 	 *
 	 * @generated from field: string source_path = 13;
@@ -380,6 +391,25 @@ export type ExportToS3Settings = Message<'Ydb.Export.ExportToS3Settings'> & {
 	 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 15;
 	 */
 	encryptionSettings?: EncryptionSettings
+
+	/**
+	 * Materialization of index table data.
+	 * By default, only index metadata is uploaded and indexes are built during import — it saves space
+	 * and reduces export time, but it can potentially increase the import time.
+	 * Indexes can be materialized, then their data will be uploaded during export and downloaded during import.
+	 *
+	 * @generated from field: bool materialize_indexes = 16;
+	 */
+	materializeIndexes: boolean
+
+	/**
+	 * Patterns (PCRE) for paths excluded from export operation.
+	 * - Patterns are matched against the object path relative to the export's source_path.
+	 * - Object is excluded from export operation if it matches any of the specified exclude regexps.
+	 *
+	 * @generated from field: repeated string exclude_regexps = 17;
+	 */
+	excludeRegexps: string[]
 }
 
 /**
@@ -519,7 +549,8 @@ export type ExportToS3Result = Message<'Ydb.Export.ExportToS3Result'> & {}
  * Use `create(ExportToS3ResultSchema)` to create a new message.
  */
 export const ExportToS3ResultSchema: GenMessage<ExportToS3Result> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_export, 8)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 8)
 
 /**
  * @generated from message Ydb.Export.ExportToS3Metadata
@@ -654,3 +685,202 @@ export type EncryptionSettings_SymmetricKey =
 export const EncryptionSettings_SymmetricKeySchema: GenMessage<EncryptionSettings_SymmetricKey> =
 	/*@__PURE__*/
 	messageDesc(file_protos_ydb_export, 12, 0)
+
+/**
+ * / File system (FS)
+ *
+ * @generated from message Ydb.Export.ExportToFsSettings
+ */
+export type ExportToFsSettings = Message<'Ydb.Export.ExportToFsSettings'> & {
+	/**
+	 * Base path on FS where to write all export items
+	 * In the case of NFS, one of the directories in the path must be mounted
+	 * Must be an absolute path
+	 * Example: /mnt/exports
+	 * SchemaMapping file with the list of objects is written to this path
+	 *
+	 * @generated from field: string base_path = 1;
+	 */
+	basePath: string
+
+	/**
+	 * List of items to export
+	 *
+	 * @generated from field: repeated Ydb.Export.ExportToFsSettings.Item items = 2;
+	 */
+	items: ExportToFsSettings_Item[]
+
+	/**
+	 * Optional description
+	 *
+	 * @generated from field: string description = 3;
+	 */
+	description: string
+
+	/**
+	 * Number of retries for failed operations
+	 *
+	 * @generated from field: uint32 number_of_retries = 4;
+	 */
+	numberOfRetries: number
+
+	/**
+	 * Codec used to compress data. Codecs are available:
+	 * - zstd.
+	 * - zstd-N, where N is compression level, e.g. zstd-3.
+	 *
+	 * @generated from field: string compression = 5;
+	 */
+	compression: string
+
+	/**
+	 * Settings for data encryption.
+	 * If encryption_settings field is not specified,
+	 * the resulting data will not be encrypted.
+	 *
+	 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 6;
+	 */
+	encryptionSettings?: EncryptionSettings
+
+	/**
+	 * Defaults to database root if not provided.
+	 * All object names are calculated and written relative to this path.
+	 *
+	 * @generated from field: string source_path = 7;
+	 */
+	sourcePath: string
+
+	/**
+	 * Patterns (PCRE) for paths excluded from export operation.
+	 * - Patterns are matched against the object path relative to the export's source_path.
+	 * - Object is excluded from export operation if it matches any of the specified exclude regexps.
+	 *
+	 * @generated from field: repeated string exclude_regexps = 8;
+	 */
+	excludeRegexps: string[]
+}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsSettings.
+ * Use `create(ExportToFsSettingsSchema)` to create a new message.
+ */
+export const ExportToFsSettingsSchema: GenMessage<ExportToFsSettings> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 13)
+
+/**
+ * @generated from message Ydb.Export.ExportToFsSettings.Item
+ */
+export type ExportToFsSettings_Item =
+	Message<'Ydb.Export.ExportToFsSettings.Item'> & {
+		/**
+		 * Database path to a table/directory to be exported
+		 *
+		 * @generated from field: string source_path = 1;
+		 */
+		sourcePath: string
+
+		/**
+		 * Tables are exported to one or more files in FS.
+		 * The path begins with 'destination_path'.
+		 * If not specified, actual FS path is the default `base_path` concatenated with:
+		 * The object path relative to the global `source_path` for a non-encrypted export
+		 * The anonymized path for an encrypted export
+		 *
+		 * @generated from field: string destination_path = 2;
+		 */
+		destinationPath: string
+	}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsSettings.Item.
+ * Use `create(ExportToFsSettings_ItemSchema)` to create a new message.
+ */
+export const ExportToFsSettings_ItemSchema: GenMessage<ExportToFsSettings_Item> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 13, 0)
+
+/**
+ * @generated from message Ydb.Export.ExportToFsResult
+ */
+export type ExportToFsResult = Message<'Ydb.Export.ExportToFsResult'> & {}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsResult.
+ * Use `create(ExportToFsResultSchema)` to create a new message.
+ */
+export const ExportToFsResultSchema: GenMessage<ExportToFsResult> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 14)
+
+/**
+ * @generated from message Ydb.Export.ExportToFsMetadata
+ */
+export type ExportToFsMetadata = Message<'Ydb.Export.ExportToFsMetadata'> & {
+	/**
+	 * @generated from field: Ydb.Export.ExportToFsSettings settings = 1;
+	 */
+	settings?: ExportToFsSettings
+
+	/**
+	 * @generated from field: Ydb.Export.ExportProgress.Progress progress = 2;
+	 */
+	progress: ExportProgress_Progress
+
+	/**
+	 * @generated from field: repeated Ydb.Export.ExportItemProgress items_progress = 3;
+	 */
+	itemsProgress: ExportItemProgress[]
+}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsMetadata.
+ * Use `create(ExportToFsMetadataSchema)` to create a new message.
+ */
+export const ExportToFsMetadataSchema: GenMessage<ExportToFsMetadata> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 15)
+
+/**
+ * @generated from message Ydb.Export.ExportToFsRequest
+ */
+export type ExportToFsRequest = Message<'Ydb.Export.ExportToFsRequest'> & {
+	/**
+	 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+	 */
+	operationParams?: OperationParams
+
+	/**
+	 * @generated from field: Ydb.Export.ExportToFsSettings settings = 2;
+	 */
+	settings?: ExportToFsSettings
+}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsRequest.
+ * Use `create(ExportToFsRequestSchema)` to create a new message.
+ */
+export const ExportToFsRequestSchema: GenMessage<ExportToFsRequest> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 16)
+
+/**
+ * @generated from message Ydb.Export.ExportToFsResponse
+ */
+export type ExportToFsResponse = Message<'Ydb.Export.ExportToFsResponse'> & {
+	/**
+	 * operation.result = ExportToFsResult
+	 * operation.metadata = ExportToFsMetadata
+	 *
+	 * @generated from field: Ydb.Operations.Operation operation = 1;
+	 */
+	operation?: Operation
+}
+
+/**
+ * Describes the message Ydb.Export.ExportToFsResponse.
+ * Use `create(ExportToFsResponseSchema)` to create a new message.
+ */
+export const ExportToFsResponseSchema: GenMessage<ExportToFsResponse> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_export, 17)

@@ -70,10 +70,9 @@ export type Struct = Message<'google.protobuf.Struct'> & {
  * Describes the message google.protobuf.Struct.
  * Use `create(StructSchema)` to create a new message.
  */
-export const StructSchema: GenMessage<Struct> = /*@__PURE__*/ messageDesc(
-	file_google_protobuf_struct,
-	0
-)
+export const StructSchema: GenMessage<Struct> =
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_struct, 0)
 
 /**
  * `Value` represents a dynamically typed value which can be either
@@ -153,10 +152,9 @@ export type Value = Message<'google.protobuf.Value'> & {
  * Describes the message google.protobuf.Value.
  * Use `create(ValueSchema)` to create a new message.
  */
-export const ValueSchema: GenMessage<Value> = /*@__PURE__*/ messageDesc(
-	file_google_protobuf_struct,
-	1
-)
+export const ValueSchema: GenMessage<Value> =
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_struct, 1)
 
 /**
  * `ListValue` is a wrapper around a repeated field of values.
@@ -178,10 +176,9 @@ export type ListValue = Message<'google.protobuf.ListValue'> & {
  * Describes the message google.protobuf.ListValue.
  * Use `create(ListValueSchema)` to create a new message.
  */
-export const ListValueSchema: GenMessage<ListValue> = /*@__PURE__*/ messageDesc(
-	file_google_protobuf_struct,
-	2
-)
+export const ListValueSchema: GenMessage<ListValue> =
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_struct, 2)
 
 /**
  * `NullValue` is a singleton enumeration to represent the null value for the
@@ -203,7 +200,6 @@ export enum NullValue {
 /**
  * Describes the enum google.protobuf.NullValue.
  */
-export const NullValueSchema: GenEnum<NullValue> = /*@__PURE__*/ enumDesc(
-	file_google_protobuf_struct,
-	0
-)
+export const NullValueSchema: GenEnum<NullValue> =
+	/*@__PURE__*/
+	enumDesc(file_google_protobuf_struct, 0)

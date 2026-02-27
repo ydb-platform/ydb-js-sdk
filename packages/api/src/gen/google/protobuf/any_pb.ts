@@ -183,7 +183,6 @@ export type Any = Message<'google.protobuf.Any'> & {
  * Describes the message google.protobuf.Any.
  * Use `create(AnySchema)` to create a new message.
  */
-export const AnySchema: GenMessage<Any> = /*@__PURE__*/ messageDesc(
-	file_google_protobuf_any,
-	0
-)
+export const AnySchema: GenMessage<Any> =
+	/*@__PURE__*/
+	messageDesc(file_google_protobuf_any, 0)

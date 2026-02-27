@@ -23,6 +23,12 @@ import {
 	CreateTableResponseSchema,
 	DeleteSessionRequestSchema,
 	DeleteSessionResponseSchema,
+	DescribeExternalDataSourceRequestSchema,
+	DescribeExternalDataSourceResponseSchema,
+	DescribeExternalTableRequestSchema,
+	DescribeExternalTableResponseSchema,
+	DescribeSystemViewRequestSchema,
+	DescribeSystemViewResponseSchema,
 	DescribeTableOptionsRequestSchema,
 	DescribeTableOptionsResponseSchema,
 	DescribeTableRequestSchema,
@@ -60,7 +66,7 @@ export const TableServiceDefinition = {
 	 * Create new session. Implicit session creation is forbidden,
 	 * so user must create new session before execute any query,
 	 * otherwise BAD_SESSION status will be returned.
-	 * Simultaneous execution of requests are forbiden.
+	 * Simultaneous execution of requests are forbidden.
 	 * Sessions are volatile, can be invalidated by server, for example in case
 	 * of fatal errors. All requests with this session will fail with BAD_SESSION status.
 	 * So, client must be able to handle BAD_SESSION status.
@@ -706,6 +712,99 @@ export const TableServiceDefinition = {
 			),
 		responseDeserialize: (bytes: Uint8Array) =>
 			fromBinary(ExecuteScanQueryPartialResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Returns information about a given external data source.
+	 *
+	 * @generated from rpc Ydb.Table.V1.TableService.DescribeExternalDataSource
+	 */
+	describeExternalDataSource: {
+		path: '/Ydb.Table.V1.TableService/DescribeExternalDataSource',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<
+				typeof DescribeExternalDataSourceRequestSchema
+			>
+		) =>
+			toBinary(
+				DescribeExternalDataSourceRequestSchema,
+				create(DescribeExternalDataSourceRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeExternalDataSourceRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<
+				typeof DescribeExternalDataSourceResponseSchema
+			>
+		) =>
+			toBinary(
+				DescribeExternalDataSourceResponseSchema,
+				create(DescribeExternalDataSourceResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeExternalDataSourceResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Returns information about a given external table.
+	 *
+	 * @generated from rpc Ydb.Table.V1.TableService.DescribeExternalTable
+	 */
+	describeExternalTable: {
+		path: '/Ydb.Table.V1.TableService/DescribeExternalTable',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof DescribeExternalTableRequestSchema>
+		) =>
+			toBinary(
+				DescribeExternalTableRequestSchema,
+				create(DescribeExternalTableRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeExternalTableRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<
+				typeof DescribeExternalTableResponseSchema
+			>
+		) =>
+			toBinary(
+				DescribeExternalTableResponseSchema,
+				create(DescribeExternalTableResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeExternalTableResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Returns information about a given system view table.
+	 *
+	 * @generated from rpc Ydb.Table.V1.TableService.DescribeSystemView
+	 */
+	describeSystemView: {
+		path: '/Ydb.Table.V1.TableService/DescribeSystemView',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof DescribeSystemViewRequestSchema>
+		) =>
+			toBinary(
+				DescribeSystemViewRequestSchema,
+				create(DescribeSystemViewRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeSystemViewRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof DescribeSystemViewResponseSchema>
+		) =>
+			toBinary(
+				DescribeSystemViewResponseSchema,
+				create(DescribeSystemViewResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(DescribeSystemViewResponseSchema, bytes),
 		options: {},
 	},
 } as const satisfies ServiceDefinition

@@ -5,6 +5,8 @@
 import type { MessageInitShape } from '@bufbuild/protobuf'
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import {
+	ExportToFsRequestSchema,
+	ExportToFsResponseSchema,
 	ExportToS3RequestSchema,
 	ExportToS3ResponseSchema,
 	ExportToYtRequestSchema,
@@ -74,6 +76,36 @@ export const ExportServiceDefinition = {
 			),
 		responseDeserialize: (bytes: Uint8Array) =>
 			fromBinary(ExportToS3ResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * Exports data to file system.
+	 * Method starts an asynchronous operation that can be cancelled while it is in progress.
+	 *
+	 * @generated from rpc Ydb.Export.V1.ExportService.ExportToFs
+	 */
+	exportToFs: {
+		path: '/Ydb.Export.V1.ExportService/ExportToFs',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ExportToFsRequestSchema>
+		) =>
+			toBinary(
+				ExportToFsRequestSchema,
+				create(ExportToFsRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExportToFsRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ExportToFsResponseSchema>
+		) =>
+			toBinary(
+				ExportToFsResponseSchema,
+				create(ExportToFsResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ExportToFsResponseSchema, bytes),
 		options: {},
 	},
 } as const satisfies ServiceDefinition

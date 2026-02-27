@@ -79,10 +79,9 @@ export type Limit = Message<'Ydb.Limit'> & {
  * Describes the message Ydb.Limit.
  * Use `create(LimitSchema)` to create a new message.
  */
-export const LimitSchema: GenMessage<Limit> = /*@__PURE__*/ messageDesc(
-	file_protos_annotations_validation,
-	0
-)
+export const LimitSchema: GenMessage<Limit> =
+	/*@__PURE__*/
+	messageDesc(file_protos_annotations_validation, 0)
 
 /**
  * @generated from message Ydb.Limit.Range
@@ -126,10 +125,9 @@ export type MapKey = Message<'Ydb.MapKey'> & {
  * Describes the message Ydb.MapKey.
  * Use `create(MapKeySchema)` to create a new message.
  */
-export const MapKeySchema: GenMessage<MapKey> = /*@__PURE__*/ messageDesc(
-	file_protos_annotations_validation,
-	1
-)
+export const MapKeySchema: GenMessage<MapKey> =
+	/*@__PURE__*/
+	messageDesc(file_protos_annotations_validation, 1)
 
 /**
  * @generated from extension: bool required = 87650;
@@ -141,29 +139,27 @@ export const required: GenExtension<FieldOptions, boolean> =
 /**
  * @generated from extension: Ydb.Limit size = 87651;
  */
-export const size: GenExtension<FieldOptions, Limit> = /*@__PURE__*/ extDesc(
-	file_protos_annotations_validation,
-	1
-)
+export const size: GenExtension<FieldOptions, Limit> =
+	/*@__PURE__*/
+	extDesc(file_protos_annotations_validation, 1)
 
 /**
  * @generated from extension: Ydb.Limit length = 87652;
  */
-export const length: GenExtension<FieldOptions, Limit> = /*@__PURE__*/ extDesc(
-	file_protos_annotations_validation,
-	2
-)
+export const length: GenExtension<FieldOptions, Limit> =
+	/*@__PURE__*/
+	extDesc(file_protos_annotations_validation, 2)
 
 /**
  * @generated from extension: Ydb.MapKey map_key = 87653;
  */
 export const map_key: GenExtension<FieldOptions, MapKey> =
-	/*@__PURE__*/ extDesc(file_protos_annotations_validation, 3)
+	/*@__PURE__*/
+	extDesc(file_protos_annotations_validation, 3)
 
 /**
  * @generated from extension: string value = 87654;
  */
-export const value: GenExtension<FieldOptions, string> = /*@__PURE__*/ extDesc(
-	file_protos_annotations_validation,
-	4
-)
+export const value: GenExtension<FieldOptions, string> =
+	/*@__PURE__*/
+	extDesc(file_protos_annotations_validation, 4)

@@ -76,7 +76,8 @@ export type CsvSettings = Message<'Ydb.Formats.CsvSettings'> & {
  * Use `create(CsvSettingsSchema)` to create a new message.
  */
 export const CsvSettingsSchema: GenMessage<CsvSettings> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_formats, 1)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_formats, 1)
 
 /**
  * @generated from message Ydb.Formats.CsvSettings.Quoting
@@ -221,4 +222,5 @@ export type ArrowFormatMeta = Message<'Ydb.Formats.ArrowFormatMeta'> & {
  * Use `create(ArrowFormatMetaSchema)` to create a new message.
  */
 export const ArrowFormatMetaSchema: GenMessage<ArrowFormatMeta> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_formats, 3)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_formats, 3)

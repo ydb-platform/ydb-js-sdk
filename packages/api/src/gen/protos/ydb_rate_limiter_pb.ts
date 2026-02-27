@@ -111,10 +111,9 @@ export type Resource = Message<'Ydb.RateLimiter.Resource'> & {
  * Describes the message Ydb.RateLimiter.Resource.
  * Use `create(ResourceSchema)` to create a new message.
  */
-export const ResourceSchema: GenMessage<Resource> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_rate_limiter,
-	1
-)
+export const ResourceSchema: GenMessage<Resource> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_rate_limiter, 1)
 
 /**
  * @generated from message Ydb.RateLimiter.CreateResourceRequest

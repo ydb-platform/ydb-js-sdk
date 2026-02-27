@@ -1,3 +1,5 @@
+- Update protofiles to latest
+
 # @ydbjs/api
 
 ## 6.0.5

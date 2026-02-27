@@ -63,7 +63,8 @@ export type IssueMessage = Message<'Ydb.Issue.IssueMessage'> & {
  * Use `create(IssueMessageSchema)` to create a new message.
  */
 export const IssueMessageSchema: GenMessage<IssueMessage> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_issue_message, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_issue_message, 0)
 
 /**
  * @generated from message Ydb.Issue.IssueMessage.Position

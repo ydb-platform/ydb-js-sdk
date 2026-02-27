@@ -62,7 +62,8 @@ export type SupportedCodecs = Message<'Ydb.Topic.SupportedCodecs'> & {
  * Use `create(SupportedCodecsSchema)` to create a new message.
  */
 export const SupportedCodecsSchema: GenMessage<SupportedCodecs> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 0)
 
 /**
  * Represents range [start, end).
@@ -87,7 +88,8 @@ export type OffsetsRange = Message<'Ydb.Topic.OffsetsRange'> & {
  * Use `create(OffsetsRangeSchema)` to create a new message.
  */
 export const OffsetsRangeSchema: GenMessage<OffsetsRange> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 1)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 1)
 
 /**
  * In-session reauthentication and reauthorization, lets user increase session lifetime.
@@ -171,7 +173,8 @@ export type MetadataItem = Message<'Ydb.Topic.MetadataItem'> & {
  * Use `create(MetadataItemSchema)` to create a new message.
  */
 export const MetadataItemSchema: GenMessage<MetadataItem> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 5)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 5)
 
 /**
  * Messages for bidirectional streaming rpc StreamWrite
@@ -2521,10 +2524,9 @@ export type Consumer = Message<'Ydb.Topic.Consumer'> & {
  * Describes the message Ydb.Topic.Consumer.
  * Use `create(ConsumerSchema)` to create a new message.
  */
-export const ConsumerSchema: GenMessage<Consumer> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_topic,
-	17
-)
+export const ConsumerSchema: GenMessage<Consumer> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 17)
 
 /**
  * @generated from message Ydb.Topic.Consumer.ConsumerStats
@@ -2649,7 +2651,8 @@ export type AlterConsumer = Message<'Ydb.Topic.AlterConsumer'> & {
  * Use `create(AlterConsumerSchema)` to create a new message.
  */
 export const AlterConsumerSchema: GenMessage<AlterConsumer> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 18)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 18)
 
 /**
  * Partitioning settings for topic.
@@ -3772,7 +3775,8 @@ export type PartitionStats = Message<'Ydb.Topic.PartitionStats'> & {
  * Use `create(PartitionStatsSchema)` to create a new message.
  */
 export const PartitionStatsSchema: GenMessage<PartitionStats> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 39)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 39)
 
 /**
  * Update existing topic request sent from client to server.
@@ -3919,7 +3923,8 @@ export type AlterTopicResult = Message<'Ydb.Topic.AlterTopicResult'> & {}
  * Use `create(AlterTopicResultSchema)` to create a new message.
  */
 export const AlterTopicResultSchema: GenMessage<AlterTopicResult> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 42)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 42)
 
 /**
  * Drop topic request sent from client to server.
@@ -3945,7 +3950,8 @@ export type DropTopicRequest = Message<'Ydb.Topic.DropTopicRequest'> & {
  * Use `create(DropTopicRequestSchema)` to create a new message.
  */
 export const DropTopicRequestSchema: GenMessage<DropTopicRequest> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 43)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 43)
 
 /**
  * Drop topic response sent from server to client.
@@ -3982,7 +3988,8 @@ export type DropTopicResult = Message<'Ydb.Topic.DropTopicResult'> & {}
  * Use `create(DropTopicResultSchema)` to create a new message.
  */
 export const DropTopicResultSchema: GenMessage<DropTopicResult> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_topic, 45)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_topic, 45)
 
 /**
  * @generated from enum Ydb.Topic.Codec
@@ -4024,10 +4031,9 @@ export enum Codec {
 /**
  * Describes the enum Ydb.Topic.Codec.
  */
-export const CodecSchema: GenEnum<Codec> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_topic,
-	0
-)
+export const CodecSchema: GenEnum<Codec> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_topic, 0)
 
 /**
  * @generated from enum Ydb.Topic.AutoPartitioningStrategy
@@ -4109,7 +4115,6 @@ export enum MeteringMode {
 /**
  * Describes the enum Ydb.Topic.MeteringMode.
  */
-export const MeteringModeSchema: GenEnum<MeteringMode> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_topic,
-	2
-)
+export const MeteringModeSchema: GenEnum<MeteringMode> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_topic, 2)

@@ -25,7 +25,8 @@ export type FeatureFlag = Message<'Ydb.FeatureFlag'> & {}
  * Use `create(FeatureFlagSchema)` to create a new message.
  */
 export const FeatureFlagSchema: GenMessage<FeatureFlag> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_common, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_common, 0)
 
 /**
  * @generated from enum Ydb.FeatureFlag.Status
@@ -70,10 +71,9 @@ export type CostInfo = Message<'Ydb.CostInfo'> & {
  * Describes the message Ydb.CostInfo.
  * Use `create(CostInfoSchema)` to create a new message.
  */
-export const CostInfoSchema: GenMessage<CostInfo> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_common,
-	1
-)
+export const CostInfoSchema: GenMessage<CostInfo> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_common, 1)
 
 /**
  * @generated from message Ydb.QuotaExceeded
@@ -90,7 +90,8 @@ export type QuotaExceeded = Message<'Ydb.QuotaExceeded'> & {
  * Use `create(QuotaExceededSchema)` to create a new message.
  */
 export const QuotaExceededSchema: GenMessage<QuotaExceeded> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_common, 2)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_common, 2)
 
 /**
  * Specifies a point in database time
@@ -114,4 +115,5 @@ export type VirtualTimestamp = Message<'Ydb.VirtualTimestamp'> & {
  * Use `create(VirtualTimestampSchema)` to create a new message.
  */
 export const VirtualTimestampSchema: GenMessage<VirtualTimestamp> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_common, 3)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_common, 3)
