@@ -44,7 +44,8 @@ export type Unsupported = Message<'Ydb.Coordination.Unsupported'> & {}
  * Use `create(UnsupportedSchema)` to create a new message.
  */
 export const UnsupportedSchema: GenMessage<Unsupported> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_coordination, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_coordination, 0)
 
 /**
  * *
@@ -100,10 +101,9 @@ export type Config = Message<'Ydb.Coordination.Config'> & {
  * Describes the message Ydb.Coordination.Config.
  * Use `create(ConfigSchema)` to create a new message.
  */
-export const ConfigSchema: GenMessage<Config> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_coordination,
-	1
-)
+export const ConfigSchema: GenMessage<Config> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_coordination, 1)
 
 /**
  * *
@@ -1542,7 +1542,8 @@ export enum ConsistencyMode {
  * Describes the enum Ydb.Coordination.ConsistencyMode.
  */
 export const ConsistencyModeSchema: GenEnum<ConsistencyMode> =
-	/*@__PURE__*/ enumDesc(file_protos_ydb_coordination, 0)
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_coordination, 0)
 
 /**
  * *

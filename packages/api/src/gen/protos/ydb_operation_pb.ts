@@ -364,7 +364,6 @@ export type Operation = Message<'Ydb.Operations.Operation'> & {
  * Describes the message Ydb.Operations.Operation.
  * Use `create(OperationSchema)` to create a new message.
  */
-export const OperationSchema: GenMessage<Operation> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_operation,
-	9
-)
+export const OperationSchema: GenMessage<Operation> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_operation, 9)

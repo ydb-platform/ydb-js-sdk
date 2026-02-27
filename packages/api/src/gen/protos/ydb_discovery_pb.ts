@@ -112,7 +112,8 @@ export type EndpointInfo = Message<'Ydb.Discovery.EndpointInfo'> & {
  * Use `create(EndpointInfoSchema)` to create a new message.
  */
 export const EndpointInfoSchema: GenMessage<EndpointInfo> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_discovery, 1)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_discovery, 1)
 
 /**
  * @generated from message Ydb.Discovery.ListEndpointsResult
@@ -174,7 +175,8 @@ export type WhoAmIRequest = Message<'Ydb.Discovery.WhoAmIRequest'> & {
  * Use `create(WhoAmIRequestSchema)` to create a new message.
  */
 export const WhoAmIRequestSchema: GenMessage<WhoAmIRequest> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_discovery, 4)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_discovery, 4)
 
 /**
  * @generated from message Ydb.Discovery.WhoAmIResult
@@ -200,7 +202,8 @@ export type WhoAmIResult = Message<'Ydb.Discovery.WhoAmIResult'> & {
  * Use `create(WhoAmIResultSchema)` to create a new message.
  */
 export const WhoAmIResultSchema: GenMessage<WhoAmIResult> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_discovery, 5)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_discovery, 5)
 
 /**
  * @generated from message Ydb.Discovery.WhoAmIResponse
@@ -217,7 +220,8 @@ export type WhoAmIResponse = Message<'Ydb.Discovery.WhoAmIResponse'> & {
  * Use `create(WhoAmIResponseSchema)` to create a new message.
  */
 export const WhoAmIResponseSchema: GenMessage<WhoAmIResponse> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_discovery, 6)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_discovery, 6)
 
 /**
  * @generated from message Ydb.Discovery.NodeLocation
@@ -283,4 +287,5 @@ export type NodeLocation = Message<'Ydb.Discovery.NodeLocation'> & {
  * Use `create(NodeLocationSchema)` to create a new message.
  */
 export const NodeLocationSchema: GenMessage<NodeLocation> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_discovery, 7)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_discovery, 7)

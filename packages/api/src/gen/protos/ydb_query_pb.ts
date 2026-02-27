@@ -181,7 +181,8 @@ export type SessionState = Message<'Ydb.Query.SessionState'> & {
  * Use `create(SessionStateSchema)` to create a new message.
  */
 export const SessionStateSchema: GenMessage<SessionState> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_query, 5)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query, 5)
 
 /**
  * @generated from message Ydb.Query.SerializableModeSettings
@@ -391,7 +392,8 @@ export type TransactionMeta = Message<'Ydb.Query.TransactionMeta'> & {
  * Use `create(TransactionMetaSchema)` to create a new message.
  */
 export const TransactionMetaSchema: GenMessage<TransactionMeta> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_query, 14)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query, 14)
 
 /**
  * @generated from message Ydb.Query.BeginTransactionResponse
@@ -546,7 +548,8 @@ export type QueryContent = Message<'Ydb.Query.QueryContent'> & {
  * Use `create(QueryContentSchema)` to create a new message.
  */
 export const QueryContentSchema: GenMessage<QueryContent> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_query, 20)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query, 20)
 
 /**
  * @generated from message Ydb.Query.ExecuteQueryRequest
@@ -670,7 +673,8 @@ export type ResultSetMeta = Message<'Ydb.Query.ResultSetMeta'> & {
  * Use `create(ResultSetMetaSchema)` to create a new message.
  */
 export const ResultSetMetaSchema: GenMessage<ResultSetMeta> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_query, 22)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query, 22)
 
 /**
  * @generated from message Ydb.Query.ExecuteQueryResponsePart
@@ -908,10 +912,9 @@ export type Script = Message<'Ydb.Query.Script'> & {
  * Describes the message Ydb.Query.Script.
  * Use `create(ScriptSchema)` to create a new message.
  */
-export const ScriptSchema: GenMessage<Script> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_query,
-	28
-)
+export const ScriptSchema: GenMessage<Script> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query, 28)
 
 /**
  * @generated from enum Ydb.Query.Syntax
@@ -940,10 +943,9 @@ export enum Syntax {
 /**
  * Describes the enum Ydb.Query.Syntax.
  */
-export const SyntaxSchema: GenEnum<Syntax> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_query,
-	0
-)
+export const SyntaxSchema: GenEnum<Syntax> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_query, 0)
 
 /**
  * @generated from enum Ydb.Query.ExecMode
@@ -978,10 +980,9 @@ export enum ExecMode {
 /**
  * Describes the enum Ydb.Query.ExecMode.
  */
-export const ExecModeSchema: GenEnum<ExecMode> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_query,
-	1
-)
+export const ExecModeSchema: GenEnum<ExecMode> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_query, 1)
 
 /**
  * @generated from enum Ydb.Query.StatsMode
@@ -1024,10 +1025,9 @@ export enum StatsMode {
 /**
  * Describes the enum Ydb.Query.StatsMode.
  */
-export const StatsModeSchema: GenEnum<StatsMode> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_query,
-	2
-)
+export const StatsModeSchema: GenEnum<StatsMode> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_query, 2)
 
 /**
  * @generated from enum Ydb.Query.SchemaInclusionMode
@@ -1059,7 +1059,8 @@ export enum SchemaInclusionMode {
  * Describes the enum Ydb.Query.SchemaInclusionMode.
  */
 export const SchemaInclusionModeSchema: GenEnum<SchemaInclusionMode> =
-	/*@__PURE__*/ enumDesc(file_protos_ydb_query, 3)
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_query, 3)
 
 /**
  * @generated from enum Ydb.Query.ExecStatus
@@ -1099,7 +1100,6 @@ export enum ExecStatus {
 /**
  * Describes the enum Ydb.Query.ExecStatus.
  */
-export const ExecStatusSchema: GenEnum<ExecStatus> = /*@__PURE__*/ enumDesc(
-	file_protos_ydb_query,
-	4
-)
+export const ExecStatusSchema: GenEnum<ExecStatus> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_query, 4)

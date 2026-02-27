@@ -7,8 +7,12 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import {
 	ImportDataRequestSchema,
 	ImportDataResponseSchema,
+	ImportFromFsRequestSchema,
+	ImportFromFsResponseSchema,
 	ImportFromS3RequestSchema,
 	ImportFromS3ResponseSchema,
+	ListObjectsInFsExportRequestSchema,
+	ListObjectsInFsExportResponseSchema,
 	ListObjectsInS3ExportRequestSchema,
 	ListObjectsInS3ExportResponseSchema,
 } from './protos/ydb_import_pb.js'
@@ -49,6 +53,36 @@ export const ImportServiceDefinition = {
 		options: {},
 	},
 	/**
+	 * Imports data from file system.
+	 * Method starts an asynchronous operation that can be cancelled while it is in progress.
+	 *
+	 * @generated from rpc Ydb.Import.V1.ImportService.ImportFromFs
+	 */
+	importFromFs: {
+		path: '/Ydb.Import.V1.ImportService/ImportFromFs',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ImportFromFsRequestSchema>
+		) =>
+			toBinary(
+				ImportFromFsRequestSchema,
+				create(ImportFromFsRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ImportFromFsRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<typeof ImportFromFsResponseSchema>
+		) =>
+			toBinary(
+				ImportFromFsResponseSchema,
+				create(ImportFromFsResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ImportFromFsResponseSchema, bytes),
+		options: {},
+	},
+	/**
 	 * List objects from existing export stored in S3 bucket
 	 *
 	 * @generated from rpc Ydb.Import.V1.ImportService.ListObjectsInS3Export
@@ -77,6 +111,37 @@ export const ImportServiceDefinition = {
 			),
 		responseDeserialize: (bytes: Uint8Array) =>
 			fromBinary(ListObjectsInS3ExportResponseSchema, bytes),
+		options: {},
+	},
+	/**
+	 * List objects from existing export stored in FS
+	 *
+	 * @generated from rpc Ydb.Import.V1.ImportService.ListObjectsInFsExport
+	 */
+	listObjectsInFsExport: {
+		path: '/Ydb.Import.V1.ImportService/ListObjectsInFsExport',
+		requestStream: false,
+		requestSerialize: (
+			message: MessageInitShape<typeof ListObjectsInFsExportRequestSchema>
+		) =>
+			toBinary(
+				ListObjectsInFsExportRequestSchema,
+				create(ListObjectsInFsExportRequestSchema, message)
+			),
+		requestDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListObjectsInFsExportRequestSchema, bytes),
+		responseStream: false,
+		responseSerialize: (
+			message: MessageInitShape<
+				typeof ListObjectsInFsExportResponseSchema
+			>
+		) =>
+			toBinary(
+				ListObjectsInFsExportResponseSchema,
+				create(ListObjectsInFsExportResponseSchema, message)
+			),
+		responseDeserialize: (bytes: Uint8Array) =>
+			fromBinary(ListObjectsInFsExportResponseSchema, bytes),
 		options: {},
 	},
 	/**

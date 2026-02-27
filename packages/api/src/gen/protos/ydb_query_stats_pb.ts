@@ -193,4 +193,5 @@ export type QueryStats = Message<'Ydb.TableStats.QueryStats'> & {
  * Use `create(QueryStatsSchema)` to create a new message.
  */
 export const QueryStatsSchema: GenMessage<QueryStats> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_query_stats, 4)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_query_stats, 4)

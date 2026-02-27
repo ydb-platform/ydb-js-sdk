@@ -28,7 +28,8 @@ export type StatusFlag = Message<'Ydb.Monitoring.StatusFlag'> & {}
  * Use `create(StatusFlagSchema)` to create a new message.
  */
 export const StatusFlagSchema: GenMessage<StatusFlag> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_monitoring, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 0)
 
 /**
  * Describes the general state of a component.
@@ -191,10 +192,9 @@ export type SelfCheck = Message<'Ydb.Monitoring.SelfCheck'> & {}
  * Describes the message Ydb.Monitoring.SelfCheck.
  * Use `create(SelfCheckSchema)` to create a new message.
  */
-export const SelfCheckSchema: GenMessage<SelfCheck> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_monitoring,
-	5
-)
+export const SelfCheckSchema: GenMessage<SelfCheck> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 5)
 
 /**
  * Describes the result of self-check performed.
@@ -370,7 +370,8 @@ export type StorageStatus = Message<'Ydb.Monitoring.StorageStatus'> & {
  * Use `create(StorageStatusSchema)` to create a new message.
  */
 export const StorageStatusSchema: GenMessage<StorageStatus> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_monitoring, 10)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 10)
 
 /**
  * Describes the state of a tablet group.
@@ -532,7 +533,8 @@ export type ComputeStatus = Message<'Ydb.Monitoring.ComputeStatus'> & {
  * Use `create(ComputeStatusSchema)` to create a new message.
  */
 export const ComputeStatusSchema: GenMessage<ComputeStatus> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_monitoring, 15)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 15)
 
 /**
  * @generated from message Ydb.Monitoring.LocationNode
@@ -559,7 +561,8 @@ export type LocationNode = Message<'Ydb.Monitoring.LocationNode'> & {
  * Use `create(LocationNodeSchema)` to create a new message.
  */
 export const LocationNodeSchema: GenMessage<LocationNode> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_monitoring, 16)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 16)
 
 /**
  * @generated from message Ydb.Monitoring.LocationStoragePDisk
@@ -798,10 +801,9 @@ export type Location = Message<'Ydb.Monitoring.Location'> & {
  * Describes the message Ydb.Monitoring.Location.
  * Use `create(LocationSchema)` to create a new message.
  */
-export const LocationSchema: GenMessage<Location> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_monitoring,
-	26
-)
+export const LocationSchema: GenMessage<Location> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 26)
 
 /**
  * @generated from message Ydb.Monitoring.IssueLog
@@ -857,10 +859,9 @@ export type IssueLog = Message<'Ydb.Monitoring.IssueLog'> & {
  * Describes the message Ydb.Monitoring.IssueLog.
  * Use `create(IssueLogSchema)` to create a new message.
  */
-export const IssueLogSchema: GenMessage<IssueLog> = /*@__PURE__*/ messageDesc(
-	file_protos_ydb_monitoring,
-	27
-)
+export const IssueLogSchema: GenMessage<IssueLog> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_monitoring, 27)
 
 /**
  * @generated from message Ydb.Monitoring.DatabaseStatus

@@ -19,7 +19,7 @@ import type { Message } from '@bufbuild/protobuf'
 export const file_protos_ydb_import: GenFile =
 	/*@__PURE__*/
 	fileDesc(
-		'Chdwcm90b3MveWRiX2ltcG9ydC5wcm90bxIKWWRiLkltcG9ydCLuAQoOSW1wb3J0UHJvZ3Jlc3Mi2wEKCFByb2dyZXNzEhgKFFBST0dSRVNTX1VOU1BFQ0lGSUVEEAASFgoSUFJPR1JFU1NfUFJFUEFSSU5HEAESGgoWUFJPR1JFU1NfVFJBTlNGRVJfREFUQRACEhoKFlBST0dSRVNTX0JVSUxEX0lOREVYRVMQAxIRCg1QUk9HUkVTU19ET05FEAQSGQoVUFJPR1JFU1NfQ0FOQ0VMTEFUSU9OEAUSFgoSUFJPR1JFU1NfQ0FOQ0VMTEVEEAYSHwobUFJPR1JFU1NfQ1JFQVRFX0NIQU5HRUZFRURTEAcioAEKEkltcG9ydEl0ZW1Qcm9ncmVzcxITCgtwYXJ0c190b3RhbBgBIAEoDRIXCg9wYXJ0c19jb21wbGV0ZWQYAiABKA0SLgoKc3RhcnRfdGltZRgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLAoIZW5kX3RpbWUYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoAFChRJbXBvcnRGcm9tUzNTZXR0aW5ncxIWCghlbmRwb2ludBgBIAEoCUIEkOYqARI3CgZzY2hlbWUYAiABKA4yJy5ZZGIuSW1wb3J0LkltcG9ydEZyb21TM1NldHRpbmdzLlNjaGVtZRIUCgZidWNrZXQYAyABKAlCBJDmKgESGAoKYWNjZXNzX2tleRgEIAEoCUIEkOYqARIYCgpzZWNyZXRfa2V5GAUgASgJQgSQ5ioBEjQKBWl0ZW1zGAYgAygLMiUuWWRiLkltcG9ydC5JbXBvcnRGcm9tUzNTZXR0aW5ncy5JdGVtEhwKC2Rlc2NyaXB0aW9uGAcgASgJQgei5ioDGIABEhkKEW51bWJlcl9vZl9yZXRyaWVzGAggASgNEg4KBnJlZ2lvbhgJIAEoCRIiChpkaXNhYmxlX3ZpcnR1YWxfYWRkcmVzc2luZxgKIAEoCBIOCgZub19hY2wYCyABKAgSIAoYc2tpcF9jaGVja3N1bV92YWxpZGF0aW9uGAwgASgIEhUKDXNvdXJjZV9wcmVmaXgYDSABKAkSGAoQZGVzdGluYXRpb25fcGF0aBgOIAEoCRI7ChNlbmNyeXB0aW9uX3NldHRpbmdzGA8gASgLMh4uWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MaWgoESXRlbRIXCg1zb3VyY2VfcHJlZml4GAEgASgJSAASFQoLc291cmNlX3BhdGgYAyABKAlIABIYChBkZXN0aW5hdGlvbl9wYXRoGAIgASgJQggKBlNvdXJjZSIuCgZTY2hlbWUSDwoLVU5TUEVDSUZJRUQQABIICgRIVFRQEAESCQoFSFRUUFMQAiIUChJJbXBvcnRGcm9tUzNSZXN1bHQiuQEKFEltcG9ydEZyb21TM01ldGFkYXRhEjIKCHNldHRpbmdzGAEgASgLMiAuWWRiLkltcG9ydC5JbXBvcnRGcm9tUzNTZXR0aW5ncxI1Cghwcm9ncmVzcxgCIAEoDjIjLllkYi5JbXBvcnQuSW1wb3J0UHJvZ3Jlc3MuUHJvZ3Jlc3MSNgoOaXRlbXNfcHJvZ3Jlc3MYAyADKAsyHi5ZZGIuSW1wb3J0LkltcG9ydEl0ZW1Qcm9ncmVzcyKKAQoTSW1wb3J0RnJvbVMzUmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEjgKCHNldHRpbmdzGAIgASgLMiAuWWRiLkltcG9ydC5JbXBvcnRGcm9tUzNTZXR0aW5nc0IEkOYqASJEChRJbXBvcnRGcm9tUzNSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iqwMKHUxpc3RPYmplY3RzSW5TM0V4cG9ydFNldHRpbmdzEhYKCGVuZHBvaW50GAEgASgJQgSQ5ioBEjcKBnNjaGVtZRgCIAEoDjInLllkYi5JbXBvcnQuSW1wb3J0RnJvbVMzU2V0dGluZ3MuU2NoZW1lEhQKBmJ1Y2tldBgDIAEoCUIEkOYqARIYCgphY2Nlc3Nfa2V5GAQgASgJQgSQ5ioBEhgKCnNlY3JldF9rZXkYBSABKAlCBJDmKgESPQoFaXRlbXMYBiADKAsyLi5ZZGIuSW1wb3J0Lkxpc3RPYmplY3RzSW5TM0V4cG9ydFNldHRpbmdzLkl0ZW0SGQoRbnVtYmVyX29mX3JldHJpZXMYByABKA0SDgoGcmVnaW9uGAggASgJEiIKGmRpc2FibGVfdmlydHVhbF9hZGRyZXNzaW5nGAkgASgIEg4KBnByZWZpeBgKIAEoCRI7ChNlbmNyeXB0aW9uX3NldHRpbmdzGAsgASgLMh4uWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MaFAoESXRlbRIMCgRwYXRoGAEgASgJIpkBChtMaXN0T2JqZWN0c0luUzNFeHBvcnRSZXN1bHQSOwoFaXRlbXMYASADKAsyLC5ZZGIuSW1wb3J0Lkxpc3RPYmplY3RzSW5TM0V4cG9ydFJlc3VsdC5JdGVtEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCRokCgRJdGVtEg4KBnByZWZpeBgBIAEoCRIMCgRwYXRoGAIgASgJItEBChxMaXN0T2JqZWN0c0luUzNFeHBvcnRSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSQQoIc2V0dGluZ3MYAiABKAsyKS5ZZGIuSW1wb3J0Lkxpc3RPYmplY3RzSW5TM0V4cG9ydFNldHRpbmdzQgSQ5ioBEh8KCXBhZ2Vfc2l6ZRgDIAEoA0IMsuYqCDw9IDEwMDAwEhIKCnBhZ2VfdG9rZW4YBCABKAkiTQodTGlzdE9iamVjdHNJblMzRXhwb3J0UmVzcG9uc2USLAoJb3BlcmF0aW9uGAEgASgLMhkuWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uIiAKDVlkYkR1bXBGb3JtYXQSDwoHY29sdW1ucxgBIAMoCSISChBJbXBvcnREYXRhUmVzdWx0Iq4BChFJbXBvcnREYXRhUmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEgwKBHBhdGgYAiABKAkSFwoEZGF0YRgDIAEoDEIJouYqBRiAgIAIEi0KCHlkYl9kdW1wGAQgASgLMhkuWWRiLkltcG9ydC5ZZGJEdW1wRm9ybWF0SABCCAoGZm9ybWF0IkIKEkltcG9ydERhdGFSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25CVgoWdGVjaC55ZGIucHJvdG8uaW1wb3J0X1o5Z2l0aHViLmNvbS95ZGItcGxhdGZvcm0veWRiLWdvLWdlbnByb3RvL3Byb3Rvcy9ZZGJfSW1wb3J0+AEBYgZwcm90bzM',
+		'Chdwcm90b3MveWRiX2ltcG9ydC5wcm90bxIKWWRiLkltcG9ydCLuAQoOSW1wb3J0UHJvZ3Jlc3Mi2wEKCFByb2dyZXNzEhgKFFBST0dSRVNTX1VOU1BFQ0lGSUVEEAASFgoSUFJPR1JFU1NfUFJFUEFSSU5HEAESGgoWUFJPR1JFU1NfVFJBTlNGRVJfREFUQRACEhoKFlBST0dSRVNTX0JVSUxEX0lOREVYRVMQAxIRCg1QUk9HUkVTU19ET05FEAQSGQoVUFJPR1JFU1NfQ0FOQ0VMTEFUSU9OEAUSFgoSUFJPR1JFU1NfQ0FOQ0VMTEVEEAYSHwobUFJPR1JFU1NfQ1JFQVRFX0NIQU5HRUZFRURTEAcioAEKEkltcG9ydEl0ZW1Qcm9ncmVzcxITCgtwYXJ0c190b3RhbBgBIAEoDRIXCg9wYXJ0c19jb21wbGV0ZWQYAiABKA0SLgoKc3RhcnRfdGltZRgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLAoIZW5kX3RpbWUYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIvsGChRJbXBvcnRGcm9tUzNTZXR0aW5ncxIWCghlbmRwb2ludBgBIAEoCUIEkOYqARI3CgZzY2hlbWUYAiABKA4yJy5ZZGIuSW1wb3J0LkltcG9ydEZyb21TM1NldHRpbmdzLlNjaGVtZRIUCgZidWNrZXQYAyABKAlCBJDmKgESGAoKYWNjZXNzX2tleRgEIAEoCUIEkOYqARIYCgpzZWNyZXRfa2V5GAUgASgJQgSQ5ioBEjQKBWl0ZW1zGAYgAygLMiUuWWRiLkltcG9ydC5JbXBvcnRGcm9tUzNTZXR0aW5ncy5JdGVtEhwKC2Rlc2NyaXB0aW9uGAcgASgJQgei5ioDGIABEhkKEW51bWJlcl9vZl9yZXRyaWVzGAggASgNEg4KBnJlZ2lvbhgJIAEoCRIiChpkaXNhYmxlX3ZpcnR1YWxfYWRkcmVzc2luZxgKIAEoCBIOCgZub19hY2wYCyABKAgSIAoYc2tpcF9jaGVja3N1bV92YWxpZGF0aW9uGAwgASgIEhUKDXNvdXJjZV9wcmVmaXgYDSABKAkSGAoQZGVzdGluYXRpb25fcGF0aBgOIAEoCRI7ChNlbmNyeXB0aW9uX3NldHRpbmdzGA8gASgLMh4uWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MSTQoSaW5kZXhfZmlsbGluZ19tb2RlGBAgASgOMjEuWWRiLkltcG9ydC5JbXBvcnRGcm9tUzNTZXR0aW5ncy5JbmRleEZpbGxpbmdNb2RlEhcKD2V4Y2x1ZGVfcmVnZXhwcxgRIAMoCRpaCgRJdGVtEhcKDXNvdXJjZV9wcmVmaXgYASABKAlIABIVCgtzb3VyY2VfcGF0aBgDIAEoCUgAEhgKEGRlc3RpbmF0aW9uX3BhdGgYAiABKAlCCAoGU291cmNlIi4KBlNjaGVtZRIPCgtVTlNQRUNJRklFRBAAEggKBEhUVFAQARIJCgVIVFRQUxACIpABChBJbmRleEZpbGxpbmdNb2RlEiIKHklOREVYX0ZJTExJTkdfTU9ERV9VTlNQRUNJRklFRBAAEhwKGElOREVYX0ZJTExJTkdfTU9ERV9CVUlMRBABEh0KGUlOREVYX0ZJTExJTkdfTU9ERV9JTVBPUlQQAhIbChdJTkRFWF9GSUxMSU5HX01PREVfQVVUTxADIhQKEkltcG9ydEZyb21TM1Jlc3VsdCK5AQoUSW1wb3J0RnJvbVMzTWV0YWRhdGESMgoIc2V0dGluZ3MYASABKAsyIC5ZZGIuSW1wb3J0LkltcG9ydEZyb21TM1NldHRpbmdzEjUKCHByb2dyZXNzGAIgASgOMiMuWWRiLkltcG9ydC5JbXBvcnRQcm9ncmVzcy5Qcm9ncmVzcxI2Cg5pdGVtc19wcm9ncmVzcxgDIAMoCzIeLllkYi5JbXBvcnQuSW1wb3J0SXRlbVByb2dyZXNzIooBChNJbXBvcnRGcm9tUzNSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSOAoIc2V0dGluZ3MYAiABKAsyIC5ZZGIuSW1wb3J0LkltcG9ydEZyb21TM1NldHRpbmdzQgSQ5ioBIkQKFEltcG9ydEZyb21TM1Jlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiL3AgoUSW1wb3J0RnJvbUZzU2V0dGluZ3MSFwoJYmFzZV9wYXRoGAEgASgJQgSQ5ioBEjQKBWl0ZW1zGAIgAygLMiUuWWRiLkltcG9ydC5JbXBvcnRGcm9tRnNTZXR0aW5ncy5JdGVtEhwKC2Rlc2NyaXB0aW9uGAMgASgJQgei5ioDGIABEhkKEW51bWJlcl9vZl9yZXRyaWVzGAQgASgNEg4KBm5vX2FjbBgFIAEoCBIgChhza2lwX2NoZWNrc3VtX3ZhbGlkYXRpb24YBiABKAgSGAoQZGVzdGluYXRpb25fcGF0aBgHIAEoCRI7ChNlbmNyeXB0aW9uX3NldHRpbmdzGAggASgLMh4uWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MSFwoPZXhjbHVkZV9yZWdleHBzGAkgAygJGjUKBEl0ZW0SEwoLc291cmNlX3BhdGgYASABKAkSGAoQZGVzdGluYXRpb25fcGF0aBgCIAEoCSIUChJJbXBvcnRGcm9tRnNSZXN1bHQiuQEKFEltcG9ydEZyb21Gc01ldGFkYXRhEjIKCHNldHRpbmdzGAEgASgLMiAuWWRiLkltcG9ydC5JbXBvcnRGcm9tRnNTZXR0aW5ncxI1Cghwcm9ncmVzcxgCIAEoDjIjLllkYi5JbXBvcnQuSW1wb3J0UHJvZ3Jlc3MuUHJvZ3Jlc3MSNgoOaXRlbXNfcHJvZ3Jlc3MYAyADKAsyHi5ZZGIuSW1wb3J0LkltcG9ydEl0ZW1Qcm9ncmVzcyKKAQoTSW1wb3J0RnJvbUZzUmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEjgKCHNldHRpbmdzGAIgASgLMiAuWWRiLkltcG9ydC5JbXBvcnRGcm9tRnNTZXR0aW5nc0IEkOYqASJEChRJbXBvcnRGcm9tRnNSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24ixAMKHUxpc3RPYmplY3RzSW5TM0V4cG9ydFNldHRpbmdzEhYKCGVuZHBvaW50GAEgASgJQgSQ5ioBEjcKBnNjaGVtZRgCIAEoDjInLllkYi5JbXBvcnQuSW1wb3J0RnJvbVMzU2V0dGluZ3MuU2NoZW1lEhQKBmJ1Y2tldBgDIAEoCUIEkOYqARIYCgphY2Nlc3Nfa2V5GAQgASgJQgSQ5ioBEhgKCnNlY3JldF9rZXkYBSABKAlCBJDmKgESPQoFaXRlbXMYBiADKAsyLi5ZZGIuSW1wb3J0Lkxpc3RPYmplY3RzSW5TM0V4cG9ydFNldHRpbmdzLkl0ZW0SGQoRbnVtYmVyX29mX3JldHJpZXMYByABKA0SDgoGcmVnaW9uGAggASgJEiIKGmRpc2FibGVfdmlydHVhbF9hZGRyZXNzaW5nGAkgASgIEg4KBnByZWZpeBgKIAEoCRI7ChNlbmNyeXB0aW9uX3NldHRpbmdzGAsgASgLMh4uWWRiLkV4cG9ydC5FbmNyeXB0aW9uU2V0dGluZ3MSFwoPZXhjbHVkZV9yZWdleHBzGAwgAygJGhQKBEl0ZW0SDAoEcGF0aBgBIAEoCSKZAQobTGlzdE9iamVjdHNJblMzRXhwb3J0UmVzdWx0EjsKBWl0ZW1zGAEgAygLMiwuWWRiLkltcG9ydC5MaXN0T2JqZWN0c0luUzNFeHBvcnRSZXN1bHQuSXRlbRIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkaJAoESXRlbRIOCgZwcmVmaXgYASABKAkSDAoEcGF0aBgCIAEoCSLRAQocTGlzdE9iamVjdHNJblMzRXhwb3J0UmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEkEKCHNldHRpbmdzGAIgASgLMikuWWRiLkltcG9ydC5MaXN0T2JqZWN0c0luUzNFeHBvcnRTZXR0aW5nc0IEkOYqARIfCglwYWdlX3NpemUYAyABKANCDLLmKgg8PSAxMDAwMBISCgpwYWdlX3Rva2VuGAQgASgJIk0KHUxpc3RPYmplY3RzSW5TM0V4cG9ydFJlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiL+AQodTGlzdE9iamVjdHNJbkZzRXhwb3J0U2V0dGluZ3MSFwoJYmFzZV9wYXRoGAEgASgJQgSQ5ioBEj0KBWl0ZW1zGAIgAygLMi4uWWRiLkltcG9ydC5MaXN0T2JqZWN0c0luRnNFeHBvcnRTZXR0aW5ncy5JdGVtEhkKEW51bWJlcl9vZl9yZXRyaWVzGAMgASgNEjsKE2VuY3J5cHRpb25fc2V0dGluZ3MYBCABKAsyHi5ZZGIuRXhwb3J0LkVuY3J5cHRpb25TZXR0aW5ncxIXCg9leGNsdWRlX3JlZ2V4cHMYBSADKAkaFAoESXRlbRIMCgRwYXRoGAEgASgJIp0BChtMaXN0T2JqZWN0c0luRnNFeHBvcnRSZXN1bHQSOwoFaXRlbXMYASADKAsyLC5ZZGIuSW1wb3J0Lkxpc3RPYmplY3RzSW5Gc0V4cG9ydFJlc3VsdC5JdGVtEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCRooCgRJdGVtEg8KB2ZzX3BhdGgYASABKAkSDwoHZGJfcGF0aBgCIAEoCSLRAQocTGlzdE9iamVjdHNJbkZzRXhwb3J0UmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEkEKCHNldHRpbmdzGAIgASgLMikuWWRiLkltcG9ydC5MaXN0T2JqZWN0c0luRnNFeHBvcnRTZXR0aW5nc0IEkOYqARIfCglwYWdlX3NpemUYAyABKANCDLLmKgg8PSAxMDAwMBISCgpwYWdlX3Rva2VuGAQgASgJIk0KHUxpc3RPYmplY3RzSW5Gc0V4cG9ydFJlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiIgCg1ZZGJEdW1wRm9ybWF0Eg8KB2NvbHVtbnMYASADKAkiEgoQSW1wb3J0RGF0YVJlc3VsdCKuAQoRSW1wb3J0RGF0YVJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxIMCgRwYXRoGAIgASgJEhcKBGRhdGEYAyABKAxCCaLmKgUYgICACBItCgh5ZGJfZHVtcBgEIAEoCzIZLllkYi5JbXBvcnQuWWRiRHVtcEZvcm1hdEgAQggKBmZvcm1hdCJCChJJbXBvcnREYXRhUmVzcG9uc2USLAoJb3BlcmF0aW9uGAEgASgLMhkuWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uQlYKFnRlY2gueWRiLnByb3RvLmltcG9ydF9aOWdpdGh1Yi5jb20veWRiLXBsYXRmb3JtL3lkYi1nby1nZW5wcm90by9wcm90b3MvWWRiX0ltcG9ydPgBAWIGcHJvdG8z',
 		[
 			file_protos_annotations_validation,
 			file_protos_ydb_export,
@@ -40,7 +40,8 @@ export type ImportProgress = Message<'Ydb.Import.ImportProgress'> & {}
  * Use `create(ImportProgressSchema)` to create a new message.
  */
 export const ImportProgressSchema: GenMessage<ImportProgress> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_import, 0)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 0)
 
 /**
  * @generated from enum Ydb.Import.ImportProgress.Progress
@@ -235,6 +236,23 @@ export type ImportFromS3Settings =
 		 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 15;
 		 */
 		encryptionSettings?: EncryptionSettings
+
+		/**
+		 * Index filling mode.
+		 * If not specified, indexes will be built.
+		 *
+		 * @generated from field: Ydb.Import.ImportFromS3Settings.IndexFillingMode index_filling_mode = 16;
+		 */
+		indexFillingMode: ImportFromS3Settings_IndexFillingMode
+
+		/**
+		 * Patterns (PCRE) for paths excluded from import operation.
+		 * - Patterns are matched against the database object names stored in the backup listing.
+		 * - Object is excluded from import operation if it matches any of the specified exclude regexps.
+		 *
+		 * @generated from field: repeated string exclude_regexps = 17;
+		 */
+		excludeRegexps: string[]
 	}
 
 /**
@@ -255,7 +273,8 @@ export type ImportFromS3Settings_Item =
 		 * The S3 object name begins with a prefix, followed by:
 		 * '/data_PartNumber', where 'PartNumber' represents the index of the part, starting at zero;
 		 * '/scheme.pb' - object with information about scheme, indexes, etc;
-		 * '/permissions.pb' - object with information about ACL and owner.
+		 * '/permissions.pb' - object with information about ACL and owner;
+		 * '/metadata.json' - object with metadata about the backup.
 		 *
 		 * @generated from oneof Ydb.Import.ImportFromS3Settings.Item.Source
 		 */
@@ -324,6 +343,46 @@ export enum ImportFromS3Settings_Scheme {
 export const ImportFromS3Settings_SchemeSchema: GenEnum<ImportFromS3Settings_Scheme> =
 	/*@__PURE__*/
 	enumDesc(file_protos_ydb_import, 2, 0)
+
+/**
+ * @generated from enum Ydb.Import.ImportFromS3Settings.IndexFillingMode
+ */
+export enum ImportFromS3Settings_IndexFillingMode {
+	/**
+	 * If unspecified, use default - Build
+	 *
+	 * @generated from enum value: INDEX_FILLING_MODE_UNSPECIFIED = 0;
+	 */
+	UNSPECIFIED = 0,
+
+	/**
+	 * Build index
+	 *
+	 * @generated from enum value: INDEX_FILLING_MODE_BUILD = 1;
+	 */
+	BUILD = 1,
+
+	/**
+	 * Import materialized index
+	 *
+	 * @generated from enum value: INDEX_FILLING_MODE_IMPORT = 2;
+	 */
+	IMPORT = 2,
+
+	/**
+	 * Try to import materialized index, build otherwise
+	 *
+	 * @generated from enum value: INDEX_FILLING_MODE_AUTO = 3;
+	 */
+	AUTO = 3,
+}
+
+/**
+ * Describes the enum Ydb.Import.ImportFromS3Settings.IndexFillingMode.
+ */
+export const ImportFromS3Settings_IndexFillingModeSchema: GenEnum<ImportFromS3Settings_IndexFillingMode> =
+	/*@__PURE__*/
+	enumDesc(file_protos_ydb_import, 2, 1)
 
 /**
  * @generated from message Ydb.Import.ImportFromS3Result
@@ -413,6 +472,220 @@ export const ImportFromS3ResponseSchema: GenMessage<ImportFromS3Response> =
 	messageDesc(file_protos_ydb_import, 6)
 
 /**
+ * / File system (FS)
+ *
+ * @generated from message Ydb.Import.ImportFromFsSettings
+ */
+export type ImportFromFsSettings =
+	Message<'Ydb.Import.ImportFromFsSettings'> & {
+		/**
+		 * Base path on FS where the export is located
+		 * In the case of NFS, one of the directories in the path must be mounted
+		 * Must be an absolute path
+		 * Example: /mnt/exports
+		 * SchemaMapping file with the list of objects is read from this path
+		 *
+		 * @generated from field: string base_path = 1;
+		 */
+		basePath: string
+
+		/**
+		 * Empty collection means import of all export objects
+		 *
+		 * @generated from field: repeated Ydb.Import.ImportFromFsSettings.Item items = 2;
+		 */
+		items: ImportFromFsSettings_Item[]
+
+		/**
+		 * Optional description
+		 *
+		 * @generated from field: string description = 3;
+		 */
+		description: string
+
+		/**
+		 * Number of retries for failed file operations
+		 *
+		 * @generated from field: uint32 number_of_retries = 4;
+		 */
+		numberOfRetries: number
+
+		/**
+		 * Prevent importing of ACL and owner. If true, objects are created with empty ACL
+		 * and their owner will be the user who started the import.
+		 *
+		 * @generated from field: bool no_acl = 5;
+		 */
+		noAcl: boolean
+
+		/**
+		 * Skip checksum validation during import
+		 *
+		 * @generated from field: bool skip_checksum_validation = 6;
+		 */
+		skipChecksumValidation: boolean
+
+		/**
+		 * Destination path to restore paths inside database
+		 * Default value is database root
+		 *
+		 * @generated from field: string destination_path = 7;
+		 */
+		destinationPath: string
+
+		/**
+		 * Settings how data is encrypted.
+		 * If encryption_settings field is not specified,
+		 * the resulting data is considered not encrypted.
+		 *
+		 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 8;
+		 */
+		encryptionSettings?: EncryptionSettings
+
+		/**
+		 * Patterns (PCRE) for paths excluded from import operation.
+		 * - Patterns are matched against the database object names stored in the backup listing.
+		 * - Object is excluded from import operation if it matches any of the specified exclude regexps.
+		 *
+		 * @generated from field: repeated string exclude_regexps = 9;
+		 */
+		excludeRegexps: string[]
+	}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsSettings.
+ * Use `create(ImportFromFsSettingsSchema)` to create a new message.
+ */
+export const ImportFromFsSettingsSchema: GenMessage<ImportFromFsSettings> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 7)
+
+/**
+ * @generated from message Ydb.Import.ImportFromFsSettings.Item
+ */
+export type ImportFromFsSettings_Item =
+	Message<'Ydb.Import.ImportFromFsSettings.Item'> & {
+		/**
+		 * YDB tables in FS are stored in a directory structure (see ydb_export.proto).
+		 * The directory contains:
+		 * '/data_PartNumber', where 'PartNumber' represents the index of the part, starting at zero;
+		 * '/scheme.pb' - object with information about scheme, indexes, etc;
+		 * '/permissions.pb' - object with information about ACL and owner;
+		 * '/metadata.json' - object with metadata about the backup.
+		 * The FS path can be either provided explicitly (relative to base_path)
+		 * Or, if the export contains the database objects list, you may specify the database object name,
+		 * and the FS prefix will be looked up in the database objects list by the import procedure
+		 *
+		 * @generated from field: string source_path = 1;
+		 */
+		sourcePath: string
+
+		/**
+		 * Database path to a database object to import the item to
+		 * Resolved relative to the default destination_path
+		 * May be omitted if the item's source_path is specified, in this case will be taken equal to it
+		 *
+		 * @generated from field: string destination_path = 2;
+		 */
+		destinationPath: string
+	}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsSettings.Item.
+ * Use `create(ImportFromFsSettings_ItemSchema)` to create a new message.
+ */
+export const ImportFromFsSettings_ItemSchema: GenMessage<ImportFromFsSettings_Item> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 7, 0)
+
+/**
+ * @generated from message Ydb.Import.ImportFromFsResult
+ */
+export type ImportFromFsResult = Message<'Ydb.Import.ImportFromFsResult'> & {}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsResult.
+ * Use `create(ImportFromFsResultSchema)` to create a new message.
+ */
+export const ImportFromFsResultSchema: GenMessage<ImportFromFsResult> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 8)
+
+/**
+ * @generated from message Ydb.Import.ImportFromFsMetadata
+ */
+export type ImportFromFsMetadata =
+	Message<'Ydb.Import.ImportFromFsMetadata'> & {
+		/**
+		 * @generated from field: Ydb.Import.ImportFromFsSettings settings = 1;
+		 */
+		settings?: ImportFromFsSettings
+
+		/**
+		 * @generated from field: Ydb.Import.ImportProgress.Progress progress = 2;
+		 */
+		progress: ImportProgress_Progress
+
+		/**
+		 * @generated from field: repeated Ydb.Import.ImportItemProgress items_progress = 3;
+		 */
+		itemsProgress: ImportItemProgress[]
+	}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsMetadata.
+ * Use `create(ImportFromFsMetadataSchema)` to create a new message.
+ */
+export const ImportFromFsMetadataSchema: GenMessage<ImportFromFsMetadata> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 9)
+
+/**
+ * @generated from message Ydb.Import.ImportFromFsRequest
+ */
+export type ImportFromFsRequest = Message<'Ydb.Import.ImportFromFsRequest'> & {
+	/**
+	 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+	 */
+	operationParams?: OperationParams
+
+	/**
+	 * @generated from field: Ydb.Import.ImportFromFsSettings settings = 2;
+	 */
+	settings?: ImportFromFsSettings
+}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsRequest.
+ * Use `create(ImportFromFsRequestSchema)` to create a new message.
+ */
+export const ImportFromFsRequestSchema: GenMessage<ImportFromFsRequest> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 10)
+
+/**
+ * @generated from message Ydb.Import.ImportFromFsResponse
+ */
+export type ImportFromFsResponse =
+	Message<'Ydb.Import.ImportFromFsResponse'> & {
+		/**
+		 * operation.result = ImportFromFsResult
+		 * operation.metadata = ImportFromFsMetadata
+		 *
+		 * @generated from field: Ydb.Operations.Operation operation = 1;
+		 */
+		operation?: Operation
+	}
+
+/**
+ * Describes the message Ydb.Import.ImportFromFsResponse.
+ * Use `create(ImportFromFsResponseSchema)` to create a new message.
+ */
+export const ImportFromFsResponseSchema: GenMessage<ImportFromFsResponse> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 11)
+
+/**
  * @generated from message Ydb.Import.ListObjectsInS3ExportSettings
  */
 export type ListObjectsInS3ExportSettings =
@@ -488,6 +761,15 @@ export type ListObjectsInS3ExportSettings =
 		 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 11;
 		 */
 		encryptionSettings?: EncryptionSettings
+
+		/**
+		 * Patterns (PCRE) for paths excluded from import operation.
+		 * - Patterns are matched against the database object names stored in the backup listing.
+		 * - Object is excluded from import operation if it matches any of the specified exclude regexps.
+		 *
+		 * @generated from field: repeated string exclude_regexps = 12;
+		 */
+		excludeRegexps: string[]
 	}
 
 /**
@@ -496,7 +778,7 @@ export type ListObjectsInS3ExportSettings =
  */
 export const ListObjectsInS3ExportSettingsSchema: GenMessage<ListObjectsInS3ExportSettings> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 7)
+	messageDesc(file_protos_ydb_import, 12)
 
 /**
  * @generated from message Ydb.Import.ListObjectsInS3ExportSettings.Item
@@ -518,7 +800,7 @@ export type ListObjectsInS3ExportSettings_Item =
  */
 export const ListObjectsInS3ExportSettings_ItemSchema: GenMessage<ListObjectsInS3ExportSettings_Item> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 7, 0)
+	messageDesc(file_protos_ydb_import, 12, 0)
 
 /**
  * @generated from message Ydb.Import.ListObjectsInS3ExportResult
@@ -548,7 +830,7 @@ export type ListObjectsInS3ExportResult =
  */
 export const ListObjectsInS3ExportResultSchema: GenMessage<ListObjectsInS3ExportResult> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 8)
+	messageDesc(file_protos_ydb_import, 13)
 
 /**
  * YDB database objects in S3 are stored in one or more S3 objects (see ydb_export.proto).
@@ -582,7 +864,7 @@ export type ListObjectsInS3ExportResult_Item =
  */
 export const ListObjectsInS3ExportResult_ItemSchema: GenMessage<ListObjectsInS3ExportResult_Item> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 8, 0)
+	messageDesc(file_protos_ydb_import, 13, 0)
 
 /**
  * @generated from message Ydb.Import.ListObjectsInS3ExportRequest
@@ -624,7 +906,7 @@ export type ListObjectsInS3ExportRequest =
  */
 export const ListObjectsInS3ExportRequestSchema: GenMessage<ListObjectsInS3ExportRequest> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 9)
+	messageDesc(file_protos_ydb_import, 14)
 
 /**
  * @generated from message Ydb.Import.ListObjectsInS3ExportResponse
@@ -645,7 +927,200 @@ export type ListObjectsInS3ExportResponse =
  */
 export const ListObjectsInS3ExportResponseSchema: GenMessage<ListObjectsInS3ExportResponse> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 10)
+	messageDesc(file_protos_ydb_import, 15)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportSettings
+ */
+export type ListObjectsInFsExportSettings =
+	Message<'Ydb.Import.ListObjectsInFsExportSettings'> & {
+		/**
+		 * @generated from field: string base_path = 1;
+		 */
+		basePath: string
+
+		/**
+		 * @generated from field: repeated Ydb.Import.ListObjectsInFsExportSettings.Item items = 2;
+		 */
+		items: ListObjectsInFsExportSettings_Item[]
+
+		/**
+		 * @generated from field: uint32 number_of_retries = 3;
+		 */
+		numberOfRetries: number
+
+		/**
+		 * Settings how data is encrypted.
+		 * If encryption_settings field is not specified,
+		 * the resulting data is considered not encrypted.
+		 *
+		 * @generated from field: Ydb.Export.EncryptionSettings encryption_settings = 4;
+		 */
+		encryptionSettings?: EncryptionSettings
+
+		/**
+		 * Patterns (PCRE) for paths excluded from import operation.
+		 * - Patterns are matched against the database object names stored in the backup listing.
+		 * - Object is excluded from import operation if it matches any of the specified exclude regexps.
+		 *
+		 * @generated from field: repeated string exclude_regexps = 5;
+		 */
+		excludeRegexps: string[]
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportSettings.
+ * Use `create(ListObjectsInFsExportSettingsSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportSettingsSchema: GenMessage<ListObjectsInFsExportSettings> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 16)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportSettings.Item
+ */
+export type ListObjectsInFsExportSettings_Item =
+	Message<'Ydb.Import.ListObjectsInFsExportSettings.Item'> & {
+		/**
+		 * Database object path
+		 * Recursive for directories
+		 *
+		 * @generated from field: string path = 1;
+		 */
+		path: string
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportSettings.Item.
+ * Use `create(ListObjectsInFsExportSettings_ItemSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportSettings_ItemSchema: GenMessage<ListObjectsInFsExportSettings_Item> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 16, 0)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportResult
+ */
+export type ListObjectsInFsExportResult =
+	Message<'Ydb.Import.ListObjectsInFsExportResult'> & {
+		/**
+		 * @generated from field: repeated Ydb.Import.ListObjectsInFsExportResult.Item items = 1;
+		 */
+		items: ListObjectsInFsExportResult_Item[]
+
+		/**
+		 * This token allows you to get the next page of results for ListObjectsInFsExport requests,
+		 * if the number of results is larger than `page_size` specified in the request.
+		 * To get the next page, specify the value of `next_page_token` as a value for
+		 * the `page_token` parameter in the next ListObjectsInFsExport request. Subsequent ListObjectsInFsExport
+		 * requests will have their own `next_page_token` to continue paging through the results.
+		 *
+		 * @generated from field: string next_page_token = 2;
+		 */
+		nextPageToken: string
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportResult.
+ * Use `create(ListObjectsInFsExportResultSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportResultSchema: GenMessage<ListObjectsInFsExportResult> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 17)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportResult.Item
+ */
+export type ListObjectsInFsExportResult_Item =
+	Message<'Ydb.Import.ListObjectsInFsExportResult.Item'> & {
+		/**
+		 * YDB database objects in S3 are stored in one or more S3 objects (see ydb_export.proto).
+		 * The S3 object name begins with a prefix, followed by:
+		 * '/data_PartNumber', where 'PartNumber' represents the index of the part, starting at zero;
+		 * '/scheme.pb' - object with information about scheme, indexes, etc;
+		 * '/permissions.pb' - object with information about ACL and owner;
+		 * '/metadata.json' - object with metadata about the backup.
+		 *
+		 * @generated from field: string fs_path = 1;
+		 */
+		fsPath: string
+
+		/**
+		 * @generated from field: string db_path = 2;
+		 */
+		dbPath: string
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportResult.Item.
+ * Use `create(ListObjectsInFsExportResult_ItemSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportResult_ItemSchema: GenMessage<ListObjectsInFsExportResult_Item> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 17, 0)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportRequest
+ */
+export type ListObjectsInFsExportRequest =
+	Message<'Ydb.Import.ListObjectsInFsExportRequest'> & {
+		/**
+		 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+		 */
+		operationParams?: OperationParams
+
+		/**
+		 * @generated from field: Ydb.Import.ListObjectsInFsExportSettings settings = 2;
+		 */
+		settings?: ListObjectsInFsExportSettings
+
+		/**
+		 * The maximum number of results per page that should be returned. If the number of available
+		 * results is larger than `page_size`, the service returns a `next_page_token` that can be used
+		 * to get the next page of results in subsequent ListObjectsInFsExport requests.
+		 * 0 means that server returns all objects.
+		 *
+		 * @generated from field: int64 page_size = 3;
+		 */
+		pageSize: bigint
+
+		/**
+		 * Page token. Set `page_token` to the `next_page_token` returned by a previous ListObjectsInFsExport
+		 * request to get the next page of results.
+		 *
+		 * @generated from field: string page_token = 4;
+		 */
+		pageToken: string
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportRequest.
+ * Use `create(ListObjectsInFsExportRequestSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportRequestSchema: GenMessage<ListObjectsInFsExportRequest> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 18)
+
+/**
+ * @generated from message Ydb.Import.ListObjectsInFsExportResponse
+ */
+export type ListObjectsInFsExportResponse =
+	Message<'Ydb.Import.ListObjectsInFsExportResponse'> & {
+		/**
+		 * operation.result = ListObjectsInFsExportResult
+		 *
+		 * @generated from field: Ydb.Operations.Operation operation = 1;
+		 */
+		operation?: Operation
+	}
+
+/**
+ * Describes the message Ydb.Import.ListObjectsInFsExportResponse.
+ * Use `create(ListObjectsInFsExportResponseSchema)` to create a new message.
+ */
+export const ListObjectsInFsExportResponseSchema: GenMessage<ListObjectsInFsExportResponse> =
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 19)
 
 /**
  * / Data
@@ -664,7 +1139,8 @@ export type YdbDumpFormat = Message<'Ydb.Import.YdbDumpFormat'> & {
  * Use `create(YdbDumpFormatSchema)` to create a new message.
  */
 export const YdbDumpFormatSchema: GenMessage<YdbDumpFormat> =
-	/*@__PURE__*/ messageDesc(file_protos_ydb_import, 11)
+	/*@__PURE__*/
+	messageDesc(file_protos_ydb_import, 20)
 
 /**
  * @generated from message Ydb.Import.ImportDataResult
@@ -677,7 +1153,7 @@ export type ImportDataResult = Message<'Ydb.Import.ImportDataResult'> & {}
  */
 export const ImportDataResultSchema: GenMessage<ImportDataResult> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 12)
+	messageDesc(file_protos_ydb_import, 21)
 
 /**
  * @generated from message Ydb.Import.ImportDataRequest
@@ -728,7 +1204,7 @@ export type ImportDataRequest = Message<'Ydb.Import.ImportDataRequest'> & {
  */
 export const ImportDataRequestSchema: GenMessage<ImportDataRequest> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 13)
+	messageDesc(file_protos_ydb_import, 22)
 
 /**
  * @generated from message Ydb.Import.ImportDataResponse
@@ -748,4 +1224,4 @@ export type ImportDataResponse = Message<'Ydb.Import.ImportDataResponse'> & {
  */
 export const ImportDataResponseSchema: GenMessage<ImportDataResponse> =
 	/*@__PURE__*/
-	messageDesc(file_protos_ydb_import, 14)
+	messageDesc(file_protos_ydb_import, 23)
