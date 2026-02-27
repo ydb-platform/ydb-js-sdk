@@ -3,7 +3,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { TopicServiceDefinition } from '@ydbjs/api/topic'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { defaultRetryConfig, retry } from '@ydbjs/retry'
+import { defaultStreamRetryConfig, retry } from '@ydbjs/retry'
 
 import { _send_init_request } from './_init_request.js'
 import { _on_init_response } from './_init_response.js'
@@ -26,7 +26,7 @@ export let _consume_stream = async function consume_stream(
 	let signal = state.controller.signal
 	await state.driver.ready(signal)
 
-	await retry({ ...defaultRetryConfig, signal }, async (signal) => {
+	await retry({ ...defaultStreamRetryConfig, signal }, async (signal) => {
 		state.outgoingQueue.close()
 		state.outgoingQueue.reset()
 

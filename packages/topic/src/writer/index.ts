@@ -10,7 +10,7 @@ import {
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { isRetryableError, retry } from '@ydbjs/retry'
+import { isRetryableStreamError, retry } from '@ydbjs/retry'
 import { backoff, combine, jitter } from '@ydbjs/retry/strategy'
 
 import { type CompressionCodec, defaultCodecMap } from '../codec.js'
@@ -160,7 +160,7 @@ export const createTopicWriter = function createTopicWriter(
 
 		let retryConfig = options.retryConfig?.(signal)
 		retryConfig ??= {
-			retry: isRetryableError,
+			retry: isRetryableStreamError,
 			signal: signal,
 			budget: Infinity,
 			strategy: combine(backoff(50, 5000), jitter(50)),

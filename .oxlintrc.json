@@ -12,7 +12,14 @@
 		"unicorn/require-post-message-target-origin": "off",
 		"yoda": "deny",
 		"vitest/consistent-test-it": ["error", { "fn": "test" }],
-		"vitest/max-nested-describe": ["error", 0]
+		"vitest/max-nested-describe": ["error", 0],
+		"vitest/valid-expect": [
+			"error",
+			{
+				"maxArgs": 3,
+				"minArgs": 1
+			}
+		]
 	},
 	"plugins": ["node", "import", "vitest", "promise", "typescript"],
 	"ignorePatterns": ["**/node_modules/**", "**/dist/**"],

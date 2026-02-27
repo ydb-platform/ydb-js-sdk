@@ -8,7 +8,7 @@ import { ClientError, Status } from 'nice-grpc'
 
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
-import { exponential, fixed } from './strategy.js'
+import { type RetryStrategy, exponential, fixed } from './strategy.js'
 
 export * from './config.js'
 export * from './context.js'
@@ -137,6 +137,29 @@ export function isRetryableError(error: unknown, idempotent = false): boolean {
 	return false
 }
 
+/**
+ * Determines whether an error from a long-lived gRPC stream should trigger
+ * a reconnect attempt.
+ *
+ * Streaming RPCs differ from unary calls: a CANCELLED or UNAVAILABLE status
+ * means the transport was interrupted (e.g. the server restarted, the
+ * connection pool was refreshed after a discovery round), not that the
+ * *operation* was semantically cancelled by the caller.  We therefore always
+ * reconnect on those codes, in addition to the errors handled by
+ * {@link isRetryableError}.
+ */
+export function isRetryableStreamError(error: unknown): boolean {
+	if (error instanceof ClientError) {
+		return (
+			error.code === Status.CANCELLED ||
+			error.code === Status.UNAVAILABLE ||
+			isRetryableError(error, true)
+		)
+	}
+
+	return isRetryableError(error, false)
+}
+
 export const defaultRetryConfig: RetryConfig = {
 	retry: isRetryableError,
 	budget: Infinity,
@@ -177,5 +200,28 @@ export const defaultRetryConfig: RetryConfig = {
 		}
 
 		return exponential(10)(ctx, cfg)
+	},
+}
+
+/**
+ * Default retry configuration for long-lived gRPC streaming connections
+ * (topic reader / writer).
+ *
+ * Extends {@link defaultRetryConfig} with reconnect logic for transient
+ * transport errors ({@link isRetryableStreamError}).
+ */
+export const defaultStreamRetryConfig: RetryConfig = {
+	...defaultRetryConfig,
+	retry: isRetryableStreamError,
+	strategy: (ctx, cfg) => {
+		if (
+			ctx.error instanceof ClientError &&
+			(ctx.error.code === Status.CANCELLED ||
+				ctx.error.code === Status.UNAVAILABLE)
+		) {
+			return exponential(10)(ctx, cfg)
+		}
+
+		return (defaultRetryConfig.strategy as RetryStrategy)(ctx, cfg)
 	},
 }

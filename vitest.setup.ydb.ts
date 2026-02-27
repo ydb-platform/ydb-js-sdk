@@ -1,4 +1,6 @@
 // eslint-disable no-await-in-loop
+import { createServer } from 'node:net'
+import type { AddressInfo } from 'node:net'
 import type { TestProject } from 'vitest/node'
 import { $ } from 'zx'
 
@@ -11,8 +13,23 @@ declare module 'vitest' {
 	}
 }
 
-let configured = false
 let containerID: string | null = null
+
+/**
+ * Find a free TCP port on localhost.
+ */
+function findFreePort(): Promise<number> {
+	let { promise, resolve, reject } = Promise.withResolvers<number>()
+	let server = createServer()
+	server.on('error', reject)
+
+	server.listen(0, '127.0.0.1', () => {
+		let port = (server.address() as AddressInfo).port
+		server.close(() => resolve(port))
+	})
+
+	return promise
+}
 
 /**
  * Sets up the test project by providing necessary environment variables for YDB connection.
@@ -44,9 +61,26 @@ export async function setup(project: TestProject) {
 		return
 	}
 
+	// Allocate random ports so that discovery returns addresses that are
+	// accessible from the host.  We pass the same port as both the host-side
+	// and container-side value (--publish P:P) and configure the YDB node to
+	// listen on that port via GRPC_PORT / MON_PORT env vars.  This way
+	// discovery returns "localhost:P" which matches the host-accessible port.
+	let monPort = await findFreePort()
+	let grpcPort = await findFreePort()
+
 	// prettier-ignore
-	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish 2135 --publish 2136 --publish 8765 --publish 9092 ydbplatform/local-ydb:25.3`.text()
+	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish ${monPort}:${monPort} --publish ${grpcPort}:${grpcPort} --env MON_PORT=${monPort} --env GRPC_PORT=${grpcPort} ydbplatform/local-ydb:25.3`.text()
 	containerID = container.trim()
+
+	// Ensure the container is removed when the process is interrupted (Ctrl-C)
+	// or terminated, not just when vitest calls teardown() normally.
+	for (let sig of ['SIGINT', 'SIGTERM'] as const) {
+		process.once(sig, async () => {
+			await teardown()
+			process.exit(sig === 'SIGINT' ? 130 : 143)
+		})
+	}
 
 	let signal = AbortSignal.timeout(30 * 1000)
 	while (
@@ -58,24 +92,14 @@ export async function setup(project: TestProject) {
 		await $`sleep 1`
 	}
 
-	let [ipv4, _ipv6] = await $`docker port ${containerID} 2136/tcp`.lines()
-
-	project.provide('connectionString', `grpc://${ipv4}/local`)
+	project.provide('connectionString', `grpc://localhost:${grpcPort}/local`)
 	project.provide('credentialsUsername', 'root')
 	project.provide('credentialsPassword', '1234')
-	project.provide('credentialsEndpoint', `grpc://${ipv4}`)
-
-	configured = true
+	project.provide('credentialsEndpoint', `grpc://localhost:${grpcPort}`)
 }
 
-/**
- * Tears down the YDB Docker container if it has been configured.
- *
- * This function checks if the YDB environment has been configured.
- * If configured, it removes the YDB Docker container forcefully.
- */
 export async function teardown() {
-	if (!configured || !containerID) {
+	if (!containerID) {
 		return
 	}
 
