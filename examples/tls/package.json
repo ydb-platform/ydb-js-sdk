@@ -13,7 +13,7 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/api": "^6.0.6",
 		"@ydbjs/auth": "^6.0.0",
 		"@ydbjs/core": "^6.0.7"
 	},
