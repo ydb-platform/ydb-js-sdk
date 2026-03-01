@@ -10,8 +10,16 @@ import { loggers } from '@ydbjs/debug'
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
 import { UnsafeString, identifier, unsafe, yql } from './yql.js'
+import { SessionPool, type SessionPoolOptions } from './session-pool.js'
 
 let dbg = loggers.query
+
+export type QueryOptions = {
+	/**
+	 * Session pool configuration
+	 */
+	poolOptions?: SessionPoolOptions
+}
 
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -123,7 +131,9 @@ const doImpl = function <T = unknown>(): Promise<T> {
  *
  * @see {@link QueryClient}
  */
-export function query(driver: Driver): QueryClient {
+export function query(driver: Driver, options?: QueryOptions): QueryClient {
+	let sessionPool = new SessionPool(driver, options?.poolOptions)
+
 	function yqlQuery<P extends any[] = unknown[], T extends any[] = unknown[]>(
 		strings: string | TemplateStringsArray,
 		...values: P
@@ -132,7 +142,7 @@ export function query(driver: Driver): QueryClient {
 		dbg.log('creating query instance for text: %s', text)
 		return ctx.run(
 			ctx.getStore() ?? {},
-			() => new Query<T>(driver, text, params)
+			() => new Query<T>(driver, text, params, sessionPool)
 		)
 	}
 
@@ -173,7 +183,6 @@ export function query(driver: Driver): QueryClient {
 		dbg.log('starting transaction')
 		await driver.ready()
 		let store = ctx.getStore() || {}
-		let client = driver.createClient(QueryServiceDefinition)
 
 		let caller = typeof optOrFn === 'function' ? optOrFn : fn
 		let options =
@@ -197,47 +206,18 @@ export function query(driver: Driver): QueryClient {
 				},
 			},
 			async (signal) => {
-				dbg.log('creating session for transaction')
-				let sessionResponse = await client.createSession({}, { signal })
-				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log(
-						'failed to create session, status: %d',
-						sessionResponse.status
-					)
-					throw new YDBError(
-						sessionResponse.status,
-						sessionResponse.issues
-					)
-				}
+				dbg.log('acquiring session from pool for transaction')
+				using sessionLease = await sessionPool.acquire(signal)
+				dbg.log('session %s acquired for transaction', sessionLease.id)
 
 				store.signal = signal
-				store.nodeId = sessionResponse.nodeId
-				store.sessionId = sessionResponse.sessionId
+				store.nodeId = sessionLease.nodeId
+				store.sessionId = sessionLease.id
 
-				client = driver.createClient(
+				let client = driver.createClient(
 					QueryServiceDefinition,
-					sessionResponse.nodeId
+					sessionLease.nodeId
 				)
-
-				let attachSession = client
-					.attachSession({ sessionId: store.sessionId }, { signal })
-					[Symbol.asyncIterator]()
-				let attachSessionResult = await attachSession.next()
-				if (
-					attachSessionResult.value.status !==
-					StatusIds_StatusCode.SUCCESS
-				) {
-					dbg.log(
-						'failed to attach session, status: %d',
-						attachSessionResult.value.status
-					)
-					throw new YDBError(
-						attachSessionResult.value.status,
-						attachSessionResult.value.issues
-					)
-				}
-
-				dbg.log('session %s created and attached', store.sessionId)
 
 				let beginTransactionResult = await client.beginTransaction(
 					{
@@ -264,7 +244,7 @@ export function query(driver: Driver): QueryClient {
 
 				store.transactionId = beginTransactionResult.txMeta!.id
 
-				let сommitHooks: Array<
+				let commitHooks: Array<
 					(signal?: AbortSignal) => Promise<void> | void
 				> = []
 				let rollbackHooks: Array<
@@ -290,7 +270,7 @@ export function query(driver: Driver): QueryClient {
 							rollbackHooks.push(fn)
 						},
 						onCommit: (fn: () => Promise<void> | void) => {
-							сommitHooks.push(fn)
+							commitHooks.push(fn)
 						},
 						onClose: (fn: () => Promise<void> | void) => {
 							closeHooks.push(fn)
@@ -300,9 +280,9 @@ export function query(driver: Driver): QueryClient {
 					dbg.log('executing transaction body')
 					let result = await ctx.run(store, () => caller!(tx, signal))
 
-					dbg.log('executing %d commit hooks', сommitHooks.length)
+					dbg.log('executing %d commit hooks', commitHooks.length)
 					await Promise.all(
-						сommitHooks.map(async (hook, i) => {
+						commitHooks.map(async (hook, i) => {
 							dbg.log('executing commit hook #%d', i + 1)
 							await hook(signal)
 							dbg.log('commit hook #%d completed', i + 1)
@@ -337,7 +317,7 @@ export function query(driver: Driver): QueryClient {
 				} catch (error) {
 					dbg.log('transaction error: %O', error)
 
-					dbg.log('executing %d rollback hooks', сommitHooks.length)
+					dbg.log('executing %d rollback hooks', rollbackHooks.length)
 					await Promise.all(
 						rollbackHooks.map(async (hook, i) => {
 							dbg.log('executing rollback hook #%d', i + 1)
@@ -358,12 +338,7 @@ export function query(driver: Driver): QueryClient {
 
 					throw error
 				} finally {
-					dbg.log('deleting session %s', sessionResponse.sessionId)
-					void client.deleteSession({
-						sessionId: sessionResponse.sessionId,
-					})
-
-					dbg.log('executing %d close hooks', сommitHooks.length)
+					dbg.log('executing %d close hooks', closeHooks.length)
 					await Promise.all(
 						closeHooks.map(async (hook, i) => {
 							dbg.log('executing close hook #%d', i + 1)
@@ -382,9 +357,12 @@ export function query(driver: Driver): QueryClient {
 		transaction: txIml,
 		identifier: identifier,
 		unsafe: unsafe,
-		async [Symbol.asyncDispose]() {},
+		async [Symbol.asyncDispose]() {
+			await sessionPool.close()
+		},
 	})
 }
 
 export { type Query } from './query.ts'
 export { identifier, unsafe, UnsafeString } from './yql.js'
+export { type SessionPoolOptions } from './session-pool.js'
