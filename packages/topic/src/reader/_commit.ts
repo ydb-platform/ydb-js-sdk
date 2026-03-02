@@ -29,8 +29,7 @@ export let _commit = function commit(
 	// Group offsets by partition session, track sessions for nextCommitStartOffset
 	let offsets = new Map<bigint, OffsetsRange[]>()
 	let sessions = new Map<bigint, (typeof messages)[0]['partitionSession']>()
-	let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] =
-		[]
+	let commitOffsets: StreamReadMessage_CommitOffsetRequest_PartitionCommitOffset[] = []
 
 	for (let message of messages) {
 		// Each message must be alive
@@ -107,20 +106,13 @@ export let _commit = function commit(
 
 	// Convert our optimized Map structure into the API's expected format
 	for (let [partitionSessionId, partOffsets] of offsets.entries()) {
-		dbg.log(
-			'committing offsets for partition session %s: %o',
-			partitionSessionId,
-			partOffsets
-		)
+		dbg.log('committing offsets for partition session %s: %o', partitionSessionId, partOffsets)
 
 		commitOffsets.push(
-			create(
-				StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema,
-				{
-					partitionSessionId,
-					offsets: partOffsets,
-				}
-			)
+			create(StreamReadMessage_CommitOffsetRequest_PartitionCommitOffsetSchema, {
+				partitionSessionId,
+				offsets: partOffsets,
+			})
 		)
 	}
 

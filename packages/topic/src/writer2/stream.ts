@@ -161,8 +161,7 @@ export const WriterStream = fromCallback<
 					sendBack({
 						type: 'writer.stream.error',
 						error: new Error(
-							'Received unknown message type: ' +
-								event.serverMessage.case
+							'Received unknown message type: ' + event.serverMessage.case
 						),
 					})
 			}
@@ -172,8 +171,7 @@ export const WriterStream = fromCallback<
 	let authorizer = async () => {
 		await input.driver.ready(ac.signal)
 
-		let interval =
-			input.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS
+		let interval = input.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS
 		for await (let _ of setInterval(interval, null, {
 			signal: ac.signal,
 		})) {
@@ -194,9 +192,7 @@ export const WriterStream = fromCallback<
 		.catch((error) => sendBack({ type: 'writer.stream.error', error }))
 		.finally(() => sendBack({ type: 'writer.stream.close' }))
 
-	void authorizer().catch((error) =>
-		sendBack({ type: 'writer.stream.error', error })
-	)
+	void authorizer().catch((error) => sendBack({ type: 'writer.stream.error', error }))
 
 	return () => {
 		queue.close()

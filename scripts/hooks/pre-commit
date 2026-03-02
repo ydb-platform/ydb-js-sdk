@@ -4,20 +4,7 @@ set -euo pipefail
 FILES=$(git diff --cached --name-only --diff-filter=ACMR | sed 's| |\\ |g')
 [ -z "$FILES" ] && exit 0
 
-git stash --keep-index --include-untracked -q
-cleanup() {
-	git stash pop -q 2>/dev/null || true
-}
-trap cleanup EXIT
-
-# Lint all selected files
+# Lint staged files (oxlint has no stdin mode, so it works on the working tree)
 echo "$FILES" | xargs ./node_modules/.bin/oxlint --fix --quiet
-LINT_EXIT=$?
-
-# Prettify all selected files
-echo "$FILES" | xargs ./node_modules/.bin/prettier --ignore-unknown --write
-
-# Add back the modified/prettified files to staging
+echo "$FILES" | xargs ./node_modules/.bin/oxfmt --no-error-on-unmatched-pattern
 echo "$FILES" | xargs git add
-
-exit $LINT_EXIT

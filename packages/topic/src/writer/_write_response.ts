@@ -17,10 +17,7 @@ export const _on_write_response = function on_write_response(
 		readonly buffer: StreamWriteMessage_WriteRequest_MessageData[] // Array of messages that are currently in-flight
 		readonly inflight: StreamWriteMessage_WriteRequest_MessageData[] // Array of messages that are currently in-flight
 		readonly throughputSettings: ThroughputSettings // Current throughput settings for the writer
-		onAck?: (
-			seqNo: bigint,
-			status?: 'skipped' | 'written' | 'writtenInTx'
-		) => void // Callback for handling acknowledgments
+		onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void // Callback for handling acknowledgments
 		updateBufferSize: (bytes: bigint) => void // Function to update the buffer size
 	},
 	input: StreamWriteMessage_WriteResponse

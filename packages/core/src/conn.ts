@@ -49,11 +49,7 @@ export class LazyConnection implements Connection {
 
 	get channel(): Channel {
 		if (this.#channel === null) {
-			dbg.log(
-				'create channel to node id=%d address=%s',
-				this.nodeId,
-				this.address
-			)
+			dbg.log('create channel to node id=%d address=%s', this.nodeId, this.address)
 
 			this.#channel = createChannel(
 				this.address,
@@ -67,11 +63,7 @@ export class LazyConnection implements Connection {
 
 	close() {
 		if (this.#channel) {
-			dbg.log(
-				'close channel to node id=%d address=%s',
-				this.nodeId,
-				this.address
-			)
+			dbg.log('close channel to node id=%d address=%s', this.nodeId, this.address)
 			this.#channel.close()
 			this.#channel = null
 		}

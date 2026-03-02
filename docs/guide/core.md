@@ -16,9 +16,7 @@ This guide helps you connect to YDB from JavaScript/TypeScript and run your firs
 ```ts
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver(
-  process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local'
-)
+const driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
 await driver.ready()
 
 // use the driver with Query/Topic or low-level clients
@@ -53,7 +51,10 @@ import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 const authEndpoint = 'grpcs://ydb.example.com:2135' // AuthService endpoint
 const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
-    { username: process.env.YDB_USER!, password: process.env.YDB_PASSWORD! },
+    {
+      username: process.env.YDB_USER!,
+      password: process.env.YDB_PASSWORD!,
+    },
     authEndpoint
   ),
 })
@@ -223,10 +224,7 @@ Example:
 class MyCredentialsProvider extends CredentialsProvider {
   #token: string | null = null
 
-  async getToken(
-    force = false,
-    signal: AbortSignal = AbortSignal.timeout(10_000)
-  ) {
+  async getToken(force = false, signal: AbortSignal = AbortSignal.timeout(10_000)) {
     if (!force && this.#token) return this.#token
     const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     const res = await fetch(this.#endpoint, {

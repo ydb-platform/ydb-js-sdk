@@ -2,23 +2,19 @@
 // @generated from file protos/ydb_scheme.proto (package Ydb.Scheme, syntax proto3)
 /* eslint-disable */
 
-import type { GenEnum, GenFile, GenMessage } from '@bufbuild/protobuf/codegenv2'
-import { enumDesc, fileDesc, messageDesc } from '@bufbuild/protobuf/codegenv2'
-import type { VirtualTimestamp } from './ydb_common_pb.js'
-import { file_protos_ydb_common } from './ydb_common_pb.js'
-import type { Operation, OperationParams } from './ydb_operation_pb.js'
-import { file_protos_ydb_operation } from './ydb_operation_pb.js'
-import type { Message } from '@bufbuild/protobuf'
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { VirtualTimestamp } from "./ydb_common_pb.js";
+import { file_protos_ydb_common } from "./ydb_common_pb.js";
+import type { Operation, OperationParams } from "./ydb_operation_pb.js";
+import { file_protos_ydb_operation } from "./ydb_operation_pb.js";
+import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file protos/ydb_scheme.proto.
  */
-export const file_protos_ydb_scheme: GenFile =
-	/*@__PURE__*/
-	fileDesc(
-		'Chdwcm90b3MveWRiX3NjaGVtZS5wcm90bxIKWWRiLlNjaGVtZSJfChRNYWtlRGlyZWN0b3J5UmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEgwKBHBhdGgYAiABKAkiRQoVTWFrZURpcmVjdG9yeVJlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiJhChZSZW1vdmVEaXJlY3RvcnlSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCSJHChdSZW1vdmVEaXJlY3RvcnlSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iXwoUTGlzdERpcmVjdG9yeVJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxIMCgRwYXRoGAIgASgJIkUKFUxpc3REaXJlY3RvcnlSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iOAoLUGVybWlzc2lvbnMSDwoHc3ViamVjdBgBIAEoCRIYChBwZXJtaXNzaW9uX25hbWVzGAIgAygJIsEECgVFbnRyeRIMCgRuYW1lGAEgASgJEg0KBW93bmVyGAIgASgJEiQKBHR5cGUYBSABKA4yFi5ZZGIuU2NoZW1lLkVudHJ5LlR5cGUSNgoVZWZmZWN0aXZlX3Blcm1pc3Npb25zGAYgAygLMhcuWWRiLlNjaGVtZS5QZXJtaXNzaW9ucxIsCgtwZXJtaXNzaW9ucxgHIAMoCzIXLllkYi5TY2hlbWUuUGVybWlzc2lvbnMSEgoKc2l6ZV9ieXRlcxgIIAEoBBIpCgpjcmVhdGVkX2F0GAkgASgLMhUuWWRiLlZpcnR1YWxUaW1lc3RhbXAizwIKBFR5cGUSFAoQVFlQRV9VTlNQRUNJRklFRBAAEg0KCURJUkVDVE9SWRABEgkKBVRBQkxFEAISFAoQUEVSU19RVUVVRV9HUk9VUBADEgwKCERBVEFCQVNFEAQSDwoLUlRNUl9WT0xVTUUQBRIWChJCTE9DS19TVE9SRV9WT0xVTUUQBhIVChFDT09SRElOQVRJT05fTk9ERRAHEhAKDENPTFVNTl9TVE9SRRAMEhAKDENPTFVNTl9UQUJMRRANEgwKCFNFUVVFTkNFEA8SDwoLUkVQTElDQVRJT04QEBIJCgVUT1BJQxAREhIKDkVYVEVSTkFMX1RBQkxFEBISGAoURVhURVJOQUxfREFUQV9TT1VSQ0UQExIICgRWSUVXEBQSEQoNUkVTT1VSQ0VfUE9PTBAVEgwKCFRSQU5TRkVSEBcSDAoIU1lTX1ZJRVcQGCJbChNMaXN0RGlyZWN0b3J5UmVzdWx0Eh8KBHNlbGYYASABKAsyES5ZZGIuU2NoZW1lLkVudHJ5EiMKCGNoaWxkcmVuGAIgAygLMhEuWWRiLlNjaGVtZS5FbnRyeSJeChNEZXNjcmliZVBhdGhSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCSJEChREZXNjcmliZVBhdGhSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iNQoSRGVzY3JpYmVQYXRoUmVzdWx0Eh8KBHNlbGYYASABKAsyES5ZZGIuU2NoZW1lLkVudHJ5IrIBChFQZXJtaXNzaW9uc0FjdGlvbhIoCgVncmFudBgBIAEoCzIXLllkYi5TY2hlbWUuUGVybWlzc2lvbnNIABIpCgZyZXZva2UYAiABKAsyFy5ZZGIuU2NoZW1lLlBlcm1pc3Npb25zSAASJgoDc2V0GAMgASgLMhcuWWRiLlNjaGVtZS5QZXJtaXNzaW9uc0gAEhYKDGNoYW5nZV9vd25lchgEIAEoCUgAQggKBmFjdGlvbiLeAQoYTW9kaWZ5UGVybWlzc2lvbnNSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCRIuCgdhY3Rpb25zGAMgAygLMh0uWWRiLlNjaGVtZS5QZXJtaXNzaW9uc0FjdGlvbhIZChFjbGVhcl9wZXJtaXNzaW9ucxgEIAEoCBIfChVpbnRlcnJ1cHRfaW5oZXJpdGFuY2UYBSABKAhIAEINCgtpbmhlcml0YW5jZSJJChlNb2RpZnlQZXJtaXNzaW9uc1Jlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbkJsChV0ZWNoLnlkYi5wcm90by5zY2hlbWVCFVNjaGVtZU9wZXJhdGlvblByb3Rvc1o5Z2l0aHViLmNvbS95ZGItcGxhdGZvcm0veWRiLWdvLWdlbnByb3RvL3Byb3Rvcy9ZZGJfU2NoZW1l+AEBYgZwcm90bzM',
-		[file_protos_ydb_common, file_protos_ydb_operation]
-	)
+export const file_protos_ydb_scheme: GenFile = /*@__PURE__*/
+  fileDesc("Chdwcm90b3MveWRiX3NjaGVtZS5wcm90bxIKWWRiLlNjaGVtZSJfChRNYWtlRGlyZWN0b3J5UmVxdWVzdBI5ChBvcGVyYXRpb25fcGFyYW1zGAEgASgLMh8uWWRiLk9wZXJhdGlvbnMuT3BlcmF0aW9uUGFyYW1zEgwKBHBhdGgYAiABKAkiRQoVTWFrZURpcmVjdG9yeVJlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbiJhChZSZW1vdmVEaXJlY3RvcnlSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCSJHChdSZW1vdmVEaXJlY3RvcnlSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iXwoUTGlzdERpcmVjdG9yeVJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxIMCgRwYXRoGAIgASgJIkUKFUxpc3REaXJlY3RvcnlSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iOAoLUGVybWlzc2lvbnMSDwoHc3ViamVjdBgBIAEoCRIYChBwZXJtaXNzaW9uX25hbWVzGAIgAygJIsEECgVFbnRyeRIMCgRuYW1lGAEgASgJEg0KBW93bmVyGAIgASgJEiQKBHR5cGUYBSABKA4yFi5ZZGIuU2NoZW1lLkVudHJ5LlR5cGUSNgoVZWZmZWN0aXZlX3Blcm1pc3Npb25zGAYgAygLMhcuWWRiLlNjaGVtZS5QZXJtaXNzaW9ucxIsCgtwZXJtaXNzaW9ucxgHIAMoCzIXLllkYi5TY2hlbWUuUGVybWlzc2lvbnMSEgoKc2l6ZV9ieXRlcxgIIAEoBBIpCgpjcmVhdGVkX2F0GAkgASgLMhUuWWRiLlZpcnR1YWxUaW1lc3RhbXAizwIKBFR5cGUSFAoQVFlQRV9VTlNQRUNJRklFRBAAEg0KCURJUkVDVE9SWRABEgkKBVRBQkxFEAISFAoQUEVSU19RVUVVRV9HUk9VUBADEgwKCERBVEFCQVNFEAQSDwoLUlRNUl9WT0xVTUUQBRIWChJCTE9DS19TVE9SRV9WT0xVTUUQBhIVChFDT09SRElOQVRJT05fTk9ERRAHEhAKDENPTFVNTl9TVE9SRRAMEhAKDENPTFVNTl9UQUJMRRANEgwKCFNFUVVFTkNFEA8SDwoLUkVQTElDQVRJT04QEBIJCgVUT1BJQxAREhIKDkVYVEVSTkFMX1RBQkxFEBISGAoURVhURVJOQUxfREFUQV9TT1VSQ0UQExIICgRWSUVXEBQSEQoNUkVTT1VSQ0VfUE9PTBAVEgwKCFRSQU5TRkVSEBcSDAoIU1lTX1ZJRVcQGCJbChNMaXN0RGlyZWN0b3J5UmVzdWx0Eh8KBHNlbGYYASABKAsyES5ZZGIuU2NoZW1lLkVudHJ5EiMKCGNoaWxkcmVuGAIgAygLMhEuWWRiLlNjaGVtZS5FbnRyeSJeChNEZXNjcmliZVBhdGhSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCSJEChREZXNjcmliZVBhdGhSZXNwb25zZRIsCglvcGVyYXRpb24YASABKAsyGS5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb24iNQoSRGVzY3JpYmVQYXRoUmVzdWx0Eh8KBHNlbGYYASABKAsyES5ZZGIuU2NoZW1lLkVudHJ5IrIBChFQZXJtaXNzaW9uc0FjdGlvbhIoCgVncmFudBgBIAEoCzIXLllkYi5TY2hlbWUuUGVybWlzc2lvbnNIABIpCgZyZXZva2UYAiABKAsyFy5ZZGIuU2NoZW1lLlBlcm1pc3Npb25zSAASJgoDc2V0GAMgASgLMhcuWWRiLlNjaGVtZS5QZXJtaXNzaW9uc0gAEhYKDGNoYW5nZV9vd25lchgEIAEoCUgAQggKBmFjdGlvbiLeAQoYTW9kaWZ5UGVybWlzc2lvbnNSZXF1ZXN0EjkKEG9wZXJhdGlvbl9wYXJhbXMYASABKAsyHy5ZZGIuT3BlcmF0aW9ucy5PcGVyYXRpb25QYXJhbXMSDAoEcGF0aBgCIAEoCRIuCgdhY3Rpb25zGAMgAygLMh0uWWRiLlNjaGVtZS5QZXJtaXNzaW9uc0FjdGlvbhIZChFjbGVhcl9wZXJtaXNzaW9ucxgEIAEoCBIfChVpbnRlcnJ1cHRfaW5oZXJpdGFuY2UYBSABKAhIAEINCgtpbmhlcml0YW5jZSJJChlNb2RpZnlQZXJtaXNzaW9uc1Jlc3BvbnNlEiwKCW9wZXJhdGlvbhgBIAEoCzIZLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvbkJsChV0ZWNoLnlkYi5wcm90by5zY2hlbWVCFVNjaGVtZU9wZXJhdGlvblByb3Rvc1o5Z2l0aHViLmNvbS95ZGItcGxhdGZvcm0veWRiLWdvLWdlbnByb3RvL3Byb3Rvcy9ZZGJfU2NoZW1l+AEBYgZwcm90bzM", [file_protos_ydb_common, file_protos_ydb_operation]);
 
 /**
  * Create directory.
@@ -26,537 +22,506 @@ export const file_protos_ydb_scheme: GenFile =
  *
  * @generated from message Ydb.Scheme.MakeDirectoryRequest
  */
-export type MakeDirectoryRequest =
-	Message<'Ydb.Scheme.MakeDirectoryRequest'> & {
-		/**
-		 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
-		 */
-		operationParams?: OperationParams
+export type MakeDirectoryRequest = Message<"Ydb.Scheme.MakeDirectoryRequest"> & {
+  /**
+   * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+   */
+  operationParams?: OperationParams;
 
-		/**
-		 * @generated from field: string path = 2;
-		 */
-		path: string
-	}
+  /**
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
 
 /**
  * Describes the message Ydb.Scheme.MakeDirectoryRequest.
  * Use `create(MakeDirectoryRequestSchema)` to create a new message.
  */
-export const MakeDirectoryRequestSchema: GenMessage<MakeDirectoryRequest> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 0)
+export const MakeDirectoryRequestSchema: GenMessage<MakeDirectoryRequest> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 0);
 
 /**
  * @generated from message Ydb.Scheme.MakeDirectoryResponse
  */
-export type MakeDirectoryResponse =
-	Message<'Ydb.Scheme.MakeDirectoryResponse'> & {
-		/**
-		 * @generated from field: Ydb.Operations.Operation operation = 1;
-		 */
-		operation?: Operation
-	}
+export type MakeDirectoryResponse = Message<"Ydb.Scheme.MakeDirectoryResponse"> & {
+  /**
+   * @generated from field: Ydb.Operations.Operation operation = 1;
+   */
+  operation?: Operation;
+};
 
 /**
  * Describes the message Ydb.Scheme.MakeDirectoryResponse.
  * Use `create(MakeDirectoryResponseSchema)` to create a new message.
  */
-export const MakeDirectoryResponseSchema: GenMessage<MakeDirectoryResponse> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 1)
+export const MakeDirectoryResponseSchema: GenMessage<MakeDirectoryResponse> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 1);
 
 /**
  * Remove directory
  *
  * @generated from message Ydb.Scheme.RemoveDirectoryRequest
  */
-export type RemoveDirectoryRequest =
-	Message<'Ydb.Scheme.RemoveDirectoryRequest'> & {
-		/**
-		 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
-		 */
-		operationParams?: OperationParams
+export type RemoveDirectoryRequest = Message<"Ydb.Scheme.RemoveDirectoryRequest"> & {
+  /**
+   * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+   */
+  operationParams?: OperationParams;
 
-		/**
-		 * @generated from field: string path = 2;
-		 */
-		path: string
-	}
+  /**
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
 
 /**
  * Describes the message Ydb.Scheme.RemoveDirectoryRequest.
  * Use `create(RemoveDirectoryRequestSchema)` to create a new message.
  */
-export const RemoveDirectoryRequestSchema: GenMessage<RemoveDirectoryRequest> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 2)
+export const RemoveDirectoryRequestSchema: GenMessage<RemoveDirectoryRequest> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 2);
 
 /**
  * @generated from message Ydb.Scheme.RemoveDirectoryResponse
  */
-export type RemoveDirectoryResponse =
-	Message<'Ydb.Scheme.RemoveDirectoryResponse'> & {
-		/**
-		 * @generated from field: Ydb.Operations.Operation operation = 1;
-		 */
-		operation?: Operation
-	}
+export type RemoveDirectoryResponse = Message<"Ydb.Scheme.RemoveDirectoryResponse"> & {
+  /**
+   * @generated from field: Ydb.Operations.Operation operation = 1;
+   */
+  operation?: Operation;
+};
 
 /**
  * Describes the message Ydb.Scheme.RemoveDirectoryResponse.
  * Use `create(RemoveDirectoryResponseSchema)` to create a new message.
  */
-export const RemoveDirectoryResponseSchema: GenMessage<RemoveDirectoryResponse> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 3)
+export const RemoveDirectoryResponseSchema: GenMessage<RemoveDirectoryResponse> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 3);
 
 /**
  * List directory
  *
  * @generated from message Ydb.Scheme.ListDirectoryRequest
  */
-export type ListDirectoryRequest =
-	Message<'Ydb.Scheme.ListDirectoryRequest'> & {
-		/**
-		 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
-		 */
-		operationParams?: OperationParams
+export type ListDirectoryRequest = Message<"Ydb.Scheme.ListDirectoryRequest"> & {
+  /**
+   * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+   */
+  operationParams?: OperationParams;
 
-		/**
-		 * @generated from field: string path = 2;
-		 */
-		path: string
-	}
+  /**
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
 
 /**
  * Describes the message Ydb.Scheme.ListDirectoryRequest.
  * Use `create(ListDirectoryRequestSchema)` to create a new message.
  */
-export const ListDirectoryRequestSchema: GenMessage<ListDirectoryRequest> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 4)
+export const ListDirectoryRequestSchema: GenMessage<ListDirectoryRequest> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 4);
 
 /**
  * @generated from message Ydb.Scheme.ListDirectoryResponse
  */
-export type ListDirectoryResponse =
-	Message<'Ydb.Scheme.ListDirectoryResponse'> & {
-		/**
-		 * Holds ListDirectoryResult in case of successful call
-		 *
-		 * @generated from field: Ydb.Operations.Operation operation = 1;
-		 */
-		operation?: Operation
-	}
+export type ListDirectoryResponse = Message<"Ydb.Scheme.ListDirectoryResponse"> & {
+  /**
+   * Holds ListDirectoryResult in case of successful call
+   *
+   * @generated from field: Ydb.Operations.Operation operation = 1;
+   */
+  operation?: Operation;
+};
 
 /**
  * Describes the message Ydb.Scheme.ListDirectoryResponse.
  * Use `create(ListDirectoryResponseSchema)` to create a new message.
  */
-export const ListDirectoryResponseSchema: GenMessage<ListDirectoryResponse> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 5)
+export const ListDirectoryResponseSchema: GenMessage<ListDirectoryResponse> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 5);
 
 /**
  * @generated from message Ydb.Scheme.Permissions
  */
-export type Permissions = Message<'Ydb.Scheme.Permissions'> & {
-	/**
-	 * SID (Security ID) of user or group
-	 *
-	 * @generated from field: string subject = 1;
-	 */
-	subject: string
+export type Permissions = Message<"Ydb.Scheme.Permissions"> & {
+  /**
+   * SID (Security ID) of user or group
+   *
+   * @generated from field: string subject = 1;
+   */
+  subject: string;
 
-	/**
-	 * @generated from field: repeated string permission_names = 2;
-	 */
-	permissionNames: string[]
-}
+  /**
+   * @generated from field: repeated string permission_names = 2;
+   */
+  permissionNames: string[];
+};
 
 /**
  * Describes the message Ydb.Scheme.Permissions.
  * Use `create(PermissionsSchema)` to create a new message.
  */
-export const PermissionsSchema: GenMessage<Permissions> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 6)
+export const PermissionsSchema: GenMessage<Permissions> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 6);
 
 /**
  * @generated from message Ydb.Scheme.Entry
  */
-export type Entry = Message<'Ydb.Scheme.Entry'> & {
-	/**
-	 * Name of scheme entry (dir2 of /dir1/dir2)
-	 *
-	 * @generated from field: string name = 1;
-	 */
-	name: string
+export type Entry = Message<"Ydb.Scheme.Entry"> & {
+  /**
+   * Name of scheme entry (dir2 of /dir1/dir2)
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
 
-	/**
-	 * SID (Security ID) of user or group
-	 *
-	 * @generated from field: string owner = 2;
-	 */
-	owner: string
+  /**
+   * SID (Security ID) of user or group
+   *
+   * @generated from field: string owner = 2;
+   */
+  owner: string;
 
-	/**
-	 * @generated from field: Ydb.Scheme.Entry.Type type = 5;
-	 */
-	type: Entry_Type
+  /**
+   * @generated from field: Ydb.Scheme.Entry.Type type = 5;
+   */
+  type: Entry_Type;
 
-	/**
-	 * @generated from field: repeated Ydb.Scheme.Permissions effective_permissions = 6;
-	 */
-	effectivePermissions: Permissions[]
+  /**
+   * @generated from field: repeated Ydb.Scheme.Permissions effective_permissions = 6;
+   */
+  effectivePermissions: Permissions[];
 
-	/**
-	 * @generated from field: repeated Ydb.Scheme.Permissions permissions = 7;
-	 */
-	permissions: Permissions[]
+  /**
+   * @generated from field: repeated Ydb.Scheme.Permissions permissions = 7;
+   */
+  permissions: Permissions[];
 
-	/**
-	 * Size of entry in bytes. Currently filled for:
-	 * - TABLE;
-	 * - DATABASE.
-	 * Empty (zero) in other cases.
-	 *
-	 * @generated from field: uint64 size_bytes = 8;
-	 */
-	sizeBytes: bigint
+  /**
+   * Size of entry in bytes. Currently filled for:
+   * - TABLE;
+   * - DATABASE.
+   * Empty (zero) in other cases.
+   *
+   * @generated from field: uint64 size_bytes = 8;
+   */
+  sizeBytes: bigint;
 
-	/**
-	 * Virtual timestamp when the object was created
-	 *
-	 * @generated from field: Ydb.VirtualTimestamp created_at = 9;
-	 */
-	createdAt?: VirtualTimestamp
-}
+  /**
+   * Virtual timestamp when the object was created
+   *
+   * @generated from field: Ydb.VirtualTimestamp created_at = 9;
+   */
+  createdAt?: VirtualTimestamp;
+};
 
 /**
  * Describes the message Ydb.Scheme.Entry.
  * Use `create(EntrySchema)` to create a new message.
  */
-export const EntrySchema: GenMessage<Entry> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 7)
+export const EntrySchema: GenMessage<Entry> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 7);
 
 /**
  * @generated from enum Ydb.Scheme.Entry.Type
  */
 export enum Entry_Type {
-	/**
-	 * @generated from enum value: TYPE_UNSPECIFIED = 0;
-	 */
-	TYPE_UNSPECIFIED = 0,
+  /**
+   * @generated from enum value: TYPE_UNSPECIFIED = 0;
+   */
+  TYPE_UNSPECIFIED = 0,
 
-	/**
-	 * @generated from enum value: DIRECTORY = 1;
-	 */
-	DIRECTORY = 1,
+  /**
+   * @generated from enum value: DIRECTORY = 1;
+   */
+  DIRECTORY = 1,
 
-	/**
-	 * @generated from enum value: TABLE = 2;
-	 */
-	TABLE = 2,
+  /**
+   * @generated from enum value: TABLE = 2;
+   */
+  TABLE = 2,
 
-	/**
-	 * @generated from enum value: PERS_QUEUE_GROUP = 3;
-	 */
-	PERS_QUEUE_GROUP = 3,
+  /**
+   * @generated from enum value: PERS_QUEUE_GROUP = 3;
+   */
+  PERS_QUEUE_GROUP = 3,
 
-	/**
-	 * @generated from enum value: DATABASE = 4;
-	 */
-	DATABASE = 4,
+  /**
+   * @generated from enum value: DATABASE = 4;
+   */
+  DATABASE = 4,
 
-	/**
-	 * @generated from enum value: RTMR_VOLUME = 5;
-	 */
-	RTMR_VOLUME = 5,
+  /**
+   * @generated from enum value: RTMR_VOLUME = 5;
+   */
+  RTMR_VOLUME = 5,
 
-	/**
-	 * @generated from enum value: BLOCK_STORE_VOLUME = 6;
-	 */
-	BLOCK_STORE_VOLUME = 6,
+  /**
+   * @generated from enum value: BLOCK_STORE_VOLUME = 6;
+   */
+  BLOCK_STORE_VOLUME = 6,
 
-	/**
-	 * @generated from enum value: COORDINATION_NODE = 7;
-	 */
-	COORDINATION_NODE = 7,
+  /**
+   * @generated from enum value: COORDINATION_NODE = 7;
+   */
+  COORDINATION_NODE = 7,
 
-	/**
-	 * @generated from enum value: COLUMN_STORE = 12;
-	 */
-	COLUMN_STORE = 12,
+  /**
+   * @generated from enum value: COLUMN_STORE = 12;
+   */
+  COLUMN_STORE = 12,
 
-	/**
-	 * @generated from enum value: COLUMN_TABLE = 13;
-	 */
-	COLUMN_TABLE = 13,
+  /**
+   * @generated from enum value: COLUMN_TABLE = 13;
+   */
+  COLUMN_TABLE = 13,
 
-	/**
-	 * @generated from enum value: SEQUENCE = 15;
-	 */
-	SEQUENCE = 15,
+  /**
+   * @generated from enum value: SEQUENCE = 15;
+   */
+  SEQUENCE = 15,
 
-	/**
-	 * @generated from enum value: REPLICATION = 16;
-	 */
-	REPLICATION = 16,
+  /**
+   * @generated from enum value: REPLICATION = 16;
+   */
+  REPLICATION = 16,
 
-	/**
-	 * @generated from enum value: TOPIC = 17;
-	 */
-	TOPIC = 17,
+  /**
+   * @generated from enum value: TOPIC = 17;
+   */
+  TOPIC = 17,
 
-	/**
-	 * @generated from enum value: EXTERNAL_TABLE = 18;
-	 */
-	EXTERNAL_TABLE = 18,
+  /**
+   * @generated from enum value: EXTERNAL_TABLE = 18;
+   */
+  EXTERNAL_TABLE = 18,
 
-	/**
-	 * @generated from enum value: EXTERNAL_DATA_SOURCE = 19;
-	 */
-	EXTERNAL_DATA_SOURCE = 19,
+  /**
+   * @generated from enum value: EXTERNAL_DATA_SOURCE = 19;
+   */
+  EXTERNAL_DATA_SOURCE = 19,
 
-	/**
-	 * @generated from enum value: VIEW = 20;
-	 */
-	VIEW = 20,
+  /**
+   * @generated from enum value: VIEW = 20;
+   */
+  VIEW = 20,
 
-	/**
-	 * @generated from enum value: RESOURCE_POOL = 21;
-	 */
-	RESOURCE_POOL = 21,
+  /**
+   * @generated from enum value: RESOURCE_POOL = 21;
+   */
+  RESOURCE_POOL = 21,
 
-	/**
-	 * @generated from enum value: TRANSFER = 23;
-	 */
-	TRANSFER = 23,
+  /**
+   * @generated from enum value: TRANSFER = 23;
+   */
+  TRANSFER = 23,
 
-	/**
-	 * @generated from enum value: SYS_VIEW = 24;
-	 */
-	SYS_VIEW = 24,
+  /**
+   * @generated from enum value: SYS_VIEW = 24;
+   */
+  SYS_VIEW = 24,
 }
 
 /**
  * Describes the enum Ydb.Scheme.Entry.Type.
  */
-export const Entry_TypeSchema: GenEnum<Entry_Type> =
-	/*@__PURE__*/
-	enumDesc(file_protos_ydb_scheme, 7, 0)
+export const Entry_TypeSchema: GenEnum<Entry_Type> = /*@__PURE__*/
+  enumDesc(file_protos_ydb_scheme, 7, 0);
 
 /**
  * @generated from message Ydb.Scheme.ListDirectoryResult
  */
-export type ListDirectoryResult = Message<'Ydb.Scheme.ListDirectoryResult'> & {
-	/**
-	 * @generated from field: Ydb.Scheme.Entry self = 1;
-	 */
-	self?: Entry
+export type ListDirectoryResult = Message<"Ydb.Scheme.ListDirectoryResult"> & {
+  /**
+   * @generated from field: Ydb.Scheme.Entry self = 1;
+   */
+  self?: Entry;
 
-	/**
-	 * @generated from field: repeated Ydb.Scheme.Entry children = 2;
-	 */
-	children: Entry[]
-}
+  /**
+   * @generated from field: repeated Ydb.Scheme.Entry children = 2;
+   */
+  children: Entry[];
+};
 
 /**
  * Describes the message Ydb.Scheme.ListDirectoryResult.
  * Use `create(ListDirectoryResultSchema)` to create a new message.
  */
-export const ListDirectoryResultSchema: GenMessage<ListDirectoryResult> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 8)
+export const ListDirectoryResultSchema: GenMessage<ListDirectoryResult> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 8);
 
 /**
  * Returns information about object with given path
  *
  * @generated from message Ydb.Scheme.DescribePathRequest
  */
-export type DescribePathRequest = Message<'Ydb.Scheme.DescribePathRequest'> & {
-	/**
-	 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
-	 */
-	operationParams?: OperationParams
+export type DescribePathRequest = Message<"Ydb.Scheme.DescribePathRequest"> & {
+  /**
+   * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+   */
+  operationParams?: OperationParams;
 
-	/**
-	 * @generated from field: string path = 2;
-	 */
-	path: string
-}
+  /**
+   * @generated from field: string path = 2;
+   */
+  path: string;
+};
 
 /**
  * Describes the message Ydb.Scheme.DescribePathRequest.
  * Use `create(DescribePathRequestSchema)` to create a new message.
  */
-export const DescribePathRequestSchema: GenMessage<DescribePathRequest> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 9)
+export const DescribePathRequestSchema: GenMessage<DescribePathRequest> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 9);
 
 /**
  * @generated from message Ydb.Scheme.DescribePathResponse
  */
-export type DescribePathResponse =
-	Message<'Ydb.Scheme.DescribePathResponse'> & {
-		/**
-		 * Holds DescribePathResult in case of DescribePathResult
-		 *
-		 * @generated from field: Ydb.Operations.Operation operation = 1;
-		 */
-		operation?: Operation
-	}
+export type DescribePathResponse = Message<"Ydb.Scheme.DescribePathResponse"> & {
+  /**
+   * Holds DescribePathResult in case of DescribePathResult
+   *
+   * @generated from field: Ydb.Operations.Operation operation = 1;
+   */
+  operation?: Operation;
+};
 
 /**
  * Describes the message Ydb.Scheme.DescribePathResponse.
  * Use `create(DescribePathResponseSchema)` to create a new message.
  */
-export const DescribePathResponseSchema: GenMessage<DescribePathResponse> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 10)
+export const DescribePathResponseSchema: GenMessage<DescribePathResponse> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 10);
 
 /**
  * @generated from message Ydb.Scheme.DescribePathResult
  */
-export type DescribePathResult = Message<'Ydb.Scheme.DescribePathResult'> & {
-	/**
-	 * @generated from field: Ydb.Scheme.Entry self = 1;
-	 */
-	self?: Entry
-}
+export type DescribePathResult = Message<"Ydb.Scheme.DescribePathResult"> & {
+  /**
+   * @generated from field: Ydb.Scheme.Entry self = 1;
+   */
+  self?: Entry;
+};
 
 /**
  * Describes the message Ydb.Scheme.DescribePathResult.
  * Use `create(DescribePathResultSchema)` to create a new message.
  */
-export const DescribePathResultSchema: GenMessage<DescribePathResult> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 11)
+export const DescribePathResultSchema: GenMessage<DescribePathResult> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 11);
 
 /**
  * @generated from message Ydb.Scheme.PermissionsAction
  */
-export type PermissionsAction = Message<'Ydb.Scheme.PermissionsAction'> & {
-	/**
-	 * @generated from oneof Ydb.Scheme.PermissionsAction.action
-	 */
-	action:
-		| {
-				/**
-				 * Grant permissions
-				 *
-				 * @generated from field: Ydb.Scheme.Permissions grant = 1;
-				 */
-				value: Permissions
-				case: 'grant'
-		  }
-		| {
-				/**
-				 * Revoke permissions
-				 *
-				 * @generated from field: Ydb.Scheme.Permissions revoke = 2;
-				 */
-				value: Permissions
-				case: 'revoke'
-		  }
-		| {
-				/**
-				 * Rewrite permissions for given subject (last set win in case of multiple set for one subject)
-				 *
-				 * @generated from field: Ydb.Scheme.Permissions set = 3;
-				 */
-				value: Permissions
-				case: 'set'
-		  }
-		| {
-				/**
-				 * New owner for object
-				 *
-				 * @generated from field: string change_owner = 4;
-				 */
-				value: string
-				case: 'changeOwner'
-		  }
-		| { case: undefined; value?: undefined }
-}
+export type PermissionsAction = Message<"Ydb.Scheme.PermissionsAction"> & {
+  /**
+   * @generated from oneof Ydb.Scheme.PermissionsAction.action
+   */
+  action: {
+    /**
+     * Grant permissions
+     *
+     * @generated from field: Ydb.Scheme.Permissions grant = 1;
+     */
+    value: Permissions;
+    case: "grant";
+  } | {
+    /**
+     * Revoke permissions
+     *
+     * @generated from field: Ydb.Scheme.Permissions revoke = 2;
+     */
+    value: Permissions;
+    case: "revoke";
+  } | {
+    /**
+     * Rewrite permissions for given subject (last set win in case of multiple set for one subject)
+     *
+     * @generated from field: Ydb.Scheme.Permissions set = 3;
+     */
+    value: Permissions;
+    case: "set";
+  } | {
+    /**
+     * New owner for object
+     *
+     * @generated from field: string change_owner = 4;
+     */
+    value: string;
+    case: "changeOwner";
+  } | { case: undefined; value?: undefined };
+};
 
 /**
  * Describes the message Ydb.Scheme.PermissionsAction.
  * Use `create(PermissionsActionSchema)` to create a new message.
  */
-export const PermissionsActionSchema: GenMessage<PermissionsAction> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 12)
+export const PermissionsActionSchema: GenMessage<PermissionsAction> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 12);
 
 /**
  * Modify permissions of given object
  *
  * @generated from message Ydb.Scheme.ModifyPermissionsRequest
  */
-export type ModifyPermissionsRequest =
-	Message<'Ydb.Scheme.ModifyPermissionsRequest'> & {
-		/**
-		 * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
-		 */
-		operationParams?: OperationParams
+export type ModifyPermissionsRequest = Message<"Ydb.Scheme.ModifyPermissionsRequest"> & {
+  /**
+   * @generated from field: Ydb.Operations.OperationParams operation_params = 1;
+   */
+  operationParams?: OperationParams;
 
-		/**
-		 * @generated from field: string path = 2;
-		 */
-		path: string
+  /**
+   * @generated from field: string path = 2;
+   */
+  path: string;
 
-		/**
-		 * @generated from field: repeated Ydb.Scheme.PermissionsAction actions = 3;
-		 */
-		actions: PermissionsAction[]
+  /**
+   * @generated from field: repeated Ydb.Scheme.PermissionsAction actions = 3;
+   */
+  actions: PermissionsAction[];
 
-		/**
-		 * Clear all permissions on the object for all subjects
-		 *
-		 * @generated from field: bool clear_permissions = 4;
-		 */
-		clearPermissions: boolean
+  /**
+   * Clear all permissions on the object for all subjects
+   *
+   * @generated from field: bool clear_permissions = 4;
+   */
+  clearPermissions: boolean;
 
-		/**
-		 * @generated from oneof Ydb.Scheme.ModifyPermissionsRequest.inheritance
-		 */
-		inheritance:
-			| {
-					/**
-					 * @generated from field: bool interrupt_inheritance = 5;
-					 */
-					value: boolean
-					case: 'interruptInheritance'
-			  }
-			| { case: undefined; value?: undefined }
-	}
+  /**
+   * @generated from oneof Ydb.Scheme.ModifyPermissionsRequest.inheritance
+   */
+  inheritance: {
+    /**
+     * @generated from field: bool interrupt_inheritance = 5;
+     */
+    value: boolean;
+    case: "interruptInheritance";
+  } | { case: undefined; value?: undefined };
+};
 
 /**
  * Describes the message Ydb.Scheme.ModifyPermissionsRequest.
  * Use `create(ModifyPermissionsRequestSchema)` to create a new message.
  */
-export const ModifyPermissionsRequestSchema: GenMessage<ModifyPermissionsRequest> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 13)
+export const ModifyPermissionsRequestSchema: GenMessage<ModifyPermissionsRequest> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 13);
 
 /**
  * @generated from message Ydb.Scheme.ModifyPermissionsResponse
  */
-export type ModifyPermissionsResponse =
-	Message<'Ydb.Scheme.ModifyPermissionsResponse'> & {
-		/**
-		 * @generated from field: Ydb.Operations.Operation operation = 1;
-		 */
-		operation?: Operation
-	}
+export type ModifyPermissionsResponse = Message<"Ydb.Scheme.ModifyPermissionsResponse"> & {
+  /**
+   * @generated from field: Ydb.Operations.Operation operation = 1;
+   */
+  operation?: Operation;
+};
 
 /**
  * Describes the message Ydb.Scheme.ModifyPermissionsResponse.
  * Use `create(ModifyPermissionsResponseSchema)` to create a new message.
  */
-export const ModifyPermissionsResponseSchema: GenMessage<ModifyPermissionsResponse> =
-	/*@__PURE__*/
-	messageDesc(file_protos_ydb_scheme, 14)
+export const ModifyPermissionsResponseSchema: GenMessage<ModifyPermissionsResponse> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_scheme, 14);
+

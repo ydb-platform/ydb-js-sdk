@@ -124,8 +124,7 @@ test('throws detailed error for null value', () => {
 })
 
 test('handles unsafe strings', () => {
-	let { text, params } =
-		yql`SELECT * FROM ${identifier('table')} WHERE id = ${1};`
+	let { text, params } = yql`SELECT * FROM ${identifier('table')} WHERE id = ${1};`
 
 	expect(text).eq('SELECT * FROM `table` WHERE id = $p0;')
 	expect(params).toHaveProperty('$p0')
@@ -172,14 +171,11 @@ test('identifier escapes backticks inside names', () => {
 
 test('public exports identifier/unsafe behave correctly', async () => {
 	// Import from public entry to ensure re-exports work in tests
-	const { identifier: pubIdentifier, unsafe: pubUnsafe } =
-		await import('./index.ts')
+	const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
 
 	expect(pubIdentifier('users').toString()).eq('`users`')
 	expect(pubIdentifier('a`b').toString()).eq('`a``b`')
-	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq(
-		'ORDER BY created_at DESC'
-	)
+	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
 })
 
 test('handles various data types', () => {

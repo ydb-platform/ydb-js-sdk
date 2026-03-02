@@ -83,12 +83,9 @@ const result = await sql.begin(async (tx) => {
 })
 
 // С изоляцией и идемпотентностью
-await sql.begin(
-  { isolation: 'snapshotReadOnly', idempotent: true },
-  async (tx) => {
-    return await tx`SELECT COUNT(*) FROM users`
-  }
-)
+await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) => {
+  return await tx`SELECT COUNT(*) FROM users`
+})
 ```
 
 ### Продвинутое: несколько наборов результатов, стриминг и события

@@ -22,10 +22,7 @@ test('authenticates and returns valid token', async () => {
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	let token = await provider.getToken()
 
@@ -39,10 +36,7 @@ test('caches token and returns same value on subsequent calls', async () => {
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	let token1 = await provider.getToken()
 	let token2 = await provider.getToken()
@@ -55,10 +49,7 @@ test('forces token refresh when force=true', async () => {
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	let token1 = await provider.getToken()
 	let token2 = await provider.getToken(true)
@@ -74,10 +65,7 @@ test('returns cached token when fresh (outside soft expiry threshold)', async ()
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	// Get initial token
 	let token1 = await provider.getToken()
@@ -96,10 +84,7 @@ test('starts background refresh when approaching soft expiry threshold', async (
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	// Get initial token
 	let token1 = await provider.getToken()
@@ -128,10 +113,7 @@ test('forces synchronous refresh when approaching hard expiry threshold', async 
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	// Get initial token
 	let token1 = await provider.getToken()
@@ -153,10 +135,7 @@ test('transitions from background to synchronous refresh', async () => {
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	// Get initial token
 	let token1 = await provider.getToken()
@@ -186,10 +165,7 @@ test('handles concurrent requests without duplicate authentication', async () =>
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	// Concurrent requests from cold start should all get the same token
 	let promises = Array.from({ length: 5 }, () => provider.getToken())
@@ -208,17 +184,12 @@ test('respects abort signal', async () => {
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
-	let provider = new StaticCredentialsProvider(
-		{ username, password },
-		endpoint
-	)
+	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
 	let controller = new AbortController()
 	setTimeout(() => controller.abort(), 1)
 
-	await expect(provider.getToken(false, controller.signal)).rejects.toThrow(
-		'AbortError'
-	)
+	await expect(provider.getToken(false, controller.signal)).rejects.toThrow('AbortError')
 })
 
 test('handles invalid credentials gracefully', async () => {
@@ -237,9 +208,6 @@ test('handles invalid endpoint protocols', async () => {
 	let password = inject('credentialsPassword')
 
 	expect(() => {
-		return new StaticCredentialsProvider(
-			{ username, password },
-			'invalid://localhost:2136'
-		)
+		return new StaticCredentialsProvider({ username, password }, 'invalid://localhost:2136')
 	}).toThrow('Invalid connection string protocol')
 })

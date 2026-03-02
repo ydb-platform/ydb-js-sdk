@@ -236,8 +236,7 @@ export const createTopicTxReader = function createTopicTxReader(
 		let updates = []
 
 		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
-			let partitionSession =
-				state.partitionSessions.get(partitionSessionId)
+			let partitionSession = state.partitionSessions.get(partitionSessionId)
 			if (partitionSession) {
 				updates.push({
 					partitionSession,
@@ -246,18 +245,10 @@ export const createTopicTxReader = function createTopicTxReader(
 			}
 		}
 
-		dbg.log(
-			'Updating offsets in transaction for %d partitions',
-			updates.length
-		)
+		dbg.log('Updating offsets in transaction for %d partitions', updates.length)
 
 		if (updates.length > 0) {
-			await _update_offsets_in_transaction(
-				tx,
-				state.driver,
-				state.options.consumer,
-				updates
-			)
+			await _update_offsets_in_transaction(tx, state.driver, state.options.consumer, updates)
 		}
 
 		closeWithReason('Transaction committed')

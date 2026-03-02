@@ -25,9 +25,7 @@ title: Повторные попытки и идемпотентность
 ## Пометка одиночного вызова как идемпотентного
 
 ```ts
-await sql`UPDATE counters SET v = v + 1 WHERE id = ${id}`
-  .idempotent(true)
-  .timeout(3000)
+await sql`UPDATE counters SET v = v + 1 WHERE id = ${id}`.idempotent(true).timeout(3000)
 ```
 
 Внутри `sql.begin`/`sql.transaction` пометка на уровне одного вызова игнорируется; настраивайте идемпотентность на уровне транзакции и делайте бизнес‑логику идемпотентной (например, через ключи идемпотентности).

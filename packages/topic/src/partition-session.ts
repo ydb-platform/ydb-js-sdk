@@ -43,11 +43,7 @@ export class TopicPartitionSession {
 	 * @param partitionId - The identifier of the partition.
 	 * @param topicPath - The path of the topic.
 	 */
-	constructor(
-		partitionSessionId: bigint,
-		partitionId: bigint,
-		topicPath: string
-	) {
+	constructor(partitionSessionId: bigint, partitionId: bigint, topicPath: string) {
 		this.partitionSessionId = partitionSessionId
 		this.partitionId = partitionId
 		this.topicPath = topicPath

@@ -1,8 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 const base = process.env.DOCS_BASE || '/'
-const sitemapHostname =
-	process.env.SITE_HOSTNAME || 'https://ydb-platform.github.io/ydb-js-sdk'
+const sitemapHostname = process.env.SITE_HOSTNAME || 'https://ydb-platform.github.io/ydb-js-sdk'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({

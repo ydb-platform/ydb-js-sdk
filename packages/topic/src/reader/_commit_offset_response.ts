@@ -21,9 +21,7 @@ export let _on_commit_offset_response = function on_commit_offset_response(
 
 	if (ctx.onCommittedOffset) {
 		for (let part of input.partitionsCommittedOffsets) {
-			let partitionSession = ctx.partitionSessions.get(
-				part.partitionSessionId
-			)
+			let partitionSession = ctx.partitionSessions.get(part.partitionSessionId)
 			if (!partitionSession) {
 				dbg.log(
 					'error: commitOffsetResponse for unknown partitionSessionId=%s',

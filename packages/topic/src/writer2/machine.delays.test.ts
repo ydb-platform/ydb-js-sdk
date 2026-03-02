@@ -36,8 +36,7 @@ test('flushInterval returns flushIntervalMs from options', () => {
 })
 
 test('gracefulShutdownTimeout returns gracefulShutdownTimeoutMs from options', () => {
-	let gracefulShutdownTimeout =
-		WriterMachine.implementations.delays.gracefulShutdownTimeout!
+	let gracefulShutdownTimeout = WriterMachine.implementations.delays.gracefulShutdownTimeout!
 	assert.ok(typeof gracefulShutdownTimeout === 'function')
 
 	let context = { options: { gracefulShutdownTimeoutMs: 100500 } }
