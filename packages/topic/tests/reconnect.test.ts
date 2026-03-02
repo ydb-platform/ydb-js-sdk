@@ -69,9 +69,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	testDriver.close()
 
-	await topicService.dropTopic(
-		create(DropTopicRequestSchema, { path: testTopicName })
-	)
+	await topicService.dropTopic(create(DropTopicRequestSchema, { path: testTopicName }))
 })
 
 test(
@@ -124,18 +122,13 @@ test(
 
 			let remaining = deadline - Date.now()
 			if (remaining > 0) {
-				await new Promise((r) =>
-					setTimeout(r, Math.min(WRITE_INTERVAL_MS, remaining))
-				)
+				await new Promise((r) => setTimeout(r, Math.min(WRITE_INTERVAL_MS, remaining)))
 			}
 		}
 
 		// Give the reader up to 10 s to drain any in-flight messages.
 		let drainDeadline = Date.now() + 10_000
-		while (
-			receivedSeqNos.size < writtenSeqNos.size &&
-			Date.now() < drainDeadline
-		) {
+		while (receivedSeqNos.size < writtenSeqNos.size && Date.now() < drainDeadline) {
 			await new Promise((r) => setTimeout(r, 200))
 		}
 
@@ -145,9 +138,7 @@ test(
 		// ── Assertions ─────────────────────────────────────────────────────────
 		expect(writtenSeqNos.size).toBeGreaterThan(0)
 
-		let missing = [...writtenSeqNos].filter(
-			(seqNo) => !receivedSeqNos.has(seqNo)
-		)
+		let missing = [...writtenSeqNos].filter((seqNo) => !receivedSeqNos.has(seqNo))
 		expect(missing, `missing seqNos: ${missing.join(', ')}`).toHaveLength(0)
 	}
 )

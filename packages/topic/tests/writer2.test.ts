@@ -9,12 +9,7 @@ import {
 } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-import {
-	type ActorRef,
-	type AnyActor,
-	type AnyMachineSnapshot,
-	createActor,
-} from 'xstate'
+import { type ActorRef, type AnyActor, type AnyMachineSnapshot, createActor } from 'xstate'
 import { TopicWriter, WriterMachine } from '../src/writer2/index.ts'
 import type { WriterEmitted } from '../src/writer2/types.ts'
 import { YDBError } from '@ydbjs/error'
@@ -61,8 +56,7 @@ afterEach(async () => {
 })
 
 // Helper: wait for actor event (with AbortSignal support)
-type EventTypeOf<A> =
-	A extends ActorRef<any, any, infer TEvent> ? TEvent : never
+type EventTypeOf<A> = A extends ActorRef<any, any, infer TEvent> ? TEvent : never
 
 async function waitForEvent<A extends AnyActor>(
 	actor: A,
@@ -123,15 +117,8 @@ test('writes messages and receive acknowledges', async (tc) => {
 		message: { seqNo: 1n, data: data },
 	})
 
-	let event: WriterEmitted = await waitForEvent(
-		actor,
-		'writer.acknowledgments',
-		tc.signal
-	)
-	assert.ok(
-		event.type === 'writer.acknowledgments',
-		'Expected writer.acknowledgments event'
-	)
+	let event: WriterEmitted = await waitForEvent(actor, 'writer.acknowledgments', tc.signal)
+	assert.ok(event.type === 'writer.acknowledgments', 'Expected writer.acknowledgments event')
 	assert.ok(event.acknowledgments.size === 1, 'Expected 1 acknowledgment')
 
 	actor.send({ type: 'writer.destroy' })
@@ -166,10 +153,7 @@ test('handles retryable errors gracefully', async (tc) => {
 	})
 
 	let event = await waitForEvent(actor, 'writer.acknowledgments', tc.signal)
-	assert.ok(
-		event.type === 'writer.acknowledgments',
-		'Expected writer.acknowledgments event'
-	)
+	assert.ok(event.type === 'writer.acknowledgments', 'Expected writer.acknowledgments event')
 	assert.ok(event.acknowledgments.size === 1, 'Expected 1 acknowledgment')
 
 	nextTick(() => actor.send({ type: 'writer.close' }))
@@ -199,16 +183,9 @@ test('handles non retryable errors gracefully', async (tc) => {
 		message: { seqNo: -1n, data: data },
 	})
 
-	let event: WriterEmitted = await waitForEvent(
-		actor,
-		'writer.error',
-		tc.signal
-	)
+	let event: WriterEmitted = await waitForEvent(actor, 'writer.error', tc.signal)
 	assert.ok(event.type === 'writer.error', 'Expected writer.error event')
-	assert.ok(
-		event.error instanceof Error,
-		'Expected error to be an instance of Error'
-	)
+	assert.ok(event.error instanceof Error, 'Expected error to be an instance of Error')
 
 	assert.equal(actor.getSnapshot().value, 'closed')
 })
@@ -239,10 +216,7 @@ test('closes gracefully and flushes the buffer', async (tc) => {
 	actor.send({ type: 'writer.close' })
 
 	let event = await waitForEvent(actor, 'writer.acknowledgments', tc.signal)
-	assert.ok(
-		event.type === 'writer.acknowledgments',
-		'Expected writer.acknowledgments event'
-	)
+	assert.ok(event.type === 'writer.acknowledgments', 'Expected writer.acknowledgments event')
 	assert.ok(event.acknowledgments.size === 1, 'Expected 1 acknowledgment')
 
 	assert.equal(actor.getSnapshot().value, 'closed')
@@ -273,10 +247,7 @@ test('flushes the buffer if overflow', async (tc) => {
 	})
 
 	let event = await waitForEvent(actor, 'writer.acknowledgments', tc.signal)
-	assert.ok(
-		event.type === 'writer.acknowledgments',
-		'Expected writer.acknowledgments event'
-	)
+	assert.ok(event.type === 'writer.acknowledgments', 'Expected writer.acknowledgments event')
 	assert.ok(event.acknowledgments.size === 1, 'Expected 1 acknowledgment')
 
 	assert.equal(actor.getSnapshot().value, 'ready')
@@ -309,10 +280,7 @@ test('flushes the buffer if timeout', async (tc) => {
 	})
 
 	let event = await waitForEvent(actor, 'writer.acknowledgments', tc.signal)
-	assert.ok(
-		event.type === 'writer.acknowledgments',
-		'Expected writer.acknowledgments event'
-	)
+	assert.ok(event.type === 'writer.acknowledgments', 'Expected writer.acknowledgments event')
 	assert.ok(event.acknowledgments.size === 1, 'Expected 1 acknowledgment')
 
 	assert.equal(actor.getSnapshot().value, 'ready')
@@ -329,6 +297,7 @@ let messageSizes = [
 	8 * 1024 * 1024, // 8 MiB
 ]
 
+// oxlint-disable-next-line
 test.sequential.skip.each(messageSizes)(
 	'measures sustained throughput with %i byte messages',
 	{ timeout: 15_000 },
@@ -337,9 +306,7 @@ test.sequential.skip.each(messageSizes)(
 		let maxDataMiB = 1024 // Maximum 1024 MiB of data per message size
 		let maxDataBytes = maxDataMiB * 1024 * 1024
 
-		console.log(
-			`\n📦 Testing with ${(messageSize / 1024).toFixed(0)} KiB messages`
-		)
+		console.log(`\n📦 Testing with ${(messageSize / 1024).toFixed(0)} KiB messages`)
 
 		let data = new Uint8Array(messageSize)
 		// Fill with random-ish data to avoid compression artifacts
@@ -423,12 +390,8 @@ test.sequential.skip.each(messageSizes)(
 		console.log(`    Send rate: ${messagesPerSecond.toFixed(1)} msg/s`)
 		console.log(`    Ack rate: ${acksPerSecond.toFixed(1)} msg/s`)
 		console.log(`    Bandwidth: ${megabytesPerSecond.toFixed(2)} MB/s`)
-		console.log(
-			`    Total data: ${(totalDataSent / 1024 / 1024).toFixed(1)} MB`
-		)
-		console.log(
-			`    Target reached: ${((totalDataSent / maxDataBytes) * 100).toFixed(1)}%`
-		)
+		console.log(`    Total data: ${(totalDataSent / 1024 / 1024).toFixed(1)} MB`)
+		console.log(`    Target reached: ${((totalDataSent / maxDataBytes) * 100).toFixed(1)}%`)
 
 		// Basic assertions
 		assert.ok(messagesSent > 0, 'Should have sent at least some messages')
@@ -537,47 +500,43 @@ test('messages written before initialization are not dropped', async () => {
 	expect(messagePayload).toBe('Test message')
 })
 
-test(
-	'new writer continues seqno sequence after previous writer',
-	{ timeout: 15_000 },
-	async () => {
-		let producerId = `test-producer-${Date.now()}`
+test('new writer continues seqno sequence after previous writer', { timeout: 15_000 }, async () => {
+	let producerId = `test-producer-${Date.now()}`
 
-		// First writer: write messages
-		await using writer1 = new TopicWriter(driver, {
-			topic: testTopicName,
-			producerId,
-		})
+	// First writer: write messages
+	await using writer1 = new TopicWriter(driver, {
+		topic: testTopicName,
+		producerId,
+	})
 
-		writer1.write(new TextEncoder().encode('Writer1 Message 1'))
-		writer1.write(new TextEncoder().encode('Writer1 Message 2'))
-		let writer1LastSeqNo = await writer1.flush()
+	writer1.write(new TextEncoder().encode('Writer1 Message 1'))
+	writer1.write(new TextEncoder().encode('Writer1 Message 2'))
+	let writer1LastSeqNo = await writer1.flush()
 
-		expect(writer1LastSeqNo).toBeGreaterThan(0n)
+	expect(writer1LastSeqNo).toBeGreaterThan(0n)
 
-		// Wait a bit to ensure messages are committed on server
-		await new Promise((resolve) => setTimeout(resolve, 500))
+	// Wait a bit to ensure messages are committed on server
+	await new Promise((resolve) => setTimeout(resolve, 500))
 
-		// Create new writer with same producerId - should continue seqno sequence
-		await using writer2 = new TopicWriter(driver, {
-			topic: testTopicName,
-			producerId,
-		})
+	// Create new writer with same producerId - should continue seqno sequence
+	await using writer2 = new TopicWriter(driver, {
+		topic: testTopicName,
+		producerId,
+	})
 
-		// Write messages immediately (before initialization)
-		// These should get seqno starting from writer1LastSeqNo + 1 after initialization
-		writer2.write(new TextEncoder().encode('Writer2 Message 1'))
-		writer2.write(new TextEncoder().encode('Writer2 Message 2'))
-		let writer2LastSeqNo = await writer2.flush()
+	// Write messages immediately (before initialization)
+	// These should get seqno starting from writer1LastSeqNo + 1 after initialization
+	writer2.write(new TextEncoder().encode('Writer2 Message 1'))
+	writer2.write(new TextEncoder().encode('Writer2 Message 2'))
+	let writer2LastSeqNo = await writer2.flush()
 
-		// Verify seqno are sequential and continue from writer1
-		// This is the key test: writer2 should get lastSeqNo from server and continue sequence
-		// After initialization, seqno for writer2's messages should be recalculated from serverLastSeqNo
-		// writer2 wrote 2 messages, so lastSeqNo should be writer1LastSeqNo + 2
-		expect(writer2LastSeqNo).toBe(writer1LastSeqNo + 2n)
+	// Verify seqno are sequential and continue from writer1
+	// This is the key test: writer2 should get lastSeqNo from server and continue sequence
+	// After initialization, seqno for writer2's messages should be recalculated from serverLastSeqNo
+	// writer2 wrote 2 messages, so lastSeqNo should be writer1LastSeqNo + 2
+	expect(writer2LastSeqNo).toBe(writer1LastSeqNo + 2n)
 
-		// Verify sequentiality: lastSeqNo should be exactly 2 more than writer1's lastSeqNo
-		// (because writer2 wrote 2 messages)
-		expect(writer2LastSeqNo).toBeGreaterThan(writer1LastSeqNo)
-	}
-)
+	// Verify sequentiality: lastSeqNo should be exactly 2 more than writer1's lastSeqNo
+	// (because writer2 wrote 2 messages)
+	expect(writer2LastSeqNo).toBeGreaterThan(writer1LastSeqNo)
+})

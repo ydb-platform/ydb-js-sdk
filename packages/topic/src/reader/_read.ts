@@ -8,10 +8,7 @@ import { _send_read_request } from './_read_request.js'
 import type { TopicPartitionSession } from '../partition-session.js'
 import type { CodecMap } from '../codec.js'
 import type { AsyncPriorityQueue } from '../queue.js'
-import type {
-	StreamReadMessage_FromClient,
-	StreamReadMessage_ReadResponse,
-} from '@ydbjs/api/topic'
+import type { StreamReadMessage_FromClient, StreamReadMessage_ReadResponse } from '@ydbjs/api/topic'
 
 let dbg = loggers.topic.extend('reader')
 
@@ -25,10 +22,7 @@ export let _read = function read(
 		readonly outgoingQueue: AsyncPriorityQueue<StreamReadMessage_FromClient>
 		readonly maxBufferSize: bigint
 		readonly freeBufferSize: bigint
-		readonly readOffsets?: Map<
-			bigint,
-			{ firstOffset: bigint; lastOffset: bigint }
-		> // Optional for transaction support
+		readonly readOffsets?: Map<bigint, { firstOffset: bigint; lastOffset: bigint }> // Optional for transaction support
 		readonly updateFreeBufferSize: (releasedBytes: bigint) => void // Helper to update free buffer size
 	},
 	options: { limit?: number; waitMs?: number; signal?: AbortSignal } = {}
@@ -62,16 +56,11 @@ export let _read = function read(
 	let mergedSignal = mergedController.signal
 
 	// Link reader's controller signal
-	let controllerAbortHandler = () =>
-		mergedController.abort(ctx.controller.signal.reason)
+	let controllerAbortHandler = () => mergedController.abort(ctx.controller.signal.reason)
 	if (ctx.controller.signal.aborted) {
 		mergedController.abort(ctx.controller.signal.reason)
 	} else {
-		ctx.controller.signal.addEventListener(
-			'abort',
-			controllerAbortHandler,
-			{ once: true }
-		)
+		ctx.controller.signal.addEventListener('abort', controllerAbortHandler, { once: true })
 	}
 
 	// Link external signal if provided
@@ -89,10 +78,7 @@ export let _read = function read(
 
 	// Cleanup function to remove listeners
 	let cleanupListeners = () => {
-		ctx.controller.signal.removeEventListener(
-			'abort',
-			controllerAbortHandler
-		)
+		ctx.controller.signal.removeEventListener('abort', controllerAbortHandler)
 		if (externalAbortHandler && signal) {
 			signal.removeEventListener('abort', externalAbortHandler)
 		}
@@ -137,10 +123,7 @@ export let _read = function read(
 
 				// Wait for the next readResponse or until the timeout expires.
 				if (!ctx.buffer.length) {
-					dbg.log(
-						'buffer empty, waiting for data (waitMs=%d)',
-						waitMs
-					)
+					dbg.log('buffer empty, waiting for data (waitMs=%d)', waitMs)
 					let waiter = Promise.withResolvers<boolean>() // true = data arrived, false = timeout
 
 					// Wait for new data to arrive
@@ -161,16 +144,11 @@ export let _read = function read(
 
 					try {
 						// oxlint-disable-next-line no-await-in-loop
-						let dataArrived = await abortable(
-							mergedSignal,
-							waiter.promise
-						)
+						let dataArrived = await abortable(mergedSignal, waiter.promise)
 
 						if (!dataArrived) {
 							// Timeout expired
-							dbg.log(
-								'wait timeout expired, yielding empty result'
-							)
+							dbg.log('wait timeout expired, yielding empty result')
 							yield []
 							continue
 						}
@@ -212,10 +190,7 @@ export let _read = function read(
 						break
 					}
 
-					while (
-						response.partitionData.length &&
-						messageCount < limit
-					) {
+					while (response.partitionData.length && messageCount < limit) {
 						let pd = response.partitionData.shift()! // Get the first partition data
 
 						if (pd.batches.length === 0) {
@@ -232,9 +207,7 @@ export let _read = function read(
 							break
 						}
 
-						let partitionSession = ctx.partitionSessions.get(
-							pd.partitionSessionId
-						)
+						let partitionSession = ctx.partitionSessions.get(pd.partitionSessionId)
 						if (!partitionSession) {
 							dbg.log(
 								'error: readResponse for unknown partitionSessionId=%s',
@@ -255,10 +228,7 @@ export let _read = function read(
 							let batch = pd.batches.shift()! // Get the first batch
 
 							if (batch.messageData.length === 0) {
-								dbg.log(
-									'skipping empty batch from producer=%s',
-									batch.producerId
-								)
+								dbg.log('skipping empty batch from producer=%s', batch.producerId)
 								continue // Skip empty batches
 							}
 
@@ -268,10 +238,7 @@ export let _read = function read(
 								break
 							}
 
-							while (
-								batch.messageData.length &&
-								messageCount < limit
-							) {
+							while (batch.messageData.length && messageCount < limit) {
 								// Process each message in the batch
 								let msg = batch.messageData.shift()! // Get the first message from the batch
 
@@ -284,20 +251,13 @@ export let _read = function read(
 								let payload = msg.data
 								if (batch.codec !== Codec.UNSPECIFIED) {
 									if (!ctx.codecs.has(batch.codec)) {
-										dbg.log(
-											'error: codec %s is not supported',
-											batch.codec
-										)
-										throw new Error(
-											`Codec ${batch.codec} is not supported`
-										)
+										dbg.log('error: codec %s is not supported', batch.codec)
+										throw new Error(`Codec ${batch.codec} is not supported`)
 									}
 
 									// Decompress the message data using the provided decompress function
 									try {
-										payload = ctx.codecs
-											.get(batch.codec)!
-											.decompress(msg.data)
+										payload = ctx.codecs.get(batch.codec)!.decompress(msg.data)
 									} catch (error) {
 										dbg.log(
 											'error: failed to decompress message data: %O',
@@ -324,31 +284,23 @@ export let _read = function read(
 									}),
 									...(msg.metadataItems && {
 										metadataItems: Object.fromEntries(
-											msg.metadataItems.map((item) => [
-												item.key,
-												item.value,
-											])
+											msg.metadataItems.map((item) => [item.key, item.value])
 										),
 									}),
 								})
 
 								// Track read offset for transaction support
 								if (ctx.readOffsets) {
-									let existing = ctx.readOffsets.get(
-										pd.partitionSessionId
-									)
+									let existing = ctx.readOffsets.get(pd.partitionSessionId)
 									if (existing) {
 										// Update last offset, keep first offset
 										existing.lastOffset = msg.offset
 									} else {
 										// First message for this partition session
-										ctx.readOffsets.set(
-											pd.partitionSessionId,
-											{
-												firstOffset: msg.offset,
-												lastOffset: msg.offset,
-											}
-										)
+										ctx.readOffsets.set(pd.partitionSessionId, {
+											firstOffset: msg.offset,
+											lastOffset: msg.offset,
+										})
 									}
 								}
 
@@ -415,9 +367,7 @@ export let _read = function read(
 						})
 					} catch {
 						// Queue may be closed during retry, ignore
-						dbg.log(
-							'failed to send read request, queue may be closed'
-						)
+						dbg.log('failed to send read request, queue may be closed')
 					}
 				}
 
@@ -425,10 +375,7 @@ export let _read = function read(
 				yield messages
 
 				// If we've reached the limit or no messages were yielded and buffer is empty, return
-				if (
-					messageCount >= limit ||
-					(messages.length === 0 && !ctx.buffer.length)
-				) {
+				if (messageCount >= limit || (messages.length === 0 && !ctx.buffer.length)) {
 					return
 				}
 			}

@@ -37,9 +37,7 @@ export let _parse_topics_read_settings = function parse_topics_read_settings(
 		return duration
 	}
 
-	let parseTimestamp = function parseTimestamp(
-		timestamp: number | Date | Timestamp
-	): Timestamp {
+	let parseTimestamp = function parseTimestamp(timestamp: number | Date | Timestamp): Timestamp {
 		if (typeof timestamp === 'number') {
 			timestamp = new Date(timestamp)
 		}

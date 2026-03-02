@@ -11,9 +11,7 @@ import type { TopicReaderState } from './types.js'
 /**
  * Creates a minimal TopicReaderState for testing commit logic.
  */
-function createMockState(
-	partitionSessions: Map<bigint, TopicPartitionSession>
-): TopicReaderState {
+function createMockState(partitionSessions: Map<bigint, TopicPartitionSession>): TopicReaderState {
 	return {
 		disposed: false,
 		pendingCommits: new Map(),
@@ -34,10 +32,7 @@ function createMockState(
 /**
  * Creates a TopicMessage for testing.
  */
-function createMessage(
-	partitionSession: TopicPartitionSession,
-	offset: bigint
-): TopicMessage {
+function createMessage(partitionSession: TopicPartitionSession, offset: bigint): TopicMessage {
 	return new TopicMessage({
 		partitionSession,
 		producer: 'test-producer',

@@ -25,9 +25,7 @@ See implementation: `packages/retry/src/index.ts` and `packages/query/src/query.
 ## Marking single calls as idempotent
 
 ```ts
-await sql`UPDATE counters SET v = v + 1 WHERE id = ${id}`
-  .idempotent(true)
-  .timeout(3000)
+await sql`UPDATE counters SET v = v + 1 WHERE id = ${id}`.idempotent(true).timeout(3000)
 ```
 
 Inside `sql.begin`/`sql.transaction`, the per-call idempotency flag is ignored; configure idempotency at the transaction level and make your business logic idempotent (e.g., via idempotency keys).

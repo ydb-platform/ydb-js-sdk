@@ -57,10 +57,7 @@ test('handles multiple issues', () => {
 })
 
 test('creates commit error', () => {
-	let error = new CommitError(
-		'Commit failed',
-		new YDBError(StatusIds_StatusCode.ABORTED, [])
-	)
+	let error = new CommitError('Commit failed', new YDBError(StatusIds_StatusCode.ABORTED, []))
 
 	expect(error.message).eq('Commit failed')
 })

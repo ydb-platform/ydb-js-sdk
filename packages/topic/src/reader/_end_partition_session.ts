@@ -11,10 +11,7 @@ export let _on_end_partition_session = function on_end_partition_session(
 	},
 	input: StreamReadMessage_EndPartitionSession
 ): void {
-	assert.ok(
-		input.partitionSessionId,
-		'endPartitionSession must have partitionSessionId'
-	)
+	assert.ok(input.partitionSessionId, 'endPartitionSession must have partitionSessionId')
 
 	let partitionSession = ctx.partitionSessions.get(input.partitionSessionId)
 	if (!partitionSession) {

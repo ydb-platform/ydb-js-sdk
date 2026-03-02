@@ -58,10 +58,7 @@ export const _on_init_response = function on_init_response(
 			// Check if messages in buffer were written before init (seqNo start from 1, not serverLastSeqNo + 1)
 			// If first message's seqNo is <= serverLastSeqNo, it was written before init and needs renumbering
 			let firstMessageSeqNo = ctx.buffer[0]?.seqNo
-			if (
-				firstMessageSeqNo !== undefined &&
-				firstMessageSeqNo <= serverLastSeqNo
-			) {
+			if (firstMessageSeqNo !== undefined && firstMessageSeqNo <= serverLastSeqNo) {
 				shouldRenumber = true
 			}
 		}

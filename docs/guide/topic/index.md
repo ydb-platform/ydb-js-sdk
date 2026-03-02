@@ -112,10 +112,7 @@ await writer.flush()
 
 ```ts
 await using reader = t.createReader({
-  topic: [
-    { path: '/Root/topic-a', partitionIds: [0n, 1n] },
-    { path: '/Root/topic-b' },
-  ],
+  topic: [{ path: '/Root/topic-a', partitionIds: [0n, 1n] }, { path: '/Root/topic-b' }],
   consumer: 'svc-a',
 })
 
@@ -135,12 +132,7 @@ await using reader = t.createReader({
     return { readOffset: committed }
   },
   onPartitionSessionStop: async (session, committed) => {
-    console.log(
-      'partition closed',
-      session.partitionSessionId,
-      'committed',
-      committed
-    )
+    console.log('partition closed', session.partitionSessionId, 'committed', committed)
   },
   onCommittedOffset: (session, committed) => {
     // observe commits (useful with fire-and-forget commit())

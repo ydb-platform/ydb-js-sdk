@@ -153,10 +153,7 @@ You can compose multiple strategies for more advanced control:
 ```ts
 import { strategies, retry } from '@ydbjs/retry'
 
-const combined = strategies.compose(
-  strategies.exponential(500),
-  strategies.jitter(100)
-)
+const combined = strategies.compose(strategies.exponential(500), strategies.jitter(100))
 
 await retry(
   {

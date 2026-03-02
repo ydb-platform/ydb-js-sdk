@@ -23,10 +23,7 @@ let connectionString =
 	'grpcs://ydb.serverless.yandexcloud.net:2135/?database=/ru-central1/.../...'
 
 // Path to authorized key file (relative to this file)
-let keyPath = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	'../authorized_key.json'
-)
+let keyPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../authorized_key.json')
 
 console.log('🔑 Using Service Account key from:', keyPath)
 console.log('🔗 Connecting to:', connectionString)

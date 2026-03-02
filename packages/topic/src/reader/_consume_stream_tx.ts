@@ -33,10 +33,7 @@ export let _consume_stream_tx = async function consume_stream_tx(
 		state.outgoingQueue.close()
 		state.outgoingQueue.reset()
 
-		dbg.log(
-			'connecting to the tx stream with consumer %s',
-			state.options.consumer
-		)
+		dbg.log('connecting to the tx stream with consumer %s', state.options.consumer)
 
 		// If we have buffered messages, we need to clear them before connecting to the stream.
 		if (state.buffer.length) {
@@ -104,23 +101,18 @@ export let _consume_stream_tx = async function consume_stream_tx(
 					},
 					chunk.serverMessage.value
 				)
-			} else if (
-				chunk.serverMessage.case === 'startPartitionSessionRequest'
-			) {
+			} else if (chunk.serverMessage.case === 'startPartitionSessionRequest') {
 				void _on_start_partition_session_request(
 					{
 						partitionSessions: state.partitionSessions,
 						outgoingQueue: state.outgoingQueue,
 						...(state.options.onPartitionSessionStart && {
-							onPartitionSessionStart:
-								state.options.onPartitionSessionStart,
+							onPartitionSessionStart: state.options.onPartitionSessionStart,
 						}),
 					},
 					chunk.serverMessage.value
 				)
-			} else if (
-				chunk.serverMessage.case === 'stopPartitionSessionRequest'
-			) {
+			} else if (chunk.serverMessage.case === 'stopPartitionSessionRequest') {
 				void _on_stop_partition_session_request(
 					{
 						partitionSessions: state.partitionSessions,
@@ -128,8 +120,7 @@ export let _consume_stream_tx = async function consume_stream_tx(
 						buffer: state.buffer,
 						disposed: state.disposed,
 						...(state.options.onPartitionSessionStop && {
-							onPartitionSessionStop:
-								state.options.onPartitionSessionStop,
+							onPartitionSessionStop: state.options.onPartitionSessionStop,
 						}),
 					},
 					chunk.serverMessage.value

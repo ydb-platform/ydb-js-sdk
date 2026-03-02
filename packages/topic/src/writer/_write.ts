@@ -36,9 +36,10 @@ export function _write(
 
 	let seqNo = msg.seqNo ?? (ctx.lastSeqNo ?? 0n) + 1n
 	let createdAt = timestampFromDate(msg.createdAt ?? new Date())
-	let metadataItems = Object.entries(msg.metadataItems || {}).map(
-		([key, value]) => ({ key, value })
-	)
+	let metadataItems = Object.entries(msg.metadataItems || {}).map(([key, value]) => ({
+		key,
+		value,
+	}))
 	let uncompressedSize = BigInt(data.length)
 
 	let message = create(StreamWriteMessage_WriteRequest_MessageDataSchema, {

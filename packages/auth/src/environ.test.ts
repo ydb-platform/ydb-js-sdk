@@ -4,10 +4,7 @@ import * as path from 'node:path'
 
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
-import {
-	EnvironCredentialsProvider,
-	getSecureOptionsFromEnviron,
-} from './environ.ts'
+import { EnvironCredentialsProvider, getSecureOptionsFromEnviron } from './environ.ts'
 
 let savedEnv: NodeJS.ProcessEnv
 
@@ -155,43 +152,33 @@ test('reads CA from YDB_SSL_ROOT_CERTIFICATES string', () => {
 	process.env.YDB_SSL_ROOT_CERTIFICATES =
 		'-----BEGIN CERTIFICATE-----\nca-inline\n-----END CERTIFICATE-----'
 	let opts = getSecureOptionsFromEnviron()
-	expect(opts!.ca).eq(
-		'-----BEGIN CERTIFICATE-----\nca-inline\n-----END CERTIFICATE-----'
-	)
+	expect(opts!.ca).eq('-----BEGIN CERTIFICATE-----\nca-inline\n-----END CERTIFICATE-----')
 })
 
 test('reads cert from YDB_SSL_CERTIFICATE string', () => {
 	process.env.YDB_SSL_CERTIFICATE =
 		'-----BEGIN CERTIFICATE-----\ncert-inline\n-----END CERTIFICATE-----'
 	let opts = getSecureOptionsFromEnviron()
-	expect(opts!.cert).eq(
-		'-----BEGIN CERTIFICATE-----\ncert-inline\n-----END CERTIFICATE-----'
-	)
+	expect(opts!.cert).eq('-----BEGIN CERTIFICATE-----\ncert-inline\n-----END CERTIFICATE-----')
 })
 
 test('reads key from YDB_SSL_PRIVATE_KEY string', () => {
 	process.env.YDB_SSL_PRIVATE_KEY =
 		'-----BEGIN PRIVATE KEY-----\nkey-inline\n-----END PRIVATE KEY-----'
 	let opts = getSecureOptionsFromEnviron()
-	expect(opts!.key).eq(
-		'-----BEGIN PRIVATE KEY-----\nkey-inline\n-----END PRIVATE KEY-----'
-	)
+	expect(opts!.key).eq('-----BEGIN PRIVATE KEY-----\nkey-inline\n-----END PRIVATE KEY-----')
 })
 
 test('throws when both YDB_SSL_ROOT_CERTIFICATES_FILE and YDB_SSL_ROOT_CERTIFICATES are set', () => {
 	process.env.YDB_SSL_ROOT_CERTIFICATES_FILE = writeTmpFile('from-file')
 	process.env.YDB_SSL_ROOT_CERTIFICATES = 'from-string'
-	expect(() => getSecureOptionsFromEnviron()).toThrow(
-		/Ambiguous CA configuration/
-	)
+	expect(() => getSecureOptionsFromEnviron()).toThrow(/Ambiguous CA configuration/)
 })
 
 test('throws when both NODE_EXTRA_CA_CERTS and YDB_SSL_ROOT_CERTIFICATES are set', () => {
 	process.env.NODE_EXTRA_CA_CERTS = writeTmpFile('from-file')
 	process.env.YDB_SSL_ROOT_CERTIFICATES = 'from-string'
-	expect(() => getSecureOptionsFromEnviron()).toThrow(
-		/Ambiguous CA configuration/
-	)
+	expect(() => getSecureOptionsFromEnviron()).toThrow(/Ambiguous CA configuration/)
 })
 
 test('throws when both YDB_SSL_CERTIFICATE_FILE and YDB_SSL_CERTIFICATE are set', () => {
@@ -205,9 +192,7 @@ test('throws when both YDB_SSL_CERTIFICATE_FILE and YDB_SSL_CERTIFICATE are set'
 test('throws when both YDB_SSL_PRIVATE_KEY_FILE and YDB_SSL_PRIVATE_KEY are set', () => {
 	process.env.YDB_SSL_PRIVATE_KEY_FILE = writeTmpFile('from-file')
 	process.env.YDB_SSL_PRIVATE_KEY = 'from-string'
-	expect(() => getSecureOptionsFromEnviron()).toThrow(
-		/Ambiguous private key configuration/
-	)
+	expect(() => getSecureOptionsFromEnviron()).toThrow(/Ambiguous private key configuration/)
 })
 
 test('reads all three from files', () => {

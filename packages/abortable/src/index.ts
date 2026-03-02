@@ -1,7 +1,4 @@
-export async function abortable<T>(
-	signal: AbortSignal,
-	promise: Promise<T>
-): Promise<T> {
+export async function abortable<T>(signal: AbortSignal, promise: Promise<T>): Promise<T> {
 	if (signal.aborted) {
 		throw new DOMException('AbortError', {
 			name: 'AbortError',

@@ -7,6 +7,6 @@ fi
 
 npx turbo run build --filter=...[origin/main]
 
-npx turbo run test --filter=...[origin/main]
+npx vitest --run --project uni
 
 exit 0

@@ -26,18 +26,12 @@ export let _handle_server_message = async function handle_server_message(
 	}
 ): Promise<void> {
 	if (ctx.disposed) {
-		dbg.log(
-			'error: receive "%s" after dispose',
-			message.serverMessage.value?.$typeName
-		)
+		dbg.log('error: receive "%s" after dispose', message.serverMessage.value?.$typeName)
 		return
 	}
 
 	if (message.serverMessage.case === 'initResponse') {
-		dbg.log(
-			'read session identifier: %s',
-			message.serverMessage.value.sessionId
-		)
+		dbg.log('read session identifier: %s', message.serverMessage.value.sessionId)
 		// This will be handled by the caller via readMore callback
 		return
 	}
@@ -66,20 +60,15 @@ export let _handle_server_message = async function handle_server_message(
 
 		// Initialize partition session state from server data.
 		// nextCommitStartOffset fills gaps when messages are deleted by retention.
-		partitionSession.nextCommitStartOffset =
-			message.serverMessage.value.committedOffset
-		partitionSession.partitionCommittedOffset =
-			message.serverMessage.value.committedOffset
+		partitionSession.nextCommitStartOffset = message.serverMessage.value.committedOffset
+		partitionSession.partitionCommittedOffset = message.serverMessage.value.committedOffset
 		partitionSession.partitionOffsets = {
 			start: message.serverMessage.value.partitionOffsets.start,
 			end: message.serverMessage.value.partitionOffsets.end,
 		}
 
 		// Save partition session.
-		ctx.partitionSessions.set(
-			partitionSession.partitionSessionId,
-			partitionSession
-		)
+		ctx.partitionSessions.set(partitionSession.partitionSessionId, partitionSession)
 
 		// Initialize offsets.
 		let readOffset = message.serverMessage.value.partitionOffsets.start
@@ -91,11 +80,7 @@ export let _handle_server_message = async function handle_server_message(
 			let partitionOffsets = message.serverMessage.value.partitionOffsets
 
 			let response = await ctx.options
-				.onPartitionSessionStart(
-					partitionSession,
-					committedOffset,
-					partitionOffsets
-				)
+				.onPartitionSessionStart(partitionSession, committedOffset, partitionOffsets)
 				.catch((error) => {
 					dbg.log('error: onPartitionSessionStart error: %O', error)
 					ctx.onError?.(error)
@@ -134,8 +119,7 @@ export let _handle_server_message = async function handle_server_message(
 		}
 
 		if (ctx.options.onPartitionSessionStop) {
-			let committedOffset =
-				message.serverMessage.value.committedOffset || 0n
+			let committedOffset = message.serverMessage.value.committedOffset || 0n
 
 			await ctx.options
 				.onPartitionSessionStop(partitionSession, committedOffset)
@@ -168,15 +152,11 @@ export let _handle_server_message = async function handle_server_message(
 				}
 			}
 
-			let pendingCommits = ctx.pendingCommits.get(
-				partitionSession.partitionSessionId
-			)
+			let pendingCommits = ctx.pendingCommits.get(partitionSession.partitionSessionId)
 			if (pendingCommits) {
 				// If there are pending commits for this partition session, reject them.
 				for (let commit of pendingCommits) {
-					commit.reject(
-						'Partition session stopped without graceful stop'
-					)
+					commit.reject('Partition session stopped without graceful stop')
 				}
 
 				ctx.pendingCommits.delete(partitionSession.partitionSessionId)
@@ -190,9 +170,7 @@ export let _handle_server_message = async function handle_server_message(
 
 		if (ctx.pendingCommits.has(partitionSession.partitionSessionId)) {
 			await Promise.race([
-				Promise.all(
-					ctx.pendingCommits.get(partitionSession.partitionSessionId)!
-				),
+				Promise.all(ctx.pendingCommits.get(partitionSession.partitionSessionId)!),
 				once(AbortSignal.timeout(30_000), 'abort'),
 			])
 		}
@@ -203,12 +181,8 @@ export let _handle_server_message = async function handle_server_message(
 
 		if (ctx.pendingCommits.has(partitionSession.partitionSessionId)) {
 			// If there are pending commits for this partition session, reject them.
-			for (let commit of ctx.pendingCommits.get(
-				partitionSession.partitionSessionId
-			)!) {
-				commit.reject(
-					'Partition session stopped after timeout during graceful stop'
-				)
+			for (let commit of ctx.pendingCommits.get(partitionSession.partitionSessionId)!) {
+				commit.reject('Partition session stopped after timeout during graceful stop')
 			}
 
 			ctx.pendingCommits.delete(partitionSession.partitionSessionId)
@@ -247,11 +221,8 @@ export let _handle_server_message = async function handle_server_message(
 		)
 
 		if (ctx.options.onCommittedOffset) {
-			for (let part of message.serverMessage.value
-				.partitionsCommittedOffsets) {
-				let partitionSession = ctx.partitionSessions.get(
-					part.partitionSessionId
-				)
+			for (let part of message.serverMessage.value.partitionsCommittedOffsets) {
+				let partitionSession = ctx.partitionSessions.get(part.partitionSessionId)
 				if (!partitionSession) {
 					dbg.log(
 						'error: commitOffsetResponse for unknown partitionSessionId=%s',
@@ -260,16 +231,12 @@ export let _handle_server_message = async function handle_server_message(
 					continue
 				}
 
-				ctx.options.onCommittedOffset(
-					partitionSession,
-					part.committedOffset
-				)
+				ctx.options.onCommittedOffset(partitionSession, part.committedOffset)
 			}
 		}
 
 		// Resolve all pending commits for the partition sessions.
-		for (let part of message.serverMessage.value
-			.partitionsCommittedOffsets) {
+		for (let part of message.serverMessage.value.partitionsCommittedOffsets) {
 			let partitionSessionId = part.partitionSessionId
 			let committedOffset = part.committedOffset
 

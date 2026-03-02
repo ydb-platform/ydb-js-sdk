@@ -24,12 +24,8 @@ let debug = loggers.auth.extend('environ')
  *
  * @returns `tls.SecureContextOptions` if any TLS env vars are set, `undefined` otherwise.
  */
-export function getSecureOptionsFromEnviron():
-	| tls.SecureContextOptions
-	| undefined {
-	let caFile =
-		process.env.YDB_SSL_ROOT_CERTIFICATES_FILE ??
-		process.env.NODE_EXTRA_CA_CERTS
+export function getSecureOptionsFromEnviron(): tls.SecureContextOptions | undefined {
+	let caFile = process.env.YDB_SSL_ROOT_CERTIFICATES_FILE ?? process.env.NODE_EXTRA_CA_CERTS
 	let crtFile = process.env.YDB_SSL_CERTIFICATE_FILE
 	let keyFile = process.env.YDB_SSL_PRIVATE_KEY_FILE
 
@@ -37,14 +33,7 @@ export function getSecureOptionsFromEnviron():
 	let crtString = process.env.YDB_SSL_CERTIFICATE
 	let keyString = process.env.YDB_SSL_PRIVATE_KEY
 
-	if (
-		!caFile &&
-		!crtFile &&
-		!keyFile &&
-		!caString &&
-		!crtString &&
-		!keyString
-	) {
+	if (!caFile && !crtFile && !keyFile && !caString && !crtString && !keyString) {
 		return undefined
 	}
 
@@ -173,9 +162,7 @@ export class EnvironCredentialsProvider extends CredentialsProvider {
 		}
 
 		if (process.env.YDB_ACCESS_TOKEN_CREDENTIALS) {
-			debug.log(
-				'YDB_ACCESS_TOKEN_CREDENTIALS is set, using access token auth'
-			)
+			debug.log('YDB_ACCESS_TOKEN_CREDENTIALS is set, using access token auth')
 			return new AccessTokenCredentialsProvider({
 				token: process.env.YDB_ACCESS_TOKEN_CREDENTIALS,
 			})

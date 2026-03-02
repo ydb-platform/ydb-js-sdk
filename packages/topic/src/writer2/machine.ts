@@ -69,10 +69,7 @@ let log = (message: string) => ({
 	params: { message },
 })
 
-function formatLog(
-	template: string,
-	vars: Record<string, string | number>
-): string {
+function formatLog(template: string, vars: Record<string, string | number>): string {
 	return template.replace(/\{(\w+)\}/g, (_, key) =>
 		vars[key] !== undefined ? String(vars[key]) : `{${key}}`
 	)
@@ -158,10 +155,7 @@ let writerMachineFactory = setup({
 			}
 
 			let ackCount = 0
-			if (
-				event.type === 'writer.stream.response.write' &&
-				event.data?.acks
-			) {
+			if (event.type === 'writer.stream.response.write' && event.data?.acks) {
 				ackCount = event.data.acks.length
 			}
 
@@ -169,9 +163,7 @@ let writerMachineFactory = setup({
 			let pendingCount = context.bufferLength + context.inflightLength
 			let pendingSize = context.bufferSize + context.inflightSize
 
-			let topicPath = context.options.topic.startsWith(
-				`${context.driver.database}`
-			)
+			let topicPath = context.options.topic.startsWith(`${context.driver.database}`)
 				? context.options.topic
 				: `${context.driver.database}/${context.options.topic}`
 
@@ -223,10 +215,8 @@ let writerMachineFactory = setup({
 					id: 'WriterStream',
 					input: {
 						driver: context.driver,
-						...(context.options.updateTokenIntervalMs !==
-							undefined && {
-							updateTokenIntervalMs:
-								context.options.updateTokenIntervalMs,
+						...(context.options.updateTokenIntervalMs !== undefined && {
+							updateTokenIntervalMs: context.options.updateTokenIntervalMs,
 						}),
 					},
 				})
@@ -300,8 +290,7 @@ let writerMachineFactory = setup({
 
 			// Count acknowledged messages and identify the new inflight window start so we can slide pointers in place.
 			let inflightStartIndex = context.inflightStart
-			let inflightEndIndex =
-				context.inflightStart + context.inflightLength
+			let inflightEndIndex = context.inflightStart + context.inflightLength
 			let bufferEndIndex = context.bufferStart + context.bufferLength
 
 			// Manual seqNo mode: drop acked entries and slide the window, seqNo stay untouched.
@@ -341,8 +330,7 @@ let writerMachineFactory = setup({
 
 				let newBufferStart = firstKeptIndex ?? bufferEndIndex
 				let bufferLength = bufferEndIndex - newBufferStart
-				let inflightSize =
-					context.inflightSize - (acknowledgedSize + pendingSize)
+				let inflightSize = context.inflightSize - (acknowledgedSize + pendingSize)
 				let garbageSize = context.garbageSize + acknowledgedSize
 				let newBufferSize = bufferSize + pendingSize
 
@@ -379,10 +367,7 @@ let writerMachineFactory = setup({
 				let message = context.messages[i]
 				if (!message) continue
 
-				if (
-					firstPendingIndex === inflightEndIndex &&
-					message.seqNo > lastSeqNo
-				) {
+				if (firstPendingIndex === inflightEndIndex && message.seqNo > lastSeqNo) {
 					firstPendingIndex = i
 				}
 
@@ -405,8 +390,7 @@ let writerMachineFactory = setup({
 				nextSeqNo++
 			}
 
-			let inflightSize =
-				context.inflightSize - acknowledgedSize - pendingSize
+			let inflightSize = context.inflightSize - acknowledgedSize - pendingSize
 			let bufferSize = context.bufferSize + pendingSize
 			let garbageSize = context.garbageSize + acknowledgedSize
 			let bufferLength = pendingCount + context.bufferLength
@@ -468,25 +452,15 @@ let writerMachineFactory = setup({
 			let batchSize = 0n
 			let batchLength = 0
 
-			for (
-				let i = context.bufferStart;
-				i < context.bufferStart + context.bufferLength;
-				i++
-			) {
+			for (let i = context.bufferStart; i < context.bufferStart + context.bufferLength; i++) {
 				let message = context.messages[i]!
 				let messageSize = BigInt(message.data.length)
 
-				if (
-					batchSize + messageSize > MAX_BATCH_SIZE &&
-					batchLength > 0
-				) {
+				if (batchSize + messageSize > MAX_BATCH_SIZE && batchLength > 0) {
 					break
 				}
 
-				if (
-					context.inflightLength + batchLength >=
-					context.options.maxInflightCount!
-				) {
+				if (context.inflightLength + batchLength >= context.options.maxInflightCount!) {
 					break
 				}
 
@@ -546,10 +520,7 @@ let writerMachineFactory = setup({
 			for (let ack of event.data.acks) {
 				acks.set(
 					ack.seqNo,
-					ack.messageWriteStatus.case as
-						| 'skipped'
-						| 'written'
-						| 'writtenInTx'
+					ack.messageWriteStatus.case as 'skipped' | 'written' | 'writtenInTx'
 				)
 			}
 
@@ -636,40 +607,33 @@ let writerMachineFactory = setup({
 				return
 			}
 
-			let createdAt = timestampFromDate(
-				event.message.createdAt ?? new Date()
-			)
+			let createdAt = timestampFromDate(event.message.createdAt ?? new Date())
 			let uncompressedSize = BigInt(event.message.data.length)
-			let metadataItems = Object.entries(
-				event.message.metadataItems || {}
-			).map(([key, value]) => ({
-				key,
-				value,
-			}))
+			let metadataItems = Object.entries(event.message.metadataItems || {}).map(
+				([key, value]) => ({
+					key,
+					value,
+				})
+			)
 
 			// Track seqNo mode (set once on first message, then remains constant)
 			// Mode is passed from TopicWriter which knows it from SeqNoManager
-			let seqNoMode: 'auto' | 'manual' | null =
-				context.seqNoMode ?? event.seqNoMode ?? null
+			let seqNoMode: 'auto' | 'manual' | null = context.seqNoMode ?? event.seqNoMode ?? null
 
-			let message = create(
-				StreamWriteMessage_WriteRequest_MessageDataSchema,
-				{
-					data: event.message.data,
-					seqNo: event.message.seqNo,
-					createdAt,
-					metadataItems,
-					uncompressedSize,
-				}
-			)
+			let message = create(StreamWriteMessage_WriteRequest_MessageDataSchema, {
+				data: event.message.data,
+				seqNo: event.message.seqNo,
+				createdAt,
+				metadataItems,
+				uncompressedSize,
+			})
 
 			// Mutate messages array in place for performance (avoids new array allocation)
 			context.messages.push(message)
 
 			enqueue.assign(({ context }) => ({
 				seqNoMode,
-				bufferSize:
-					context.bufferSize + BigInt(event.message.data.length),
+				bufferSize: context.bufferSize + BigInt(event.message.data.length),
 				bufferLength: context.bufferLength + 1,
 			}))
 
@@ -698,10 +662,7 @@ let writerMachineFactory = setup({
 		}),
 		// Emits an error event to the user after a non-retryable error.
 		reportError: enqueueActions(({ enqueue, context }) => {
-			assert.ok(
-				context.lastError,
-				'lastError must be set before reporting'
-			)
+			assert.ok(context.lastError, 'lastError must be set before reporting')
 
 			enqueue.emit(() => ({
 				type: 'writer.error',
@@ -741,10 +702,7 @@ let writerMachineFactory = setup({
 			// Calculate exponential backoff delay with jitter
 			let baseDelay = 50 // Base delay in milliseconds
 			let maxDelay = 5000 // Maximum delay in milliseconds
-			let delay = Math.min(
-				baseDelay * Math.pow(2, context.attempts),
-				maxDelay
-			)
+			let delay = Math.min(baseDelay * Math.pow(2, context.attempts), maxDelay)
 
 			// Add jitter to avoid synchronized retries
 			let jitter = Math.random() * 0.1 // ±10%
@@ -775,17 +733,14 @@ let writerMachineFactory = setup({
 			return bufferEmpty && inflightEmpty
 		},
 		bufferFullAndCanSend: ({ context }) => {
-			let bufferFull =
-				context.bufferSize >= context.options.maxBufferBytes!
-			let inflightNotFull =
-				context.inflightLength < context.options.maxInflightCount!
+			let bufferFull = context.bufferSize >= context.options.maxBufferBytes!
+			let inflightNotFull = context.inflightLength < context.options.maxInflightCount!
 
 			return bufferFull && inflightNotFull
 		},
 		hasMessagesAndCanSend: ({ context }) => {
 			let bufferNotEmpty = context.bufferLength > 0
-			let inflightNotFull =
-				context.inflightLength < context.options.maxInflightCount!
+			let inflightNotFull = context.inflightLength < context.options.maxInflightCount!
 
 			return bufferNotEmpty && inflightNotFull
 		},
@@ -804,10 +759,8 @@ let writerMachineFactory = setup({
 			return false
 		},
 		shouldReclaimMemory: ({ context }) => {
-			let maxGarbageSize =
-				context.options.garbageCollection!.maxGarbageSize!
-			let maxGarbageCount =
-				context.options.garbageCollection!.maxGarbageCount!
+			let maxGarbageSize = context.options.garbageCollection!.maxGarbageSize!
+			let maxGarbageCount = context.options.garbageCollection!.maxGarbageCount!
 
 			if (context.inflightStart > maxGarbageCount) {
 				return true
@@ -855,11 +808,7 @@ export const WriterMachine = writerMachineFactory.createMachine({
 	// CONTEXT INITIALIZATION
 	// ========================================================================
 
-	context: ({
-		input,
-	}: {
-		input: { driver: Driver; options: TopicWriterOptions }
-	}) => {
+	context: ({ input }: { input: { driver: Driver; options: TopicWriterOptions } }) => {
 		let { driver, options } = input
 
 		// Set up defaults like in original writer
@@ -990,11 +939,7 @@ export const WriterMachine = writerMachineFactory.createMachine({
 				'writer.stream.response.init': {
 					// Session established, transition to ready state for message sending
 					target: 'ready',
-					actions: [
-						'resetAttempts',
-						'updateWriteSession',
-						log('SES | {sessionId}'),
-					],
+					actions: ['resetAttempts', 'updateWriteSession', log('SES | {sessionId}')],
 				},
 			},
 		},
@@ -1156,11 +1101,7 @@ export const WriterMachine = writerMachineFactory.createMachine({
 		closed: {
 			// All resources are released in this final state
 			type: 'final',
-			entry: [
-				'closeConnection',
-				'releaseResources',
-				log('FIN | {stats}'),
-			],
+			entry: ['closeConnection', 'releaseResources', log('FIN | {stats}')],
 		},
 	},
 })
