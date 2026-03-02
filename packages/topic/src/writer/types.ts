@@ -43,10 +43,7 @@ export type TopicWriterOptions = {
 	// Retry configuration for the writer.
 	retryConfig?(signal: AbortSignal): RetryConfig
 	// Callback that is called when writer receives an acknowledgment for a message.
-	onAck?: (
-		seqNo: bigint,
-		status?: 'skipped' | 'written' | 'writtenInTx'
-	) => void
+	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
 }
 
 export interface TopicWriter extends AsyncDisposable {

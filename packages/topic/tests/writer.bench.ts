@@ -1,4 +1,4 @@
-import { bench, describe, inject } from 'vitest'
+import { bench, inject } from 'vitest'
 
 import { create } from '@bufbuild/protobuf'
 import {
@@ -58,64 +58,62 @@ async function teardown() {
 	)
 }
 
-describe('TopicWriter throughput benchmark', () => {
-	bench(
-		'16KiB',
-		async () => {
-			let MESSAGE_SIZE = 16 * 1024
-			let payload = new Uint8Array(MESSAGE_SIZE)
+bench(
+	'16KiB',
+	async () => {
+		let MESSAGE_SIZE = 16 * 1024
+		let payload = new Uint8Array(MESSAGE_SIZE)
 
-			for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
-				writer.write(payload)
-			}
+		for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
+			writer.write(payload)
+		}
 
-			await writer.flush()
-		},
-		{ warmupIterations: 0, setup, teardown }
-	)
+		await writer.flush()
+	},
+	{ warmupIterations: 0, setup, teardown }
+)
 
-	bench(
-		'64KiB',
-		async () => {
-			let MESSAGE_SIZE = 64 * 1024
-			let payload = new Uint8Array(MESSAGE_SIZE)
+bench(
+	'64KiB',
+	async () => {
+		let MESSAGE_SIZE = 64 * 1024
+		let payload = new Uint8Array(MESSAGE_SIZE)
 
-			for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
-				writer.write(payload)
-			}
+		for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
+			writer.write(payload)
+		}
 
-			await writer.flush()
-		},
-		{ warmupIterations: 0, setup, teardown }
-	)
+		await writer.flush()
+	},
+	{ warmupIterations: 0, setup, teardown }
+)
 
-	bench(
-		'256KiB',
-		async () => {
-			let MESSAGE_SIZE = 256 * 1024
-			let payload = new Uint8Array(MESSAGE_SIZE)
+bench(
+	'256KiB',
+	async () => {
+		let MESSAGE_SIZE = 256 * 1024
+		let payload = new Uint8Array(MESSAGE_SIZE)
 
-			for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
-				writer.write(payload)
-			}
+		for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
+			writer.write(payload)
+		}
 
-			await writer.flush()
-		},
-		{ warmupIterations: 0, setup, teardown }
-	)
+		await writer.flush()
+	},
+	{ warmupIterations: 0, setup, teardown }
+)
 
-	bench(
-		'1MiB',
-		async () => {
-			let MESSAGE_SIZE = 1 * 1024 * 1024
-			let payload = new Uint8Array(MESSAGE_SIZE)
+bench(
+	'1MiB',
+	async () => {
+		let MESSAGE_SIZE = 1 * 1024 * 1024
+		let payload = new Uint8Array(MESSAGE_SIZE)
 
-			for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
-				writer.write(payload)
-			}
+		for (let i = 0; i < TOTAL_TRAFFIC_BYTES / MESSAGE_SIZE; i++) {
+			writer.write(payload)
+		}
 
-			await writer.flush()
-		},
-		{ warmupIterations: 0, setup, teardown }
-	)
-})
+		await writer.flush()
+	},
+	{ warmupIterations: 0, setup, teardown }
+)

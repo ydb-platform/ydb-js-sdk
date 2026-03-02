@@ -3,27 +3,32 @@
 	"version": "6.0.7",
 	"description": "Core driver for YDB: manages connections, endpoint discovery, authentication, and service client creation. Foundation for all YDB client operations.",
 	"keywords": [
-		"ydb",
+		"core",
 		"database",
 		"driver",
-		"core",
 		"grpc",
-		"typescript"
+		"typescript",
+		"ydb"
 	],
 	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
 		"directory": "packages/core"
 	},
-	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
 	],
-	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
 	"main": "dist/index.js",
@@ -31,11 +36,10 @@
 	"exports": {
 		".": "./dist/index.js"
 	},
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
@@ -57,13 +61,9 @@
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
 	},
-	"files": [
-		"dist",
-		"README.md",
-		"CHANGELOG.md"
-	],
-	"publishConfig": {
-		"access": "public",
-		"registry": "https://registry.npmjs.org/"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }

@@ -23,12 +23,7 @@ import { _send_init_request } from './_init_request.js'
 import { _send_update_token_request } from './_update_token.js'
 import { _write } from './_write.js'
 import { _on_write_response } from './_write_response.js'
-import type {
-	ThroughputSettings,
-	TopicTxWriter,
-	TopicWriter,
-	TopicWriterOptions,
-} from './types.js'
+import type { ThroughputSettings, TopicTxWriter, TopicWriter, TopicWriterOptions } from './types.js'
 
 export const createTopicWriter = function createTopicWriter(
 	driver: Driver,
@@ -47,8 +42,7 @@ export const createTopicWriter = function createTopicWriter(
 	let dbg = loggers.topic.extend('writer')
 
 	// If the user does not provide a compression codec, use the RAW codec by default.
-	let codec: CompressionCodec =
-		options.codec ?? defaultCodecMap.get(Codec.RAW)!
+	let codec: CompressionCodec = options.codec ?? defaultCodecMap.get(Codec.RAW)!
 
 	// Last sequence number of the topic.
 	// Automatically get the last sequence number of the topic before starting to write messages.
@@ -131,11 +125,7 @@ export const createTopicWriter = function createTopicWriter(
 	// The update token interval is configurable and defaults to 60 seconds.
 	void (async function backgroundTokenRefresher() {
 		try {
-			for await (let _ of setInterval(
-				options.updateTokenIntervalMs,
-				void 0,
-				{ signal }
-			)) {
+			for await (let _ of setInterval(options.updateTokenIntervalMs, void 0, { signal })) {
 				_send_update_token_request({
 					queue: outgoing,
 					token: await driver.token,
@@ -165,11 +155,7 @@ export const createTopicWriter = function createTopicWriter(
 			budget: Infinity,
 			strategy: combine(backoff(50, 5000), jitter(50)),
 			onRetry(ctx) {
-				dbg.log(
-					'retrying stream connection, attempt %d, error: %O',
-					ctx.attempt,
-					ctx.error
-				)
+				dbg.log('retrying stream connection, attempt %d, error: %O', ctx.attempt, ctx.error)
 			},
 		}
 
@@ -179,18 +165,14 @@ export const createTopicWriter = function createTopicWriter(
 			await retry(retryConfig, async (signal) => {
 				// Close old queue and create new empty one for retry
 				outgoing.dispose()
-				outgoing =
-					new AsyncPriorityQueue<StreamWriteMessage_FromClient>()
+				outgoing = new AsyncPriorityQueue<StreamWriteMessage_FromClient>()
 
 				let stream = driver
 					.createClient(TopicServiceDefinition)
 					.streamWrite(outgoing, { signal })
 
 				// Send the initial request to the server to initialize the stream.
-				dbg.log(
-					'sending init request to server, producer: %s',
-					options.producer
-				)
+				dbg.log('sending init request to server, producer: %s', options.producer)
 
 				_send_init_request({
 					queue: outgoing,
@@ -214,14 +196,10 @@ export const createTopicWriter = function createTopicWriter(
 					)
 
 					if (chunk.status !== StatusIds_StatusCode.SUCCESS) {
-						console.error(
-							'error occurred while streaming: %O',
-							chunk.issues
-						)
+						console.error('error occurred while streaming: %O', chunk.issues)
 
 						let error = new YDBError(
-							chunk.status ||
-								StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
+							chunk.status || StatusIds_StatusCode.STATUS_CODE_UNSPECIFIED,
 							chunk.issues || []
 						)
 						throw error
@@ -278,11 +256,7 @@ export const createTopicWriter = function createTopicWriter(
 		}
 	})()
 
-	dbg.log(
-		'creating writer with producer: %s, topic: %s',
-		options.producer,
-		options.topic
-	)
+	dbg.log('creating writer with producer: %s, topic: %s', options.producer, options.topic)
 
 	// outgoing queue pause/resume
 	let originalPause = outgoing.pause.bind(outgoing)
@@ -315,9 +289,7 @@ export const createTopicWriter = function createTopicWriter(
 		}
 
 		if (isFlushing) {
-			throw new Error(
-				'Writer is flushing, cannot write messages during flush'
-			)
+			throw new Error('Writer is flushing, cannot write messages during flush')
 		}
 
 		if (isClosed) {
@@ -393,11 +365,7 @@ export const createTopicWriter = function createTopicWriter(
 		try {
 			let prevBuffer = buffer.length
 			let prevInflight = inflight.length
-			dbg.log(
-				'flush: starting, buffer: %d, inflight: %d',
-				buffer.length,
-				inflight.length
-			)
+			dbg.log('flush: starting, buffer: %d, inflight: %d', buffer.length, inflight.length)
 
 			while (buffer.length > 0 || inflight.length > 0) {
 				if (isDisposed) {
@@ -410,10 +378,7 @@ export const createTopicWriter = function createTopicWriter(
 					})
 				}
 
-				if (
-					buffer.length !== prevBuffer ||
-					inflight.length !== prevInflight
-				) {
+				if (buffer.length !== prevBuffer || inflight.length !== prevInflight) {
 					dbg.log(
 						'flush progress: inflight: %d, buffer: %d',
 						inflight.length,

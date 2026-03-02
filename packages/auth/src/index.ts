@@ -1,8 +1,4 @@
-import {
-	type CallOptions,
-	type ClientMiddlewareCall,
-	Metadata,
-} from 'nice-grpc'
+import { type CallOptions, type ClientMiddlewareCall, Metadata } from 'nice-grpc'
 
 export abstract class CredentialsProvider {
 	constructor() {
@@ -14,10 +10,7 @@ export abstract class CredentialsProvider {
 
 	abstract getToken(force?: boolean, signal?: AbortSignal): Promise<string>
 
-	readonly middleware = async function* <
-		Request = unknown,
-		Response = unknown,
-	>(
+	readonly middleware = async function* <Request = unknown, Response = unknown>(
 		this: CredentialsProvider,
 		call: ClientMiddlewareCall<Request, Response>,
 		options: CallOptions
@@ -26,10 +19,7 @@ export abstract class CredentialsProvider {
 
 		return yield* call.next(call.request, {
 			...options,
-			metadata: Metadata(options.metadata).set(
-				'x-ydb-auth-ticket',
-				token
-			),
+			metadata: Metadata(options.metadata).set('x-ydb-auth-ticket', token),
 		})
 	}
 }

@@ -40,10 +40,7 @@ export type JSValue =
 export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 	switch (type.type.case) {
 		case 'typeId':
-			let pValue = new Primitive(
-				{ value: value.value },
-				new PrimitiveType(type.type.value)
-			)
+			let pValue = new Primitive({ value: value.value }, new PrimitiveType(type.type.value))
 			if (value.high128) {
 				//@ts-expect-error
 				// Not all primitive types have a high128 property.
@@ -55,21 +52,13 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 		case 'listType':
 			return new List(
 				...value.items.map((v) =>
-					fromYdb(
-						v,
-						(type.type.value as unknown as Ydb.ListType).item!
-					)
+					fromYdb(v, (type.type.value as unknown as Ydb.ListType).item!)
 				)
 			)
 		case 'tupleType':
 			return new Tuple(
 				...value.items.map((v, i) =>
-					fromYdb(
-						v,
-						(type.type.value as unknown as Ydb.TupleType).elements[
-							i
-						]!
-					)
+					fromYdb(v, (type.type.value as unknown as Ydb.TupleType).elements[i]!)
 				)
 			)
 		case 'dictType': {
@@ -78,10 +67,7 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 				let pair = value.pairs[i]!
 				dict.push([
 					fromYdb(pair.key!, type.type.value.key!),
-					fromYdb(
-						pair.payload!,
-						(type.type.value as unknown as Ydb.DictType).payload!
-					),
+					fromYdb(pair.payload!, (type.type.value as unknown as Ydb.DictType).payload!),
 				])
 			}
 			return new Dict(...dict)
@@ -89,8 +75,7 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 		case 'structType': {
 			let struct: { [key: string]: Value } = {}
 			for (let i = 0; i < value.items.length; i++) {
-				let member = (type.type.value as unknown as Ydb.StructType)
-					.members[i]!
+				let member = (type.type.value as unknown as Ydb.StructType).members[i]!
 				struct[member.name] = fromYdb(value.items[i]!, member.type!)
 			}
 
@@ -116,9 +101,7 @@ export function fromJs(native: JSValue): Value {
 		case 'boolean':
 			return new Bool(native)
 		case 'number':
-			return Number.isInteger(native)
-				? new Int32(native)
-				: new Double(native)
+			return Number.isInteger(native) ? new Int32(native) : new Double(native)
 		case 'bigint':
 			return new Int64(native)
 		case 'string':
@@ -256,39 +239,22 @@ export function toJs(value: Value): JSValue {
 					return (value as Primitive).value as string
 				case Ydb.Type_PrimitiveTypeId.JSON:
 				case Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT:
-					return JSON.parse(
-						(value as Primitive).value as string
-					) as JSValue
+					return JSON.parse((value as Primitive).value as string) as JSValue
 				case Ydb.Type_PrimitiveTypeId.STRING:
 				case Ydb.Type_PrimitiveTypeId.YSON:
 					return (value as Primitive).value as Uint8Array
 				case Ydb.Type_PrimitiveTypeId.UUID:
-					return uuidFromBigInts(
-						(value as Uuid).value as bigint,
-						(value as Uuid).high128
-					)
+					return uuidFromBigInts((value as Uuid).value as bigint, (value as Uuid).high128)
 				case Ydb.Type_PrimitiveTypeId.DATE:
-					return new Date(
-						((value as Primitive).value as number) *
-							24 *
-							60 *
-							60 *
-							1000
-					)
+					return new Date(((value as Primitive).value as number) * 24 * 60 * 60 * 1000)
 				case Ydb.Type_PrimitiveTypeId.DATETIME:
-					return new Date(
-						((value as Primitive).value as number) * 1000
-					)
+					return new Date(((value as Primitive).value as number) * 1000)
 				case Ydb.Type_PrimitiveTypeId.TIMESTAMP:
-					return new Date(
-						Number(((value as Primitive).value as bigint) / 1000n)
-					)
+					return new Date(Number(((value as Primitive).value as bigint) / 1000n))
 				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
 				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP: {
-					let [dateStr, tz] = (
-						(value as Primitive).value as string
-					).split(',')
+					let [dateStr, tz] = ((value as Primitive).value as string).split(',')
 
 					return new TZDate(dateStr!, tz!)
 				}
@@ -314,9 +280,7 @@ export function toJs(value: Value): JSValue {
 			let struct: { [key: string]: JSValue } = {}
 
 			for (let i = 0; i < (value as Struct).type.names.length; i++) {
-				struct[(value as Struct).type.names[i]!] = toJs(
-					(value as Struct).items[i]!
-				)
+				struct[(value as Struct).type.names[i]!] = toJs((value as Struct).items[i]!)
 			}
 
 			return struct

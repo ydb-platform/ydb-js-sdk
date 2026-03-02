@@ -15,34 +15,17 @@ let plugin = createEcmaScriptPlugin({
 			let f = schema.generateFile(file.name + '_grpc_pb.ts')
 			f.preamble(file)
 
-			let niceGRPCServiceDefinition = f.import(
-				'ServiceDefinition',
-				'nice-grpc',
-				true
-			)
+			let niceGRPCServiceDefinition = f.import('ServiceDefinition', 'nice-grpc', true)
 			let bufProtoCreate = f.import('create', '@bufbuild/protobuf')
-			let bufProtoMessageInitShape = f.import(
-				'MessageInitShape',
-				'@bufbuild/protobuf',
-				true
-			)
+			let bufProtoMessageInitShape = f.import('MessageInitShape', '@bufbuild/protobuf', true)
 			let bufProtoToBinary = f.import('toBinary', '@bufbuild/protobuf')
-			let bufProtoFromBinary = f.import(
-				'fromBinary',
-				'@bufbuild/protobuf'
-			)
+			let bufProtoFromBinary = f.import('fromBinary', '@bufbuild/protobuf')
 
 			// Create a service definition based on the Nice-GRPC one
 			// (see https://github.com/deeplay-io/nice-grpc/blob/7458e8a57aec763d854c2e6eb119bfe6820b17dd/packages/nice-grpc/src/service-definitions/index.ts#L20)
 			for (let service of file.services) {
 				f.print(f.jsDoc(service))
-				f.print(
-					f.export(
-						'const',
-						safeIdentifier(service.name + 'Definition')
-					),
-					' = {'
-				)
+				f.print(f.export('const', safeIdentifier(service.name + 'Definition')), ' = {')
 				for (let method of service.methods) {
 					let requestSchema = f.importSchema(method.input)
 					let responseSchema = f.importSchema(method.output)
@@ -55,16 +38,8 @@ let plugin = createEcmaScriptPlugin({
 
 					f.print(f.jsDoc(method, '  '))
 					f.print('  ', safeIdentifier(method.localName), ': {')
-					f.print(
-						'    path: ',
-						f.string(`/${service.typeName}/${method.name}`),
-						','
-					)
-					f.print(
-						'    requestStream: ' +
-							(requestStream ? 'true' : 'false') +
-							','
-					)
+					f.print('    path: ', f.string(`/${service.typeName}/${method.name}`), ',')
+					f.print('    requestStream: ' + (requestStream ? 'true' : 'false') + ',')
 					f.print(
 						'    requestSerialize: (message: ',
 						bufProtoMessageInitShape,
@@ -87,11 +62,7 @@ let plugin = createEcmaScriptPlugin({
 						requestSchema,
 						',bytes),'
 					)
-					f.print(
-						'      responseStream: ' +
-							(responseStream ? 'true' : 'false') +
-							', '
-					)
+					f.print('      responseStream: ' + (responseStream ? 'true' : 'false') + ', ')
 					f.print(
 						'    responseSerialize: (message: ',
 						bufProtoMessageInitShape,

@@ -7,13 +7,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, retry } from '@ydbjs/retry'
-import {
-	type Client,
-	ClientError,
-	Status,
-	createChannel,
-	createClient,
-} from 'nice-grpc'
+import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
 
@@ -70,11 +64,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		)
 
 		let cs = new URL(endpoint)
-		if (
-			['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(
-				cs.protocol
-			) === false
-		) {
+		if (['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(cs.protocol) === false) {
 			throw new Error(
 				'Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https'
 			)
@@ -87,9 +77,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		}
 
 		let channelCredentials = secureOptions
-			? credentials.createFromSecureContext(
-					tls.createSecureContext(secureOptions)
-				)
+			? credentials.createFromSecureContext(tls.createSecureContext(secureOptions))
 			: credentials.createInsecure()
 		this.#client = createClient(
 			AuthServiceDefinition,
@@ -116,27 +104,21 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			this.#token.exp > currentTimeSeconds + HARD_EXPIRY_BUFFER_SECONDS
 		) {
 			let expiresInSeconds = this.#token.exp - currentTimeSeconds
-			debug.log(
-				'returning cached token, expires in %d seconds',
-				Math.floor(expiresInSeconds)
-			)
+			debug.log('returning cached token, expires in %d seconds', Math.floor(expiresInSeconds))
 
 			// Start background refresh if approaching soft expiry
 			if (
-				this.#token.exp <=
-					currentTimeSeconds + SOFT_EXPIRY_BUFFER_SECONDS &&
+				this.#token.exp <= currentTimeSeconds + SOFT_EXPIRY_BUFFER_SECONDS &&
 				!this.#promise &&
 				!this.#backgroundRefreshPromise
 			) {
-				debug.log(
-					'token approaching soft expiry, starting background refresh'
-				)
+				debug.log('token approaching soft expiry, starting background refresh')
 				// Fire and forget background refresh with timeout
-				this.#backgroundRefreshPromise = this.#refreshTokenInBackground(
-					signal
-				).finally(() => {
-					this.#backgroundRefreshPromise = undefined
-				})
+				this.#backgroundRefreshPromise = this.#refreshTokenInBackground(signal).finally(
+					() => {
+						this.#backgroundRefreshPromise = undefined
+					}
+				)
 			}
 
 			return this.#token.value
@@ -187,11 +169,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 				signal,
 				idempotent: true,
 				onRetry: (ctx) => {
-					debug.log(
-						'retry attempt #%d after error: %s',
-						ctx.attempt,
-						ctx.error
-					)
+					debug.log('retry attempt #%d after error: %s', ctx.attempt, ctx.error)
 				},
 			},
 			async () => {
@@ -209,19 +187,11 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 					)
 				}
 
-				if (
-					response.operation.status !== StatusIds_StatusCode.SUCCESS
-				) {
-					throw new YDBError(
-						response.operation.status,
-						response.operation.issues
-					)
+				if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
+					throw new YDBError(response.operation.status, response.operation.issues)
 				}
 
-				let result = anyUnpack(
-					response.operation.result!,
-					LoginResultSchema
-				)
+				let result = anyUnpack(response.operation.result!, LoginResultSchema)
 				if (!result) {
 					throw new ClientError(
 						AuthServiceDefinition.login.path,
@@ -237,9 +207,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 				// If the token is not in the expected format, we fallback to default values.
 				let [header, payload, signature] = result.token.split('.')
 				if (header && payload && signature) {
-					let decodedPayload = JSON.parse(
-						Buffer.from(payload, 'base64').toString()
-					)
+					let decodedPayload = JSON.parse(Buffer.from(payload, 'base64').toString())
 
 					this.#token = {
 						value: result.token,
@@ -250,9 +218,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 						new Date(decodedPayload.exp * 1000).toISOString()
 					)
 				} else {
-					debug.log(
-						'token not in JWT format, using fallback metadata'
-					)
+					debug.log('token not in JWT format, using fallback metadata')
 					this.#token = {
 						value: result.token,
 						aud: [],

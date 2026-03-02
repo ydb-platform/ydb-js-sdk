@@ -59,9 +59,7 @@ export function yql<P extends any[] = unknown[]>(
 			}
 
 			let ydbValue =
-				isObject(value) &&
-				'type' in value &&
-				'kind' in (value as any)['type']
+				isObject(value) && 'type' in value && 'kind' in (value as any)['type']
 					? (value as Value)
 					: fromJs(value as any)
 			params[`$p${i - skipCount}`] = ydbValue

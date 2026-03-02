@@ -16,9 +16,7 @@ import type { TopicReaderState } from './types.js'
 
 let dbg = loggers.topic.extend('reader')
 
-export let _consume_stream = async function consume_stream(
-	state: TopicReaderState
-): Promise<void> {
+export let _consume_stream = async function consume_stream(state: TopicReaderState): Promise<void> {
 	if (state.disposed) {
 		return
 	}
@@ -30,10 +28,7 @@ export let _consume_stream = async function consume_stream(
 		state.outgoingQueue.close()
 		state.outgoingQueue.reset()
 
-		dbg.log(
-			'connecting to the stream with consumer %s',
-			state.options.consumer
-		)
+		dbg.log('connecting to the stream with consumer %s', state.options.consumer)
 
 		let stream = state.driver
 			.createClient(TopicServiceDefinition)
@@ -65,14 +60,9 @@ export let _consume_stream = async function consume_stream(
 
 		// If we have pending commits, we need to reject and drop them before connecting to the stream.
 		if (state.pendingCommits.size) {
-			dbg.log(
-				'has pending commits, before connecting to the stream, rejecting them'
-			)
+			dbg.log('has pending commits, before connecting to the stream, rejecting them')
 
-			for (let [
-				partitionSessionId,
-				pendingCommits,
-			] of state.pendingCommits) {
+			for (let [partitionSessionId, pendingCommits] of state.pendingCommits) {
 				for (let commit of pendingCommits) {
 					commit.reject(
 						new Error(
@@ -120,23 +110,18 @@ export let _consume_stream = async function consume_stream(
 					},
 					chunk.serverMessage.value
 				)
-			} else if (
-				chunk.serverMessage.case === 'startPartitionSessionRequest'
-			) {
+			} else if (chunk.serverMessage.case === 'startPartitionSessionRequest') {
 				void _on_start_partition_session_request(
 					{
 						partitionSessions: state.partitionSessions,
 						outgoingQueue: state.outgoingQueue,
 						...(state.options.onPartitionSessionStart && {
-							onPartitionSessionStart:
-								state.options.onPartitionSessionStart,
+							onPartitionSessionStart: state.options.onPartitionSessionStart,
 						}),
 					},
 					chunk.serverMessage.value
 				)
-			} else if (
-				chunk.serverMessage.case === 'stopPartitionSessionRequest'
-			) {
+			} else if (chunk.serverMessage.case === 'stopPartitionSessionRequest') {
 				void _on_stop_partition_session_request(
 					{
 						partitionSessions: state.partitionSessions,
@@ -145,8 +130,7 @@ export let _consume_stream = async function consume_stream(
 						disposed: state.disposed,
 						pendingCommits: state.pendingCommits,
 						...(state.options.onPartitionSessionStop && {
-							onPartitionSessionStop:
-								state.options.onPartitionSessionStop,
+							onPartitionSessionStop: state.options.onPartitionSessionStop,
 						}),
 					},
 					chunk.serverMessage.value

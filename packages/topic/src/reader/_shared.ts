@@ -11,10 +11,7 @@ let dbg = loggers.topic.extend('reader')
 /**
  * Initialize custom codecs if provided in options
  */
-export function _initialize_codecs(
-	codecs: CodecMap,
-	codecMap?: CodecMap
-): void {
+export function _initialize_codecs(codecs: CodecMap, codecMap?: CodecMap): void {
 	if (codecMap) {
 		for (let [key, codec] of codecMap) {
 			codecs.set(key, codec)

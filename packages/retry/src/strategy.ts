@@ -45,14 +45,9 @@ export function backoff(base: number, max: number): RetryStrategy {
 }
 
 export function combine(...strategies: RetryStrategy[]): RetryStrategy {
-	return (ctx, cfg) =>
-		strategies.reduce((acc, strategy) => acc + strategy(ctx, cfg), 0)
+	return (ctx, cfg) => strategies.reduce((acc, strategy) => acc + strategy(ctx, cfg), 0)
 }
 
 export function compose(...strategies: RetryStrategy[]): RetryStrategy {
-	return (ctx, cfg) =>
-		strategies.reduce(
-			(acc, strategy) => Math.max(acc, strategy(ctx, cfg)),
-			0
-		)
+	return (ctx, cfg) => strategies.reduce((acc, strategy) => Math.max(acc, strategy(ctx, cfg)), 0)
 }

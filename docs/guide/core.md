@@ -16,9 +16,7 @@ This guide helps you connect to YDB from JavaScript/TypeScript and run your firs
 ```ts
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver(
-  process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local'
-)
+const driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
 await driver.ready()
 
 // use the driver with Query/Topic or low-level clients
@@ -53,7 +51,10 @@ import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 const authEndpoint = 'grpcs://ydb.example.com:2135' // AuthService endpoint
 const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
-    { username: process.env.YDB_USER!, password: process.env.YDB_PASSWORD! },
+    {
+      username: process.env.YDB_USER!,
+      password: process.env.YDB_PASSWORD!,
+    },
     authEndpoint
   ),
 })
@@ -85,6 +86,39 @@ const driver = new Driver('grpc://localhost:2136/local', {
 })
 await driver.ready()
 ```
+
+### 5) Environment-Based Auto-Detection
+
+`EnvironCredentialsProvider` reads environment variables and picks the right auth strategy automatically. It also detects TLS configuration.
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
+
+let cs = process.env['YDB_CONNECTION_STRING']!
+let creds = new EnvironCredentialsProvider(cs)
+
+const driver = new Driver(cs, {
+  credentialsProvider: creds,
+  secureOptions: creds.secureOptions,
+})
+await driver.ready()
+```
+
+Detection priority (first match wins):
+
+| Variable                            | Description                                             |
+| ----------------------------------- | ------------------------------------------------------- |
+| `YDB_ANONYMOUS_CREDENTIALS=1`       | Anonymous                                               |
+| `YDB_METADATA_CREDENTIALS=1`        | Cloud metadata                                          |
+| `YDB_METADATA_CREDENTIALS_ENDPOINT` | Custom metadata endpoint (default: GCE metadata)        |
+| `YDB_METADATA_CREDENTIALS_FLAVOR`   | Custom metadata flavor (default: `Google`)              |
+| `YDB_ACCESS_TOKEN_CREDENTIALS`      | Access token                                            |
+| `YDB_STATIC_CREDENTIALS_USER`       | Username for static auth                                |
+| `YDB_STATIC_CREDENTIALS_PASSWORD`   | Password (default: empty)                               |
+| `YDB_STATIC_CREDENTIALS_ENDPOINT`   | Auth endpoint (default: derived from connection string) |
+
+TLS is configured via `YDB_SSL_ROOT_CERTIFICATES_FILE` (or `YDB_SSL_ROOT_CERTIFICATES` for PEM string), `YDB_SSL_CERTIFICATE_FILE` / `YDB_SSL_CERTIFICATE`, `YDB_SSL_PRIVATE_KEY_FILE` / `YDB_SSL_PRIVATE_KEY`.
 
 ## TLS and mTLS in Driver
 
@@ -190,10 +224,7 @@ Example:
 class MyCredentialsProvider extends CredentialsProvider {
   #token: string | null = null
 
-  async getToken(
-    force = false,
-    signal: AbortSignal = AbortSignal.timeout(10_000)
-  ) {
+  async getToken(force = false, signal: AbortSignal = AbortSignal.timeout(10_000)) {
     if (!force && this.#token) return this.#token
     const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
     const res = await fetch(this.#endpoint, {

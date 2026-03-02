@@ -79,9 +79,7 @@ export interface TopicReader extends AsyncDisposable, Disposable {
 	}): AsyncIterable<import('../message.js').TopicMessage[]>
 	// Commit offsets for the provided messages.
 	commit(
-		input:
-			| import('../message.js').TopicMessage
-			| import('../message.js').TopicMessage[]
+		input: import('../message.js').TopicMessage | import('../message.js').TopicMessage[]
 	): Promise<void>
 	// Gracefully close the reader.
 	close(): Promise<void>
@@ -133,10 +131,7 @@ export type TopicTxReaderState = TopicBaseReaderState & {
 	readonly tx: TX
 	readonly options: TopicReaderOptions
 	// Transaction support - track read offsets for commit hook
-	readonly readOffsets: Map<
-		bigint,
-		{ firstOffset: bigint; lastOffset: bigint }
-	> // partitionSessionId -> first and last read offsets
+	readonly readOffsets: Map<bigint, { firstOffset: bigint; lastOffset: bigint }> // partitionSessionId -> first and last read offsets
 }
 
 export type TopicCommitPromise = {

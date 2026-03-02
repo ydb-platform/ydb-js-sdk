@@ -34,7 +34,7 @@ npm ci
 
 We use Changesets to manage versions and changelogs.
 
-- Add a changeset: `npx changeset`
+- Add a changeset: `npx @changesets/cli`
 - After merging to main, the Release workflow will create a release PR or publish (see .github/workflows/release.yml)
 
 ## Running Local YDB for Tests

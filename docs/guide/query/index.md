@@ -102,9 +102,7 @@ await sql`PRAGMA TablePathPrefix(${sql.unsafe('/Root/dev')});`
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
 
-const q = sql`SELECT * FROM heavy_table`
-  .idempotent(true)
-  .withStats(StatsMode.FULL)
+const q = sql`SELECT * FROM heavy_table`.idempotent(true).withStats(StatsMode.FULL)
 
 q.on('retry', (ctx) => console.log('retry attempt', ctx.attempt, ctx.error))
 q.on('stats', (s) => console.log('cpu(us)=', s.queryPhaseStats?.cpuTimeUs))

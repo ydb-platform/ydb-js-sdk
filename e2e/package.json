@@ -3,11 +3,9 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "restricted"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"test": "vitest --run --project e2e",
 		"test:debug": "FORCE_COLOR=3 DEBUG_COLORS=1 DEBUG=ydbjs:* vitest --project e2e --inspect --no-file-parallelism"
@@ -24,7 +22,9 @@
 		"@ydbjs/topic": "*",
 		"@ydbjs/value": "*"
 	},
-	"publishConfig": {
-		"access": "restricted"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }
