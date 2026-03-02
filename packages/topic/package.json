@@ -3,27 +3,32 @@
 	"version": "6.1.2",
 	"description": "YDB Topics client for publish-subscribe messaging. Provides at-least-once delivery, exactly-once publishing, FIFO guarantees, and scalable message processing for unstructured data.",
 	"keywords": [
-		"ydb",
 		"database",
-		"topic",
-		"streaming",
 		"messaging",
-		"typescript"
+		"streaming",
+		"topic",
+		"typescript",
+		"ydb"
 	],
 	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/topic#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
 		"directory": "packages/topic"
 	},
-	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
 	],
-	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
 	"main": "dist/index.js",
@@ -36,11 +41,10 @@
 		"./writer2": "./dist/writer2/index.js",
 		"./message": "./dist/message.js"
 	},
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
@@ -62,13 +66,9 @@
 	"devDependencies": {
 		"@types/ms": "^2.1.0"
 	},
-	"files": [
-		"dist",
-		"README.md",
-		"CHANGELOG.md"
-	],
-	"publishConfig": {
-		"access": "public",
-		"registry": "https://registry.npmjs.org/"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }

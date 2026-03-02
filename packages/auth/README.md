@@ -8,6 +8,7 @@ The `@ydbjs/auth` package provides authentication utilities for interacting with
 - Token-based authentication
 - Anonymous access for development and testing
 - VM metadata authentication (Google Cloud, Yandex Cloud)
+- Environment-based auto-detection of auth method and TLS
 - TypeScript support with type definitions
 
 ## Installation
@@ -117,6 +118,39 @@ const driver = new Driver('grpc://localhost:2136/local', {
 })
 await driver.ready()
 ```
+
+### Environment-Based Auto-Detection
+
+`EnvironCredentialsProvider` auto-detects the authentication method and TLS configuration from environment variables:
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
+
+let cs = process.env.YDB_CONNECTION_STRING!
+let creds = new EnvironCredentialsProvider(cs)
+
+let driver = new Driver(cs, {
+  credentialsProvider: creds,
+  secureOptions: creds.secureOptions,
+})
+await driver.ready()
+```
+
+Credentials are detected in priority order:
+
+| Variable                            | Auth method                                             |
+| ----------------------------------- | ------------------------------------------------------- |
+| `YDB_ANONYMOUS_CREDENTIALS=1`       | Anonymous                                               |
+| `YDB_METADATA_CREDENTIALS=1`        | Cloud metadata                                          |
+| `YDB_METADATA_CREDENTIALS_ENDPOINT` | Custom metadata endpoint (default: GCE metadata)        |
+| `YDB_METADATA_CREDENTIALS_FLAVOR`   | Custom metadata flavor (default: `Google`)              |
+| `YDB_ACCESS_TOKEN_CREDENTIALS`      | Access token                                            |
+| `YDB_STATIC_CREDENTIALS_USER`       | Username for static auth                                |
+| `YDB_STATIC_CREDENTIALS_PASSWORD`   | Password (default: empty)                               |
+| `YDB_STATIC_CREDENTIALS_ENDPOINT`   | Auth endpoint (default: derived from connection string) |
+
+TLS options are read from `YDB_SSL_ROOT_CERTIFICATES_FILE` / `YDB_SSL_ROOT_CERTIFICATES`, `YDB_SSL_CERTIFICATE_FILE` / `YDB_SSL_CERTIFICATE`, `YDB_SSL_PRIVATE_KEY_FILE` / `YDB_SSL_PRIVATE_KEY`. See the [environ example](../../examples/environ/) for full details.
 
 ---
 

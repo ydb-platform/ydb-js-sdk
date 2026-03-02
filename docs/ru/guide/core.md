@@ -86,6 +86,39 @@ const driver = new Driver('grpc://localhost:2136/local', {
 await driver.ready()
 ```
 
+### 5) Автоопределение из переменных окружения
+
+`EnvironCredentialsProvider` читает переменные окружения и автоматически выбирает нужный метод аутентификации. Также определяет TLS-конфигурацию.
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
+
+let cs = process.env['YDB_CONNECTION_STRING']!
+let creds = new EnvironCredentialsProvider(cs)
+
+const driver = new Driver(cs, {
+  credentialsProvider: creds,
+  secureOptions: creds.secureOptions,
+})
+await driver.ready()
+```
+
+Приоритет определения (первое совпадение):
+
+| Переменная                          | Описание                                                      |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `YDB_ANONYMOUS_CREDENTIALS=1`       | Anonymous                                                     |
+| `YDB_METADATA_CREDENTIALS=1`        | Cloud metadata                                                |
+| `YDB_METADATA_CREDENTIALS_ENDPOINT` | Кастомный endpoint метадаты (по умолчанию: GCE metadata)      |
+| `YDB_METADATA_CREDENTIALS_FLAVOR`   | Кастомный flavor метадаты (по умолчанию: `Google`)            |
+| `YDB_ACCESS_TOKEN_CREDENTIALS`      | Access token                                                  |
+| `YDB_STATIC_CREDENTIALS_USER`       | Имя пользователя для static auth                              |
+| `YDB_STATIC_CREDENTIALS_PASSWORD`   | Пароль (по умолчанию: пустая строка)                          |
+| `YDB_STATIC_CREDENTIALS_ENDPOINT`   | Endpoint аутентификации (по умолчанию: из строки подключения) |
+
+TLS настраивается через `YDB_SSL_ROOT_CERTIFICATES_FILE` (или `YDB_SSL_ROOT_CERTIFICATES` для PEM-строки), `YDB_SSL_CERTIFICATE_FILE` / `YDB_SSL_CERTIFICATE`, `YDB_SSL_PRIVATE_KEY_FILE` / `YDB_SSL_PRIVATE_KEY`.
+
 ## TLS и mTLS в Driver
 
 Передайте `secureOptions` (Node.js `tls.SecureContextOptions`). Если строка подключения `grpcs://...`, по умолчанию используется системное хранилище CA; `secureOptions` позволяет указать свои корни/сертификаты.

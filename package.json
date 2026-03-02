@@ -20,27 +20,27 @@
 		"attw": "turbo run attw",
 		"test": "vitest --run",
 		"lint": "oxlint --fix",
-		"format": "prettier . --ignore-unknown --write",
+		"format": "oxfmt --write",
 		"version": "npx changeset version && npm install",
 		"publish": "npx changeset publish",
 		"prepare": "git config core.hooksPath scripts/hooks"
 	},
 	"dependencies": {
-		"@types/node": "^24.10.0"
+		"@types/node": "^25.3.3"
 	},
 	"devDependencies": {
-		"@vitest/coverage-v8": "^4.0.7",
-		"@vitest/ui": "^4.0.7",
-		"oxlint": "^1.25.0",
-		"prettier": "^3.7.4",
-		"turbo": "^2.6.0",
+		"@vitest/coverage-v8": "^4.0.18",
+		"@vitest/ui": "^4.0.18",
+		"oxfmt": "^0.35.0",
+		"oxlint": "^1.50.0",
+		"turbo": "^2.8.12",
 		"typescript": "^5.9.3",
-		"vitest": "^4.0.7",
+		"vitest": "^4.0.18",
 		"zx": "^8.8.5"
 	},
 	"overrides": {
 		"@grpc/proto-loader": "npm:dry-uninstall",
-		"esbuild": "^0.25.0"
+		"esbuild": "^0.27.3"
 	},
 	"packageManager": "npm@11.5.1"
 }

@@ -3,27 +3,32 @@
 	"version": "6.0.7",
 	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
 	"keywords": [
-		"ydb",
 		"database",
 		"query",
-		"yql",
 		"transaction",
-		"typescript"
+		"typescript",
+		"ydb",
+		"yql"
 	],
 	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/query#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
 		"directory": "packages/query"
 	},
-	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
 	],
-	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
 	"main": "dist/index.js",
@@ -31,11 +36,10 @@
 	"exports": {
 		".": "./dist/index.js"
 	},
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
@@ -56,13 +60,9 @@
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
 	},
-	"files": [
-		"dist",
-		"README.md",
-		"CHANGELOG.md"
-	],
-	"publishConfig": {
-		"access": "public",
-		"registry": "https://registry.npmjs.org/"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }
