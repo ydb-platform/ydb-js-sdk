@@ -3,11 +3,9 @@
 	"version": "6.0.0",
 	"private": true,
 	"type": "module",
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "restricted"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"start": "node index.js",
 		"dev": "DEBUG=ydbjs:* node index.js"
@@ -17,7 +15,9 @@
 		"@ydbjs/query": "^6.0.7",
 		"@ydbjs/value": "^6.0.0"
 	},
-	"publishConfig": {
-		"access": "restricted"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }

@@ -86,6 +86,39 @@ const driver = new Driver('grpc://localhost:2136/local', {
 await driver.ready()
 ```
 
+### 5) Environment-Based Auto-Detection
+
+`EnvironCredentialsProvider` reads environment variables and picks the right auth strategy automatically. It also detects TLS configuration.
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
+
+let cs = process.env['YDB_CONNECTION_STRING']!
+let creds = new EnvironCredentialsProvider(cs)
+
+const driver = new Driver(cs, {
+  credentialsProvider: creds,
+  secureOptions: creds.secureOptions,
+})
+await driver.ready()
+```
+
+Detection priority (first match wins):
+
+| Variable                            | Description                                             |
+| ----------------------------------- | ------------------------------------------------------- |
+| `YDB_ANONYMOUS_CREDENTIALS=1`       | Anonymous                                               |
+| `YDB_METADATA_CREDENTIALS=1`        | Cloud metadata                                          |
+| `YDB_METADATA_CREDENTIALS_ENDPOINT` | Custom metadata endpoint (default: GCE metadata)        |
+| `YDB_METADATA_CREDENTIALS_FLAVOR`   | Custom metadata flavor (default: `Google`)              |
+| `YDB_ACCESS_TOKEN_CREDENTIALS`      | Access token                                            |
+| `YDB_STATIC_CREDENTIALS_USER`       | Username for static auth                                |
+| `YDB_STATIC_CREDENTIALS_PASSWORD`   | Password (default: empty)                               |
+| `YDB_STATIC_CREDENTIALS_ENDPOINT`   | Auth endpoint (default: derived from connection string) |
+
+TLS is configured via `YDB_SSL_ROOT_CERTIFICATES_FILE` (or `YDB_SSL_ROOT_CERTIFICATES` for PEM string), `YDB_SSL_CERTIFICATE_FILE` / `YDB_SSL_CERTIFICATE`, `YDB_SSL_PRIVATE_KEY_FILE` / `YDB_SSL_PRIVATE_KEY`.
+
 ## TLS and mTLS in Driver
 
 Pass `secureOptions` (Node.js `tls.SecureContextOptions`). For `grpcs://...`, system CA store is used by default; `secureOptions` lets you provide custom roots/certificates.

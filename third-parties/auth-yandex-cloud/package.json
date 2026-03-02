@@ -3,29 +3,34 @@
 	"version": "0.1.2",
 	"description": "Yandex Cloud Service Account authentication provider for YDB. Supports authorized key JSON files and automatic IAM token management.",
 	"keywords": [
-		"ydb",
-		"database",
-		"authentication",
 		"auth",
-		"yandex-cloud",
-		"service-account",
+		"authentication",
+		"database",
 		"iam",
-		"typescript"
+		"service-account",
+		"typescript",
+		"yandex-cloud",
+		"ydb"
 	],
 	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
 		"directory": "third-parties/auth-yandex-cloud"
 	},
-	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
 	],
-	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
 	"main": "dist/index.js",
@@ -36,11 +41,10 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
@@ -52,18 +56,9 @@
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/retry": "^6.0.0"
 	},
-	"devDependencies": {
-		"@types/node": "^24.10.0",
-		"typescript": "^5.9.3",
-		"vitest": "^4.0.7"
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
 	},
-	"files": [
-		"dist",
-		"README.md",
-		"CHANGELOG.md"
-	],
-	"publishConfig": {
-		"access": "public",
-		"registry": "https://registry.npmjs.org/"
-	}
+	"engineStrict": true
 }
