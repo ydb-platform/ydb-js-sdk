@@ -1,0 +1,15 @@
+{
+	"name": "coordination-example",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example of using @ydbjs/coordination package",
+	"main": "index.js",
+	"scripts": {
+		"start": "node index.js"
+	},
+	"dependencies": {
+		"@ydbjs/coordination": "^0.0.1",
+		"@ydbjs/core": "^6.0.7"
+	}
+}

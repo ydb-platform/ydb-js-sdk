@@ -65,6 +65,17 @@ cd examples/topic
 npm install && npm start
 ```
 
+### 📁 [coordination/](./coordination/)
+
+EN: Coordination nodes, distributed semaphores, leader election
+
+RU: Coordination nodes, распределенные семафоры, выбор лидера
+
+```bash
+cd examples/coordination
+npm install && npm start
+```
+
 ### 📁 [service-account/](./service-account/)
 
 EN: Yandex Cloud Service Account authentication with authorized key JSON file.
@@ -118,6 +129,7 @@ cd examples/query && npm run dev
 cd examples/sls && npm start
 cd examples/tls && npm start
 cd examples/topic && npm start
+cd examples/coordination && npm start
 cd examples/service-account && npm start
 ```
 
