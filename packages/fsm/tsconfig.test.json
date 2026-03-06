@@ -1,0 +1,19 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"composite": true,
+		"rootDir": ".",
+		"noImplicitReturns": false,
+		"tsBuildInfoFile": "./dist/.test.tsbuildinfo"
+	},
+	"include": [
+		"src/**/*.ts",
+		"src/**/*.test.ts",
+		"tests/**/*.ts",
+		"tests/**/*.test.ts",
+		"examples/**/*.ts",
+		"vitest.config.ts"
+	],
+	"exclude": ["dist/**/*", "node_modules/**/*"]
+}

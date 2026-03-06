@@ -76,6 +76,17 @@ cd examples/coordination
 npm install && npm start
 ```
 
+### 📁 [fsm/](./fsm/)
+
+EN: Lightweight async-first FSM runtime usage (`@ydbjs/fsm`), transitions, effects, stream ingestion.
+
+RU: Использование легковесного async-first FSM runtime (`@ydbjs/fsm`), переходы, эффекты, ingestion стримов.
+
+```bash
+cd examples/fsm
+npm install && npm start
+```
+
 ### 📁 [service-account/](./service-account/)
 
 EN: Yandex Cloud Service Account authentication with authorized key JSON file.
@@ -130,6 +141,7 @@ cd examples/sls && npm start
 cd examples/tls && npm start
 cd examples/topic && npm start
 cd examples/coordination && npm start
+cd examples/fsm && npm start
 cd examples/service-account && npm start
 ```
 
