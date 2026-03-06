@@ -12,6 +12,9 @@ let dbg = loggers.driver.extend('conn')
 export interface Connection {
 	readonly nodeId: bigint
 	readonly address: string
+	readonly peerAddress: string
+	readonly peerPort: number
+	readonly location: string
 	readonly channel: Channel
 	pessimizedUntil?: number
 
@@ -45,6 +48,18 @@ export class LazyConnection implements Connection {
 
 	get address(): string {
 		return `${this.#endpoint.address}:${this.#endpoint.port}`
+	}
+
+	get peerAddress(): string {
+		return this.#endpoint.address
+	}
+
+	get peerPort(): number {
+		return this.#endpoint.port
+	}
+
+	get location(): string {
+		return this.#endpoint.location ?? ''
 	}
 
 	get channel(): Channel {

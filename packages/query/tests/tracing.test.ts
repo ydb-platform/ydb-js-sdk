@@ -4,7 +4,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { Driver } from '@ydbjs/core'
-import { SPAN_NAMES } from '@ydbjs/tracing'
+import { SPAN_NAMES, createOpenTelemetryTracer } from '@ydbjs/tracing'
 
 import { query } from '../src/index.js'
 
@@ -32,9 +32,11 @@ function assertCommonDbAttributes(
 	expected: { host: string; port: number; database: string }
 ) {
 	const attrs = (span.attributes ?? {}) as Record<string, unknown>
-	expect(attrs['db.system']).toBe('ydb')
+	expect(attrs['db.system.name']).toBe('ydb')
 	expect(attrs['server.address']).toBe(expected.host)
 	expect(attrs['server.port']).toBe(expected.port)
+	expect(attrs['network.peer.address']).toBe(expected.host)
+	expect(attrs['network.peer.port']).toBe(expected.port)
 	expect(String(attrs['db.namespace'] ?? '')).toBe(expected.database)
 }
 
@@ -54,6 +56,7 @@ function getSpanByName(
 beforeAll(async () => {
 	driver = new Driver(inject('connectionString'), {
 		'ydb.sdk.enable_discovery': false,
+		tracer: createOpenTelemetryTracer(),
 	})
 	await driver.ready()
 })
@@ -126,4 +129,28 @@ test('executeQuery error sets error status and error.type on span', async () => 
 	expect(
 		errorSpan == null || errorSpan.attributes?.['error.type'] != null
 	).toBe(true)
+})
+
+const TRACEQL_ATTR_KEYS = [
+	'db.system.name',
+	'server.address',
+	'server.port',
+	'network.peer.address',
+	'network.peer.port',
+	'db.namespace',
+] as const
+
+test('spans have TraceQL-compatible attributes for Grafana Tempo', async () => {
+	exporter.reset()
+	const sql = query(driver)
+	await sql`SELECT 1 AS id`
+	const spans = exporter.getFinishedSpans()
+	const createSession = spans.find((s) => s.name === SPAN_NAMES.CreateSession)
+	expect(createSession).toBeDefined()
+	const attrs = (createSession!.attributes ?? {}) as Record<string, unknown>
+	for (const key of TRACEQL_ATTR_KEYS) {
+		if (key === 'db.namespace' && attrs[key] === undefined) continue
+		expect(attrs[key]).toBeDefined()
+	}
+	expect(attrs['db.system.name']).toBe('ydb')
 })

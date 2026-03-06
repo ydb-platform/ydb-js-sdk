@@ -40,7 +40,7 @@
 	},
 	"dependencies": {
 		"@opentelemetry/api": "^1.9.0",
-		"@ydbjs/error": "^6.0.0"
+		"@ydbjs/core": "^6.0.0"
 	},
 	"peerDependencies": {
 		"@ydbjs/api": "^6.0.0"

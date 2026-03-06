@@ -31,6 +31,8 @@ import pkg from '../package.json' with { type: 'json' }
 import { type Connection, LazyConnection } from './conn.js'
 import { createTracingMiddleware, debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
+import { tracingContext } from './tracing-context.js'
+import { NoopTracer, type Tracer } from './tracing.js'
 import { detectRuntime } from './runtime.js'
 import { ConnectivityState } from '@grpc/grpc-js/build/src/connectivity-state.js'
 
@@ -46,6 +48,10 @@ export type DriverOptions = {
 	secureOptions?: tls.SecureContextOptions | undefined
 	channelOptions?: ChannelOptions
 	credentialsProvider?: CredentialsProvider
+	/**
+	 * Tracer for spans. Default is NoopTracer. Use createOpenTelemetryTracer() from @ydbjs/tracing for OTel.
+	 */
+	tracer?: Tracer
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
@@ -201,7 +207,8 @@ export class Driver implements Disposable {
 		this.#middleware = createTracingMiddleware(
 			this.cs.hostname,
 			Number.parseInt(this.cs.port || '2135', 10),
-			this.database || undefined
+			this.database || undefined,
+			this.options.tracer ?? NoopTracer
 		)
 		this.#middleware = composeClientMiddleware(this.#middleware, debug)
 		this.#middleware = composeClientMiddleware(
@@ -479,11 +486,34 @@ export class Driver implements Disposable {
 			.create(
 				service,
 				new Proxy(this.#connection.channel, {
-					get: (target, propertyKey) => {
-						let channel = this.options['ydb.sdk.enable_discovery']
-							? this.#pool.acquire(preferNodeId).channel
-							: target
-
+					get: (_target, propertyKey) => {
+						let connection = this.options[
+							'ydb.sdk.enable_discovery'
+						]
+							? this.#pool.acquire(preferNodeId)
+							: this.#connection
+						let channel = connection.channel
+						let store = tracingContext.getStore()
+						if (store?.span) {
+							store.span.setAttribute(
+								'network.peer.address',
+								connection.peerAddress
+							)
+							store.span.setAttribute(
+								'network.peer.port',
+								connection.peerPort
+							)
+							store.span.setAttribute(
+								'ydb.node.id',
+								Number(connection.nodeId)
+							)
+							if (connection.location) {
+								store.span.setAttribute(
+									'ydb.node.dc',
+									connection.location
+								)
+							}
+						}
 						return Reflect.get(channel, propertyKey, channel)
 					},
 				}),
