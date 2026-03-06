@@ -1,0 +1,13 @@
+{
+	"name": "@ydbjs/examples-fsm",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Runnable example for @ydbjs/fsm runtime",
+	"scripts": {
+		"start": "node index.js"
+	},
+	"dependencies": {
+		"@ydbjs/fsm": "^6.0.0"
+	}
+}

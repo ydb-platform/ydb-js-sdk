@@ -1,0 +1,7 @@
+src/
+tests/
+.turbo/
+node_modules/
+vitest.config.ts
+tsconfig.json
+*.tsbuildinfo
