@@ -1,4 +1,5 @@
 export * from './driver.js'
+export { tracingContext, type TracingContextStore } from './tracing-context.js'
 export {
 	DB_SYSTEM,
 	formatTraceparent,

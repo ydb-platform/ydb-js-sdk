@@ -24,6 +24,7 @@ export type Span = {
 	end(): void
 	recordException(error: Error): void
 	setStatus(status: { code: number; message?: string }): void
+	runInContext<T>(fn: () => T): T
 }
 
 export type StartSpanOptions = {
@@ -47,6 +48,9 @@ class NoopSpan implements Span {
 	end(): void {}
 	recordException(_error: Error): void {}
 	setStatus(_status: { code: number; message?: string }): void {}
+	runInContext<T>(fn: () => T): T {
+		return fn()
+	}
 }
 
 export const NoopTracer: Tracer = {

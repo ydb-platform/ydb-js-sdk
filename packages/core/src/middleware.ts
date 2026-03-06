@@ -42,16 +42,25 @@ export function createTracingMiddleware(
 			return yield* call.next(call.request, options)
 		}
 
+		const existingQueryText = tracingContext.getStore()?.queryText
+
 		const span = tracer.startSpan(spanName, {
 			kind: SpanKind.CLIENT,
 			attributes: baseAttrs,
 		})
+		if (existingQueryText && call.method.path === EXECUTE_QUERY_PATH) {
+			span.setAttribute('db.query.text', existingQueryText)
+		}
 		if (typeof process !== 'undefined' && process.env.YDB_TRACE_DEBUG) {
 			const ctx = span.spanContext()
 			// eslint-disable-next-line no-console
 			console.log('[ydb-tracing]', spanName, 'traceId:', ctx.traceId)
 		}
-		tracingContext.enterWith({ span })
+		tracingContext.enterWith(
+			existingQueryText
+				? { span, queryText: existingQueryText }
+				: { span }
+		)
 
 		const ctx = span.spanContext()
 		const nextOptions =
@@ -69,65 +78,68 @@ export function createTracingMiddleware(
 					}
 				: options
 
-		try {
-			if (call.method.path === EXECUTE_QUERY_PATH) {
-				// Server streaming: yield* call.next() returns undefined (stream is yielded). Iterate the generator and end span when stream ends or part.status !== SUCCESS.
-				const nextGen = call.next(call.request, nextOptions)
-				let ended = false
-				const endSpan = (err?: unknown) => {
-					if (ended) return
-					ended = true
-					if (err !== undefined) {
-						span.setAttributes(recordErrorAttributes(err))
-						span.recordException(
-							err instanceof Error ? err : new Error(String(err))
-						)
-						span.setStatus({ code: 2, message: String(err) })
-					}
-					span.end()
-				}
-				try {
-					for await (const part of nextGen) {
-						if (
-							part &&
-							typeof part === 'object' &&
-							'status' in part &&
-							part.status !== StatusIds_StatusCode.SUCCESS
-						) {
-							const p = part as {
-								status: number
-								issues?: import('@ydbjs/api/operation').IssueMessage[]
-							}
-							const err = new YDBError(
-								p.status as StatusIds_StatusCode,
-								p.issues ?? []
+		return yield* span.runInContext(async function* () {
+			try {
+				if (call.method.path === EXECUTE_QUERY_PATH) {
+					// Server streaming: iterate the generator and end span when the stream ends or a part.status !== SUCCESS.
+					const nextGen = call.next(call.request, nextOptions)
+					let ended = false
+					const endSpan = (err?: unknown) => {
+						if (ended) return
+						ended = true
+						if (err !== undefined) {
+							span.setAttributes(recordErrorAttributes(err))
+							span.recordException(
+								err instanceof Error
+									? err
+									: new Error(String(err))
 							)
-							endSpan(err)
-							yield part
-							return
+							span.setStatus({ code: 2, message: String(err) })
 						}
-						yield part
+						span.end()
 					}
-					endSpan()
-					return
-				} catch (streamError: unknown) {
-					endSpan(streamError)
-					throw streamError
+					try {
+						for await (const part of nextGen) {
+							if (
+								part &&
+								typeof part === 'object' &&
+								'status' in part &&
+								part.status !== StatusIds_StatusCode.SUCCESS
+							) {
+								const p = part as {
+									status: number
+									issues?: import('@ydbjs/api/operation').IssueMessage[]
+								}
+								const err = new YDBError(
+									p.status as StatusIds_StatusCode,
+									p.issues ?? []
+								)
+								endSpan(err)
+								yield part
+								return
+							}
+							yield part
+						}
+						endSpan()
+						return
+					} catch (streamError: unknown) {
+						endSpan(streamError)
+						throw streamError
+					}
 				}
+				const result = yield* call.next(call.request, nextOptions)
+				span.end()
+				return result
+			} catch (error: unknown) {
+				span.setAttributes(recordErrorAttributes(error))
+				span.recordException(
+					error instanceof Error ? error : new Error(String(error))
+				)
+				span.setStatus({ code: 2, message: String(error) })
+				span.end()
+				throw error
 			}
-			const result = yield* call.next(call.request, nextOptions)
-			span.end()
-			return result
-		} catch (error: unknown) {
-			const errAttrs = recordErrorAttributes(error)
-			span.setAttributes(errAttrs)
-			span.recordException(
-				error instanceof Error ? error : new Error(String(error))
-			)
-			span.setStatus({ code: 2, message: String(error) })
-			span.end()
-			throw error
-		}
+		})
 	} as ClientMiddleware
 }
 

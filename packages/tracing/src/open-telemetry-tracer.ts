@@ -1,11 +1,10 @@
-import { SpanKind, trace } from '@opentelemetry/api'
+import { SpanKind, context, trace } from '@opentelemetry/api'
 import type { Span as OtelSpan } from '@opentelemetry/api'
 import {
 	type Span,
 	type SpanContext,
 	type StartSpanOptions,
 	type Tracer,
-	recordErrorAttributes,
 } from '@ydbjs/core'
 import { formatTraceparent } from './traceparent.js'
 import pkg from '../package.json' with { type: 'json' }
@@ -34,13 +33,13 @@ function wrapOtelSpan(otelSpan: OtelSpan): Span {
 			otelSpan.end()
 		},
 		recordException(error: Error): void {
-			const attrs = recordErrorAttributes(error)
-			otelSpan.setAttributes(attrs)
 			otelSpan.recordException(error)
-			otelSpan.setStatus({ code: 2, message: String(error) })
 		},
 		setStatus(status: { code: number; message?: string }): void {
 			otelSpan.setStatus(status)
+		},
+		runInContext<T>(fn: () => T): T {
+			return context.with(trace.setSpan(context.active(), otelSpan), fn)
 		},
 	}
 }
