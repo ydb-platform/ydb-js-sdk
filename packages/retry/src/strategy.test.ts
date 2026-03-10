@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest'
 
+import type { RetryConfig } from './config.ts'
+import type { RetryContext } from './context.ts'
 import { defaultRetryConfig } from './index.ts'
 import * as strategies from './strategy.ts'
 
@@ -258,4 +260,35 @@ test('handles mixed positive and negative in compose strategy', async () => {
 	let result = composed({ attempt: 0, error: new Error('test') }, defaultRetryConfig)
 
 	expect(result).eq(100) // max(-50, 100, 25) = 100
+})
+
+test('defaultRetryConfig strategy never exceeds configured max delay', () => {
+	// Simulate a large number of attempts to verify the cap
+	for (let attempt = 0; attempt <= 100; attempt++) {
+		let ctx = { attempt, error: new Error('default') }
+		let strategy = defaultRetryConfig.strategy as (
+			ctx: RetryContext,
+			cfg: RetryConfig
+		) => number
+		let delay = strategy(ctx, defaultRetryConfig)
+		expect(delay).toBeLessThanOrEqual(30_000)
+	}
+})
+
+test('backoff strategy delay never exceeds max for OVERLOADED errors', () => {
+	let strategy = strategies.backoff(1000, 60_000)
+
+	for (let attempt = 0; attempt <= 100; attempt++) {
+		let delay = strategy({ attempt, error: new Error('overloaded') }, defaultRetryConfig)
+		expect(delay).toBeLessThanOrEqual(60_000)
+	}
+})
+
+test('backoff strategy delay never exceeds max for default errors', () => {
+	let strategy = strategies.backoff(10, 30_000)
+
+	for (let attempt = 0; attempt <= 100; attempt++) {
+		let delay = strategy({ attempt, error: new Error('default') }, defaultRetryConfig)
+		expect(delay).toBeLessThanOrEqual(30_000)
+	}
 })
