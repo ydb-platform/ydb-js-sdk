@@ -8,7 +8,7 @@ import { ClientError, Status } from 'nice-grpc'
 
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
-import { type RetryStrategy, exponential, fixed } from './strategy.js'
+import { type RetryStrategy, backoff, fixed } from './strategy.js'
 
 export * from './config.js'
 export * from './context.js'
@@ -159,14 +159,14 @@ export const defaultRetryConfig: RetryConfig = {
 		}
 
 		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
-			return exponential(1000)(ctx, cfg)
+			return backoff(1000, 60_000)(ctx, cfg)
 		}
 
 		if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
-			return exponential(1000)(ctx, cfg)
+			return backoff(1000, 60_000)(ctx, cfg)
 		}
 
-		return exponential(10)(ctx, cfg)
+		return backoff(10, 30_000)(ctx, cfg)
 	},
 }
 
@@ -185,7 +185,7 @@ export const defaultStreamRetryConfig: RetryConfig = {
 			ctx.error instanceof ClientError &&
 			(ctx.error.code === Status.CANCELLED || ctx.error.code === Status.UNAVAILABLE)
 		) {
-			return exponential(10)(ctx, cfg)
+			return backoff(10, 30_000)(ctx, cfg)
 		}
 
 		return (defaultRetryConfig.strategy as RetryStrategy)(ctx, cfg)
