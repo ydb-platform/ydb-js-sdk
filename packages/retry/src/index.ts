@@ -14,6 +14,11 @@ export * from './config.js'
 export * from './context.js'
 export * as strategies from './strategy.js'
 
+const BACKOFF_OVERLOAD_BASE_MS = 1000
+const BACKOFF_OVERLOAD_MAX_MS = 60_000
+const BACKOFF_DEFAULT_BASE_MS = 10
+const BACKOFF_DEFAULT_MAX_MS = 30_000
+
 let dbg = loggers.retry
 
 export async function retry<R>(
@@ -159,14 +164,14 @@ export const defaultRetryConfig: RetryConfig = {
 		}
 
 		if (ctx.error instanceof YDBError && ctx.error.code === StatusIds_StatusCode.OVERLOADED) {
-			return backoff(1000, 60_000)(ctx, cfg)
+			return backoff(BACKOFF_OVERLOAD_BASE_MS, BACKOFF_OVERLOAD_MAX_MS)(ctx, cfg)
 		}
 
 		if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
-			return backoff(1000, 60_000)(ctx, cfg)
+			return backoff(BACKOFF_OVERLOAD_BASE_MS, BACKOFF_OVERLOAD_MAX_MS)(ctx, cfg)
 		}
 
-		return backoff(10, 30_000)(ctx, cfg)
+		return backoff(BACKOFF_DEFAULT_BASE_MS, BACKOFF_DEFAULT_MAX_MS)(ctx, cfg)
 	},
 }
 
@@ -185,7 +190,7 @@ export const defaultStreamRetryConfig: RetryConfig = {
 			ctx.error instanceof ClientError &&
 			(ctx.error.code === Status.CANCELLED || ctx.error.code === Status.UNAVAILABLE)
 		) {
-			return backoff(10, 30_000)(ctx, cfg)
+			return backoff(BACKOFF_DEFAULT_BASE_MS, BACKOFF_DEFAULT_MAX_MS)(ctx, cfg)
 		}
 
 		return (defaultRetryConfig.strategy as RetryStrategy)(ctx, cfg)
