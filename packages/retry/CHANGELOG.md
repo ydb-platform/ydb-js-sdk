@@ -1,5 +1,11 @@
 # @ydbjs/retry
 
+## 6.1.1
+
+### Patch Changes
+
+- [#568](https://github.com/ydb-platform/ydb-js-sdk/pull/568) [`fbf2c6b`](https://github.com/ydb-platform/ydb-js-sdk/commit/fbf2c6bbd4b04da8d34d4e76c5d36b4dffb68dd9) Thanks [@DanilTezin](https://github.com/DanilTezin)! - Fix TimeoutOverflowWarning caused by unbounded exponential backoff. Replace `exponential(ms)` with `backoff(base, max)` which caps the delay via `Math.min(2^attempt * base, max)`, preventing `Infinity` from being passed to `setTimeout`.
+
 ## 6.1.0
 
 ### Minor Changes
