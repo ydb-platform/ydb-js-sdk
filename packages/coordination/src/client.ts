@@ -99,13 +99,16 @@ let shouldOpenNextSession = async function shouldOpenNextSession(
 	session: CoordinationSession,
 	externalSignal?: AbortSignal
 ): Promise<boolean> {
-	let deferred = Promise.withResolvers<any>()
+	let resolve!: () => void
+	let promise = new Promise<void>((res) => {
+		resolve = res
+	})
 	let combinedSignal = externalSignal
 		? AbortSignal.any([session.signal, externalSignal])
 		: session.signal
 
-	combinedSignal.addEventListener('abort', deferred.resolve, { once: true })
-	await deferred.promise
+	combinedSignal.addEventListener('abort', resolve, { once: true })
+	await promise
 
 	if (externalSignal?.aborted) {
 		return false
