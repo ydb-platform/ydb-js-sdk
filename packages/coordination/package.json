@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/coordination",
-	"version": "0.0.1",
+	"version": "6.0.0",
 	"description": "High-level coordination client for YDB. Supports coordination nodes, distributed semaphores, and distributed locking.",
 	"keywords": [
 		"ydb",

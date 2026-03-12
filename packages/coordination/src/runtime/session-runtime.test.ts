@@ -81,9 +81,7 @@ test('waitReady blocks during reconnect after first ready', async () => {
 	// waitReady must block now; the old (resolved) readyDeferred should have been
 	// replaced with a fresh unresolved one when schedule_retry_backoff ran.
 	let resolved = false
-	let waitPromise = runtime.waitReady().then(() => {
-		resolved = true
-	})
+	let waitPromise = runtime.waitReady().then(() => (resolved = true))
 
 	await settle()
 	expect(resolved).toBe(false)
@@ -222,9 +220,7 @@ test('close() waits for sessionStopped before resolving', async () => {
 	expect(runtime.status).toBe('ready')
 
 	let closed = false
-	let closePromise = runtime.close().then(() => {
-		closed = true
-	})
+	let closePromise = runtime.close().then(() => (closed = true))
 
 	// FSM moves to closing; close() must still be pending until sessionStopped.
 	await waitForStatus(runtime, 'closing')

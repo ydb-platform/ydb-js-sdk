@@ -3,7 +3,7 @@ import type { Driver } from '@ydbjs/core'
 import { CoordinationNodeRuntime } from './runtime/node-runtime.js'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import type { CoordinationNodeConfig, CoordinationNodeDescription } from './runtime/node-runtime.js'
-import { CoordinationSession, type CreateSessionOptions } from './session.js'
+import { CoordinationSession } from './session.js'
 
 export interface SessionOptions {
 	description?: string
@@ -46,7 +46,7 @@ export class CoordinationClient {
 			throw signal.reason
 		}
 
-		let session = new CoordinationSession(this.#driver, toCreateSessionOptions(path, options))
+		let session = new CoordinationSession(this.#driver, { path, ...options }, signal)
 
 		try {
 			await getSessionRuntime(session).waitReady(signal)
@@ -93,33 +93,6 @@ export class CoordinationClient {
 			await session.close(signal)
 		}
 	}
-}
-
-let toCreateSessionOptions = function toCreateSessionOptions(
-	path: string,
-	options?: SessionOptions
-): CreateSessionOptions {
-	let sessionOptions: CreateSessionOptions = {
-		path,
-	}
-
-	if (options?.description !== undefined) {
-		sessionOptions.description = options.description
-	}
-
-	if (options?.recoveryWindow !== undefined) {
-		sessionOptions.recoveryWindow = options.recoveryWindow
-	}
-
-	if (options?.startTimeout !== undefined) {
-		sessionOptions.startTimeout = options.startTimeout
-	}
-
-	if (options?.retryBackoff !== undefined) {
-		sessionOptions.retryBackoff = options.retryBackoff
-	}
-
-	return sessionOptions
 }
 
 let shouldOpenNextSession = async function shouldOpenNextSession(

@@ -1,16 +1,17 @@
 import type { CoordinationSession } from './session.js'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import { isTryAcquireMiss } from './internal/try-acquire.js'
-import type {
-	AcquireSemaphoreOptions,
-	CreateSemaphoreOptions,
-	DeleteSemaphoreOptions,
-	DescribeSemaphoreOptions,
-	LeaseRuntime,
-	SemaphoreDescription,
-	SemaphoreRuntime,
-	UpdateSemaphoreOptions,
-	WatchSemaphoreOptions,
+import {
+	type AcquireSemaphoreOptions,
+	type CreateSemaphoreOptions,
+	type DeleteSemaphoreOptions,
+	type DescribeSemaphoreOptions,
+	type LeaseRuntime,
+	type SemaphoreDescription,
+	type SemaphoreRuntime,
+	type WatchSemaphoreOptions,
+	normalizeAcquireOptions,
+	toCount,
 } from './runtime/semaphore-runtime.js'
 
 export type {
@@ -19,7 +20,6 @@ export type {
 	DeleteSemaphoreOptions,
 	DescribeSemaphoreOptions,
 	SemaphoreDescription,
-	UpdateSemaphoreOptions,
 	WatchSemaphoreOptions,
 } from './runtime/semaphore-runtime.js'
 
@@ -29,36 +29,6 @@ export interface SemaphoreSessionDescription {
 	orderId: bigint
 	sessionId: bigint
 	timeoutMillis: bigint
-}
-
-let emptyBytes = new Uint8Array()
-let maxUint64 = 2n ** 64n - 1n
-
-let toCount = function toCount(value?: number | bigint, fallback = 1n): bigint {
-	if (value === undefined) {
-		return fallback
-	}
-
-	if (typeof value === 'bigint') {
-		return value
-	}
-
-	if (value === Infinity) {
-		return maxUint64
-	}
-
-	return BigInt(value)
-}
-
-export let normalizeAcquireSemaphoreOptions = function normalizeAcquireSemaphoreOptions(
-	options?: AcquireSemaphoreOptions
-): Required<AcquireSemaphoreOptions> {
-	return {
-		data: options?.data ?? emptyBytes,
-		count: toCount(options?.count, 1n),
-		ephemeral: options?.ephemeral ?? false,
-		waitTimeout: toCount(options?.waitTimeout, 0n),
-	}
 }
 
 export class Lease implements AsyncDisposable {
@@ -114,8 +84,8 @@ export class Semaphore {
 		)
 	}
 
-	update(options: UpdateSemaphoreOptions, signal?: AbortSignal): Promise<void> {
-		return this.#runtime.updateSemaphore(this.#name, options, signal)
+	update(data: Uint8Array, signal?: AbortSignal): Promise<void> {
+		return this.#runtime.updateSemaphore(this.#name, data, signal)
 	}
 
 	delete(options?: DeleteSemaphoreOptions, signal?: AbortSignal): Promise<void> {
@@ -123,23 +93,11 @@ export class Semaphore {
 	}
 
 	async acquire(options?: AcquireSemaphoreOptions, signal?: AbortSignal): Promise<Lease> {
-		let normalizedOptions: AcquireSemaphoreOptions | undefined
-
-		if (options) {
-			normalizedOptions = {
-				...options,
-			}
-
-			if (options.count !== undefined) {
-				normalizedOptions.count = toCount(options.count)
-			}
-
-			if (options.waitTimeout !== undefined) {
-				normalizedOptions.waitTimeout = toCount(options.waitTimeout, 0n)
-			}
-		}
-
-		let lease = await this.#runtime.acquireSemaphore(this.#name, normalizedOptions, signal)
+		let lease = await this.#runtime.acquireSemaphore(
+			this.#name,
+			normalizeAcquireOptions(options),
+			signal
+		)
 		return new Lease(this.#name, lease)
 	}
 
@@ -147,17 +105,12 @@ export class Semaphore {
 		options?: AcquireSemaphoreOptions,
 		signal?: AbortSignal
 	): Promise<Lease | null> {
-		let nextOptions: AcquireSemaphoreOptions = {
-			...options,
-			waitTimeout: options?.waitTimeout === undefined ? 0n : toCount(options.waitTimeout, 0n),
-		}
-
-		if (options?.count !== undefined) {
-			nextOptions.count = toCount(options.count)
-		}
+		// Force waitTimeout to 0 so the server returns immediately instead of
+		// blocking — the caller gets null rather than waiting indefinitely.
+		let normalized = normalizeAcquireOptions({ ...options, waitTimeout: 0n })
 
 		try {
-			let lease = await this.#runtime.acquireSemaphore(this.#name, nextOptions, signal)
+			let lease = await this.#runtime.acquireSemaphore(this.#name, normalized, signal)
 			return new Lease(this.#name, lease)
 		} catch (error) {
 			if (isTryAcquireMiss(error)) {

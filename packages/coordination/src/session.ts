@@ -63,14 +63,3 @@ export class CoordinationSession implements AsyncDisposable {
 		await this.#runtime.close()
 	}
 }
-
-export let createSession = function createSession(
-	driver: Driver,
-	options: CreateSessionOptions,
-	signal?: AbortSignal
-): CoordinationSession {
-	// Signal is forwarded directly into the runtime via the constructor so that
-	// createRuntime can wire it into createSessionEnv (stream-level abort) and
-	// dispatch session.destroy through the FSM rather than bypassing it.
-	return new CoordinationSession(driver, options, signal)
-}

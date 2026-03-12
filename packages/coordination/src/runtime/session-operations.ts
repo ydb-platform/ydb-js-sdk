@@ -29,16 +29,19 @@ import {
 	sendRequest,
 } from './session-stream.js'
 
-import type {
-	AcquireSemaphoreOptions,
-	CreateSemaphoreOptions,
-	DeleteSemaphoreOptions,
-	DescribeSemaphoreOptions,
-	LeaseRuntime,
-	SemaphoreDescription,
-	SemaphoreRuntime,
-	UpdateSemaphoreOptions,
-	WatchSemaphoreOptions,
+import { TryAcquireMissError } from '../internal/try-acquire.js'
+
+import {
+	type AcquireSemaphoreOptions,
+	type CreateSemaphoreOptions,
+	type DeleteSemaphoreOptions,
+	type DescribeSemaphoreOptions,
+	type LeaseRuntime,
+	type SemaphoreDescription,
+	type SemaphoreRuntime,
+	type WatchSemaphoreOptions,
+	normalizeAcquireOptions,
+	toCount,
 } from './semaphore-runtime.js'
 
 // ── context shape ──────────────────────────────────────────────────────────────
@@ -117,22 +120,24 @@ let waitReady = async function waitReady(ctx: OperationsCtx, signal?: AbortSigna
 }
 
 // Send a request on the stream and wait for the matching response.  Retries
-// transparently when the session reconnects mid-flight.
+// transparently when the session reconnects mid-flight.  makePayload receives
+// the freshly allocated reqId so the caller can embed it in the protobuf message
+// without managing reqId allocation themselves.
 let request = async function request(
 	ctx: OperationsCtx,
-	reqId: bigint,
-	requestPayload: SessionStreamRequest,
+	makePayload: (reqId: bigint) => SessionStreamRequest,
 	requestSignal?: AbortSignal
 ): Promise<SessionResponse> {
 	for (;;) {
 		// oxlint-disable-next-line no-await-in-loop
 		await waitReady(ctx, requestSignal)
 
+		let reqId = ctx.requests.nextReqId()
 		let deferred = ctx.requests.register(reqId)
 		let streamSignal = createRuntimeSignal(ctx.signalController.signal, requestSignal)
 
 		try {
-			sendRequest(ctx, requestPayload)
+			sendRequest(ctx, makePayload(reqId))
 			// oxlint-disable-next-line no-await-in-loop
 			return await abortable(streamSignal, deferred.promise)
 		} catch (error) {
@@ -224,24 +229,19 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			signal?: AbortSignal
 		): Promise<void> {
 			let ctx = sessionCtx()
-			let reqId = ctx.requests.nextReqId()
 			let response = await request(
 				ctx,
-				reqId,
-				{
+				(reqId) => ({
 					request: {
 						case: 'createSemaphore',
 						value: create(SessionRequest_CreateSemaphoreSchema, {
 							reqId,
 							name,
-							limit:
-								typeof createOptions.limit === 'bigint'
-									? createOptions.limit
-									: BigInt(createOptions.limit),
+							limit: toCount(createOptions.limit),
 							data: createOptions.data ?? new Uint8Array(),
 						}),
 					},
-				},
+				}),
 				signal
 			)
 
@@ -255,26 +255,20 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			)
 		},
 
-		async updateSemaphore(
-			name: string,
-			updateOptions: UpdateSemaphoreOptions,
-			signal?: AbortSignal
-		): Promise<void> {
+		async updateSemaphore(name: string, data: Uint8Array, signal?: AbortSignal): Promise<void> {
 			let ctx = sessionCtx()
-			let reqId = ctx.requests.nextReqId()
 			let response = await request(
 				ctx,
-				reqId,
-				{
+				(reqId) => ({
 					request: {
 						case: 'updateSemaphore',
 						value: create(SessionRequest_UpdateSemaphoreSchema, {
 							reqId,
 							name,
-							data: updateOptions.data ?? new Uint8Array(),
+							data,
 						}),
 					},
-				},
+				}),
 				signal
 			)
 
@@ -294,11 +288,9 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			signal?: AbortSignal
 		): Promise<void> {
 			let ctx = sessionCtx()
-			let reqId = ctx.requests.nextReqId()
 			let response = await request(
 				ctx,
-				reqId,
-				{
+				(reqId) => ({
 					request: {
 						case: 'deleteSemaphore',
 						value: create(SessionRequest_DeleteSemaphoreSchema, {
@@ -307,7 +299,7 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 							force: deleteOptions?.force ?? false,
 						}),
 					},
-				},
+				}),
 				signal
 			)
 
@@ -327,24 +319,11 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			signal?: AbortSignal
 		): Promise<LeaseRuntime> {
 			let ctx = sessionCtx()
-			let count =
-				acquireOptions?.count === undefined
-					? 1n
-					: typeof acquireOptions.count === 'bigint'
-						? acquireOptions.count
-						: BigInt(acquireOptions.count)
-			let waitTimeout =
-				acquireOptions?.waitTimeout === undefined
-					? 0n
-					: typeof acquireOptions.waitTimeout === 'bigint'
-						? acquireOptions.waitTimeout
-						: BigInt(acquireOptions.waitTimeout)
+			let { count, waitTimeout, data, ephemeral } = normalizeAcquireOptions(acquireOptions)
 
-			let reqId = ctx.requests.nextReqId()
 			let response = await request(
 				ctx,
-				reqId,
-				{
+				(reqId) => ({
 					request: {
 						case: 'acquireSemaphore',
 						value: create(SessionRequest_AcquireSemaphoreSchema, {
@@ -352,11 +331,11 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 							name,
 							timeoutMillis: waitTimeout,
 							count,
-							data: acquireOptions?.data ?? new Uint8Array(),
-							ephemeral: acquireOptions?.ephemeral ?? false,
+							data,
+							ephemeral,
 						}),
 					},
-				},
+				}),
 				signal
 			)
 
@@ -370,7 +349,7 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			)
 
 			if (!response.response.value.acquired) {
-				throw new Error('Try acquire miss')
+				throw new TryAcquireMissError()
 			}
 
 			let leaseSignalController = new AbortController()
@@ -401,13 +380,11 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 					releaseStarted = true
 
 					let releaseCtx = sessionCtx()
-					let releaseReqId = releaseCtx.requests.nextReqId()
 
 					try {
 						let releaseResponse = await request(
 							releaseCtx,
-							releaseReqId,
-							{
+							(releaseReqId) => ({
 								request: {
 									case: 'releaseSemaphore',
 									value: create(SessionRequest_ReleaseSemaphoreSchema, {
@@ -415,7 +392,7 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 										name,
 									}),
 								},
-							},
+							}),
 							releaseSignal
 						)
 
@@ -448,11 +425,9 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 			signal?: AbortSignal
 		): Promise<SemaphoreDescription> {
 			let ctx = sessionCtx()
-			let reqId = ctx.requests.nextReqId()
 			let response = await request(
 				ctx,
-				reqId,
-				{
+				(reqId) => ({
 					request: {
 						case: 'describeSemaphore',
 						value: create(SessionRequest_DescribeSemaphoreSchema, {
@@ -464,7 +439,7 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 							watchOwners: false,
 						}),
 					},
-				},
+				}),
 				signal
 			)
 
@@ -538,22 +513,26 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 					throw new Error('Semaphore watch registration is no longer active')
 				}
 
-				let reqId = current.requests.nextReqId()
+				// Capture the reqId assigned by request() so updateWatchRegistration
+				// can register the correct slot after a successful server response.
+				let capturedReqId = 0n
 				let response = await request(
 					current,
-					reqId,
-					{
-						request: {
-							case: 'describeSemaphore',
-							value: create(SessionRequest_DescribeSemaphoreSchema, {
-								reqId,
-								name,
-								includeOwners: watchOptions?.owners ?? false,
-								includeWaiters: watchOptions?.waiters ?? false,
-								watchData: watchOptions?.data ?? false,
-								watchOwners: watchOptions?.owners ?? false,
-							}),
-						},
+					(reqId) => {
+						capturedReqId = reqId
+						return {
+							request: {
+								case: 'describeSemaphore',
+								value: create(SessionRequest_DescribeSemaphoreSchema, {
+									reqId,
+									name,
+									includeOwners: watchOptions?.owners ?? false,
+									includeWaiters: watchOptions?.waiters ?? false,
+									watchData: watchOptions?.data ?? false,
+									watchOwners: watchOptions?.owners ?? false,
+								}),
+							},
+						}
 					},
 					watchSignal
 				)
@@ -573,7 +552,7 @@ export let createSemaphoreOperations = function createSemaphoreOperations(
 				}
 
 				if (response.response.value.watchAdded) {
-					updateWatchRegistration(reqId)
+					updateWatchRegistration(capturedReqId)
 				}
 
 				return mapDescription(description)

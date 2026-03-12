@@ -9,6 +9,8 @@ export interface LeaderInfo {
 export interface LeaderState {
 	data: Uint8Array
 	isMe: boolean
+	// Aborts when the leader changes or the observation ends.
+	// Always alive when the state is first yielded — never pre-aborted.
 	signal: AbortSignal
 }
 
@@ -31,7 +33,7 @@ export class Leadership implements AsyncDisposable {
 	async proclaim(data: Uint8Array, signal?: AbortSignal): Promise<void> {
 		throwIfAborted(signal)
 
-		return getSessionRuntime(this.#session).updateSemaphore(this.#name, { data }, signal)
+		return getSessionRuntime(this.#session).updateSemaphore(this.#name, data, signal)
 	}
 
 	async resign(signal?: AbortSignal): Promise<void> {
@@ -70,38 +72,52 @@ export class Election {
 
 	async *observe(signal?: AbortSignal): AsyncIterable<LeaderState> {
 		let previousLeader: { sessionId: bigint; orderId: bigint } | null = null
+		// Tracks the AbortController for the currently live LeaderState so we can
+		// abort it as soon as the leader changes, before yielding the next state.
+		let currentController: AbortController | null = null
 
 		let semaphore = new Semaphore(this.#session, this.#name)
-		for await (let description of semaphore.watch({ owners: true }, signal)) {
-			let owner = description.owners?.[0]
-			let currentLeader = owner
-				? { sessionId: owner.sessionId, orderId: owner.orderId }
-				: null
+		try {
+			for await (let description of semaphore.watch({ owners: true }, signal)) {
+				let owner = description.owners?.[0]
+				let currentLeader = owner
+					? { sessionId: owner.sessionId, orderId: owner.orderId }
+					: null
 
-			if (isSameLeader(previousLeader, currentLeader)) {
-				continue
-			}
-
-			previousLeader = currentLeader
-
-			if (!owner) {
-				yield {
-					data: emptyBytes,
-					isMe: false,
-					signal: AbortSignal.abort(new Error('Leader is not available')),
+				if (isSameLeader(previousLeader, currentLeader)) {
+					continue
 				}
-				continue
-			}
 
-			yield {
-				data: owner.data,
-				isMe:
-					this.#session.sessionId !== null && owner.sessionId === this.#session.sessionId,
-				signal:
-					owner.sessionId === this.#session.sessionId
-						? this.#session.signal
-						: AbortSignal.abort(new Error('Leader changed')),
+				previousLeader = currentLeader
+
+				// Abort the previous state's signal before yielding the next one so
+				// consumers see the transition in the right order.
+				if (currentController) {
+					currentController.abort(new Error('Leader changed'))
+				}
+				currentController = new AbortController()
+
+				if (!owner) {
+					yield {
+						data: emptyBytes,
+						isMe: false,
+						signal: currentController.signal,
+					}
+					continue
+				}
+
+				yield {
+					data: owner.data,
+					isMe:
+						this.#session.sessionId !== null &&
+						owner.sessionId === this.#session.sessionId,
+					signal: currentController.signal,
+				}
 			}
+		} finally {
+			// Ensure the last yielded state's signal is aborted when iteration ends
+			// so consumers relying on it for cancellation are always unblocked.
+			currentController?.abort(new Error('Election observation ended'))
 		}
 	}
 
@@ -137,11 +153,4 @@ let throwIfAborted = function throwIfAborted(signal?: AbortSignal): void {
 	if (signal?.aborted) {
 		throw signal.reason ?? new Error('The operation was aborted')
 	}
-}
-
-export let createElection = function createElection(
-	session: CoordinationSession,
-	name: string
-): Election {
-	return new Election(session, name)
 }
