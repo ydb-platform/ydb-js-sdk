@@ -1,256 +1,184 @@
-import { loggers } from '@ydbjs/debug'
+import type { CoordinationSession } from './session.js'
+import { getSessionRuntime } from './internal/session-runtime.js'
+import { isTryAcquireMiss } from './internal/try-acquire.js'
+import type {
+	AcquireSemaphoreOptions,
+	CreateSemaphoreOptions,
+	DeleteSemaphoreOptions,
+	DescribeSemaphoreOptions,
+	LeaseRuntime,
+	SemaphoreDescription,
+	SemaphoreRuntime,
+	UpdateSemaphoreOptions,
+	WatchSemaphoreOptions,
+} from './runtime/semaphore-runtime.js'
 
-import {
-	type CoordinationSession,
-	CoordinationSessionEvents,
-} from './session.js'
+export type {
+	AcquireSemaphoreOptions,
+	CreateSemaphoreOptions,
+	DeleteSemaphoreOptions,
+	DescribeSemaphoreOptions,
+	SemaphoreDescription,
+	UpdateSemaphoreOptions,
+	WatchSemaphoreOptions,
+} from './runtime/semaphore-runtime.js'
 
-let dbg = loggers.driver.extend('coordination').extend('semaphore')
-
-/**
- * Lock interface for acquired semaphores
- *
- * Represents an acquired lock with automatic cleanup and loss detection.
- * The signal property aborts when the lock is lost involuntarily
- * (session expired or server released it).
- *
- * @example
- * ```typescript
- * await using lock = await session.acquire('my-lock')
- * // Use lock.signal to detect involuntary lock loss
- * await someOperation({ signal: lock.signal })
- * // Lock automatically released on scope exit
- * ```
- */
-export interface Lock extends AsyncDisposable {
-	/**
-	 * Name of the acquired semaphore
-	 */
-	name: string
-
-	/**
-	 * AbortSignal that aborts when the coordination session expires.
-	 *
-	 * When the session expires, the server automatically releases all locks held by that session.
-	 * This signal allows you to detect session expiration and stop ongoing operations gracefully.
-	 */
-	signal: AbortSignal
-
-	/**
-	 * Explicitly releases the lock
-	 */
-	release(): Promise<void>
-
-	/**
-	 * Called automatically via await using, internally calls release()
-	 */
-	[Symbol.asyncDispose](): Promise<void>
+export interface SemaphoreSessionDescription {
+	data: Uint8Array
+	count: bigint
+	orderId: bigint
+	sessionId: bigint
+	timeoutMillis: bigint
 }
 
-/**
- * Semaphore lock handle that represents an acquired semaphore
- *
- * This class implements the Lock interface and provides automatic cleanup
- * when disposed. The lock is automatically released when the scope exits
- * (using `await using` keyword) or when explicitly released.
- *
- * The session that created this lock remains open after release.
- *
- * @example
- * ```typescript
- * // Automatic release with using keyword
- * await using lock = await session.acquire('my-lock')
- * // Critical section - lock is guaranteed to be held
- * // Use lock.signal to detect involuntary lock loss
- * await someOperation({ signal: lock.signal })
- * // Lock automatically released here
- * ```
- */
-export class SemaphoreLock implements Lock {
-	#session: CoordinationSession
+let emptyBytes = new Uint8Array()
+let maxUint64 = 2n ** 64n - 1n
+
+let toCount = function toCount(value?: number | bigint, fallback = 1n): bigint {
+	if (value === undefined) {
+		return fallback
+	}
+
+	if (typeof value === 'bigint') {
+		return value
+	}
+
+	if (value === Infinity) {
+		return maxUint64
+	}
+
+	return BigInt(value)
+}
+
+export let normalizeAcquireSemaphoreOptions = function normalizeAcquireSemaphoreOptions(
+	options?: AcquireSemaphoreOptions
+): Required<AcquireSemaphoreOptions> {
+	return {
+		data: options?.data ?? emptyBytes,
+		count: toCount(options?.count, 1n),
+		ephemeral: options?.ephemeral ?? false,
+		waitTimeout: toCount(options?.waitTimeout, 0n),
+	}
+}
+
+export class Lease implements AsyncDisposable {
 	#name: string
-	#released: boolean = false
-	#abortController: AbortController
-	#sessionExpiredHandler: () => void
+	#runtime: LeaseRuntime
+	#released = false
 
-	constructor(session: CoordinationSession, name: string) {
-		this.#session = session
+	constructor(name: string, runtime: LeaseRuntime) {
 		this.#name = name
-		this.#abortController = new AbortController()
-
-		// Subscribe to session expiration to abort lock signal
-		this.#sessionExpiredHandler = () => {
-			if (!this.#abortController.signal.aborted) {
-				dbg.log(
-					'session expired, aborting lock signal for: %s',
-					this.#name
-				)
-				this.#abortController.abort(
-					new Error('Lock lost: session expired')
-				)
-			}
-			// Mark as released since server automatically released the semaphore
-			this.#released = true
-		}
-		this.#session.once(
-			CoordinationSessionEvents.SESSION_EXPIRED,
-			this.#sessionExpiredHandler
-		)
+		this.#runtime = runtime
 	}
 
-	/**
-	 * AbortSignal that aborts when the coordination session expires.
-	 *
-	 * When the session expires, the server automatically releases all locks held by that session.
-	 * This signal allows you to detect session expiration and stop ongoing operations gracefully.
-	 */
-	get signal(): AbortSignal {
-		return this.#abortController.signal
-	}
-
-	/**
-	 * Returns the semaphore name
-	 */
 	get name(): string {
 		return this.#name
 	}
 
-	/**
-	 * Explicitly releases the lock
-	 *
-	 * This method can be called explicitly to release the semaphore.
-	 * Useful when not using the `await using` keyword.
-	 *
-	 * @param signal - AbortSignal to timeout the operation
-	 * @throws {YDBError} If the operation fails
-	 *
-	 * @example
-	 * ```typescript
-	 * let lock = await session.acquire('my-lock')
-	 * try {
-	 *   // do work with lock
-	 * } finally {
-	 *   await lock.release()
-	 * }
-	 * ```
-	 */
+	get signal(): AbortSignal {
+		return this.#runtime.signal
+	}
+
 	async release(signal?: AbortSignal): Promise<void> {
 		if (this.#released) {
 			return
 		}
 
-		this.#session.off(
-			CoordinationSessionEvents.SESSION_EXPIRED,
-			this.#sessionExpiredHandler
-		)
-		await this.#session.release(this.#name, signal)
 		this.#released = true
+		await this.#runtime.release(signal)
 	}
 
-	/**
-	 * Automatically releases the lock when disposed
-	 *
-	 * This method is called automatically when using the `await using` keyword.
-	 */
 	async [Symbol.asyncDispose](): Promise<void> {
-		if (!this.#released) {
-			dbg.log(
-				'auto-releasing semaphore via Symbol.asyncDispose: %s',
-				this.#name
-			)
-			await this.release()
-		}
+		await this.release()
 	}
 }
 
-/**
- * Session-owned lock that manages session lifecycle automatically
- *
- * This class combines session creation, semaphore acquisition, and automatic cleanup
- * into a single high-level API. The session is created when the lock is acquired
- * and automatically closed when the lock is released.
- *
- * Implements AsyncDisposable for automatic cleanup with `await using` keyword.
- *
- * @example
- * ```typescript
- * // Automatic session + lock management
- * await using lock = await client.acquireLock('/local/node', 'my-lock')
- * // Session is created, lock is acquired
- * // Do work with lock
- * // Lock is released and session is closed automatically
- * ```
- */
-export class SessionOwnedLock implements Lock {
-	#session: CoordinationSession
-	#lock: Lock
-	#released: boolean = false
+export class Semaphore {
+	#name: string
+	#runtime: SemaphoreRuntime
 
-	constructor(session: CoordinationSession, lock: Lock) {
-		this.#session = session
-		this.#lock = lock
+	constructor(session: CoordinationSession, name: string) {
+		this.#name = name
+		this.#runtime = getSessionRuntime(session)
 	}
 
-	/**
-	 * Name of the acquired lock
-	 */
 	get name(): string {
-		return this.#lock.name
+		return this.#name
 	}
 
-	/**
-	 * AbortSignal that aborts when lock is lost involuntarily
-	 * (session died, server released it)
-	 */
-	get signal(): AbortSignal {
-		return this.#lock.signal
+	create(options: CreateSemaphoreOptions, signal?: AbortSignal): Promise<void> {
+		return this.#runtime.createSemaphore(
+			this.#name,
+			{ ...options, limit: toCount(options.limit) },
+			signal
+		)
 	}
 
-	/**
-	 * Explicitly releases the lock and closes the session
-	 *
-	 * This method can be called explicitly to release the lock and close the session.
-	 * Useful when not using the `await using` keyword.
-	 *
-	 * @throws {YDBError} If the operation fails
-	 *
-	 * @example
-	 * ```typescript
-	 * let lock = await client.acquireLock('/local/node', 'my-lock')
-	 * try {
-	 *   // do work with lock
-	 * } finally {
-	 *   await lock.release()
-	 * }
-	 * ```
-	 */
-	async release(): Promise<void> {
-		if (this.#released) {
-			return
+	update(options: UpdateSemaphoreOptions, signal?: AbortSignal): Promise<void> {
+		return this.#runtime.updateSemaphore(this.#name, options, signal)
+	}
+
+	delete(options?: DeleteSemaphoreOptions, signal?: AbortSignal): Promise<void> {
+		return this.#runtime.deleteSemaphore(this.#name, options, signal)
+	}
+
+	async acquire(options?: AcquireSemaphoreOptions, signal?: AbortSignal): Promise<Lease> {
+		let normalizedOptions: AcquireSemaphoreOptions | undefined
+
+		if (options) {
+			normalizedOptions = {
+				...options,
+			}
+
+			if (options.count !== undefined) {
+				normalizedOptions.count = toCount(options.count)
+			}
+
+			if (options.waitTimeout !== undefined) {
+				normalizedOptions.waitTimeout = toCount(options.waitTimeout, 0n)
+			}
 		}
 
-		dbg.log('releasing distributed lock: %s', this.#lock.name)
+		let lease = await this.#runtime.acquireSemaphore(this.#name, normalizedOptions, signal)
+		return new Lease(this.#name, lease)
+	}
+
+	async tryAcquire(
+		options?: AcquireSemaphoreOptions,
+		signal?: AbortSignal
+	): Promise<Lease | null> {
+		let nextOptions: AcquireSemaphoreOptions = {
+			...options,
+			waitTimeout: options?.waitTimeout === undefined ? 0n : toCount(options.waitTimeout, 0n),
+		}
+
+		if (options?.count !== undefined) {
+			nextOptions.count = toCount(options.count)
+		}
 
 		try {
-			await this.#lock.release()
-		} finally {
-			await this.#session.close()
-			this.#released = true
-		}
+			let lease = await this.#runtime.acquireSemaphore(this.#name, nextOptions, signal)
+			return new Lease(this.#name, lease)
+		} catch (error) {
+			if (isTryAcquireMiss(error)) {
+				return null
+			}
 
-		dbg.log('distributed lock released: %s', this.#lock.name)
+			throw error
+		}
 	}
 
-	/**
-	 * Automatically releases the lock and closes the session when disposed
-	 */
-	async [Symbol.asyncDispose](): Promise<void> {
-		if (!this.#released) {
-			dbg.log(
-				'auto-releasing distributed lock via Symbol.asyncDispose: %s',
-				this.#lock.name
-			)
-			await this.release()
-		}
+	describe(
+		options?: DescribeSemaphoreOptions,
+		signal?: AbortSignal
+	): Promise<SemaphoreDescription> {
+		return this.#runtime.describeSemaphore(this.#name, options, signal)
+	}
+
+	watch(
+		options?: WatchSemaphoreOptions,
+		signal?: AbortSignal
+	): AsyncIterable<SemaphoreDescription> {
+		return this.#runtime.watchSemaphore(this.#name, options, signal)
 	}
 }

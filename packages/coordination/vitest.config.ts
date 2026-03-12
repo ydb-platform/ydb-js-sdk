@@ -6,6 +6,16 @@ export default defineProject({
 			{
 				test: {
 					name: {
+						label: 'uni',
+						color: 'yellow',
+					},
+					include: ['src/**/*.test.ts'],
+					environment: 'node',
+				},
+			},
+			{
+				test: {
+					name: {
 						label: 'int',
 						color: 'blue',
 					},
@@ -16,5 +26,6 @@ export default defineProject({
 				},
 			},
 		],
+		passWithNoTests: true,
 	},
 })
