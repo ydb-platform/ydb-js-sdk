@@ -40,6 +40,20 @@ export interface EffectRuntime<S, E extends MachineEvent, O> extends TransitionR
 	close(reason?: unknown): Promise<void>
 	/** Immediately halts the machine, dropping any pending events. */
 	destroy(reason?: unknown): Promise<void>
+	/**
+	 * Ingests an async iterable source, mapping each item to an event (or `null` to skip).
+	 * Stops automatically when the machine closes, the source ends, or the returned handle is disposed.
+	 *
+	 * Available in effect handlers so that effects can start stream ingestion without
+	 * needing a direct reference to the full {@link MachineRuntime}.
+	 *
+	 * @throws If the machine is already closed or destroyed.
+	 */
+	ingest<T>(
+		source: AsyncIterable<T>,
+		map: (input: T) => E | null,
+		signal?: AbortSignal
+	): IngestHandle
 }
 
 /**
@@ -168,7 +182,7 @@ export type RuntimeOptions<
 	effects: EffectHandlers<S, LC, RC, E, FX, O>
 }
 
-/** Handle returned by {@link MachineRuntime.ingest} — dispose to stop ingestion. */
+/** Handle returned by {@link MachineRuntime.ingest} and {@link EffectRuntime.ingest} — dispose to stop ingestion. */
 export interface IngestHandle extends AsyncDisposable {}
 
 /**
