@@ -38,7 +38,6 @@ import type {
 	LeaseRuntime,
 	SemaphoreDescription,
 	SemaphoreRuntime,
-	UpdateSemaphoreOptions,
 	WatchSemaphoreOptions,
 } from './semaphore-runtime.js'
 import * as assert from 'node:assert'
@@ -827,11 +826,7 @@ export function createRuntime(
 				response.response.value.issues
 			)
 		},
-		async updateSemaphore(
-			name: string,
-			updateOptions: UpdateSemaphoreOptions,
-			signal?: AbortSignal
-		): Promise<void> {
+		async updateSemaphore(name: string, data: Uint8Array, signal?: AbortSignal): Promise<void> {
 			let ctx = sessionCtx()
 			let reqId = ctx.requests.nextReqId()
 			let response = await request(
@@ -843,7 +838,7 @@ export function createRuntime(
 						value: create(SessionRequest_UpdateSemaphoreSchema, {
 							reqId,
 							name,
-							data: updateOptions.data ?? new Uint8Array(),
+							data,
 						}),
 					},
 				},

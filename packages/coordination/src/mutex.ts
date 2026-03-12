@@ -1,42 +1,19 @@
 import type { CoordinationSession } from './session.js'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import { isTryAcquireMiss } from './internal/try-acquire.js'
-import type { LeaseRuntime } from './runtime/semaphore-runtime.js'
+import { Lease } from './semaphore.js'
 import type { SessionRuntime } from './runtime/session-runtime.js'
 
+// Ephemeral semaphores in YDB have a server-hardcoded limit of MAX_UINT64.
+// Mutex exclusivity is achieved by acquiring all tokens at once — no other
+// session can acquire even a single token while they are all held.
+// When the lease is released the ephemeral semaphore is deleted automatically.
 let mutexCapacity = 2n ** 64n - 1n
 
-export class Lock implements AsyncDisposable {
-	#name: string
-	#runtime: LeaseRuntime
-	#released = false
-
-	constructor(name: string, runtime: LeaseRuntime) {
-		this.#name = name
-		this.#runtime = runtime
-	}
-
-	get name(): string {
-		return this.#name
-	}
-
-	get signal(): AbortSignal {
-		return this.#runtime.signal
-	}
-
-	async release(signal?: AbortSignal): Promise<void> {
-		if (this.#released) {
-			return
-		}
-
-		await this.#runtime.release(signal)
-		this.#released = true
-	}
-
-	async [Symbol.asyncDispose](): Promise<void> {
-		await this.release()
-	}
-}
+// Lock is the public name for a held mutex token.
+// Extends Lease so the implementation lives in one place — the only difference
+// is the type name, which keeps the public API expressive.
+export class Lock extends Lease {}
 
 export class Mutex {
 	#name: string
@@ -52,11 +29,9 @@ export class Mutex {
 	}
 
 	async lock(signal?: AbortSignal): Promise<Lock> {
-		await this.#ensureSemaphore(signal)
-
 		let lease = await this.#runtime.acquireSemaphore(
 			this.#name,
-			{ count: mutexCapacity },
+			{ count: mutexCapacity, ephemeral: true },
 			signal
 		)
 
@@ -64,15 +39,10 @@ export class Mutex {
 	}
 
 	async tryLock(signal?: AbortSignal): Promise<Lock | null> {
-		await this.#ensureSemaphore(signal)
-
 		try {
 			let lease = await this.#runtime.acquireSemaphore(
 				this.#name,
-				{
-					count: mutexCapacity,
-					waitTimeout: 0,
-				},
+				{ count: mutexCapacity, ephemeral: true, waitTimeout: 0 },
 				signal
 			)
 
@@ -85,26 +55,4 @@ export class Mutex {
 			throw error
 		}
 	}
-
-	async #ensureSemaphore(signal?: AbortSignal): Promise<void> {
-		try {
-			await this.#runtime.createSemaphore(
-				this.#name,
-				{
-					limit: mutexCapacity,
-				},
-				signal
-			)
-			return
-		} catch {
-			let description = await this.#runtime.describeSemaphore(this.#name, undefined, signal)
-			if (description.limit !== mutexCapacity) {
-				throw new Error('Mutex semaphore has incompatible limit')
-			}
-		}
-	}
-}
-
-export let createMutex = function createMutex(session: CoordinationSession, name: string): Mutex {
-	return new Mutex(session, name)
 }

@@ -73,7 +73,7 @@ When a session dies beyond the recovery window:
 4. The `for await` loop in `openSession()` catches the end and yields a new live session
 5. Everything restarts cleanly from the next iteration
 
-During a transient disconnect within `recoveryWindowMs`, the session reconnects transparently. `session.signal` does **not** abort. All signals remain valid. Work continues uninterrupted.
+During a transient disconnect within `recoveryWindow`, the session reconnects transparently. `session.signal` does **not** abort. All signals remain valid. Work continues uninterrupted.
 
 ---
 
@@ -92,21 +92,21 @@ All runtime objects derived from that session are scoped to the same server sess
 
 If the server session dies, all derived objects become invalid.
 
-### Recovery window (`recoveryWindowMs`)
+### Recovery window (`recoveryWindow`)
 
-`recoveryWindowMs` is the SDK-level recovery window for restoring the same server session after transport loss.
+`recoveryWindow` is the SDK-level recovery window for restoring the same server session after transport loss.
 
-On the wire, `recoveryWindowMs` is mapped to the protocol field `timeoutMillis` in `SessionStart`.
+On the wire, `recoveryWindow` is mapped to the protocol field `timeoutMillis` in `SessionStart`.
 
-- If transport is restored **within** `recoveryWindowMs`, the client continues the **same** server session.
-- If transport is not restored within `recoveryWindowMs`, the server session is dead and cannot be resumed.
+- If transport is restored **within** `recoveryWindow`, the client continues the **same** server session.
+- If transport is not restored within `recoveryWindow`, the server session is dead and cannot be resumed.
 - After that boundary, only a **new** session can be created.
 
 ### Behavior during transient disconnects
 
 Transport disconnect/reconnect is normal in a distributed fault-tolerant system and is not treated as session death by itself.
 
-While reconnecting within `recoveryWindowMs`, implementation **MUST** preserve:
+While reconnecting within `recoveryWindow`, implementation **MUST** preserve:
 
 - the same session identity
 - non-aborted `session.signal`
@@ -127,7 +127,7 @@ After terminal death, this session object must not become live again.
 
 ### Retry boundary
 
-Retry is allowed only for transport recovery of a still-alive server session (inside `recoveryWindowMs`).
+Retry is allowed only for transport recovery of a still-alive server session (inside `recoveryWindow`).
 
 Retry is not allowed after confirmed server-side session death.
 
@@ -169,7 +169,7 @@ interface CoordinationClient {
   describeNode(path: string, signal?: AbortSignal): Promise<CoordinationNodeDescription>
 
   // Single-lifecycle API (manual control):
-  // - reconnects while server session is alive (within recoveryWindowMs)
+  // - reconnects while server session is alive (within recoveryWindow)
   // - becomes terminal when server session expires
   // - does not auto-create a replacement lifecycle
   createSession(
@@ -208,7 +208,7 @@ A session is a bidirectional gRPC stream to a coordination node. All semaphore o
 
 In `createSession()` mode, the returned object represents a single server-session lifecycle:
 
-- reconnects and retries transport while still inside `recoveryWindowMs`
+- reconnects and retries transport while still inside `recoveryWindow`
 - preserves the same session identity within that recovery window
 - transitions to terminal `expired` state when server session death is confirmed
 - never auto-restarts itself after terminal expiry
@@ -555,7 +555,7 @@ interface LeaderInfo {
 
 ### Scenario 1 — Single active worker (participant only)
 
-Multiple workers compete to be the sole processor of a task queue. Only the leader processes tasks. If the leader's session expires, another worker takes over. Network blips within `recoveryWindowMs` are transparent — leadership is preserved.
+Multiple workers compete to be the sole processor of a task queue. Only the leader processes tasks. If the leader's session expires, another worker takes over. Network blips within `recoveryWindow` are transparent — leadership is preserved.
 
 ```typescript
 import { coordination } from '@ydbjs/coordination'
@@ -569,7 +569,7 @@ await client.createNode('/local/workers')
 async function runWorker(endpoint: string) {
   // openSession() automatically reconnects when a session dies beyond recoveryWindow.
   // Each iteration gets a fresh, live session.
-  for await (let session of client.openSession('/local/workers', { recoveryWindowMs: 30_000 })) {
+  for await (let session of client.openSession('/local/workers', { recoveryWindow: 30_000 })) {
     let election = session.election('task-processor-leader')
 
     try {
@@ -754,7 +754,7 @@ async function registerWorker(endpoint: string, signal: AbortSignal) {
   // The next iteration re-registers automatically.
   for await (let session of client.openSession(
     '/local/api-service',
-    { recoveryWindowMs: 15_000 },
+    { recoveryWindow: 15_000 },
     signal
   )) {
     let semaphore = session.semaphore('endpoints')
@@ -930,7 +930,7 @@ The `ABORTED` status code from the server (for a still-pending acquire that was 
 
 ### `openSession()` — AsyncIterable as reconnect primitive
 
-Session expiry is a normal event in a distributed system, not an exception. `openSession()` models this explicitly: each iteration of the loop is a live, ready session. When a session dies beyond `recoveryWindowMs`, the loop automatically yields the next session. The caller's code is just a regular `for await` — no event handlers, no manual retry logic, no state machines.
+Session expiry is a normal event in a distributed system, not an exception. `openSession()` models this explicitly: each iteration of the loop is a live, ready session. When a session dies beyond `recoveryWindow`, the loop automatically yields the next session. The caller's code is just a regular `for await` — no event handlers, no manual retry logic, no state machines.
 
 `createSession()` still exists for cases where you want manual control (admin scripts, one-shot operations, tests).
 
@@ -944,7 +944,7 @@ There are two distinct failure modes:
 
 |                  | Transient disconnect        | Session expiry                   |
 | ---------------- | --------------------------- | -------------------------------- |
-| Duration         | Within `recoveryWindowMs`   | Beyond `recoveryWindowMs`        |
+| Duration         | Within `recoveryWindow`     | Beyond `recoveryWindow`          |
 | `session.signal` | Does **not** abort          | Aborts                           |
 | Semaphore state  | Preserved on server         | Released by server               |
 | Caller impact    | Transparent, work continues | All derived signals abort        |

@@ -125,13 +125,8 @@ test('delete removes a pending request silently', async () => {
 	// The deferred promise itself is never settled — that's intentional.
 	// Attach a no-op race so we can confirm nothing settled synchronously.
 	let settled = false
-	deferred.promise
-		.then(() => {
-			settled = true
-		})
-		.catch(() => {
-			settled = true
-		})
+	deferred.promise.finally(() => (settled = true))
+
 	await Promise.resolve()
 	expect(settled).toBe(false)
 })
