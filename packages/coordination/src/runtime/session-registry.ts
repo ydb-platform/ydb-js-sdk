@@ -17,19 +17,20 @@ export class SessionReconnectError extends Error {
 }
 
 export let createDeferred = function createDeferred<T>(): Deferred<T> {
-	let promise = Promise.withResolvers<T>()
+	let resolve!: (value: T | PromiseLike<T>) => void
+	let reject!: (reason?: unknown) => void
+	let promise = new Promise<T>((res, rej) => {
+		resolve = res
+		reject = rej
+	})
 
 	// Attach a no-op catch so that if the deferred is rejected while nobody is
 	// awaiting it (e.g. before the first waitReady() call), Node.js does not
 	// raise an UnhandledPromiseRejection.  Callers that do await the promise
 	// still receive the rejection normally through their own chain.
-	promise.promise.catch(() => {})
+	promise.catch(() => {})
 
-	return {
-		promise: promise.promise,
-		resolve: promise.resolve,
-		reject: promise.reject,
-	}
+	return { promise, resolve, reject }
 }
 
 type PendingRequest = {
