@@ -1,5 +1,5 @@
 {
-	"name": "coordination-example",
+	"name": "@ydbjs/examples-coordination",
 	"version": "1.0.0",
 	"private": true,
 	"type": "module",
