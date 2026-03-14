@@ -1,8 +1,11 @@
 import type { CoordinationSession } from './session.js'
+import { loggers } from '@ydbjs/debug'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import { isTryAcquireMiss } from './internal/try-acquire.js'
 import { Lease } from './semaphore.js'
 import type { SessionRuntime } from './runtime/session-runtime.js'
+
+let dbg = loggers.coordination.extend('mutex')
 
 // Ephemeral semaphores in YDB have a server-hardcoded limit of MAX_UINT64.
 // Mutex exclusivity is achieved by acquiring all tokens at once — no other
@@ -29,16 +32,19 @@ export class Mutex {
 	}
 
 	async lock(signal?: AbortSignal): Promise<Lock> {
+		dbg.log('waiting to acquire lock on %s', this.#name)
 		let lease = await this.#runtime.acquireSemaphore(
 			this.#name,
 			{ count: mutexCapacity, ephemeral: true },
 			signal
 		)
 
+		dbg.log('lock acquired on %s', this.#name)
 		return new Lock(this.#name, lease)
 	}
 
 	async tryLock(signal?: AbortSignal): Promise<Lock | null> {
+		dbg.log('trying to acquire lock on %s without waiting', this.#name)
 		try {
 			let lease = await this.#runtime.acquireSemaphore(
 				this.#name,
@@ -46,9 +52,11 @@ export class Mutex {
 				signal
 			)
 
+			dbg.log('lock acquired on %s', this.#name)
 			return new Lock(this.#name, lease)
 		} catch (error) {
 			if (isTryAcquireMiss(error)) {
+				dbg.log('%s is already locked, skipping', this.#name)
 				return null
 			}
 

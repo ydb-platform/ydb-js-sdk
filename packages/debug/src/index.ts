@@ -6,6 +6,7 @@ import debug from 'debug'
  */
 export type YDBLogCategory =
 	| 'auth'
+	| 'coordination'
 	| 'driver'
 	| 'error'
 	| 'grpc'
@@ -56,6 +57,7 @@ export class YDBDebugLogger {
 // Sorted for consistency and maintainability
 export let loggers = {
 	auth: new YDBDebugLogger('ydbjs:auth'),
+	coordination: new YDBDebugLogger('ydbjs:coordination'),
 	driver: new YDBDebugLogger('ydbjs:driver'),
 	error: new YDBDebugLogger('ydbjs:error'),
 	grpc: new YDBDebugLogger('ydbjs:grpc'),

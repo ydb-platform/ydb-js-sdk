@@ -42,7 +42,7 @@ import type {
 } from './semaphore-runtime.js'
 import * as assert from 'node:assert'
 
-let dbg = loggers.topic.extend('coordination').extend('session-runtime')
+let dbg = loggers.coordination.extend('session')
 
 type SessionStreamRequest = {
 	request: {
@@ -641,6 +641,9 @@ let request = async function request(
 			// Retryable: the stream dropped while waiting for a response.
 			// Loop back to waitReady so the request is re-sent after reconnect.
 			if (error instanceof SessionReconnectError) {
+				dbg.log(
+					'request interrupted by reconnect, waiting for session to recover before retrying'
+				)
 				continue
 			}
 
@@ -676,6 +679,7 @@ export function createRuntime(
 				await closeStream(ctx)
 			},
 			'session.effect.stream.send_stop': (ctx) => {
+				dbg.log('gracefully closing session %s on %s', ctx.sessionId, ctx.options.path)
 				// Prevent new requests from being registered during graceful close.
 				ctx.requests.close()
 				sendStop(ctx)
@@ -684,13 +688,21 @@ export function createRuntime(
 				sendPong(ctx, effect.opaque)
 			},
 			'session.effect.timer.schedule_start_timeout': (ctx, _effect, runtime) => {
+				let timeoutMs = ctx.options.startTimeout ?? 3_000
+				dbg.log(
+					'waiting up to %dms for server to accept session on %s',
+					timeoutMs,
+					ctx.options.path
+				)
 				ctx.timerStartTimeout = clearTimer(ctx.timerStartTimeout)
 				ctx.timerStartTimeout = setTimeout(() => {
 					ctx.timerStartTimeout = null
 					runtime.dispatch({ type: 'session.timer.start_timeout' })
-				}, ctx.options.startTimeout ?? 3_000)
+				}, timeoutMs)
 			},
 			'session.effect.timer.schedule_retry_backoff': (ctx, _effect, runtime) => {
+				let backoffMs = ctx.options.retryBackoff ?? 30
+				dbg.log('disconnected from %s, retrying in %dms', ctx.options.path, backoffMs)
 				// Reject in-flight requests so they can retry after reconnect.
 				ctx.requests.reconnect()
 
@@ -705,18 +717,24 @@ export function createRuntime(
 				ctx.timerRetryBackoff = setTimeout(() => {
 					ctx.timerRetryBackoff = null
 					runtime.dispatch({ type: 'session.timer.retry_backoff_elapsed' })
-				}, ctx.options.retryBackoff ?? 30)
+				}, backoffMs)
 			},
 			'session.effect.timer.schedule_recovery_window': (ctx, _effect, runtime) => {
 				if (ctx.timerRecoveryWindow) {
 					return
 				}
 
+				let windowMs = ctx.options.recoveryWindow ?? 30_000
+				dbg.log(
+					'recovery window started (%dms) — session expires if not reconnected in time on %s',
+					windowMs,
+					ctx.options.path
+				)
 				ctx.timerRecoveryWindow = clearTimer(ctx.timerRecoveryWindow)
 				ctx.timerRecoveryWindow = setTimeout(() => {
 					ctx.timerRecoveryWindow = null
 					runtime.dispatch({ type: 'session.timer.recovery_window_expired' })
-				}, ctx.options.recoveryWindow ?? 30_000)
+				}, windowMs)
 			},
 			'session.effect.timer.clear_start_timeout': (ctx) => {
 				ctx.timerStartTimeout = clearTimer(ctx.timerStartTimeout)
@@ -728,21 +746,28 @@ export function createRuntime(
 				ctx.timerRecoveryWindow = clearTimer(ctx.timerRecoveryWindow)
 			},
 			'session.effect.runtime.restore_after_reconnect': (ctx) => {
-				dbg.log('restoring runtime after reconnect')
+				dbg.log(
+					'reconnected to %s, notifying %d active semaphore watches to re-read',
+					ctx.options.path,
+					ctx.watchesByName.size
+				)
 				for (let watch of ctx.watchesByName.values()) {
 					watch.queue.push({ dataChanged: false, ownersChanged: false })
 				}
 			},
 			'session.effect.runtime.emit_error': (_ctx, effect) => {
-				dbg.log('session runtime error: %O', effect.error)
+				dbg.log('session terminated with error: %O', effect.error)
 			},
 			'session.effect.runtime.mark_ready': async (ctx, effect) => {
+				dbg.log('session ready on %s (id=%s)', ctx.options.path, effect.sessionId)
 				await markReady(ctx, effect.sessionId)
 			},
 			'session.effect.runtime.mark_closed': async (ctx, effect) => {
+				dbg.log('session closed on %s', ctx.options.path)
 				await markClosed(ctx, effect.reason)
 			},
 			'session.effect.runtime.mark_expired': async (ctx, effect) => {
+				dbg.log('session expired on %s: %O', ctx.options.path, effect.reason)
 				await markExpired(ctx, effect.reason)
 			},
 		},
@@ -754,11 +779,13 @@ export function createRuntime(
 
 	if (outerSignal) {
 		if (outerSignal.aborted) {
+			dbg.log('not starting session on %s: cancellation signal already fired', options.path)
 			machineRuntime.dispatch({ type: 'session.destroy', reason: outerSignal.reason })
 		} else {
 			outerSignal.addEventListener(
 				'abort',
 				() => {
+					dbg.log('cancellation signal fired, stopping session on %s', options.path)
 					machineRuntime.dispatch({ type: 'session.destroy', reason: outerSignal.reason })
 				},
 				{ once: true }
@@ -766,6 +793,11 @@ export function createRuntime(
 		}
 	}
 
+	dbg.log(
+		'starting coordination session on %s (recoveryWindow=%dms)',
+		options.path,
+		options.recoveryWindow ?? 30_000
+	)
 	machineRuntime.dispatch({ type: 'session.start' })
 
 	return {
@@ -783,12 +815,14 @@ export function createRuntime(
 			return waitReady(sessionCtx(), signal)
 		},
 		close(signal?: AbortSignal): Promise<void> {
+			dbg.log('closing session %s on %s', machineRuntime.ctx.sessionId, options.path)
 			machineRuntime.dispatch({ type: 'session.close' })
 			let ctx = sessionCtx()
 			let targetSignal = createRuntimeSignal(ctx.signalController.signal, signal)
 			return abortable(targetSignal, ctx.closedDeferred.promise)
 		},
 		destroy(reason?: unknown): void {
+			dbg.log('destroying session %s on %s', machineRuntime.ctx.sessionId, options.path)
 			machineRuntime.dispatch({ type: 'session.destroy', reason })
 		},
 		async createSemaphore(
@@ -796,6 +830,7 @@ export function createRuntime(
 			createOptions: CreateSemaphoreOptions,
 			signal?: AbortSignal
 		): Promise<void> {
+			dbg.log('creating semaphore %s (limit=%s)', name, createOptions.limit)
 			let ctx = sessionCtx()
 			let reqId = ctx.requests.nextReqId()
 			let response = await request(
@@ -828,6 +863,7 @@ export function createRuntime(
 			)
 		},
 		async updateSemaphore(name: string, data: Uint8Array, signal?: AbortSignal): Promise<void> {
+			dbg.log('updating semaphore %s data (%d bytes)', name, data.byteLength)
 			let ctx = sessionCtx()
 			let reqId = ctx.requests.nextReqId()
 			let response = await request(
@@ -860,6 +896,7 @@ export function createRuntime(
 			deleteOptions?: DeleteSemaphoreOptions,
 			signal?: AbortSignal
 		): Promise<void> {
+			dbg.log('deleting semaphore %s%s', name, deleteOptions?.force ? ' (force)' : '')
 			let ctx = sessionCtx()
 			let reqId = ctx.requests.nextReqId()
 			let response = await request(
@@ -892,6 +929,13 @@ export function createRuntime(
 			acquireOptions?: AcquireSemaphoreOptions,
 			signal?: AbortSignal
 		): Promise<LeaseRuntime> {
+			dbg.log(
+				'acquiring semaphore %s (count=%s%s%s)',
+				name,
+				acquireOptions?.count ?? 1,
+				acquireOptions?.ephemeral ? ', ephemeral' : '',
+				acquireOptions?.waitTimeout ? `, waitTimeout=${acquireOptions.waitTimeout}ms` : ''
+			)
 			let ctx = sessionCtx()
 			let normalized = {
 				data: acquireOptions?.data ?? new Uint8Array(),
@@ -947,6 +991,7 @@ export function createRuntime(
 				ctx.signalController.signal,
 				leaseSignalController.signal,
 			])
+			dbg.log('acquired semaphore %s', name)
 			let releaseDeferred = createDeferred<void>()
 			let releaseStarted = false
 			let releaseFinished = false
@@ -967,6 +1012,7 @@ export function createRuntime(
 					}
 
 					releaseStarted = true
+					dbg.log('releasing semaphore %s', name)
 
 					let releaseCtx = sessionCtx()
 					let releaseReqId = releaseCtx.requests.nextReqId()
@@ -998,9 +1044,11 @@ export function createRuntime(
 						)
 
 						releaseFinished = true
+						dbg.log('released semaphore %s', name)
 						leaseSignalController.abort(new Error('Semaphore lease released'))
 						releaseDeferred.resolve()
 					} catch (error) {
+						dbg.log('failed to release semaphore %s: %O', name, error)
 						leaseSignalController.abort(error)
 						releaseDeferred.reject(error)
 						throw error
@@ -1013,6 +1061,7 @@ export function createRuntime(
 			describeOptions?: DescribeSemaphoreOptions,
 			signal?: AbortSignal
 		): Promise<SemaphoreDescription> {
+			dbg.log('describing semaphore %s', name)
 			let ctx = sessionCtx()
 			let reqId = ctx.requests.nextReqId()
 			let response = await request(
@@ -1075,6 +1124,7 @@ export function createRuntime(
 			watchOptions?: WatchSemaphoreOptions,
 			signal?: AbortSignal
 		): AsyncIterable<SemaphoreDescription> {
+			dbg.log('watching semaphore %s for changes', name)
 			let ctx = sessionCtx()
 			let signalController = new AbortController()
 			let queue = new AsyncQueue<WatchChange>()
@@ -1085,6 +1135,7 @@ export function createRuntime(
 			}
 			let previous = ctx.watchesByName.get(name)
 			if (previous) {
+				dbg.log('replacing existing watch on semaphore %s', name)
 				closeWatchRegistration(ctx, name, previous, new Error('Semaphore watch replaced'))
 			}
 
@@ -1188,9 +1239,11 @@ export function createRuntime(
 						throw watchSignal.reason
 					}
 
+					dbg.log('semaphore %s changed, re-reading state', name)
 					yield await abortable(watchSignal, readDescription())
 				}
 			} finally {
+				dbg.log('stopped watching semaphore %s', name)
 				cleanup(new Error('Semaphore watch closed'))
 			}
 		},

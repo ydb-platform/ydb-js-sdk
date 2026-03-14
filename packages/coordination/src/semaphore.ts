@@ -1,6 +1,9 @@
 import type { CoordinationSession } from './session.js'
+import { loggers } from '@ydbjs/debug'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import { isTryAcquireMiss } from './internal/try-acquire.js'
+
+let dbg = loggers.coordination.extend('semaphore')
 import {
 	type AcquireSemaphoreOptions,
 	type CreateSemaphoreOptions,
@@ -54,6 +57,7 @@ export class Lease implements AsyncDisposable {
 			return
 		}
 
+		dbg.log('releasing lease on %s', this.#name)
 		this.#released = true
 		await this.#runtime.release(signal)
 	}
@@ -77,6 +81,7 @@ export class Semaphore {
 	}
 
 	create(options: CreateSemaphoreOptions, signal?: AbortSignal): Promise<void> {
+		dbg.log('creating %s (limit=%s)', this.#name, options.limit)
 		return this.#runtime.createSemaphore(
 			this.#name,
 			{ ...options, limit: toCount(options.limit) },
@@ -85,19 +90,23 @@ export class Semaphore {
 	}
 
 	update(data: Uint8Array, signal?: AbortSignal): Promise<void> {
+		dbg.log('updating data on %s (%d bytes)', this.#name, data.byteLength)
 		return this.#runtime.updateSemaphore(this.#name, data, signal)
 	}
 
 	delete(options?: DeleteSemaphoreOptions, signal?: AbortSignal): Promise<void> {
+		dbg.log('deleting %s%s', this.#name, options?.force ? ' (force)' : '')
 		return this.#runtime.deleteSemaphore(this.#name, options, signal)
 	}
 
 	async acquire(options?: AcquireSemaphoreOptions, signal?: AbortSignal): Promise<Lease> {
+		dbg.log('waiting to acquire %s (count=%s)', this.#name, options?.count ?? 1)
 		let lease = await this.#runtime.acquireSemaphore(
 			this.#name,
 			normalizeAcquireOptions(options),
 			signal
 		)
+		dbg.log('acquired %s', this.#name)
 		return new Lease(this.#name, lease)
 	}
 
@@ -109,11 +118,14 @@ export class Semaphore {
 		// blocking — the caller gets null rather than waiting indefinitely.
 		let normalized = normalizeAcquireOptions({ ...options, waitTimeout: 0n })
 
+		dbg.log('trying to acquire %s without waiting (count=%s)', this.#name, options?.count ?? 1)
 		try {
 			let lease = await this.#runtime.acquireSemaphore(this.#name, normalized, signal)
+			dbg.log('acquired %s', this.#name)
 			return new Lease(this.#name, lease)
 		} catch (error) {
 			if (isTryAcquireMiss(error)) {
+				dbg.log('%s is already held, skipping', this.#name)
 				return null
 			}
 

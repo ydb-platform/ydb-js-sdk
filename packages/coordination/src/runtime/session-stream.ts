@@ -14,7 +14,7 @@ import type { CoordinationSessionOptions } from './session-options.js'
 import { type SessionRequestRegistry } from './session-registry.js'
 import { type SessionEvent, type SessionOutput, type SessionState } from './session-state.js'
 
-let dbg = loggers.topic.extend('coordination').extend('session-stream')
+let dbg = loggers.coordination.extend('stream')
 
 // ── exported types ─────────────────────────────────────────────────────────────
 
@@ -79,7 +79,6 @@ let isAbortError = function isAbortError(error: unknown): boolean {
 export let sendRequest = function sendRequest(ctx: StreamCtx, request: SessionStreamRequest): void {
 	let input = ctx.streamInput
 	if (!input || input.isClosed || input.isDestroyed) {
-		dbg.log('stream request skipped, input unavailable: %s', request.request.case)
 		return
 	}
 
@@ -87,6 +86,12 @@ export let sendRequest = function sendRequest(ctx: StreamCtx, request: SessionSt
 }
 
 export let sendStart = function sendStart(ctx: StreamCtx): void {
+	dbg.log(
+		'starting session on %s (sessionId=%s, recoveryWindow=%dms)',
+		ctx.options.path,
+		ctx.sessionId ?? 'new',
+		ctx.options.recoveryWindow ?? 30_000
+	)
 	sendRequest(ctx, {
 		request: {
 			case: 'sessionStart',
@@ -103,6 +108,7 @@ export let sendStart = function sendStart(ctx: StreamCtx): void {
 }
 
 export let sendStop = function sendStop(ctx: StreamCtx): void {
+	dbg.log('requesting graceful session stop on %s', ctx.options.path)
 	sendRequest(ctx, {
 		request: {
 			case: 'sessionStop',
@@ -158,6 +164,12 @@ export let routeResponse = function routeResponse(
 				active.reqId === response.response.value.reqId &&
 				active.queue === watcher.queue
 			) {
+				dbg.log(
+					'semaphore %s changed (dataChanged=%s, ownersChanged=%s)',
+					watcher.name,
+					response.response.value.dataChanged,
+					response.response.value.ownersChanged
+				)
 				watcher.queue.push({
 					dataChanged: response.response.value.dataChanged,
 					ownersChanged: response.response.value.ownersChanged,
@@ -184,6 +196,7 @@ export let routeResponse = function routeResponse(
 	}
 
 	if (response.response.case === 'sessionStarted') {
+		dbg.log('session established (sessionId=%s)', response.response.value.sessionId)
 		return {
 			type: 'session.stream.response.started',
 			sessionId: response.response.value.sessionId,
@@ -191,6 +204,7 @@ export let routeResponse = function routeResponse(
 	}
 
 	if (response.response.case === 'sessionStopped') {
+		dbg.log('session stopped by server (sessionId=%s)', response.response.value.sessionId)
 		return {
 			type: 'session.stream.response.stopped',
 			sessionId: response.response.value.sessionId,
@@ -198,6 +212,7 @@ export let routeResponse = function routeResponse(
 	}
 
 	if (response.response.case === 'failure') {
+		dbg.log('server reported failure (status=%s)', response.response.value.status)
 		return {
 			type: 'session.stream.response.failure',
 			status: response.response.value.status as StatusIds_StatusCode,
@@ -215,11 +230,10 @@ export let openStream = async function openStream(
 	runtime: EffectRuntime<SessionState, SessionEvent, SessionOutput>
 ): Promise<void> {
 	if (ctx.streamIngest) {
-		dbg.log('stream open skipped, ingest already active')
 		return
 	}
 
-	dbg.log('opening session stream for path: %s', ctx.options.path)
+	dbg.log('connecting to %s', ctx.options.path)
 
 	let streamInput = new AsyncQueue<SessionStreamRequest>()
 	let streamAbortController = new AbortController()
@@ -284,6 +298,8 @@ export let closeStream = async function closeStream(ctx: StreamCtx): Promise<voi
 	let ingest = ctx.streamIngest
 	ctx.streamIngest = null
 
+	dbg.log('disconnecting from %s', ctx.options.path)
+
 	// Abort the stream transport signal first so the source generator unblocks
 	// from its grpcStream read.  The ingest task's combined signal includes
 	// streamAbortController.signal, so aborting here lets the ingest loop exit
@@ -302,4 +318,6 @@ export let closeStream = async function closeStream(ctx: StreamCtx): Promise<voi
 	if (ingest) {
 		await ingest[Symbol.asyncDispose]()
 	}
+
+	dbg.log('disconnected from %s', ctx.options.path)
 }

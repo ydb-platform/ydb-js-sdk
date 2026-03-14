@@ -1,9 +1,12 @@
 import type { Driver } from '@ydbjs/core'
+import { loggers } from '@ydbjs/debug'
 
 import { CoordinationNodeRuntime } from './runtime/node-runtime.js'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import type { CoordinationNodeConfig, CoordinationNodeDescription } from './runtime/node-runtime.js'
 import { CoordinationSession } from './session.js'
+
+let dbg = loggers.coordination.extend('client')
 
 export interface SessionOptions {
 	description?: string
@@ -46,12 +49,15 @@ export class CoordinationClient {
 			throw signal.reason
 		}
 
+		dbg.log('creating session on %s', path)
 		let session = new CoordinationSession(this.#driver, { path, ...options }, signal)
 
 		try {
 			await getSessionRuntime(session).waitReady(signal)
+			dbg.log('session ready on %s (id=%s)', path, session.sessionId)
 			return session
 		} catch (error) {
+			dbg.log('failed to open session on %s: %O', path, error)
 			session.destroy(error)
 			throw error
 		}
@@ -62,6 +68,7 @@ export class CoordinationClient {
 		options?: SessionOptions,
 		signal?: AbortSignal
 	): AsyncIterable<CoordinationSession> {
+		dbg.log('opening persistent session on %s', path)
 		for (;;) {
 			if (signal?.aborted) {
 				return
@@ -76,6 +83,8 @@ export class CoordinationClient {
 			if (!shouldOpenNext) {
 				return
 			}
+
+			dbg.log('session expired on %s, reopening', path)
 		}
 	}
 
