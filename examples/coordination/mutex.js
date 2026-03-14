@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { CoordinationClient } from '@ydbjs/coordination'
 import { Driver } from '@ydbjs/core'
 
@@ -26,7 +28,7 @@ async function runWorker(id, signal) {
 			await using lock = await mutex.lock()
 
 			console.log(`[worker-${id}] lock acquired — doing exclusive work`)
-			await sleep(500, lock.signal)
+			await sleep(500, undefined, { signal: lock.signal })
 			console.log(`[worker-${id}] work done, releasing`)
 
 			// await using → lock.release() called automatically here
@@ -61,7 +63,7 @@ async function tryWork(signal) {
 
 	try {
 		console.log('[tryLock] lock acquired — doing optional work')
-		await sleep(200, lock.signal)
+		await sleep(200, undefined, { signal: lock.signal })
 		console.log('[tryLock] optional work done')
 	} finally {
 		await lock.release()
@@ -95,24 +97,6 @@ async function main() {
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
-}
-
-function sleep(ms, signal) {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
-			return reject(signal.reason)
-		}
-
-		let timer = setTimeout(resolve, ms)
-		signal?.addEventListener(
-			'abort',
-			() => {
-				clearTimeout(timer)
-				reject(signal.reason)
-			},
-			{ once: true }
-		)
-	})
 }
 
 main().catch((error) => {

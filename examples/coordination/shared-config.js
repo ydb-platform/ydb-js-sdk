@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { CoordinationClient } from '@ydbjs/coordination'
 import { Driver } from '@ydbjs/core'
 
@@ -105,28 +107,10 @@ async function publishUpdates(signal) {
 
 	for (let config of configs) {
 		// oxlint-disable-next-line no-await-in-loop
-		await sleep(500, signal)
+		await sleep(500, undefined, { signal })
 		// oxlint-disable-next-line no-await-in-loop
 		await publishConfig(config, signal)
 	}
-}
-
-function sleep(ms, signal) {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
-			return reject(signal.reason)
-		}
-
-		let timer = setTimeout(resolve, ms)
-		signal?.addEventListener(
-			'abort',
-			() => {
-				clearTimeout(timer)
-				reject(signal.reason)
-			},
-			{ once: true }
-		)
-	})
 }
 
 main().catch((error) => {

@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { CoordinationClient } from '@ydbjs/coordination'
 import { Driver } from '@ydbjs/core'
 
@@ -30,14 +32,14 @@ async function runLeader(signal) {
 			console.log('[leader] elected — publishing endpoint')
 
 			// Simulate startup time before the real endpoint is known.
-			await sleep(300, session.signal)
+			await sleep(300, undefined, { signal: session.signal })
 
 			// Update leader data without re-election — all observers see it immediately.
 			await leadership.proclaim(utf8.encode('worker-a:8080'))
 			console.log('[leader] proclaimed endpoint: worker-a:8080')
 
 			// Hold leadership until the session dies or external signal fires.
-			await sleep(2_000, leadership.signal)
+			await sleep(2_000, undefined, { signal: leadership.signal })
 
 			console.log('[leader] resigning')
 			// await using → resign() called automatically here
@@ -146,24 +148,6 @@ async function main() {
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
-}
-
-function sleep(ms, signal) {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) {
-			return reject(signal.reason)
-		}
-
-		let timer = setTimeout(resolve, ms)
-		signal?.addEventListener(
-			'abort',
-			() => {
-				clearTimeout(timer)
-				reject(signal.reason)
-			},
-			{ once: true }
-		)
-	})
 }
 
 main().catch((error) => {

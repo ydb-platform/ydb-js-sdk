@@ -17,6 +17,8 @@
  * `await using` equivalent so the difference is unmistakable.
  */
 
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { CoordinationClient } from '@ydbjs/coordination'
 import { Driver } from '@ydbjs/core'
 
@@ -65,7 +67,7 @@ async function oldLockUsage(signal) {
 		let lock = await mutex.lock()
 		try {
 			console.log('[old] lock acquired, doing work')
-			await doWork(signal)
+			await sleep(200, undefined, { signal })
 		} finally {
 			await lock.release()
 		}
@@ -81,7 +83,7 @@ async function newLockUsage(signal) {
 	await using _lock = await session.mutex('job').lock()
 
 	console.log('[new] lock acquired, doing work')
-	await doWork(signal)
+	await sleep(200, undefined, { signal })
 	// lock.release()  ← called automatically
 	// session.close() ← called automatically, after lock is released
 }
@@ -129,7 +131,7 @@ async function oldMultiResource(signal) {
 			let lease = await session.semaphore('quota').acquire({ count: 1 })
 			try {
 				console.log('[old] all resources acquired')
-				await doWork(signal)
+				await sleep(200, undefined, { signal })
 			} finally {
 				await lease.release()
 			}
@@ -150,7 +152,7 @@ async function newMultiResource(signal) {
 	await using _lease = await session.semaphore('quota').acquire({ count: 1 })
 
 	console.log('[new] all resources acquired')
-	await doWork(signal)
+	await sleep(200, undefined, { signal })
 	// lease.release()  ← first
 	// lock.release()   ← second
 	// session.close()  ← last
@@ -171,7 +173,7 @@ async function campaignExample(signal) {
 			await using leadership = await election.campaign(utf8.encode('worker-a'))
 
 			console.log('[leader] elected — doing leader work')
-			await doWork(leadership.signal)
+			await sleep(200, undefined, { signal: leadership.signal })
 
 			// leadership.resign() called automatically when the block exits —
 			// whether by normal return, exception, or session expiry.
@@ -237,21 +239,6 @@ async function main() {
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
-}
-
-function doWork(signal) {
-	return new Promise((resolve, reject) => {
-		if (signal?.aborted) return reject(signal.reason)
-		let timer = setTimeout(resolve, 200)
-		signal?.addEventListener(
-			'abort',
-			() => {
-				clearTimeout(timer)
-				reject(signal.reason)
-			},
-			{ once: true }
-		)
-	})
 }
 
 main().catch((error) => {
