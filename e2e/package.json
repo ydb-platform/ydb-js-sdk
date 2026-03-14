@@ -19,6 +19,7 @@
 		"@ydbjs/error": "*",
 		"@ydbjs/query": "*",
 		"@ydbjs/retry": "*",
+		"@ydbjs/coordination": "*",
 		"@ydbjs/topic": "*",
 		"@ydbjs/value": "*"
 	},
