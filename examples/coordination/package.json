@@ -12,7 +12,7 @@
 		"resource-management": "node resource-management.js"
 	},
 	"dependencies": {
-		"@ydbjs/coordination": "^6.0.0",
+		"@ydbjs/coordination": "^6.1.0",
 		"@ydbjs/core": "^6.0.7"
 	}
 }

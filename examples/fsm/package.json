@@ -8,6 +8,6 @@
 		"start": "node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/fsm": "^6.0.0"
+		"@ydbjs/fsm": "^6.1.0"
 	}
 }
