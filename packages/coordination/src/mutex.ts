@@ -13,6 +13,11 @@ let dbg = loggers.coordination.extend('mutex')
 // When the lease is released the ephemeral semaphore is deleted automatically.
 let mutexCapacity = 2n ** 64n - 1n
 
+// Passing MAX_UINT64 as timeoutMillis tells the server to keep the request in
+// the waiters queue indefinitely.  timeoutMillis: 0 means "return immediately
+// if not available", which is the tryLock semantics — not what lock() wants.
+let waitIndefinitely = mutexCapacity
+
 // Lock is the public name for a held mutex token.
 // Extends Lease so the implementation lives in one place — the only difference
 // is the type name, which keeps the public API expressive.
@@ -35,7 +40,7 @@ export class Mutex {
 		dbg.log('waiting to acquire lock on %s', this.#name)
 		let lease = await this.#runtime.acquireSemaphore(
 			this.#name,
-			{ count: mutexCapacity, ephemeral: true },
+			{ count: mutexCapacity, ephemeral: true, waitTimeout: waitIndefinitely },
 			signal
 		)
 

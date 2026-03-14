@@ -30,6 +30,7 @@ import {
 	sessionTransition,
 } from './session-state.js'
 import type { CoordinationSessionOptions } from './session-options.js'
+import { TryAcquireMissError } from '../internal/try-acquire.js'
 import type {
 	AcquireSemaphoreOptions,
 	CreateSemaphoreOptions,
@@ -954,24 +955,51 @@ export function createRuntime(
 							: BigInt(acquireOptions.waitTimeout),
 			}
 			let reqId = ctx.requests.nextReqId()
-			let response = await request(
-				ctx,
-				reqId,
-				{
-					request: {
-						case: 'acquireSemaphore',
-						value: create(SessionRequest_AcquireSemaphoreSchema, {
-							reqId,
-							name,
-							timeoutMillis: normalized.waitTimeout,
-							count: normalized.count,
-							data: normalized.data,
-							ephemeral: normalized.ephemeral,
-						}),
-					},
+			let requestPayload = {
+				request: {
+					case: 'acquireSemaphore' as const,
+					value: create(SessionRequest_AcquireSemaphoreSchema, {
+						reqId,
+						name,
+						timeoutMillis: normalized.waitTimeout,
+						count: normalized.count,
+						data: normalized.data,
+						ephemeral: normalized.ephemeral,
+					}),
 				},
-				signal
-			)
+			}
+
+			let response = await request(ctx, reqId, requestPayload, signal)
+
+			// The server may respond with acquireSemaphorePending first to confirm
+			// that the request has been placed in the waiters queue.  We then wait
+			// for the final acquireSemaphoreResult without re-sending the request.
+			// If the session reconnects while we are waiting, the full request must
+			// be re-sent because the server has lost the in-flight waiter state.
+			while (response.response.case === 'acquireSemaphorePending') {
+				dbg.log('semaphore %s is held, waiting in queue', name)
+				let deferred = ctx.requests.register(reqId)
+				let streamSignal = createRuntimeSignal(ctx.signalController.signal, signal)
+				try {
+					// oxlint-disable-next-line no-await-in-loop
+					response = await abortable(streamSignal, deferred.promise)
+				} catch (error) {
+					ctx.requests.delete(reqId)
+					if (error instanceof SessionReconnectError) {
+						// Stream dropped — re-send the full acquire request after recovery
+						dbg.log(
+							'acquire of %s interrupted by reconnect, retrying after session recovers',
+							name
+						)
+						// oxlint-disable-next-line no-await-in-loop
+						response = await request(ctx, reqId, requestPayload, signal)
+					} else {
+						throw error
+					}
+				} finally {
+					ctx.requests.delete(reqId)
+				}
+			}
 
 			if (response.response.case !== 'acquireSemaphoreResult') {
 				throw new Error('Unexpected response for acquire semaphore')
@@ -983,7 +1011,8 @@ export function createRuntime(
 			)
 
 			if (!response.response.value.acquired) {
-				throw new Error('Try acquire miss')
+				dbg.log('semaphore %s not acquired (no capacity)', name)
+				throw new TryAcquireMissError()
 			}
 
 			let leaseSignalController = new AbortController()

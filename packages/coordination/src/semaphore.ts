@@ -3,6 +3,11 @@ import { loggers } from '@ydbjs/debug'
 import { getSessionRuntime } from './internal/session-runtime.js'
 import { isTryAcquireMiss } from './internal/try-acquire.js'
 
+// Passing MAX_UINT64 as timeoutMillis tells the server to keep the acquire
+// request in the waiters queue indefinitely.  timeoutMillis: 0 means "return
+// immediately if not available", which is tryAcquire semantics — not acquire.
+let waitIndefinitely = 2n ** 64n - 1n
+
 let dbg = loggers.coordination.extend('semaphore')
 import {
 	type AcquireSemaphoreOptions,
@@ -103,7 +108,7 @@ export class Semaphore {
 		dbg.log('waiting to acquire %s (count=%s)', this.#name, options?.count ?? 1)
 		let lease = await this.#runtime.acquireSemaphore(
 			this.#name,
-			normalizeAcquireOptions(options),
+			normalizeAcquireOptions({ waitTimeout: waitIndefinitely, ...options }),
 			signal
 		)
 		dbg.log('acquired %s', this.#name)
