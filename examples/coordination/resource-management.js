@@ -22,6 +22,7 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
+await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
@@ -174,9 +175,9 @@ async function campaignExample(signal) {
 
 			// leadership.resign() called automatically when the block exits —
 			// whether by normal return, exception, or session expiry.
-		} catch (error) {
+		} catch (e) {
 			if (session.signal.aborted) continue
-			throw error
+			throw e
 		}
 
 		break
@@ -195,10 +196,17 @@ async function main() {
 		// Node may already exist.
 	}
 
-	// Ensure semaphore for quota example exists.
+	// Ensure semaphores used by examples exist before running them.
 	try {
 		await using session = await client.createSession(nodePath, {}, ctrl.signal)
 		await session.semaphore('quota').create({ limit: 10 }, ctrl.signal)
+	} catch {
+		// May already exist.
+	}
+
+	try {
+		await using session = await client.createSession(nodePath, {}, ctrl.signal)
+		await session.semaphore('leader').create({ limit: 1 }, ctrl.signal)
 	} catch {
 		// May already exist.
 	}

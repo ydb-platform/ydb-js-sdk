@@ -3,6 +3,7 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
+await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
@@ -40,12 +41,12 @@ async function runLeader(signal) {
 
 			console.log('[leader] resigning')
 			// await using → resign() called automatically here
-		} catch {
+		} catch (e) {
 			if (session.signal.aborted) {
 				console.log('[leader] session expired, re-entering election')
 				continue
 			}
-			throw error
+			throw e
 		}
 
 		// One leadership cycle is enough for this example.
@@ -80,12 +81,12 @@ async function runFollower(signal) {
 					console.log('[follower] current leader:', endpoint)
 				}
 			}
-		} catch {
+		} catch (e) {
 			if (session.signal.aborted) {
 				console.log('[follower] session expired, reconnecting')
 				continue
 			}
-			throw error
+			throw e
 		}
 
 		break
@@ -122,6 +123,17 @@ async function main() {
 		// Node may already exist — that is fine.
 	}
 
+	// Ensure the election semaphore exists before leader and follower start.
+	// observe() calls watchSemaphore which requires the semaphore to already
+	// exist — if the follower races ahead of the leader's campaign() the
+	// server returns NOT_FOUND.
+	try {
+		await using session = await client.createSession(nodePath, {}, ctrl.signal)
+		await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
+	} catch {
+		// May already exist — that is fine.
+	}
+
 	try {
 		// Leader and follower run concurrently in the same process.
 		// In a real system they would be separate worker processes.
@@ -155,6 +167,7 @@ function sleep(ms, signal) {
 }
 
 main().catch((error) => {
+	if (error?.message === 'example timeout') return
 	console.error(error)
 	process.exit(1)
 })

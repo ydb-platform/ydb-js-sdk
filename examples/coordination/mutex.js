@@ -3,6 +3,7 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
+await driver.ready()
 let client = new CoordinationClient(driver)
 
 let nodePath = '/local/mutex-example'

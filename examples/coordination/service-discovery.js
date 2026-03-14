@@ -3,6 +3,7 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
+await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
@@ -38,12 +39,12 @@ async function runWorker(endpoint, signal) {
 
 			// await using → lease.release() called here.
 			// The endpoint disappears from the owners list immediately.
-		} catch {
+		} catch (e) {
 			if (session.signal.aborted) {
 				console.log(`[worker] ${endpoint} session expired, re-registering`)
 				continue
 			}
-			throw error
+			throw e
 		}
 
 		break
@@ -69,12 +70,12 @@ async function watchEndpoints(signal) {
 
 				console.log('[watcher] available workers:', endpoints.length ? endpoints : '(none)')
 			}
-		} catch {
+		} catch (e) {
 			if (session.signal.aborted) {
 				console.log('[watcher] session expired, reconnecting')
 				continue
 			}
-			throw error
+			throw e
 		}
 
 		break

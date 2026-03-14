@@ -3,6 +3,7 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
+await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
@@ -45,12 +46,12 @@ async function watchConfig(signal) {
 				let config = JSON.parse(text.decode(description.data))
 				console.log('[watcher] config updated:', config)
 			}
-		} catch {
+		} catch (e) {
 			if (session.signal.aborted) {
 				console.log('[watcher] session expired, reconnecting')
 				continue
 			}
-			throw error
+			throw e
 		}
 
 		break
