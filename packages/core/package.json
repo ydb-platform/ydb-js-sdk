@@ -55,7 +55,6 @@
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"@ydbjs/retry": "^6.0.0",
-		"abort-controller-x": "^0.4.3",
 		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
