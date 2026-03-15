@@ -2,8 +2,29 @@ import { defineProject } from 'vitest/config'
 
 export default defineProject({
 	test: {
-		name: 'core',
-		include: ['src/**/*.test.ts'],
-		environment: 'node',
+		projects: [
+			{
+				test: {
+					name: {
+						label: 'uni',
+						color: 'yellow',
+					},
+					include: ['src/**/*.test.ts'],
+					environment: 'node',
+				},
+			},
+			{
+				test: {
+					name: {
+						label: 'int',
+						color: 'blue',
+					},
+					include: ['tests/**/*.test.ts'],
+					environment: 'node',
+					testTimeout: 30000,
+					globalSetup: '../../vitest.setup.ydb.ts',
+				},
+			},
+		],
 	},
 })
