@@ -44,6 +44,8 @@
 	},
 	"files": [
 		"dist",
+		"!dist/.tsbuildinfo",
+		"!dist/.test.tsbuildinfo",
 		"README.md",
 		"DESIGN.md",
 		"CHANGELOG.md"
