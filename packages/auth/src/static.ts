@@ -152,7 +152,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		debug.log('starting background token refresh')
 		using linkedSignal = linkSignals(signal, AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS))
 
-		void this.#refreshToken(linkedSignal.signal)
+		await this.#refreshToken(linkedSignal.signal).catch(() => {})
 	}
 
 	/**
