@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/abortable",
-	"version": "6.0.5",
+	"version": "6.1.0",
 	"description": "Utilities for working with AbortController and AbortSignal in YDB operations.",
 	"keywords": [
 		"abort",
