@@ -1,5 +1,13 @@
 # @ydbjs/auth
 
+## 6.2.1
+
+### Patch Changes
+
+- [`9f556fe`](https://github.com/ydb-platform/ydb-js-sdk/commit/9f556fe80527a136e23ad5ff70279545f533c0a6) Thanks [@polRk](https://github.com/polRk)! - Fix `StaticCredentialsProvider` background token refresh being immediately cancelled
+
+  `#refreshTokenInBackground` previously used `void this.#refreshToken(linkedSignal.signal)` — fire-and-forget, so `using linkedSignal` stayed alive for the duration of the refresh. After the fix for the memory leak the call became `await this.#refreshToken(...)`, which caused `[Symbol.dispose]` to run synchronously at the end of the `async` function frame — before the refresh had a chance to complete — aborting the underlying `AbortController` and cancelling every background refresh immediately.
+
 ## 6.2.0
 
 ### Minor Changes
