@@ -1,6 +1,6 @@
 import { setTimeout } from 'timers/promises'
 
-import { abortable } from '@ydbjs/abortable'
+import { abortable, linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { CommitError, YDBError } from '@ydbjs/error'
@@ -34,20 +34,21 @@ export async function retry<R>(
 		(budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))
 	) {
 		let ac = new AbortController()
-		let signal = cfg.signal ? AbortSignal.any([cfg.signal, ac.signal]) : ac.signal
+		using linkedSignal = linkSignals(cfg.signal, ac.signal)
 
 		let start = Date.now()
+		let signal = linkedSignal.signal
 
 		try {
 			signal.throwIfAborted()
 			dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
-			// oxlint-disable no-await-in-loop
+			// oxlint-disable-next-line no-await-in-loop
 			let result = await abortable(signal, Promise.resolve(fn(signal)))
 			dbg.log('attempt %d: success', ctx.attempt + 1)
 			return result
 		} catch (error) {
-			ctx.attempt += 1
 			ctx.error = error
+			ctx.attempt += 1
 
 			if (error instanceof Error && error.name === 'AbortError') {
 				dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
@@ -59,14 +60,14 @@ export async function retry<R>(
 				throw error
 			}
 
-			let retry: boolean
+			let willRetry: boolean
 			if (typeof config.retry === 'boolean') {
-				retry = config.retry
+				willRetry = config.retry
 			} else {
-				retry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
+				willRetry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
 			}
 
-			if (!retry || ctx.attempt >= budget) {
+			if (!willRetry || ctx.attempt >= budget) {
 				dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
 				break
 			}
@@ -86,7 +87,7 @@ export async function retry<R>(
 
 			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
 			// oxlint-disable no-await-in-loop
-			await setTimeout(remaining, void 0, { signal: cfg.signal })
+			await setTimeout(remaining, void 0, { signal })
 
 			if (config.onRetry) {
 				config.onRetry(ctx)
