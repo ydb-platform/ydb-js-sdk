@@ -10,6 +10,7 @@ import { defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
+import { linkSignals } from '@ydbjs/abortable'
 
 let debug = loggers.auth.extend('static')
 
@@ -79,6 +80,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		let channelCredentials = secureOptions
 			? credentials.createFromSecureContext(tls.createSecureContext(secureOptions))
 			: credentials.createInsecure()
+
 		this.#client = createClient(
 			AuthServiceDefinition,
 			createChannel(address, channelCredentials, channelOptions)
@@ -148,13 +150,9 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		}
 
 		debug.log('starting background token refresh')
-		// Combine user signal with timeout signal
-		let combinedSignal = AbortSignal.any([
-			signal,
-			AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS),
-		])
+		using linkedSignal = linkSignals(signal, AbortSignal.timeout(BACKGROUND_REFRESH_TIMEOUT_MS))
 
-		void this.#refreshToken(combinedSignal)
+		void this.#refreshToken(linkedSignal.signal)
 	}
 
 	/**
@@ -172,7 +170,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 					debug.log('retry attempt #%d after error: %s', ctx.attempt, ctx.error)
 				},
 			},
-			async () => {
+			async (signal) => {
 				debug.log('attempting login with user: %s', this.#username)
 
 				let response = await this.#client.login(
