@@ -54,7 +54,7 @@
 		"@ydbjs/auth": "^6.1.0",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
-		"@ydbjs/retry": "^6.1.0",
+		"@ydbjs/retry": "^6.2.0",
 		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
