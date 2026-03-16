@@ -42,6 +42,9 @@
 		"test": "tsc -b tsconfig.test.json && vitest --run",
 		"attw": "attw --pack --profile esm-only"
 	},
+	"dependencies": {
+		"@ydbjs/abortable": "^6.1.0"
+	},
 	"files": [
 		"dist",
 		"!dist/.tsbuildinfo",

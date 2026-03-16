@@ -1,3 +1,6 @@
+import { linkSignals } from '@ydbjs/abortable'
+
+import { AsyncQueue } from './queue.js'
 import type {
 	EffectRuntime,
 	IngestHandle,
@@ -7,7 +10,6 @@ import type {
 	RuntimeOptions,
 	TransitionRuntime,
 } from './types.js'
-import { AsyncQueue } from './queue.js'
 
 type InternalEventEnvelope<E> = {
 	event: E
@@ -87,14 +89,16 @@ class Runtime<
 		}
 
 		let ac = new AbortController()
-		let combined = signal
-			? AbortSignal.any([signal, ac.signal, this.signal])
-			: AbortSignal.any([ac.signal, this.signal])
+		let combined = linkSignals(signal, ac.signal, this.signal)
 
 		let task = (async () => {
 			try {
 				for await (let input of source) {
-					if (combined.aborted || this.#closing || this.#closed || this.#destroyed) {
+					if (combined.signal.aborted) {
+						return
+					}
+
+					if (this.#closing || this.#closed || this.#destroyed) {
 						return
 					}
 
@@ -104,7 +108,11 @@ class Runtime<
 					}
 				}
 			} catch (error) {
-				if (combined.aborted || this.#closing || this.#closed || this.#destroyed) {
+				if (combined.signal.aborted) {
+					return
+				}
+
+				if (this.#closing || this.#closed || this.#destroyed) {
 					return
 				}
 
