@@ -4,7 +4,7 @@ import * as assert from 'node:assert/strict'
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { credentials } from '@grpc/grpc-js'
-import { abortable } from '@ydbjs/abortable'
+import { abortable, linkSignals } from '@ydbjs/abortable'
 import {
 	DiscoveryServiceDefinition,
 	EndpointInfoSchema,
@@ -351,12 +351,10 @@ export class Driver implements Disposable {
 		dbg.log('waiting for driver to become ready')
 
 		let timeout = this.options['ydb.sdk.ready_timeout_ms']!
-		let effectiveSignal = signal
-			? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
-			: AbortSignal.timeout(timeout)
+		using linkedSignal = linkSignals(signal, AbortSignal.timeout(timeout))
 
 		try {
-			await abortable(effectiveSignal, this.#ready.promise)
+			await abortable(linkedSignal.signal, this.#ready.promise)
 
 			dbg.log('driver is ready')
 		} catch (error) {
