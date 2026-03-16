@@ -5,6 +5,7 @@ import {
 	type SpanContext,
 	type StartSpanOptions,
 	type Tracer,
+	recordErrorAttributes,
 } from '@ydbjs/core'
 import { formatTraceparent } from './traceparent.js'
 import pkg from '../package.json' with { type: 'json' }
@@ -33,7 +34,10 @@ function wrapOtelSpan(otelSpan: OtelSpan): Span {
 			otelSpan.end()
 		},
 		recordException(error: Error): void {
+			const attrs = recordErrorAttributes(error)
+			otelSpan.setAttributes(attrs)
 			otelSpan.recordException(error)
+			otelSpan.setStatus({ code: 2, message: String(error) })
 		},
 		setStatus(status: { code: number; message?: string }): void {
 			otelSpan.setStatus(status)

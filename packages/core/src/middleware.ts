@@ -4,11 +4,11 @@ import { YDBError } from '@ydbjs/error'
 import { tracingContext } from './tracing-context.js'
 import {
 	SPAN_NAMES,
+	SpanFinalizer,
 	SpanKind,
 	type Tracer,
 	formatTraceparent,
 	getBaseAttributes,
-	recordErrorAttributes,
 } from './tracing.js'
 import { isAbortError } from 'abort-controller-x'
 import { ClientError, type ClientMiddleware, Metadata } from 'nice-grpc'
@@ -82,22 +82,17 @@ export function createTracingMiddleware(
 			try {
 				if (call.method.path === EXECUTE_QUERY_PATH) {
 					// Server streaming: iterate the generator and end span when the stream ends or a part.status !== SUCCESS.
-					const nextGen = call.next(call.request, nextOptions)
-					let ended = false
-					const endSpan = (err?: unknown) => {
-						if (ended) return
-						ended = true
-						if (err !== undefined) {
-							span.setAttributes(recordErrorAttributes(err))
-							span.recordException(
-								err instanceof Error
-									? err
-									: new Error(String(err))
-							)
-							span.setStatus({ code: 2, message: String(err) })
-						}
-						span.end()
+				const nextGen = call.next(call.request, nextOptions)
+				let ended = false
+				const endSpan = (err?: unknown) => {
+					if (ended) return
+					ended = true
+					if (err !== undefined) {
+						SpanFinalizer.finishByError(span, err)
+					} else {
+						SpanFinalizer.finishSuccess(span)
 					}
+				}
 					try {
 						for await (const part of nextGen) {
 							if (
@@ -131,12 +126,7 @@ export function createTracingMiddleware(
 				span.end()
 				return result
 			} catch (error: unknown) {
-				span.setAttributes(recordErrorAttributes(error))
-				span.recordException(
-					error instanceof Error ? error : new Error(String(error))
-				)
-				span.setStatus({ code: 2, message: String(error) })
-				span.end()
+				SpanFinalizer.finishByError(span, error)
 				throw error
 			}
 		})
