@@ -12,7 +12,7 @@
 	},
 	"dependencies": {
 		"@ydbjs/api": "^6.0.0",
-		"@ydbjs/auth": "^6.2.0",
+		"@ydbjs/auth": "^6.2.1",
 		"@ydbjs/core": "^6.0.7"
 	},
 	"engines": {
