@@ -189,7 +189,7 @@ test('respects abort signal', async () => {
 	let controller = new AbortController()
 	setTimeout(() => controller.abort(), 1)
 
-	await expect(provider.getToken(false, controller.signal)).rejects.toThrow('AbortError')
+	await expect(provider.getToken(false, controller.signal)).rejects.toThrow('aborted')
 })
 
 test('handles invalid credentials gracefully', async () => {
