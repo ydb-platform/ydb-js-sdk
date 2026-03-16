@@ -250,4 +250,8 @@ export class ConnectionPool implements Disposable {
 	[Symbol.dispose]() {
 		return this.destroy()
 	}
+
+	[Symbol.iterator](): IterableIterator<Connection> {
+		return this.connections[Symbol.iterator]()
+	}
 }

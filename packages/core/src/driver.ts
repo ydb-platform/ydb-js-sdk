@@ -405,6 +405,23 @@ export class Driver implements Disposable {
 					timeoutMs,
 					effectiveSignal
 				)
+			} else {
+				dbg.log('warming up pool connections after discovery')
+				await Promise.all(
+					[...this.#pool].map((conn) =>
+						this.#checkChannelConnectivity(
+							conn.channel,
+							timeoutMs,
+							effectiveSignal
+						).catch((err) => {
+							dbg.log(
+								'failed to warm up connection to %s: %O',
+								conn.address,
+								err
+							)
+						})
+					)
+				)
 			}
 
 			dbg.log('driver is ready')
