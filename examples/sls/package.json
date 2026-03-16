@@ -12,7 +12,7 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/auth": "^6.1.0",
+		"@ydbjs/auth": "^6.2.0",
 		"@ydbjs/core": "^6.0.7",
 		"@ydbjs/query": "^6.0.7"
 	},
