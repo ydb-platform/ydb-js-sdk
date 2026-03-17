@@ -13,7 +13,7 @@
 	"dependencies": {
 		"@ydbjs/api": "^6.0.6",
 		"@ydbjs/auth": "^6.2.1",
-		"@ydbjs/core": "^6.0.7"
+		"@ydbjs/core": "^6.1.0"
 	},
 	"engines": {
 		"node": ">=20.19.0",
