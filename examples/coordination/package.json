@@ -13,6 +13,6 @@
 	},
 	"dependencies": {
 		"@ydbjs/coordination": "^6.1.0",
-		"@ydbjs/core": "^6.0.7"
+		"@ydbjs/core": "^6.1.0"
 	}
 }
