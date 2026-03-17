@@ -66,9 +66,7 @@ npm start
 import { ServiceAccountCredentialsProvider } from '@ydbjs/auth-yandex-cloud'
 import { Driver } from '@ydbjs/core'
 
-let provider = ServiceAccountCredentialsProvider.fromFile(
-  './authorized_key.json'
-)
+let provider = ServiceAccountCredentialsProvider.fromFile('./authorized_key.json')
 let driver = new Driver(connectionString, {
   credentialsProvider: provider,
 })

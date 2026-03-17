@@ -1,5 +1,6 @@
 {
-	"printWidth": 80,
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"printWidth": 100,
 	"tabWidth": 4,
 	"useTabs": true,
 	"semi": false,
@@ -9,9 +10,11 @@
 	"bracketSameLine": false,
 	"arrowParens": "always",
 	"endOfLine": "lf",
+	"sortPackageJson": false,
+	"ignorePatterns": [],
 	"overrides": [
 		{
-			"files": "*.{md,yml,yaml}",
+			"files": ["*.md", "*.yml", "*.yaml"],
 			"options": {
 				"tabWidth": 2,
 				"useTabs": false

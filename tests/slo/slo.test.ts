@@ -46,25 +46,16 @@ let sdk_operations_total = meter.createCounter('sdk_operations_total', {
 let sdk_retry_attempts_total = meter.createCounter('sdk_retry_attempts_total', {
 	valueType: 0,
 })
-let sdk_operations_success_total = meter.createCounter(
-	'sdk_operations_success_total',
-	{
-		valueType: 0,
-	}
-)
-let sdk_operations_failure_total = meter.createCounter(
-	'sdk_operations_failure_total',
-	{
-		valueType: 0,
-	}
-)
-let sdk_operation_latency_seconds = meter.createHistogram(
-	'sdk_operation_latency_seconds',
-	{
-		unit: 'seconds',
-		valueType: 1,
-	}
-)
+let sdk_operations_success_total = meter.createCounter('sdk_operations_success_total', {
+	valueType: 0,
+})
+let sdk_operations_failure_total = meter.createCounter('sdk_operations_failure_total', {
+	valueType: 0,
+})
+let sdk_operation_latency_seconds = meter.createHistogram('sdk_operation_latency_seconds', {
+	unit: 'seconds',
+	valueType: 1,
+})
 
 let curId = 1
 let inFlightRead = 0
@@ -104,9 +95,7 @@ function sleep(ms: number) {
 	return Promise.race([
 		new Promise((resolve) => setTimeout(resolve, ms)),
 		new Promise((_, reject) =>
-			ctrl.signal.addEventListener('abort', () =>
-				reject(new Error('Aborted'))
-			)
+			ctrl.signal.addEventListener('abort', () => reject(new Error('Aborted')))
 		),
 	])
 }
@@ -127,13 +116,11 @@ async function read(maxId: number) {
 				.on('retry', ({ error }) => {
 					sdk_errors_total.add(1, {
 						operation_type: 'read',
-						error_type:
-							error instanceof Error ? error.name : 'Unknown',
+						error_type: error instanceof Error ? error.name : 'Unknown',
 					})
 					sdk_retry_attempts_total.add(1, {
 						operation_type: 'read',
-						error_type:
-							error instanceof Error ? error.name : 'Unknown',
+						error_type: error instanceof Error ? error.name : 'Unknown',
 					})
 				})
 
@@ -148,12 +135,9 @@ async function read(maxId: number) {
 		})
 	} finally {
 		sdk_operations_total.add(1, { operation_type: 'read' })
-		sdk_operation_latency_seconds.record(
-			(performance.now() - start) / 1000,
-			{
-				operation_type: 'read',
-			}
-		)
+		sdk_operation_latency_seconds.record((performance.now() - start) / 1000, {
+			operation_type: 'read',
+		})
 	}
 }
 
@@ -178,13 +162,11 @@ async function write(curId: number) {
 				.on('retry', ({ error }) => {
 					sdk_errors_total.add(1, {
 						operation_type: 'write',
-						error_type:
-							error instanceof Error ? error.name : 'Unknown',
+						error_type: error instanceof Error ? error.name : 'Unknown',
 					})
 					sdk_retry_attempts_total.add(1, {
 						operation_type: 'write',
-						error_type:
-							error instanceof Error ? error.name : 'Unknown',
+						error_type: error instanceof Error ? error.name : 'Unknown',
 					})
 				})
 
@@ -199,12 +181,9 @@ async function write(curId: number) {
 		})
 	} finally {
 		sdk_operations_total.add(1, { operation_type: 'write' })
-		sdk_operation_latency_seconds.record(
-			(performance.now() - start) / 1000,
-			{
-				operation_type: 'write',
-			}
-		)
+		sdk_operation_latency_seconds.record((performance.now() - start) / 1000, {
+			operation_type: 'write',
+		})
 	}
 }
 

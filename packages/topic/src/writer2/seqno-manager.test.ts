@@ -18,9 +18,7 @@ test('auto mode rejects manual seqNo once started', () => {
 
 	manager.getNext()
 
-	expect(() => manager.getNext(10n)).toThrowError(
-		/Cannot mix auto and manual seqNo modes/
-	)
+	expect(() => manager.getNext(10n)).toThrowError(/Cannot mix auto and manual seqNo modes/)
 })
 
 test('initialize adjusts next seqNo in auto mode', () => {
@@ -50,9 +48,7 @@ test('manual mode rejects missing seqNo once started', () => {
 
 	manager.getNext(10n)
 
-	expect(() => manager.getNext()).toThrowError(
-		/Cannot mix manual and auto seqNo modes/
-	)
+	expect(() => manager.getNext()).toThrowError(/Cannot mix manual and auto seqNo modes/)
 })
 
 test('manual mode enforces strictly increasing seqNo', () => {
@@ -60,7 +56,5 @@ test('manual mode enforces strictly increasing seqNo', () => {
 
 	manager.getNext(10n)
 
-	expect(() => manager.getNext(10n)).toThrowError(
-		/SeqNo must be strictly increasing/
-	)
+	expect(() => manager.getNext(10n)).toThrowError(/SeqNo must be strictly increasing/)
 })

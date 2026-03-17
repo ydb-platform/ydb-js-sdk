@@ -1,9 +1,5 @@
 import { type MessageJsonType, toJson } from '@bufbuild/protobuf'
-import {
-	type IssueMessage,
-	IssueMessageSchema,
-	StatusIds_StatusCode,
-} from '@ydbjs/api/operation'
+import { type IssueMessage, IssueMessageSchema, StatusIds_StatusCode } from '@ydbjs/api/operation'
 
 export class YDBIssue {
 	constructor(
@@ -50,9 +46,7 @@ export class YDBError extends Error {
 					: '')
 		)
 		this.code = code
-		this.issues = issues.map((issue) =>
-			toJson(IssueMessageSchema, issue as IssueMessage)
-		)
+		this.issues = issues.map((issue) => toJson(IssueMessageSchema, issue as IssueMessage))
 	}
 
 	static codes: Record<StatusIds_StatusCode, string> = {

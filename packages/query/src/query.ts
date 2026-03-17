@@ -16,12 +16,7 @@ import type { Driver } from '@ydbjs/core'
 import { tracingContext } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import {
-	type RetryConfig,
-	type RetryContext,
-	defaultRetryConfig,
-	retry,
-} from '@ydbjs/retry'
+import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
@@ -130,10 +125,7 @@ export class Query<T extends any[] = unknown[]>
 			signal = AbortSignal.any([signal, this.#signal])
 		}
 		if (this.#timeout) {
-			signal = AbortSignal.any([
-				signal,
-				AbortSignal.timeout(this.#timeout),
-			])
+			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
 		}
 
 		let retryConfig: RetryConfig = {
@@ -141,11 +133,7 @@ export class Query<T extends any[] = unknown[]>
 			signal,
 			idempotent: this.#idempotent,
 			onRetry: (retryCtx) => {
-				dbg.log(
-					'retrying query, attempt %d, error: %O',
-					retryCtx.attempt,
-					retryCtx.error
-				)
+				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)
 			},
 		}
@@ -154,32 +142,20 @@ export class Query<T extends any[] = unknown[]>
 
 		this.#promise = retry(retryConfig, async (signal) => {
 			dbg.log('creating query client for nodeId: %s', nodeId)
-			let client = this.#driver.createClient(
-				QueryServiceDefinition,
-				nodeId
-			)
+			let client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 
 			if (!sessionId) {
 				dbg.log('creating new session')
 				let sessionResponse = await client.createSession({}, { signal })
 				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log(
-						'failed to create session, status: %d',
-						sessionResponse.status
-					)
-					throw new YDBError(
-						sessionResponse.status,
-						sessionResponse.issues
-					)
+					dbg.log('failed to create session, status: %d', sessionResponse.status)
+					throw new YDBError(sessionResponse.status, sessionResponse.issues)
 				}
 
 				nodeId = sessionResponse.nodeId
 				sessionId = sessionResponse.sessionId
 
-				client = this.#driver.createClient(
-					QueryServiceDefinition,
-					nodeId
-				)
+				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 				this.#cleanup.push(async () => {
 					dbg.log('deleting session %s', sessionId)
 					await client.deleteSession({ sessionId: sessionId! })
@@ -189,10 +165,7 @@ export class Query<T extends any[] = unknown[]>
 					.attachSession({ sessionId }, { signal })
 					[Symbol.asyncIterator]()
 				let attachSessionResult = await attachSession.next()
-				if (
-					attachSessionResult.value.status !==
-					StatusIds_StatusCode.SUCCESS
-				) {
+				if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
 					dbg.log(
 						'failed to attach session, status: %d',
 						attachSessionResult.value.status
@@ -294,17 +267,11 @@ export class Query<T extends any[] = unknown[]>
 						let value = part.resultSet.rows[i]!.items[j]!
 
 						if (this.#values) {
-							result.push(
-								this.#raw
-									? value
-									: toJs(fromYdb(value, column.type!))
-							)
+							result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
 							continue
 						}
 
-						result[column.name] = this.#raw
-							? value
-							: toJs(fromYdb(value, column.type!))
+						result[column.name] = this.#raw ? value : toJs(fromYdb(value, column.type!))
 					}
 
 					results[Number(part.resultSetIndex)]!.push(result)
@@ -341,9 +308,7 @@ export class Query<T extends any[] = unknown[]>
 	/** Returns the result of the query */
 	/* oxlint-disable unicorn/no-thenable */
 	then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
-		onfulfilled?: (
-			value: ArrayifyTuple<T>
-		) => TResult1 | PromiseLike<TResult1>,
+		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
 		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
 	): Promise<TResult1 | TResult2> {
 		return this.#execute().then(onfulfilled, onrejected)
@@ -366,9 +331,7 @@ export class Query<T extends any[] = unknown[]>
 				// oxlint-disable no-unused-expressions
 				name.startsWith('$') || (name = '$' + name)
 
-				queryText =
-					`DECLARE ${name} AS ${typeToString(value.type)};\n` +
-					queryText
+				queryText = `DECLARE ${name} AS ${typeToString(value.type)};\n` + queryText
 			}
 		}
 

@@ -57,6 +57,7 @@ test.skip('memory leak check', { timeout: 300_000 }, async () => {
 	console.log(`Heap snapshot written to: ${snapshotPath}`)
 
 	for (let i = 0; i < iterations; i++) {
+		// oxlint-disable-next-line no-await-in-loop
 		await using reader = createTopicReader(driver, {
 			topic: testTopicName,
 			consumer: testConsumerName,
@@ -67,7 +68,6 @@ test.skip('memory leak check', { timeout: 300_000 }, async () => {
 			for await (let messages of reader.read({
 				signal: AbortSignal.timeout(1), // Very short timeout to trigger more errors
 			})) {
-				// oxlint-disable-next-line no-await-in-loop
 				await reader.commit(messages)
 			}
 		} catch {

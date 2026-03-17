@@ -40,10 +40,7 @@ export class AsyncPriorityQueue<T> implements AsyncIterable<T>, Disposable {
 		this.heap.splice(left, 0, { value, priority })
 
 		if (this.pendingShift && this.heap.length > 0) {
-			dbg.log(
-				'resolving pending shift operation with item %o',
-				this.heap[0]
-			)
+			dbg.log('resolving pending shift operation with item %o', this.heap[0])
 			const next = this.heap.shift()!
 			const resolve = this.pendingShift
 			delete this.pendingShift

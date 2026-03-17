@@ -13,29 +13,17 @@ test('ClientError with ABORTED is retryable', () => {
 })
 
 test('ClientError with INTERNAL is retryable', () => {
-	let error = new ClientError(
-		'Internal error',
-		Status.INTERNAL,
-		'test details'
-	)
+	let error = new ClientError('Internal error', Status.INTERNAL, 'test details')
 	expect(isRetryableError(error)).toBe(true)
 })
 
 test('ClientError with RESOURCE_EXHAUSTED is retryable', () => {
-	let error = new ClientError(
-		'Resource exhausted',
-		Status.RESOURCE_EXHAUSTED,
-		'test details'
-	)
+	let error = new ClientError('Resource exhausted', Status.RESOURCE_EXHAUSTED, 'test details')
 	expect(isRetryableError(error)).toBe(true)
 })
 
 test('ClientError with UNAVAILABLE is retryable only for idempotent operations', () => {
-	let error = new ClientError(
-		'Unavailable',
-		Status.UNAVAILABLE,
-		'test details'
-	)
+	let error = new ClientError('Unavailable', Status.UNAVAILABLE, 'test details')
 	expect(isRetryableError(error, false)).toBe(false)
 	expect(isRetryableError(error, true)).toBe(true)
 })
@@ -87,16 +75,10 @@ test('YDBError with non-retryable code is not retryable', () => {
 
 test('CommitError retryability depends on its retryable method', () => {
 	let retryableYDBError = new YDBError(StatusIds_StatusCode.ABORTED, [])
-	let retryableCommitError = new CommitError(
-		'Retryable commit error',
-		retryableYDBError
-	)
+	let retryableCommitError = new CommitError('Retryable commit error', retryableYDBError)
 
 	let conditionalYDBError = new YDBError(StatusIds_StatusCode.TIMEOUT, [])
-	let conditionalCommitError = new CommitError(
-		'Conditional commit error',
-		conditionalYDBError
-	)
+	let conditionalCommitError = new CommitError('Conditional commit error', conditionalYDBError)
 
 	let nonRetryableYDBError = new YDBError(StatusIds_StatusCode.NOT_FOUND, [])
 	let nonRetryableCommitError = new CommitError(
@@ -168,11 +150,7 @@ test('defaultRetryConfig uses exponential(1000) for OVERLOADED', () => {
 })
 
 test('defaultRetryConfig uses exponential(1000) for ClientError RESOURCE_EXHAUSTED', () => {
-	let error = new ClientError(
-		'Resource exhausted',
-		Status.RESOURCE_EXHAUSTED,
-		'test details'
-	)
+	let error = new ClientError('Resource exhausted', Status.RESOURCE_EXHAUSTED, 'test details')
 	let ctx = { attempt: 0, error }
 
 	let strategy = defaultRetryConfig.strategy as RetryStrategy
@@ -208,17 +186,10 @@ test('defaultRetryConfig has correct default values', () => {
 })
 
 test('defaultRetryConfig retry function uses isRetryableError', () => {
-	let retryableError = new ClientError(
-		'Aborted',
-		Status.ABORTED,
-		'test details'
-	)
+	let retryableError = new ClientError('Aborted', Status.ABORTED, 'test details')
 	let nonRetryableError = new Error('Generic error')
 
-	let retryFn = defaultRetryConfig.retry as (
-		error: unknown,
-		idempotent: boolean
-	) => boolean
+	let retryFn = defaultRetryConfig.retry as (error: unknown, idempotent: boolean) => boolean
 	expect(retryFn(retryableError, false)).toBe(true)
 	expect(retryFn(nonRetryableError, false)).toBe(false)
 })

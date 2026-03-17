@@ -10,7 +10,6 @@ import {
 	formatTraceparent,
 	getBaseAttributes,
 } from './tracing.js'
-import { isAbortError } from 'abort-controller-x'
 import { ClientError, type ClientMiddleware, Metadata } from 'nice-grpc'
 
 let log = loggers.grpc
@@ -141,7 +140,7 @@ export const debug: ClientMiddleware = async function* (call, options) {
 		hasError = true
 		if (error instanceof ClientError) {
 			log.log('%s', error.message)
-		} else if (isAbortError(error)) {
+		} else if (error instanceof Error && error.name === 'AbortError') {
 			log.log('%s %s: %s', call.method.path, 'CANCELLED', error.message)
 		} else {
 			log.log('%s %s: %s', call.method.path, 'UNKNOWN', error)

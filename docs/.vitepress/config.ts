@@ -1,8 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 const base = process.env.DOCS_BASE || '/'
-const sitemapHostname =
-	process.env.SITE_HOSTNAME || 'https://ydb-platform.github.io/ydb-js-sdk'
+const sitemapHostname = process.env.SITE_HOSTNAME || 'https://ydb-platform.github.io/ydb-js-sdk'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -20,6 +19,7 @@ export default defineConfig({
 					{ text: 'Getting Started', link: '/guide/core' },
 					{ text: 'Query', link: '/guide/query/' },
 					{ text: 'Topic', link: '/guide/topic/' },
+					{ text: 'Coordination', link: '/guide/coordination/' },
 					{ text: 'Advanced', link: '/advanced/' },
 				],
 				sidebar: [
@@ -163,6 +163,33 @@ export default defineConfig({
 						],
 					},
 					{
+						text: 'Coordination',
+						items: [
+							{ text: 'Overview', link: '/guide/coordination/' },
+							{
+								text: 'Examples',
+								items: [
+									{
+										text: 'Mutex: exclusive lock',
+										link: '/guide/coordination/#examples-mutex',
+									},
+									{
+										text: 'Service discovery',
+										link: '/guide/coordination/#examples-service-discovery',
+									},
+									{
+										text: 'Shared config',
+										link: '/guide/coordination/#examples-shared-config',
+									},
+									{
+										text: 'Leader election',
+										link: '/guide/coordination/#examples-election',
+									},
+								],
+							},
+						],
+					},
+					{
 						text: 'Advanced',
 						items: [
 							{
@@ -203,6 +230,7 @@ export default defineConfig({
 					{ text: 'Начало работы', link: '/ru/guide/core' },
 					{ text: 'Query', link: '/ru/guide/query/' },
 					{ text: 'Topic', link: '/ru/guide/topic/' },
+					{ text: 'Coordination', link: '/ru/guide/coordination/' },
 					{ text: 'Расширенные темы', link: '/ru/advanced/' },
 				],
 				sidebar: [
@@ -346,6 +374,33 @@ export default defineConfig({
 									{
 										text: 'Хуки партиций',
 										link: '/ru/guide/topic/#examples-hooks',
+									},
+								],
+							},
+						],
+					},
+					{
+						text: 'Coordination',
+						items: [
+							{ text: 'Обзор', link: '/ru/guide/coordination/' },
+							{
+								text: 'Примеры',
+								items: [
+									{
+										text: 'Мьютекс: эксклюзивная блокировка',
+										link: '/ru/guide/coordination/#examples-mutex',
+									},
+									{
+										text: 'Service discovery',
+										link: '/ru/guide/coordination/#examples-service-discovery',
+									},
+									{
+										text: 'Общая конфигурация',
+										link: '/ru/guide/coordination/#examples-shared-config',
+									},
+									{
+										text: 'Выборы лидера',
+										link: '/ru/guide/coordination/#examples-election',
 									},
 								],
 							},

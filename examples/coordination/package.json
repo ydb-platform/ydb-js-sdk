@@ -1,0 +1,18 @@
+{
+	"name": "@ydbjs/examples-coordination",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Examples of using @ydbjs/coordination: leader election, distributed mutex, service discovery, shared config",
+	"scripts": {
+		"election": "node election.js",
+		"mutex": "node mutex.js",
+		"service-discovery": "node service-discovery.js",
+		"shared-config": "node shared-config.js",
+		"resource-management": "node resource-management.js"
+	},
+	"dependencies": {
+		"@ydbjs/coordination": "^6.1.0",
+		"@ydbjs/core": "^6.1.0"
+	}
+}

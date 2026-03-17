@@ -36,10 +36,7 @@ export class DictType implements Type {
 	}
 }
 
-export class Dict<
-	K extends Value = Value,
-	V extends Value = Value,
-> implements Value<DictType> {
+export class Dict<K extends Value = Value, V extends Value = Value> implements Value<DictType> {
 	readonly type: DictType
 	readonly pairs: [K, V][] = []
 	#valueInstance?: Ydb.Value

@@ -20,10 +20,7 @@ export class TopicWriter implements AsyncDisposable {
 		this.#subscription = this.#actor.subscribe((snapshot) => {
 			// When all messages are processed (buffer and inflight empty),
 			// resolve current flush promise if it exists
-			if (
-				snapshot.context.bufferLength === 0 &&
-				snapshot.context.inflightLength === 0
-			) {
+			if (snapshot.context.bufferLength === 0 && snapshot.context.inflightLength === 0) {
 				this.#promise?.resolve(this.#seqNoManager.getState().lastSeqNo)
 				this.#promise = null
 			}
@@ -115,10 +112,7 @@ export class TopicWriter implements AsyncDisposable {
 
 		// Check if already flushed
 		let snapshot = this.#actor.getSnapshot()
-		if (
-			snapshot.context.bufferLength === 0 &&
-			snapshot.context.inflightLength === 0
-		) {
+		if (snapshot.context.bufferLength === 0 && snapshot.context.inflightLength === 0) {
 			// Already flushed, return immediately
 			return Promise.resolve(this.#seqNoManager.getState().lastSeqNo)
 		}

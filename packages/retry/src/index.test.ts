@@ -64,13 +64,10 @@ test('accepts aborted signal', async () => {
 
 	controller.abort()
 
-	let result = retry(
-		{ retry: isError, signal: controller.signal },
-		async () => {
-			attempts++
-			throw new Error('should not reach here')
-		}
-	)
+	let result = retry({ retry: isError, signal: controller.signal }, async () => {
+		attempts++
+		throw new Error('should not reach here')
+	})
 
 	await expect(result).rejects.toThrow('This operation was aborted')
 	expect(attempts).eq(0)
@@ -83,13 +80,10 @@ test('respects signal abort', async () => {
 	// Abort immediately
 	controller.abort()
 
-	let result = retry(
-		{ retry: isError, signal: controller.signal, budget: 5 },
-		async () => {
-			attempts++
-			throw new Error('test error')
-		}
-	)
+	let result = retry({ retry: isError, signal: controller.signal, budget: 5 }, async () => {
+		attempts++
+		throw new Error('test error')
+	})
 
 	await expect(result).rejects.toThrow('This operation was aborted')
 	expect(attempts).eq(0)
@@ -206,18 +200,15 @@ test('accepts number strategy (fixed delay)', async () => {
 	let attempts = 0
 	let start = Date.now()
 
-	let result = retry(
-		{ retry: isError, budget: 2, strategy: 100 },
-		async () => {
-			attempts++
+	let result = retry({ retry: isError, budget: 2, strategy: 100 }, async () => {
+		attempts++
 
-			if (attempts === 1) {
-				throw new Error('test error')
-			}
-
-			return 'success'
+		if (attempts === 1) {
+			throw new Error('test error')
 		}
-	)
+
+		return 'success'
+	})
 
 	await expect(result).resolves.eq('success')
 	let elapsed = Date.now() - start
@@ -234,18 +225,15 @@ test('accepts custom strategy function', async () => {
 		return ctx.attempt * 50
 	}
 
-	let result = retry(
-		{ retry: isError, budget: 3, strategy: customStrategy },
-		async () => {
-			attempts++
+	let result = retry({ retry: isError, budget: 3, strategy: customStrategy }, async () => {
+		attempts++
 
-			if (attempts < 3) {
-				throw new Error('test error')
-			}
-
-			return 'success'
+		if (attempts < 3) {
+			throw new Error('test error')
 		}
-	)
+
+		return 'success'
+	})
 
 	await expect(result).resolves.eq('success')
 	expect(attempts).eq(3)
@@ -282,20 +270,17 @@ test('respects remaining delay time', async () => {
 
 	let customStrategy = () => 200 // 200ms delay
 
-	let result = retry(
-		{ retry: isError, budget: 2, strategy: customStrategy },
-		async () => {
-			attempts++
+	let result = retry({ retry: isError, budget: 2, strategy: customStrategy }, async () => {
+		attempts++
 
-			if (attempts === 1) {
-				// Simulate some processing time
-				await new Promise((resolve) => setTimeout(resolve, 150))
-				throw new Error('test error')
-			}
-
-			return 'success'
+		if (attempts === 1) {
+			// Simulate some processing time
+			await new Promise((resolve) => setTimeout(resolve, 150))
+			throw new Error('test error')
 		}
-	)
+
+		return 'success'
+	})
 
 	await expect(result).resolves.eq('success')
 	let elapsed = Date.now() - start

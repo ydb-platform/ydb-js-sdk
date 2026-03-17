@@ -2,10 +2,7 @@ import * as path from 'node:path'
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import {
-	ServiceAccountCredentialsProvider,
-	type ServiceAccountKey,
-} from './service-account.js'
+import { ServiceAccountCredentialsProvider, type ServiceAccountKey } from './service-account.js'
 
 // Valid RSA private key for testing (2048-bit)
 // Generated with: openssl genrsa 2048
@@ -172,9 +169,7 @@ test('fromEnv throws if environment variable not set', () => {
 
 	expect(() => {
 		ServiceAccountCredentialsProvider.fromEnv()
-	}).toThrow(
-		'YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set'
-	)
+	}).toThrow('YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS environment variable is not set')
 
 	if (originalEnv) {
 		process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = originalEnv

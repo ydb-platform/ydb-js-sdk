@@ -28,7 +28,7 @@ test('throws immediately when signal already aborted', async () => {
 	let promise = Promise.resolve('success')
 	let result = abortable(controller.signal, promise)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 })
 
 test('throws immediately when signal aborted with reason', async () => {
@@ -39,7 +39,7 @@ test('throws immediately when signal aborted with reason', async () => {
 	let promise = Promise.resolve('success')
 	let result = abortable(controller.signal, promise)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('Custom abort reason')
 })
 
 test('aborts when signal aborted during promise execution', async () => {
@@ -53,7 +53,7 @@ test('aborts when signal aborted during promise execution', async () => {
 	// Abort after a short delay
 	setTimeout(() => controller.abort(), 10)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 })
 
 test('resolves when promise completes before abort signal', async () => {
@@ -87,7 +87,7 @@ test('handles multiple abort listeners correctly', async () => {
 
 	setTimeout(() => controller.abort(), 10)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 	expect(listenerCalled).eq(true)
 })
 
@@ -113,7 +113,7 @@ test('handles promise that never resolves with abort', async () => {
 	// Immediately abort
 	controller.abort()
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 })
 
 test('handles promise rejection after abort signal', async () => {
@@ -127,11 +127,11 @@ test('handles promise rejection after abort signal', async () => {
 	// Abort immediately
 	controller.abort()
 
-	// Should reject with AbortError, not the promise error
-	await expect(result).rejects.toThrow('AbortError')
+	// Should reject with aborted, not the promise error
+	await expect(result).rejects.toThrow('aborted')
 })
 
-test('creates AbortError when signal aborted with reason', async () => {
+test('creates aborted when signal aborted with reason', async () => {
 	let controller = new AbortController()
 	let customReason = new Error('Custom cancellation')
 
@@ -143,18 +143,14 @@ test('creates AbortError when signal aborted with reason', async () => {
 
 	setTimeout(() => controller.abort(customReason), 10)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('Custom cancellation')
 })
 
 test('handles concurrent abortable calls with same signal', async () => {
 	let controller = new AbortController()
 
-	let promise1 = new Promise((resolve) =>
-		setTimeout(() => resolve('result1'), 50)
-	)
-	let promise2 = new Promise((resolve) =>
-		setTimeout(() => resolve('result2'), 50)
-	)
+	let promise1 = new Promise((resolve) => setTimeout(() => resolve('result1'), 50))
+	let promise2 = new Promise((resolve) => setTimeout(() => resolve('result2'), 50))
 
 	let result1 = abortable(controller.signal, promise1)
 	let result2 = abortable(controller.signal, promise2)
@@ -162,8 +158,8 @@ test('handles concurrent abortable calls with same signal', async () => {
 	// Abort after starting both
 	setTimeout(() => controller.abort(), 10)
 
-	await expect(result1).rejects.toThrow('AbortError')
-	await expect(result2).rejects.toThrow('AbortError')
+	await expect(result1).rejects.toThrow('aborted')
+	await expect(result2).rejects.toThrow('aborted')
 })
 
 test('works with different promise types', async () => {
@@ -195,7 +191,7 @@ test('handles abort without reason', async () => {
 
 	setTimeout(() => controller.abort(), 10)
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 })
 
 test('handles promise that resolves to undefined', async () => {
@@ -227,7 +223,7 @@ test('handles extremely fast abort timing', async () => {
 	// Abort immediately without delay
 	controller.abort()
 
-	await expect(result).rejects.toThrow('AbortError')
+	await expect(result).rejects.toThrow('aborted')
 })
 
 test('handles abort signal from different controller', async () => {
@@ -244,6 +240,6 @@ test('handles abort signal from different controller', async () => {
 	// Only abort controller1
 	setTimeout(() => controller1.abort(), 10)
 
-	await expect(result1).rejects.toThrow('AbortError')
+	await expect(result1).rejects.toThrow('aborted')
 	await expect(result2).resolves.eq('success')
 })

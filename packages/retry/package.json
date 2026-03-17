@@ -1,28 +1,33 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.0.5",
+	"version": "6.2.0",
 	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
 	"keywords": [
-		"ydb",
 		"database",
-		"retry",
 		"resilience",
-		"typescript"
+		"retry",
+		"typescript",
+		"ydb"
 	],
 	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
 	"bugs": {
 		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
 	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
 		"directory": "packages/retry"
 	},
-	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
-	"contributors": [
-		"Vladislav Polyakov <me@polrk.com>"
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
 	],
-	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
 	"main": "dist/index.js",
@@ -32,11 +37,10 @@
 		"./budget": "./dist/budget.js",
 		"./strategy": "./dist/strategy.js"
 	},
-	"engines": {
-		"node": ">=20.19.0",
-		"npm": ">=10"
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
 	},
-	"engineStrict": true,
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
@@ -44,19 +48,15 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@ydbjs/abortable": "^6.0.0",
+		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"nice-grpc": "^2.1.13"
 	},
-	"files": [
-		"dist",
-		"README.md",
-		"CHANGELOG.md"
-	],
-	"publishConfig": {
-		"access": "public",
-		"registry": "https://registry.npmjs.org/"
-	}
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
 }

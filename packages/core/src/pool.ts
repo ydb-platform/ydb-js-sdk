@@ -1,160 +1,349 @@
-import { type EndpointInfo } from '@ydbjs/api/discovery'
+import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
+import { connectivityState } from '@grpc/grpc-js'
+
 import { loggers } from '@ydbjs/debug'
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
-import { type Connection, LazyConnection } from './conn.js'
+
+import { type Connection, GrpcConnection } from './conn.js'
+import type { DriverHooks, EndpointInfo } from './hooks.js'
+
+export const POOL_INJECT_FOR_TESTING: unique symbol = Symbol('POOL_INJECT')
+export const POOL_GET_ACTIVE_FOR_TESTING: unique symbol = Symbol('POOL_ACTIVE')
+export const POOL_GET_RETIRED_FOR_TESTING: unique symbol = Symbol('POOL_RETIRED')
+export const POOL_GET_PESSIMIZED_FOR_TESTING: unique symbol = Symbol('POOL_PESSIMIZED')
+export const POOL_RUN_IDLE_SWEEP_FOR_TESTING: unique symbol = Symbol('POOL_RUN_IDLE_SWEEP')
+export const POOL_GET_LAST_ACQUIRED_FOR_TESTING: unique symbol = Symbol('POOL_LAST_ACQUIRED')
 
 let dbg = loggers.driver.extend('pool')
 
-const PESSIMIZATION_TIMEOUT_MS = 60_000
+export interface ConnectionPoolOptions {
+	hooks?: DriverHooks | undefined
+	channelOptions?: ChannelOptions | undefined
+	channelCredentials: ChannelCredentials
+	idleTimeout: number
+	idleInterval: number
+	pessimizationTimeout: number
+}
 
 export class ConnectionPool implements Disposable {
-	protected connections: Set<Connection> = new Set()
-	protected pessimized: Set<Connection> = new Set()
+	readonly options: ConnectionPoolOptions
 
-	#channelOptions?: ChannelOptions
-	#channelCredentials: ChannelCredentials
+	#connections: Connection[] = []
+	#pessimized: Map<Connection, number> = new Map()
+	#acquired: Map<Connection, number> = new Map()
+	#retired: Set<Connection> = new Set()
+	#index = 0
 
-	constructor(
-		channelCredentials: ChannelCredentials,
-		channelOptions?: ChannelOptions
-	) {
-		dbg.log('creating connection pool')
-		this.#channelCredentials = channelCredentials
+	#idleTimer?: NodeJS.Timeout
 
-		if (channelOptions) {
-			this.#channelOptions = channelOptions
+	constructor(options: ConnectionPoolOptions) {
+		this.options = options
+		if (options.idleInterval) {
+			this.#startIdleSweep()
 		}
 	}
 
+	get activeSize(): number {
+		return this.#connections.length
+	}
+
+	get retiredSize(): number {
+		return this.#retired.size
+	}
+
+	get pessimizedSize(): number {
+		return this.#pessimized.size
+	}
+
 	/**
-	 * Get a channel based on load balancing rules
-	 * @param preferNodeId The preferred node id to use
-	 * @returns A connection from the pool
+	 * Acquire a connection for an RPC.
+	 *
+	 * Priority order:
+	 *   1. Preferred node (active), if preferNodeId is given
+	 *   2. Round-robin over active connections
+	 *   3. Preferred node (pessimized) — sessions/transactions are node-bound
+	 *   4. Any pessimized connection — last resort when pool is fully pessimized
+	 *
+	 * Note: returning a pessimized preferred node is intentional. Sessions and
+	 * transactions are bound to a specific nodeId. Silently routing to a different
+	 * node would cause BAD_SESSION errors that are harder to diagnose than an
+	 * explicit transport error.
 	 */
-	acquire(preferNodeId?: Connection['nodeId']): Connection {
-		let candidate: Connection | null = null
-		this.#refreshPessimizedChannels()
+	acquire(preferNodeId?: bigint): Connection {
+		this.#refreshPessimized()
 
-		// Try to find preferred node or any good connection
-		for (let connection of this.connections) {
-			candidate ??= connection
+		if (preferNodeId !== undefined) {
+			// 1. Preferred active
+			let preferred = this.#findActive(preferNodeId)
+			if (preferred) {
+				this.#acquired.set(preferred, Date.now())
+				return preferred
+			}
 
-			if (connection.nodeId === preferNodeId) {
-				dbg.log(
-					'returning preferred connection to node %d',
-					preferNodeId
-				)
-				return connection
+			// 2. Preferred pessimized
+			let preferredPessimized = this.#findPessimized(preferNodeId)
+			if (preferredPessimized) {
+				this.#acquired.set(preferredPessimized, Date.now())
+				return preferredPessimized
 			}
 		}
 
-		if (candidate) {
-			// Move to end of set for round-robin
-			this.connections.delete(candidate)
-			this.connections.add(candidate)
-			dbg.log(
-				'returning round-robin connection to node %d (pool size: %d)',
-				candidate.nodeId,
-				this.connections.size
-			)
-			return candidate
+		// 3. Round-robin active connection
+		if (this.#connections.length > 0) {
+			let conn = this.#connections[this.#index % this.#connections.length]!
+			this.#index++
+			this.#acquired.set(conn, Date.now())
+			return conn
 		}
 
-		// Fallback to pessimized connections
-		dbg.log(
-			'no good connections available, falling back to pessimized connections'
-		)
-		for (let connection of this.pessimized) {
-			candidate ??= connection
-
-			if (connection.nodeId === preferNodeId) {
-				dbg.log(
-					'returning preferred pessimized connection to node %d',
-					preferNodeId
-				)
-				return connection
+		// 4. Any pessimized connection
+		if (this.#pessimized.size > 0) {
+			for (let [conn] of this.#pessimized) {
+				this.#acquired.set(conn, Date.now())
+				return conn
 			}
 		}
 
-		if (candidate) {
-			this.pessimized.delete(candidate)
-			this.pessimized.add(candidate)
-			dbg.log(
-				'returning pessimized connection to node %d (pessimized size: %d)',
-				candidate.nodeId,
-				this.pessimized.size
-			)
-			return candidate
-		}
-
-		dbg.log('no connections available in pool')
 		throw new Error('No connection available')
 	}
 
 	/**
-	 * Release a connection back to the pool
-	 * @param conn The connection to release
-	 * @returns The connection pool instance
+	 * Pessimize a connection — move it out of active rotation for
+	 * PESSIMIZATION_TIMEOUT_MS milliseconds.
 	 */
-	release(conn: Connection) {
-		this.connections.delete(conn)
-		this.connections.add(conn)
-
-		this.pessimized.delete(conn)
-		this.pessimized.add(conn)
-
-		dbg.log(
-			'released connection to node %d address %s',
-			conn.nodeId,
-			conn.address
-		)
-		return this
-	}
-
-	/**
-	 * Add a new connection to the pool
-	 * @param endpoint The endpoint information for the new connection
-	 */
-	add(endpoint: EndpointInfo) {
-		let connection = this.findByNodeId(BigInt(endpoint.nodeId))
-		if (connection) {
-			dbg.log('replacing existing connection to node %d', endpoint.nodeId)
-			this.remove(connection)
-			connection.channel.close()
+	pessimize(conn: Connection): void {
+		let index = this.#connections.indexOf(conn)
+		if (index !== -1) {
+			this.#connections.splice(index, 1)
 		}
 
-		connection = new LazyConnection(
-			endpoint,
-			this.#channelCredentials,
-			this.#channelOptions
-		)
+		// Don't double-pessimize — refresh the timestamp if already pessimized
+		this.#pessimized.set(conn, Date.now() + this.options.pessimizationTimeout)
 
-		this.connections.add(connection)
-		dbg.log(
-			'added connection to node %d address %s (pool size: %d)',
-			connection.nodeId,
-			connection.address,
-			this.connections.size
-		)
+		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
 
-		return this
+		this.#safeHook('onPessimize', () => {
+			this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
+		})
 	}
 
 	/**
-	 * Find a connection by node id
-	 * @param nodeId The node id to search for
-	 * @returns The connection if found, undefined otherwise
+	 * Add (or replace) an endpoint in the pool.
+	 *
+	 * If a connection with the same nodeId already exists (active or pessimized),
+	 * it is closed and replaced with a fresh GrpcConnection. This handles the case
+	 * where an endpoint disappears from discovery and later re-appears — it gets a
+	 * clean channel.
 	 */
-	findByNodeId(nodeId: Connection['nodeId']): Connection | undefined {
-		for (let connection of this.connections) {
-			if (connection.nodeId === nodeId) {
-				return connection
+	add(endpoint: ProtoEndpointInfo): void {
+		let nodeId = BigInt(endpoint.nodeId)
+
+		// Remove from active
+		for (let i = this.#connections.length - 1; i >= 0; i--) {
+			if (this.#connections[i]!.endpoint.nodeId !== nodeId) {
+				continue
+			}
+
+			let old = this.#connections.splice(i, 1)[0]!
+			old.close()
+			dbg.log('replaced active connection to node %d', nodeId)
+		}
+
+		// Remove from pessimized
+		for (let [conn] of this.#pessimized) {
+			if (conn.endpoint.nodeId !== nodeId) {
+				continue
+			}
+
+			this.#pessimized.delete(conn)
+			conn.close()
+			dbg.log('replaced pessimized connection to node %d', nodeId)
+		}
+
+		// Remove from retired
+		for (let conn of this.#retired) {
+			if (conn.endpoint.nodeId !== nodeId) {
+				continue
+			}
+
+			this.#retired.delete(conn)
+			conn.close()
+			dbg.log('replaced retired connection to node %d', nodeId)
+		}
+
+		let conn = new GrpcConnection(
+			endpoint,
+			this.options.channelCredentials,
+			this.options.channelOptions
+		)
+
+		this.#connections.push(conn)
+
+		dbg.log(
+			'added connection to node %d address %s (pool size: %d)',
+			conn.endpoint.nodeId,
+			conn.endpoint.address,
+			this.#connections.length
+		)
+	}
+
+	/**
+	 * Atomically sync the pool with a fresh discovery endpoint list.
+	 *
+	 * Endpoints no longer present in the list are removed from routing but
+	 * their gRPC channels are NOT closed — existing streams (topic reader/writer,
+	 * coordination sessions) continue to work. Removed connections are moved to
+	 * the #retired list where the idle sweep will close them once grpc-js reports
+	 * the channel as IDLE (all streams ended).
+	 *
+	 * New endpoints are added via add(), which also handles re-appeared endpoints.
+	 *
+	 * Returns { added, removed } for the onDiscovery hook.
+	 */
+	sync(endpoints: ProtoEndpointInfo[]): { added: EndpointInfo[]; removed: EndpointInfo[] } {
+		let added: EndpointInfo[] = []
+		let removed: EndpointInfo[] = []
+
+		let discoveredNodeIds = new Set(endpoints.map((e) => BigInt(e.nodeId)))
+
+		// Remove stale endpoints from active list.
+		// Move to #retired — channel stays open for existing streams.
+		for (let i = this.#connections.length - 1; i >= 0; i--) {
+			let conn = this.#connections[i]!
+			if (discoveredNodeIds.has(conn.endpoint.nodeId)) {
+				continue
+			}
+
+			this.#connections.splice(i, 1)
+			this.#acquired.delete(conn)
+			this.#retired.add(conn)
+			removed.push(conn.endpoint)
+			dbg.log('removed stale active node %d from routing', conn.endpoint.nodeId)
+		}
+
+		// Remove stale endpoints from pessimized map.
+		// Move to #retired — channel stays open for existing streams.
+		for (let conn of this.#pessimized.keys()) {
+			if (discoveredNodeIds.has(conn.endpoint.nodeId)) {
+				continue
+			}
+
+			this.#pessimized.delete(conn)
+			this.#acquired.delete(conn)
+			this.#retired.add(conn)
+			removed.push(conn.endpoint)
+			dbg.log('removed stale pessimized node %d from routing', conn.endpoint.nodeId)
+		}
+
+		// Determine which endpoints in the discovery response are genuinely new
+		// (not already present in active or pessimized sets). We snapshot the set
+		// BEFORE calling add() because add() mutates #connections.
+		let existingNodeIds = new Set<bigint>()
+
+		for (let conn of this.#connections) {
+			existingNodeIds.add(conn.endpoint.nodeId)
+		}
+
+		for (let conn of this.#pessimized.keys()) {
+			existingNodeIds.add(conn.endpoint.nodeId)
+		}
+
+		for (let endpoint of endpoints) {
+			let nodeId = BigInt(endpoint.nodeId)
+			if (!existingNodeIds.has(nodeId)) {
+				// Genuinely new endpoint — create a fresh connection.
+				this.add(endpoint)
+
+				let address = `${endpoint.address}:${endpoint.port}`
+				added.push(
+					Object.freeze<EndpointInfo>({
+						nodeId,
+						address,
+						location: endpoint.location,
+					})
+				)
 			}
 		}
 
-		for (let connection of this.pessimized) {
-			if (connection.nodeId === nodeId) {
-				return connection
+		dbg.log(
+			'sync complete: %d added, %d removed, %d retired, pool size: %d',
+			added.length,
+			removed.length,
+			this.#retired.size,
+			this.#connections.length
+		)
+
+		return { added, removed }
+	}
+
+	/**
+	 * Check whether a nodeId is currently routable (active or pessimized).
+	 */
+	isAvailable(nodeId: bigint): boolean {
+		for (let conn of this.#connections) {
+			if (conn.endpoint.nodeId === nodeId) {
+				return true
+			}
+		}
+
+		for (let conn of this.#pessimized.keys()) {
+			if (conn.endpoint.nodeId === nodeId) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	/**
+	 * Close all connections (active, pessimized, and retired) and clear the pool.
+	 * Stops the idle sweep timer. Called by Driver.close() / Symbol.dispose.
+	 */
+	close(): void {
+		dbg.log(
+			'closing connection pool (%d active, %d pessimized, %d retired)',
+			this.#connections.length,
+			this.#pessimized.size,
+			this.#retired.size
+		)
+
+		if (this.#idleTimer) {
+			clearInterval(this.#idleTimer)
+		}
+
+		for (let conn of this.#connections) {
+			conn.close()
+		}
+
+		for (let conn of this.#pessimized.keys()) {
+			conn.close()
+		}
+
+		for (let conn of this.#retired) {
+			conn.close()
+		}
+
+		this.#connections.length = 0
+		this.#connections = []
+		this.#pessimized.clear()
+		this.#acquired.clear()
+		this.#retired.clear()
+
+		dbg.log('connection pool closed')
+	}
+
+	[Symbol.dispose](): void {
+		this.close()
+	}
+
+	#findActive(nodeId: bigint): Connection | undefined {
+		return this.#connections.find((c) => c.endpoint.nodeId === nodeId)
+	}
+
+	#findPessimized(nodeId: bigint): Connection | undefined {
+		for (let [conn] of this.#pessimized) {
+			if (conn.endpoint.nodeId === nodeId) {
+				return conn
 			}
 		}
 
@@ -162,93 +351,171 @@ export class ConnectionPool implements Disposable {
 	}
 
 	/**
-	 * Remove a connection from the pool
-	 * @param connection The connection to remove
+	 * Restore any pessimized connections whose timeout has elapsed back into
+	 * the active rotation. Called at the start of every acquire().
 	 */
-	remove(connection: Connection) {
-		this.connections.delete(connection)
-		this.pessimized.delete(connection)
-
-		dbg.log(
-			'removed connection to node %d address %s',
-			connection.nodeId,
-			connection.address
-		)
-
-		return this
-	}
-
-	/**
-	 * Pessimize a connection for a set amount of time
-	 * @param connection The connection to pessimize
-	 */
-	pessimize(connection: Connection) {
-		connection.pessimizedUntil = Date.now() + PESSIMIZATION_TIMEOUT_MS
-		this.pessimized.add(connection)
-		this.connections.delete(connection)
-
-		dbg.log(
-			'pessimized node %d address %s',
-			connection.nodeId,
-			connection.address
-		)
-
-		return this
-	}
-
-	/**
-	 * Check pessimized channels and restore them if the timeout has elapsed
-	 */
-	#refreshPessimizedChannels(): void {
+	#refreshPessimized(): void {
 		let now = Date.now()
 
-		for (let connection of this.pessimized) {
-			if (connection.pessimizedUntil! < now) {
-				this.pessimized.delete(connection)
-				this.connections.add(connection)
+		for (let [conn, until] of this.#pessimized) {
+			if (until < now) {
+				this.#pessimized.delete(conn)
+				this.#connections.push(conn)
 
 				dbg.log(
 					'un-pessimized node %d address %s',
-					connection.nodeId,
-					connection.address
+					conn.endpoint.nodeId,
+					conn.endpoint.address
 				)
+
+				this.#safeHook('onUnpessimize', () => {
+					this.options.hooks?.onUnpessimize?.({ endpoint: conn.endpoint })
+				})
 			}
 		}
 	}
 
 	/**
-	 * Close all connections in the pool
+	 * Start the background idle sweep timer.
+	 *
+	 * The sweep checks two categories of connections:
+	 *
+	 * 1. **Retired connections** (removed by sync(), channel left open for streams):
+	 *    Closed as soon as getConnectivityState(false) reports IDLE, TRANSIENT_FAILURE,
+	 *    or SHUTDOWN — meaning all streams have ended and grpc-js closed the transport.
+	 *    READY means a stream is likely still active — leave it alone.
+	 *
+	 * 2. **Active connections** unused for longer than #idleTtlMs:
+	 *    Closed only if BOTH conditions are met:
+	 *    - Not acquired for longer than the TTL
+	 *    - getConnectivityState(false) is not READY (no active streams)
+	 *    This prevents closing channels that serve long-lived streams even if
+	 *    acquire() hasn't been called recently (e.g., topic reader started once).
 	 */
-	close() {
+	#startIdleSweep(): void {
+		this.#idleTimer = setInterval(() => {
+			this.#idleSweep()
+		}, this.options.idleInterval)
+
+		// Don't prevent process exit
+		this.#idleTimer.unref()
+
 		dbg.log(
-			'closing connection pool (%d active, %d pessimized)',
-			this.connections.size,
-			this.pessimized.size
+			'idle sweep started: check every %d ms, active TTL %d ms',
+			this.options.idleInterval,
+			this.options.idleTimeout
 		)
-
-		for (let connection of this.connections) {
-			connection.close()
-		}
-
-		for (let connection of this.pessimized) {
-			connection.close()
-		}
-
-		this.connections.clear()
-		this.pessimized.clear()
-
-		dbg.log('connection pool closed')
 	}
 
 	/**
-	 * Destroy the connection pool.
+	 * Run one pass of the idle connection sweep.
+	 * Called by the background timer and by the test escape hatch.
 	 */
-	destroy() {
-		this.close()
+	#idleSweep(): void {
+		let now = Date.now()
+
+		let idleStates = [
+			connectivityState.IDLE,
+			connectivityState.TRANSIENT_FAILURE,
+			connectivityState.SHUTDOWN,
+		]
+
+		for (let conn of this.#retired) {
+			let state = conn.channel.getConnectivityState(false)
+
+			if (idleStates.includes(state)) {
+				this.#retired.delete(conn)
+				conn.close()
+
+				dbg.log('closed retired connection to node %d', conn.endpoint.nodeId)
+			}
+		}
+
+		for (let i = this.#connections.length - 1; i >= 0; i--) {
+			let conn = this.#connections[i]!
+			let lastUsed = this.#acquired.get(conn) ?? 0
+			let unusedMs = now - lastUsed
+
+			if (unusedMs > this.options.idleTimeout) {
+				let state = conn.channel.getConnectivityState(false)
+				if (state !== connectivityState.READY) {
+					this.#connections.splice(i, 1)
+					this.#acquired.delete(conn)
+					conn.close()
+					dbg.log('closed idle active connection to node %d', conn.endpoint.nodeId)
+				}
+			}
+		}
 	}
 
-	[Symbol.dispose]() {
-		return this.destroy()
+	/**
+	 * Invoke a hook callback and swallow any errors it throws.
+	 *
+	 * Hooks must never affect the request path. If a hook throws, log it and
+	 * continue. The hook author gets a debug message; the RPC is unaffected.
+	 */
+	#safeHook(name: string, fn: () => void): void {
+		try {
+			fn()
+		} catch (error) {
+			dbg.log('hook %s threw an error (swallowed): %O', name, error)
+		}
+	}
+
+	/**
+	 * Inject a pre-built Connection directly into the active list.
+	 *
+	 * @internal
+	 */
+	[POOL_INJECT_FOR_TESTING](conn: Connection): void {
+		this.#connections.push(conn)
+		this.#acquired.set(conn, Date.now())
+	}
+
+	/**
+	 * Return the active connections array (read-only view).
+	 *
+	 * @internal
+	 */
+	[POOL_GET_ACTIVE_FOR_TESTING](): Connection[] {
+		return this.#connections
+	}
+
+	/**
+	 * Return the pessimized Map (conn → pessimizedUntil timestamp).
+	 *
+	 * @internal
+	 */
+	[POOL_GET_PESSIMIZED_FOR_TESTING](): Map<Connection, number> {
+		return this.#pessimized
+	}
+
+	/**
+	 * Return the retired connections list.
+	 *
+	 * @internal
+	 */
+	[POOL_GET_RETIRED_FOR_TESTING](): Set<Connection> {
+		return this.#retired
+	}
+
+	/**
+	 * Return the lastAcquiredAt Map (conn → timestamp).
+	 *
+	 * @internal
+	 */
+	[POOL_GET_LAST_ACQUIRED_FOR_TESTING](): Map<Connection, number> {
+		return this.#acquired
+	}
+
+	/**
+	 * Run the idle sweep synchronously (same logic as the background timer).
+	 * Useful in tests to avoid waiting for real timers.
+	 *
+	 * @internal
+	 */
+	[POOL_RUN_IDLE_SWEEP_FOR_TESTING](): void {
+		this.#idleSweep()
 	}
 
 	[Symbol.iterator](): IterableIterator<Connection> {

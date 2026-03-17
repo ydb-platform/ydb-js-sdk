@@ -146,9 +146,7 @@ await using writer = t.createWriter({
   producer: 'json-producer',
 })
 
-const payload = new TextEncoder().encode(
-  JSON.stringify({ foo: 'bar', ts: Date.now() })
-)
+const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
 const seqNo = writer.write(payload)
 await writer.flush()
 ```

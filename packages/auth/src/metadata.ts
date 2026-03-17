@@ -68,10 +68,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	 */
 	async getToken(force?: boolean, signal?: AbortSignal): Promise<string> {
 		if (!force && this.#token && this.#token.expired_at > Date.now()) {
-			dbg.log(
-				'returning cached token, expires in %d ms',
-				this.#token.expired_at - Date.now()
-			)
+			dbg.log('returning cached token, expires in %d ms', this.#token.expired_at - Date.now())
 			return this.#token.value
 		}
 
@@ -88,11 +85,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 			budget: 5,
 			strategy: backoff(10, 1000),
 			onRetry: (ctx) => {
-				dbg.log(
-					'retrying token fetch, attempt %d, error: %O',
-					ctx.attempt,
-					ctx.error
-				)
+				dbg.log('retrying token fetch, attempt %d, error: %O', ctx.attempt, ctx.error)
 			},
 		}
 
@@ -134,10 +127,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
 			}
 
-			dbg.log(
-				'token fetched successfully, expires in %d seconds',
-				token.expires_in ?? 3600
-			)
+			dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
 			return this.#token.value
 		}).finally(() => {
 			this.#promise = null

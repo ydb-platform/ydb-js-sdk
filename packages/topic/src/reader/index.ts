@@ -67,11 +67,13 @@ export const createTopicReader = function createTopicReader(
 		} catch (error) {
 			if (!state.controller.signal.aborted) {
 				dbg.log('error occurred while streaming: %O', error)
+				// Stream died unexpectedly (retry budget exhausted or non-retryable
+				// error). Destroy the reader so that any pending read() calls are
+				// unblocked rather than polling forever.
+				destroy(error)
 			}
 		} finally {
 			dbg.log('stream closed')
-			// Don't call destroy here - it's already being called by close/destroy
-			// and calling it again would be a no-op anyway due to disposed check
 		}
 	})()
 
@@ -234,8 +236,7 @@ export const createTopicTxReader = function createTopicTxReader(
 		let updates = []
 
 		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
-			let partitionSession =
-				state.partitionSessions.get(partitionSessionId)
+			let partitionSession = state.partitionSessions.get(partitionSessionId)
 			if (partitionSession) {
 				updates.push({
 					partitionSession,
@@ -244,18 +245,10 @@ export const createTopicTxReader = function createTopicTxReader(
 			}
 		}
 
-		dbg.log(
-			'Updating offsets in transaction for %d partitions',
-			updates.length
-		)
+		dbg.log('Updating offsets in transaction for %d partitions', updates.length)
 
 		if (updates.length > 0) {
-			await _update_offsets_in_transaction(
-				tx,
-				state.driver,
-				state.options.consumer,
-				updates
-			)
+			await _update_offsets_in_transaction(tx, state.driver, state.options.consumer, updates)
 		}
 
 		closeWithReason('Transaction committed')
