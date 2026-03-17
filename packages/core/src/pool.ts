@@ -519,6 +519,6 @@ export class ConnectionPool implements Disposable {
 	}
 
 	[Symbol.iterator](): IterableIterator<Connection> {
-		return this.connections[Symbol.iterator]()
+		return this.#connections[Symbol.iterator]()
 	}
 }
