@@ -12,6 +12,15 @@ title: Обработка ошибок
 - `CommitError` — неудачный коммит; содержит `retryable(idempotent)`.
 - `ClientError` — gRPC‑ошибка на стороне клиента (например, `UNAVAILABLE`).
 
+### Ошибки координации (`@ydbjs/coordination`)
+
+- `SessionClosedError` — сессия закрыта штатно или уничтожена.
+- `SessionExpiredError` — окно восстановления истекло, сервер удалил сессию.
+- `LeaseReleasedError` — аренда семафора освобождена (в `lease.signal.reason`).
+- `LeaderChangedError` — лидер сменился во время `observe()` (в `LeaderState.signal.reason`).
+- `ObservationEndedError` — итератор `observe()` завершился.
+- `TryAcquireMissError` — неблокирующий захват не нашёл свободных токенов (внутренняя).
+
 Используйте `instanceof` для ветвления логики.
 
 ```ts

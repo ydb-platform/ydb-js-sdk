@@ -1,3 +1,4 @@
+export * from './errors.js'
 export * from './client.js'
 export * from './semaphore.js'
 export * from './mutex.js'

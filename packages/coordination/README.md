@@ -8,7 +8,8 @@ Distributed coordination client for [YDB](https://ydb.tech): semaphores, mutexes
 - **Distributed mutexes** — exclusive locking via ephemeral semaphores
 - **Leader elections** — campaign for leadership and observe leader changes
 - **Automatic reconnection** — sessions reconnect transparently; pending operations retry automatically
-- **Session lifecycle signals** — `session.signal` aborts when the session expires so dependent work is cancelled immediately
+- **Typed errors** — `SessionClosedError`, `SessionExpiredError`, `LeaseReleasedError`, `LeaderChangedError` for reliable `instanceof` checks
+- **Session lifecycle signals** — `session.signal` aborts when the session closes or expires
 - **`await using` support** — all resources implement `Symbol.asyncDispose`
 
 ## Installation
@@ -103,7 +104,7 @@ await using _ = lock
 await doWork(lock.signal)
 ```
 
-`lock.signal` aborts when the lock is lost (e.g. session expired), so you can pass it to downstream operations and they will cancel automatically.
+`lock.signal` aborts when the lock is released. Use `session.signal` to detect session death.
 
 ---
 
@@ -299,6 +300,37 @@ await client.dropNode('/local/my-app')
 | `description`    | `string`      | `''`     | Human-readable label visible in server diagnostics            |
 | `startTimeout`   | `number` (ms) | —        | Timeout for the initial session handshake                     |
 | `retryBackoff`   | `number` (ms) | —        | Base delay between reconnect attempts                         |
+
+---
+
+## Error classes
+
+All error classes are exported from `@ydbjs/coordination` and can be checked with `instanceof`.
+
+| Error                   | When                                                      | Found in                            |
+| ----------------------- | --------------------------------------------------------- | ----------------------------------- |
+| `SessionClosedError`    | Session was closed (gracefully or destroyed)              | `session.signal.reason`             |
+| `SessionExpiredError`   | Recovery window expired — server dropped the session      | `session.signal.reason`             |
+| `LeaseReleasedError`    | Semaphore lease was released                              | `lease.signal.reason`               |
+| `LeaderChangedError`    | A new leader replaced the previous one during `observe()` | `LeaderState.signal.reason`         |
+| `ObservationEndedError` | The `observe()` async iterator finished                   | `LeaderState.signal.reason`         |
+| `TryAcquireMissError`   | Non-blocking acquire found no available tokens (internal) | thrown by `acquire(waitTimeout: 0)` |
+
+```typescript
+import { SessionExpiredError, LeaseReleasedError } from '@ydbjs/coordination'
+
+session.signal.addEventListener('abort', () => {
+  if (session.signal.reason instanceof SessionExpiredError) {
+    console.log('session expired — will reconnect')
+  }
+})
+
+lease.signal.addEventListener('abort', () => {
+  if (lease.signal.reason instanceof LeaseReleasedError) {
+    console.log('lease released normally')
+  }
+})
+```
 
 ---
 

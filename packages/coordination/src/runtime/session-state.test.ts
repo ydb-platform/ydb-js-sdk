@@ -2,6 +2,8 @@ import { expect, test } from 'vitest'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { TransitionRuntime } from '@ydbjs/fsm'
 
+import { SessionClosedError, SessionExpiredError } from '../errors.ts'
+
 import {
 	type SessionCtx,
 	type SessionEffect,
@@ -138,7 +140,7 @@ test('moves from idle to connecting on session start', () => {
 	expect(result.state).toBe('connecting')
 	expect(result.context.startTimeoutScheduled).toBe(true)
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.open' },
+		{ type: 'session.effect.transport.connect' },
 		{ type: 'session.effect.timer.schedule_start_timeout' },
 	])
 })
@@ -150,7 +152,7 @@ test('closes directly from idle on close', () => {
 	expect(result.effects).toEqual([
 		{
 			type: 'session.effect.runtime.mark_closed',
-			reason: new Error('Session was closed before start'),
+			reason: new SessionClosedError('Session was closed before start'),
 		},
 	])
 })
@@ -158,7 +160,7 @@ test('closes directly from idle on close', () => {
 test('moves from connecting to ready on first session start', () => {
 	let result = transition(
 		'connecting',
-		{ type: 'session.stream.response.started', sessionId: 42n },
+		{ type: 'session.transport.started', sessionId: 42n },
 		{
 			startTimeoutScheduled: true,
 			hasEverConnected: false,
@@ -171,19 +173,17 @@ test('moves from connecting to ready on first session start', () => {
 	expect(result.context.startTimeoutScheduled).toBe(false)
 	expect(result.context.retryScheduled).toBe(false)
 	expect(result.context.recoveryScheduled).toBe(false)
-	// First connection — no resources to restore yet
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.runtime.mark_ready', sessionId: 42n },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
 	])
 })
 
-test('moves from connecting to ready and restores resources after reconnect', () => {
+test('moves from connecting to ready after reconnect', () => {
 	let result = transition(
 		'connecting',
-		{ type: 'session.stream.response.started', sessionId: 42n },
+		{ type: 'session.transport.started', sessionId: 42n },
 		{
 			startTimeoutScheduled: true,
 			hasEverConnected: true,
@@ -197,24 +197,11 @@ test('moves from connecting to ready and restores resources after reconnect', ()
 	expect(result.context.startTimeoutScheduled).toBe(false)
 	expect(result.context.retryScheduled).toBe(false)
 	expect(result.context.recoveryScheduled).toBe(false)
-	// Reconnect — must restore resources
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.runtime.mark_ready', sessionId: 42n },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
-		{ type: 'session.effect.runtime.restore_after_reconnect' },
 	])
-})
-
-test('responds to ping while connecting', () => {
-	let result = transition('connecting', {
-		type: 'session.stream.response.ping',
-		opaque: 11n,
-	})
-
-	expect(result.state).toBe('connecting')
-	expect(result.effects).toEqual([{ type: 'session.effect.stream.send_pong', opaque: 11n }])
 })
 
 test('moves from connecting to reconnecting on start timeout', () => {
@@ -238,7 +225,7 @@ test('moves from connecting to reconnecting on start timeout', () => {
 })
 
 test('moves from ready to reconnecting on disconnect', () => {
-	let result = transition('ready', { type: 'session.stream.disconnected' })
+	let result = transition('ready', { type: 'session.transport.disconnected' })
 
 	expect(result.state).toBe('reconnecting')
 	expect(result.context.retryScheduled).toBe(true)
@@ -264,15 +251,15 @@ test('moves from reconnecting to connecting on retry backoff elapsed', () => {
 	expect(result.context.recoveryScheduled).toBe(true)
 	expect(result.context.startTimeoutScheduled).toBe(true)
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.open' },
+		{ type: 'session.effect.transport.connect' },
 		{ type: 'session.effect.timer.schedule_start_timeout' },
 	])
 })
 
-test('moves from reconnecting to ready and restores resources after reconnect', () => {
+test('moves from reconnecting to ready after reconnect', () => {
 	let result = transition(
 		'reconnecting',
-		{ type: 'session.stream.response.started', sessionId: 99n },
+		{ type: 'session.transport.started', sessionId: 99n },
 		{
 			hasEverConnected: true,
 			retryScheduled: true,
@@ -285,11 +272,9 @@ test('moves from reconnecting to ready and restores resources after reconnect', 
 	expect(result.context.retryScheduled).toBe(false)
 	expect(result.context.recoveryScheduled).toBe(false)
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.runtime.mark_ready', sessionId: 99n },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
-		{ type: 'session.effect.runtime.restore_after_reconnect' },
 	])
 })
 
@@ -314,7 +299,7 @@ test('expires session when recovery window elapses', () => {
 		{ type: 'session.effect.timer.clear_recovery_window' },
 		{
 			type: 'session.effect.runtime.mark_expired',
-			reason: new Error('Recovery window expired'),
+			reason: new SessionExpiredError('Recovery window expired'),
 		},
 	])
 })
@@ -335,17 +320,17 @@ test('moves from ready to closing on close request', () => {
 	expect(result.context.retryScheduled).toBe(false)
 	expect(result.context.recoveryScheduled).toBe(false)
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.send_stop' },
+		{ type: 'session.effect.transport.stop' },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
 	])
 })
 
-test('moves from closing to closed on stream stopped', () => {
+test('moves from closing to closed on transport stopped', () => {
 	let result = transition(
 		'closing',
-		{ type: 'session.stream.response.stopped', sessionId: 7n },
+		{ type: 'session.transport.stopped', sessionId: 7n },
 		{
 			startTimeoutScheduled: true,
 			retryScheduled: true,
@@ -358,20 +343,20 @@ test('moves from closing to closed on stream stopped', () => {
 	expect(result.context.retryScheduled).toBe(false)
 	expect(result.context.recoveryScheduled).toBe(false)
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.close' },
+		{
+			type: 'session.effect.runtime.mark_closed',
+			reason: new SessionClosedError(),
+		},
+		{ type: 'session.effect.transport.close' },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
-		{
-			type: 'session.effect.runtime.mark_closed',
-			reason: new Error('Session closed'),
-		},
 	])
 })
 
 test('expires from ready on terminal protocol failure', () => {
 	let result = transition('ready', {
-		type: 'session.stream.response.failure',
+		type: 'session.transport.failure',
 		status: StatusIds_StatusCode.SESSION_EXPIRED,
 		issues: [],
 	})
@@ -383,18 +368,17 @@ test('expires from ready on terminal protocol failure', () => {
 	expect(result.effects[3]?.type).toBe('session.effect.runtime.mark_expired')
 })
 
-test('expires from connecting on internal fatal error', () => {
+test('expires from connecting on transport fatal error', () => {
 	let error = new Error('boom')
-	let result = transition('connecting', { type: 'session.internal.fatal', error })
+	let result = transition('connecting', { type: 'session.transport.fatal', error })
 
 	expect(result.state).toBe('expired')
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.close' },
+		{ type: 'session.effect.runtime.mark_expired', reason: error },
+		{ type: 'session.effect.transport.close' },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
-		{ type: 'session.effect.runtime.emit_error', error },
-		{ type: 'session.effect.runtime.mark_expired', reason: error },
 	])
 })
 
@@ -404,11 +388,11 @@ test('closes from any non-closed state on destroy', () => {
 
 	expect(result.state).toBe('closed')
 	expect(result.effects).toEqual([
-		{ type: 'session.effect.stream.close' },
+		{ type: 'session.effect.runtime.mark_closed', reason },
+		{ type: 'session.effect.transport.close' },
 		{ type: 'session.effect.timer.clear_start_timeout' },
 		{ type: 'session.effect.timer.clear_retry_backoff' },
 		{ type: 'session.effect.timer.clear_recovery_window' },
-		{ type: 'session.effect.runtime.mark_closed', reason },
 	])
 })
 

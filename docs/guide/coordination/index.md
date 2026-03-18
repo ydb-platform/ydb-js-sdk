@@ -105,8 +105,7 @@ await using _ = lock
 await doWork(lock.signal)
 ```
 
-`lock.signal` aborts when the lock is lost (e.g. session expired), so you can pass it to
-downstream operations to have them cancel automatically.
+`lock.signal` aborts when the lock is released. Use `session.signal` to detect session death.
 
 ## Semaphore
 

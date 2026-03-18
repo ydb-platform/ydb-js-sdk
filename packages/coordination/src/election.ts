@@ -1,9 +1,11 @@
 import { loggers } from '@ydbjs/debug'
-import { getSessionRuntime } from './internal/session-runtime.js'
+
+import { LeaderChangedError, ObservationEndedError } from './errors.js'
 import { Lease, Semaphore } from './semaphore.js'
-import type { CoordinationSession } from './session.js'
 
 let dbg = loggers.coordination.extend('election')
+
+let emptyBytes = new Uint8Array()
 
 export interface LeaderInfo {
 	data: Uint8Array
@@ -12,21 +14,17 @@ export interface LeaderInfo {
 export interface LeaderState {
 	data: Uint8Array
 	isMe: boolean
-	// Aborts when the leader changes or the observation ends.
-	// Always alive when the state is first yielded — never pre-aborted.
 	signal: AbortSignal
 }
 
 export class Leadership implements AsyncDisposable {
-	#name: string
+	#semaphore: Semaphore
 	#lease: Lease
-	#session: CoordinationSession
 	#resigned = false
 
-	constructor(lease: Lease, name: string, session: CoordinationSession) {
-		this.#name = name
+	constructor(lease: Lease, semaphore: Semaphore) {
 		this.#lease = lease
-		this.#session = session
+		this.#semaphore = semaphore
 	}
 
 	get signal(): AbortSignal {
@@ -34,10 +32,9 @@ export class Leadership implements AsyncDisposable {
 	}
 
 	async proclaim(data: Uint8Array, signal?: AbortSignal): Promise<void> {
-		throwIfAborted(signal)
-
-		dbg.log('proclaiming leadership on %s (%d bytes)', this.#name, data.byteLength)
-		return getSessionRuntime(this.#session).updateSemaphore(this.#name, data, signal)
+		signal?.throwIfAborted()
+		dbg.log('proclaiming leadership on %s (%d bytes)', this.#semaphore.name, data.byteLength)
+		return this.#semaphore.update(data, signal)
 	}
 
 	async resign(signal?: AbortSignal): Promise<void> {
@@ -45,8 +42,8 @@ export class Leadership implements AsyncDisposable {
 			return
 		}
 
-		dbg.log('resigning from leadership on %s', this.#name)
 		this.#resigned = true
+		dbg.log('resigning from leadership on %s', this.#semaphore.name)
 		await this.#lease.release(signal)
 	}
 
@@ -56,37 +53,35 @@ export class Leadership implements AsyncDisposable {
 }
 
 export class Election {
-	#name: string
-	#session: CoordinationSession
+	#semaphore: Semaphore
+	#sessionId: () => bigint | null
 
-	constructor(session: CoordinationSession, name: string) {
-		this.#name = name
-		this.#session = session
+	constructor(semaphore: Semaphore, sessionId: () => bigint | null) {
+		this.#semaphore = semaphore
+		this.#sessionId = sessionId
 	}
 
 	get name(): string {
-		return this.#name
+		return this.#semaphore.name
 	}
 
 	async campaign(data: Uint8Array, signal?: AbortSignal): Promise<Leadership> {
-		dbg.log('campaigning for leadership on %s', this.#name)
-		let semaphore = new Semaphore(this.#session, this.#name)
-		let lease = await semaphore.acquire({ count: 1, data }, signal)
+		dbg.log('campaigning for leadership on %s', this.name)
 
-		dbg.log('became leader on %s', this.#name)
-		return new Leadership(lease, this.#name, this.#session)
+		let lease = await this.#semaphore.acquire({ count: 1, data }, signal)
+
+		dbg.log('won leadership on %s', this.name)
+		return new Leadership(lease, this.#semaphore)
 	}
 
 	async *observe(signal?: AbortSignal): AsyncIterable<LeaderState> {
-		dbg.log('observing leadership changes on %s', this.#name)
+		dbg.log('observing leadership changes on %s', this.name)
+
 		let previousLeader: { sessionId: bigint; orderId: bigint } | null = null
-		// Tracks the AbortController for the currently live LeaderState so we can
-		// abort it as soon as the leader changes, before yielding the next state.
 		let currentController: AbortController | null = null
 
-		let semaphore = new Semaphore(this.#session, this.#name)
 		try {
-			for await (let description of semaphore.watch({ owners: true }, signal)) {
+			for await (let description of this.#semaphore.watch({ owners: true }, signal)) {
 				let owner = description.owners?.[0]
 				let currentLeader = owner
 					? { sessionId: owner.sessionId, orderId: owner.orderId }
@@ -98,64 +93,39 @@ export class Election {
 
 				previousLeader = currentLeader
 
-				// Abort the previous state's signal before yielding the next one so
-				// consumers see the transition in the right order.
 				if (currentController) {
-					currentController.abort(new Error('Leader changed'))
+					currentController.abort(new LeaderChangedError())
 				}
 				currentController = new AbortController()
 
 				if (!owner) {
-					dbg.log('no leader on %s', this.#name)
-					yield {
-						data: emptyBytes,
-						isMe: false,
-						signal: currentController.signal,
-					}
+					dbg.log('no leader on %s', this.name)
+					yield { data: emptyBytes, isMe: false, signal: currentController.signal }
 					continue
 				}
 
-				let isMe =
-					this.#session.sessionId !== null && owner.sessionId === this.#session.sessionId
+				let sessionId = this.#sessionId()
+				let isMe = sessionId !== null && owner.sessionId === sessionId
 				dbg.log(
 					'leader changed on %s (sessionId=%s, isMe=%s)',
-					this.#name,
+					this.name,
 					owner.sessionId,
 					isMe
 				)
-				yield {
-					data: owner.data,
-					isMe,
-					signal: currentController.signal,
-				}
+				yield { data: owner.data, isMe, signal: currentController.signal }
 			}
 		} finally {
-			// Ensure the last yielded state's signal is aborted when iteration ends
-			// so consumers relying on it for cancellation are always unblocked.
-			dbg.log('stopped observing %s', this.#name)
-			currentController?.abort(new Error('Election observation ended'))
+			dbg.log('stopped observing %s', this.name)
+			currentController?.abort(new ObservationEndedError())
 		}
 	}
 
 	async leader(signal?: AbortSignal): Promise<LeaderInfo | null> {
-		dbg.log('reading current leader on %s', this.#name)
-		let semaphore = new Semaphore(this.#session, this.#name)
-		let description = await semaphore.describe({ owners: true }, signal)
+		let description = await this.#semaphore.describe({ owners: true }, signal)
 		let owner = description.owners?.[0]
-
-		if (!owner) {
-			dbg.log('no current leader on %s', this.#name)
-			return null
-		}
-
-		dbg.log('current leader on %s is session %s', this.#name, owner.sessionId)
-		return {
-			data: owner.data,
-		}
+		return owner ? { data: owner.data } : null
 	}
 }
-
-let emptyBytes = new Uint8Array()
 
 let isSameLeader = function isSameLeader(
 	left: { sessionId: bigint; orderId: bigint } | null,
@@ -166,10 +136,4 @@ let isSameLeader = function isSameLeader(
 	}
 
 	return left.sessionId === right.sessionId && left.orderId === right.orderId
-}
-
-let throwIfAborted = function throwIfAborted(signal?: AbortSignal): void {
-	if (signal?.aborted) {
-		throw signal.reason ?? new Error('The operation was aborted')
-	}
 }

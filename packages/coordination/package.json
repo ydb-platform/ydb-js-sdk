@@ -44,13 +44,13 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.10.1",
-		"@ydbjs/abortable": "^6.0.0",
+		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/core": "^6.0.7",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
-		"@ydbjs/fsm": "^6.1.0",
-		"@ydbjs/retry": "^6.0.0",
+		"@ydbjs/fsm": "^6.1.1",
+		"@ydbjs/retry": "^6.2.0",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.13"
 	},

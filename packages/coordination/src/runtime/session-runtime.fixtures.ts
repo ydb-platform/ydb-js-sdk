@@ -1,6 +1,7 @@
 import type { SessionResponse } from '@ydbjs/api/coordination'
 import type { Driver } from '@ydbjs/core'
 
+import { createDeferred } from './session-registry.ts'
 import type { SessionRuntime, SessionStatus } from './session-runtime.ts'
 
 // ── fake stream infrastructure ─────────────────────────────────────────────────
@@ -32,7 +33,9 @@ export let makeFakeDriver = function makeFakeDriver(): FakeDriverHandle {
 		if (pendingHandles.length > 0) {
 			return Promise.resolve(pendingHandles.shift()!)
 		}
-		return new Promise<FakeStreamHandle>((resolve) => pendingWaiters.push(resolve))
+		let deferred = createDeferred<FakeStreamHandle>()
+		pendingWaiters.push(deferred.resolve)
+		return deferred.promise
 	}
 
 	let deliverHandle = function deliverHandle(handle: FakeStreamHandle): void {
@@ -105,9 +108,10 @@ export let makeFakeDriver = function makeFakeDriver(): FakeDriverHandle {
 											done: true,
 										})
 									}
-									return new Promise<IteratorResult<SessionResponse>>((resolve) =>
-										readers.push(resolve)
-									)
+									let { promise, resolve } =
+										createDeferred<IteratorResult<SessionResponse>>()
+									readers.push(resolve)
+									return promise
 								},
 							}
 						},
@@ -149,7 +153,9 @@ export let settle = async function settle(ticks = 100): Promise<void> {
 // phases so that pending setTimeout callbacks (retry backoff, recovery window)
 // get a chance to fire before we resume.
 export let tick = function tick(): Promise<void> {
-	return new Promise<void>((r) => setTimeout(r, 0))
+	let deferred = createDeferred<void>()
+	setTimeout(deferred.resolve, 0)
+	return deferred.promise
 }
 
 // Poll until the session reaches the expected status, then run additional
