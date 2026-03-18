@@ -89,9 +89,9 @@ class Runtime<
 		}
 
 		let ac = new AbortController()
-		let combined = linkSignals(signal, ac.signal, this.signal)
-
 		let task = (async () => {
+			using combined = linkSignals(this.#ac.signal, ac.signal, signal)
+
 			try {
 				for await (let input of source) {
 					if (combined.signal.aborted) {
@@ -144,7 +144,11 @@ class Runtime<
 		}
 
 		this.#eventQueue.push({ event })
-		void this.#drain()
+
+		// Drain handles errors internally (via #handleError → destroy).
+		// Suppress the rejected promise so Node does not surface it as
+		// an unhandled rejection when dispatch is fire-and-forget.
+		this.#drain().catch(() => {})
 	}
 
 	async close(reason?: unknown): Promise<void> {

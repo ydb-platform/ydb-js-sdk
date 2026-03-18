@@ -1,7 +1,7 @@
 import { beforeEach, expect, inject, onTestFinished, test } from 'vitest'
 
 import { Driver } from '@ydbjs/core'
-import { CoordinationClient, Lock } from '@ydbjs/coordination'
+import { CoordinationClient, Lease } from '@ydbjs/coordination'
 import type { CoordinationSession } from '@ydbjs/coordination'
 
 // #region setup
@@ -45,7 +45,7 @@ test('lock acquires exclusive access', async () => {
 
 	let lock = await mutex.lock(AbortSignal.timeout(5000))
 
-	expect(lock).toBeInstanceOf(Lock)
+	expect(lock).toBeInstanceOf(Lease)
 	// Signal must be alive while the lock is held
 	expect(lock.signal.aborted).toBe(false)
 
@@ -66,7 +66,7 @@ test('async dispose releases the lock', async () => {
 	// verifies that dispose does not throw — that is the core contract.
 	// A second lock attempt proves the mutex is free again.
 	let lock2 = await mutex.lock(AbortSignal.timeout(5000))
-	expect(lock2).toBeInstanceOf(Lock)
+	expect(lock2).toBeInstanceOf(Lease)
 	await lock2.release(AbortSignal.timeout(5000))
 })
 
@@ -90,7 +90,7 @@ test('second lock blocks until first is released', async () => {
 
 	await using lockB = await acquireB
 
-	expect(lockB).toBeInstanceOf(Lock)
+	expect(lockB).toBeInstanceOf(Lease)
 	expect(lockB.signal.aborted).toBe(false)
 })
 
@@ -100,7 +100,7 @@ test('tryLock succeeds when mutex is free', async () => {
 	let lock = await mutex.tryLock(AbortSignal.timeout(5000))
 
 	expect(lock).not.toBeNull()
-	expect(lock).toBeInstanceOf(Lock)
+	expect(lock).toBeInstanceOf(Lease)
 
 	await lock!.release(AbortSignal.timeout(5000))
 })

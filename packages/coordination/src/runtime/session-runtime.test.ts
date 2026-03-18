@@ -25,7 +25,7 @@ test('waitReady resolves after first sessionStarted', async () => {
 	stream.respond(sessionStartedResponse(1n))
 	await settle()
 
-	await expect(runtime.waitReady()).resolves.toBeUndefined()
+	await expect(runtime.transport.waitReady()).resolves.toBeUndefined()
 	expect(runtime.status).toBe('ready')
 	expect(runtime.sessionId).toBe(1n)
 
@@ -81,7 +81,7 @@ test('waitReady blocks during reconnect after first ready', async () => {
 	// waitReady must block now; the old (resolved) readyDeferred should have been
 	// replaced with a fresh unresolved one when schedule_retry_backoff ran.
 	let resolved = false
-	let waitPromise = runtime.waitReady().then(() => (resolved = true))
+	let waitPromise = runtime.transport.waitReady().then(() => (resolved = true))
 
 	await settle()
 	expect(resolved).toBe(false)
@@ -111,7 +111,7 @@ test('waitReady rejects when outer signal aborts before first ready', async () =
 	await settle()
 
 	// Start waiting for ready, then abort the outer signal.
-	let waitPromise = runtime.waitReady()
+	let waitPromise = runtime.transport.waitReady()
 	ctrl.abort(new Error('cancelled by caller'))
 
 	// The session should close and waitReady should reject.
@@ -129,7 +129,7 @@ test('waitReady with per-call signal rejects without terminating the session', a
 
 	// Abort only the per-call signal, not the session-level signal.
 	let callCtrl = new AbortController()
-	let waitPromise = runtime.waitReady(callCtrl.signal)
+	let waitPromise = runtime.transport.waitReady(callCtrl.signal)
 
 	callCtrl.abort(new Error('per-call timeout'))
 	await settle()
@@ -153,7 +153,7 @@ test('waitReady rejects after destroy()', async () => {
 	runtime.destroy(new Error('torn down'))
 	await waitForStatus(runtime, 'closed')
 
-	await expect(runtime.waitReady()).rejects.toBeDefined()
+	await expect(runtime.transport.waitReady()).rejects.toBeDefined()
 })
 
 // ── destroy() and close() ─────────────────────────────────────────────────────
@@ -357,3 +357,54 @@ test('session signal aborts when recovery window expires', async () => {
 	expect(runtime.status).toBe('expired')
 	expect(runtime.signal.aborted).toBe(true)
 }, 10_000)
+
+test('session signal does NOT abort on transport reconnect', async () => {
+	let { driver, waitForNextStream } = makeFakeDriver()
+
+	let runtime = createRuntime(driver, {
+		path: '/test',
+		startTimeout: 999_999,
+		retryBackoff: 0,
+		recoveryWindow: 999_999,
+	})
+
+	let stream1 = await waitForNextStream()
+	stream1.respond(sessionStartedResponse(1n))
+	await waitForStatus(runtime, 'ready')
+
+	expect(runtime.signal.aborted).toBe(false)
+
+	// Disconnect — transport reconnects, but session stays alive.
+	stream1.disconnect()
+	await waitForStatus(runtime, 'reconnecting')
+
+	// Session signal must still be alive during reconnect.
+	expect(runtime.signal.aborted).toBe(false)
+
+	// Reconnect succeeds.
+	let stream2 = await waitForNextStream()
+	stream2.respond(sessionStartedResponse(1n))
+	await waitForStatus(runtime, 'ready')
+
+	// Signal still alive after reconnect.
+	expect(runtime.signal.aborted).toBe(false)
+
+	runtime.destroy()
+	await waitForStatus(runtime, 'closed')
+})
+
+test('session signal carries the finalize reason', async () => {
+	let { driver, waitForNextStream } = makeFakeDriver()
+
+	let runtime = createRuntime(driver, { path: '/test', startTimeout: 999_999 })
+	let stream = await waitForNextStream()
+	stream.respond(sessionStartedResponse(1n))
+	await settle()
+
+	let destroyReason = new Error('test reason')
+	runtime.destroy(destroyReason)
+	await waitForStatus(runtime, 'closed')
+
+	expect(runtime.signal.aborted).toBe(true)
+	expect(runtime.signal.reason).toBe(destroyReason)
+})
