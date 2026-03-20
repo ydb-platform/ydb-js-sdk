@@ -55,6 +55,7 @@
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"@ydbjs/retry": "^6.2.0",
+		"@ydbjs/telemetry": "^6.0.0",
 		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {

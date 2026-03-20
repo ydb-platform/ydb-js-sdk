@@ -3,6 +3,7 @@ import type { Span } from './tracing.js'
 
 export type TracingContextStore = {
 	span?: Span
+	spanName?: string
 	queryText?: string
 }
 

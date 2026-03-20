@@ -1,27 +1,17 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { tracingContext } from './tracing-context.js'
 import {
-	SPAN_NAMES,
 	SpanFinalizer,
 	SpanKind,
 	type Tracer,
 	formatTraceparent,
 	getBaseAttributes,
-} from './tracing.js'
+	tracingContext,
+} from '@ydbjs/telemetry'
 import { ClientError, type ClientMiddleware, Metadata } from 'nice-grpc'
 
 let log = loggers.grpc
-
-const QUERY_SERVICE_PATH = '/Ydb.Query.V1.QueryService/'
-const EXECUTE_QUERY_PATH = QUERY_SERVICE_PATH + 'ExecuteQuery'
-const PATH_TO_SPAN: Record<string, string> = {
-	[QUERY_SERVICE_PATH + 'CreateSession']: SPAN_NAMES.CreateSession,
-	[EXECUTE_QUERY_PATH]: SPAN_NAMES.ExecuteQuery,
-	[QUERY_SERVICE_PATH + 'CommitTransaction']: SPAN_NAMES.Commit,
-	[QUERY_SERVICE_PATH + 'RollbackTransaction']: SPAN_NAMES.Rollback,
-}
 
 export function createTracingMiddleware(
 	serverAddress: string,
@@ -36,18 +26,19 @@ export function createTracingMiddleware(
 	)
 
 	return async function* (call, options) {
-		const spanName = PATH_TO_SPAN[call.method.path]
+		const store = tracingContext.getStore()
+		const spanName = store?.spanName
 		if (!spanName) {
 			return yield* call.next(call.request, options)
 		}
 
-		const existingQueryText = tracingContext.getStore()?.queryText
+		const existingQueryText = store.queryText
 
 		const span = tracer.startSpan(spanName, {
 			kind: SpanKind.CLIENT,
 			attributes: baseAttrs,
 		})
-		if (existingQueryText && call.method.path === EXECUTE_QUERY_PATH) {
+		if (existingQueryText) {
 			span.setAttribute('db.query.text', existingQueryText)
 		}
 		if (typeof process !== 'undefined' && process.env.YDB_TRACE_DEBUG) {
@@ -57,8 +48,8 @@ export function createTracingMiddleware(
 		}
 		tracingContext.enterWith(
 			existingQueryText
-				? { span, queryText: existingQueryText }
-				: { span }
+				? { span, spanName, queryText: existingQueryText }
+				: { span, spanName }
 		)
 
 		const ctx = span.spanContext()
@@ -68,30 +59,26 @@ export function createTracingMiddleware(
 						...options,
 						metadata: Metadata(options.metadata).set(
 							'traceparent',
-							formatTraceparent(
-								ctx.traceId,
-								ctx.spanId,
-								ctx.traceFlags
-							)
+							formatTraceparent(ctx.traceId, ctx.spanId, ctx.traceFlags)
 						),
 					}
 				: options
 
 		return yield* span.runInContext(async function* () {
 			try {
-				if (call.method.path === EXECUTE_QUERY_PATH) {
+				if (call.method.responseStream) {
 					// Server streaming: iterate the generator and end span when the stream ends or a part.status !== SUCCESS.
-				const nextGen = call.next(call.request, nextOptions)
-				let ended = false
-				const endSpan = (err?: unknown) => {
-					if (ended) return
-					ended = true
-					if (err !== undefined) {
-						SpanFinalizer.finishByError(span, err)
-					} else {
-						SpanFinalizer.finishSuccess(span)
+					const nextGen = call.next(call.request, nextOptions)
+					let ended = false
+					const endSpan = (err?: unknown) => {
+						if (ended) return
+						ended = true
+						if (err !== undefined) {
+							SpanFinalizer.finishByError(span, err)
+						} else {
+							SpanFinalizer.finishSuccess(span)
+						}
 					}
-				}
 					try {
 						for await (const part of nextGen) {
 							if (

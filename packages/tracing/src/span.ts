@@ -1,7 +1,11 @@
 import { SpanKind, trace } from '@opentelemetry/api'
-import type { Span as OtelSpan } from '@opentelemetry/api'
-import { DB_SYSTEM, recordErrorAttributes } from '@ydbjs/core'
-import type { SpanBaseAttributes } from '@ydbjs/core'
+import {
+	DB_SYSTEM,
+	type Span,
+	type SpanBaseAttributes,
+	recordErrorAttributes,
+} from '@ydbjs/telemetry'
+import { wrapOtelSpan } from './open-telemetry-tracer.js'
 import pkg from '../package.json' with { type: 'json' }
 
 /**
@@ -11,27 +15,28 @@ import pkg from '../package.json' with { type: 'json' }
 export function createSpan<T>(
 	operationName: string,
 	baseAttributes: SpanBaseAttributes & { 'db.system.name'?: string },
-	fn: (span: OtelSpan) => Promise<T>
+	fn: (span: Span) => Promise<T>
 ): Promise<T> {
 	const tracer = trace.getTracer('Ydb.Sdk', pkg.version)
 	const attrs = {
 		'db.system.name': DB_SYSTEM,
 		...baseAttributes,
 	}
-	const span = tracer.startSpan(operationName, {
+	const otelSpan = tracer.startSpan(operationName, {
 		kind: SpanKind.CLIENT,
 		attributes: attrs,
 	})
+	const span = wrapOtelSpan(otelSpan)
 
 	return fn(span)
 		.then((result) => {
 			span.end()
 			return result
 		})
-		.catch((error) => {
+		.catch((error: unknown) => {
 			const errAttrs = recordErrorAttributes(error)
 			span.setAttributes(errAttrs)
-			span.recordException(error)
+			span.recordException(error instanceof Error ? error : new Error(String(error)))
 			span.setStatus({ code: 2, message: String(error) })
 			span.end()
 			throw error

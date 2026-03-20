@@ -3,6 +3,7 @@ import type { Abortable } from 'node:events'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
+import { SPAN_NAMES, tracingContext } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, isRetryableError, retry } from '@ydbjs/retry'
 import { loggers } from '@ydbjs/debug'
@@ -181,6 +182,7 @@ export function query(driver: Driver): QueryClient {
 			},
 			async (signal) => {
 				dbg.log('creating session for transaction')
+				tracingContext.enterWith({ spanName: SPAN_NAMES.CreateSession })
 				let sessionResponse = await client.createSession({}, { signal })
 				if (sessionResponse.status !== StatusIds_StatusCode.SUCCESS) {
 					dbg.log('failed to create session, status: %d', sessionResponse.status)
@@ -267,6 +269,7 @@ export function query(driver: Driver): QueryClient {
 					)
 
 					dbg.log('committing transaction')
+					tracingContext.enterWith({ spanName: SPAN_NAMES.Commit })
 					let commitResult = await client.commitTransaction(
 						{
 							sessionId: store.sessionId,
@@ -298,6 +301,7 @@ export function query(driver: Driver): QueryClient {
 					)
 
 					try {
+						tracingContext.enterWith({ spanName: SPAN_NAMES.Rollback })
 						await client.rollbackTransaction({
 							sessionId: store.sessionId,
 							txId: store.transactionId,

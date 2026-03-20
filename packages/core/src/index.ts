@@ -1,5 +1,4 @@
 export * from './driver.js'
-export { tracingContext, type TracingContextStore } from './tracing-context.js'
 export {
 	DB_SYSTEM,
 	formatTraceparent,
@@ -9,13 +8,15 @@ export {
 	SPAN_NAMES,
 	SpanFinalizer,
 	SpanKind,
+	tracingContext,
 	type GetBaseAttributesOptions,
 	type Span,
 	type SpanBaseAttributes,
 	type SpanContext,
 	type StartSpanOptions,
+	type TracingContextStore,
 	type Tracer,
-} from './tracing.js'
+} from '@ydbjs/telemetry'
 export type {
 	DriverHooks,
 	EndpointInfo,

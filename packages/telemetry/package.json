@@ -1,11 +1,11 @@
 {
-	"name": "@ydbjs/tracing",
+	"name": "@ydbjs/telemetry",
 	"version": "6.0.0",
-	"description": "OpenTelemetry tracing for YDB JavaScript SDK. Instrumentation for QueryService operations.",
+	"description": "Abstract telemetry interfaces and no-op implementation for YDB SDK. No OpenTelemetry dependency.",
 	"keywords": [
 		"ydb",
 		"database",
-		"opentelemetry",
+		"telemetry",
 		"tracing",
 		"typescript"
 	],
@@ -16,7 +16,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
-		"directory": "packages/tracing"
+		"directory": "packages/telemetry"
 	},
 	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
 	"license": "Apache-2.0",
@@ -39,16 +39,9 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@opentelemetry/api": "^1.9.0",
-		"@ydbjs/telemetry": "^6.0.0"
-	},
-	"peerDependencies": {
-		"@ydbjs/api": "^6.0.0"
-	},
-	"devDependencies": {
-		"@opentelemetry/sdk-trace-base": "^1.28.0",
-		"@opentelemetry/sdk-trace-node": "^1.28.0",
-		"@ydbjs/api": "^6.0.0"
+		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/error": "^6.0.0",
+		"nice-grpc": "^2.1.13"
 	},
 	"files": [
 		"dist",

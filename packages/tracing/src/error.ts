@@ -1,1 +1,1 @@
-export { recordErrorAttributes } from '@ydbjs/core'
+export { recordErrorAttributes } from '@ydbjs/telemetry'
