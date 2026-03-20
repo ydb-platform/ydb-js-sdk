@@ -16,7 +16,7 @@
 ## Установка
 
 ```sh
-npm install @ydbjs/core@alpha @ydbjs/query@alpha
+npm install @ydbjs/core @ydbjs/query
 ```
 
 ## Как это работает

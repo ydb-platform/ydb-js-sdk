@@ -16,7 +16,7 @@ The `@ydbjs/auth` package provides authentication utilities for interacting with
 Install the package using npm:
 
 ```sh
-npm install @ydbjs/auth@6.0.0@alpha
+npm install @ydbjs/auth
 ```
 
 ---

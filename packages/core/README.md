@@ -14,7 +14,7 @@ The `@ydbjs/core` package provides the core driver and connection management for
 ## Installation
 
 ```sh
-npm install @ydbjs/core@alpha
+npm install @ydbjs/core
 ```
 
 ## How It Works
