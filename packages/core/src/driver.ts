@@ -39,9 +39,10 @@ import {
 	DriverResponseError,
 } from './errors.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
-import { debug } from './middleware.js'
+import { createTracingMiddleware, debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
+import { NoopTracer, type Tracer } from '@ydbjs/telemetry'
 
 export type { DriverHooks, EndpointInfo }
 
@@ -55,6 +56,10 @@ export type DriverOptions = {
 	secureOptions?: tls.SecureContextOptions | undefined
 	channelOptions?: ChannelOptions
 	credentialsProvider?: CredentialsProvider
+	/**
+	 * Tracer for spans. Default is NoopTracer. Use createOpenTelemetryTracer() from @ydbjs/tracing for OTel.
+	 */
+	tracer?: Tracer
 
 	/**
 	 * Optional driver hooks.
@@ -200,14 +205,23 @@ export class Driver implements Disposable {
 			this.#credentialsProvider = this.options.credentialsProvider
 		}
 
-		this.#middleware = composeClientMiddleware(debug, (call, options) => {
+		this.#middleware = createTracingMiddleware(
+			this.cs.hostname,
+			Number.parseInt(this.cs.port || '2135', 10),
+			this.database || undefined,
+			this.options.tracer ?? NoopTracer
+		)
+
+		const metadataMiddleware: ClientMiddleware = (call, options) => {
 			let metadata = Metadata(options.metadata)
 				.set('x-ydb-database', this.database)
 				.set('x-ydb-application-name', this.application)
 
 			return call.next(call.request, Object.assign(options, { metadata }))
-		})
+		}
 
+		this.#middleware = composeClientMiddleware(this.#middleware, debug)
+		this.#middleware = composeClientMiddleware(this.#middleware, metadataMiddleware)
 		this.#middleware = composeClientMiddleware(
 			this.#middleware,
 			this.#credentialsProvider.middleware

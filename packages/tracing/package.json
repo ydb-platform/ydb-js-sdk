@@ -1,0 +1,62 @@
+{
+	"name": "@ydbjs/tracing",
+	"version": "6.0.0",
+	"description": "OpenTelemetry tracing for YDB JavaScript SDK. Instrumentation for QueryService operations.",
+	"keywords": [
+		"ydb",
+		"database",
+		"opentelemetry",
+		"tracing",
+		"typescript"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/tracing"
+	},
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"license": "Apache-2.0",
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true,
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	},
+	"dependencies": {
+		"@opentelemetry/api": "^1.9.0",
+		"@ydbjs/telemetry": "^6.0.0"
+	},
+	"peerDependencies": {
+		"@ydbjs/api": "^6.0.0"
+	},
+	"devDependencies": {
+		"@opentelemetry/sdk-trace-base": "^1.28.0",
+		"@opentelemetry/sdk-trace-node": "^1.28.0",
+		"@ydbjs/api": "^6.0.0"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	}
+}

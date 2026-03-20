@@ -58,6 +58,9 @@
 		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
+		"@opentelemetry/sdk-trace-base": "^1.28.0",
+		"@opentelemetry/sdk-trace-node": "^1.28.0",
+		"@ydbjs/tracing": "^6.0.0",
 		"@types/debug": "^4.1.12"
 	},
 	"engines": {
