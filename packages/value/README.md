@@ -14,7 +14,7 @@ The `@ydbjs/value` package provides utilities for working with YDB values and ty
 Install the package using npm:
 
 ```sh
-npm install @ydbjs/value@alpha
+npm install @ydbjs/value
 ```
 
 ## Usage

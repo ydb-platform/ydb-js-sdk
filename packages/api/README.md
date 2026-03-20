@@ -13,7 +13,7 @@ The `@ydbjs/api` package provides TypeScript/JavaScript bindings for interacting
 Install the package using npm:
 
 ```sh
-npm install @ydbjs/api@alpha
+npm install @ydbjs/api
 ```
 
 ## Usage

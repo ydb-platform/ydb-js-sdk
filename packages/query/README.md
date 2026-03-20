@@ -16,7 +16,7 @@ The `@ydbjs/query` package provides a high-level, type-safe client for executing
 ## Installation
 
 ```sh
-npm install @ydbjs/core@alpha @ydbjs/query@alpha
+npm install @ydbjs/core @ydbjs/query
 ```
 
 ## How It Works
