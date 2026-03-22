@@ -1,6 +1,8 @@
 # @ydbjs/tracing
 
-OpenTelemetry tracing for YDB JavaScript SDK. Used internally by `@ydbjs/core` to instrument QueryService operations according to [OpenTelemetry Database Spans semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-spans/).
+OpenTelemetry tracing for YDB JavaScript SDK. Instruments QueryService operations according to [OpenTelemetry Database Spans semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-spans/).
+
+This package is an **optional** add-on — `@ydbjs/core` and `@ydbjs/query` have no dependency on OpenTelemetry. Tracing is opt-in: you enable it by passing `tracer` and `hooks` to the `Driver` constructor.
 
 ## Instrumented operations
 
@@ -46,9 +48,41 @@ provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter()))
 provider.register()
 ```
 
-3. Use `@ydbjs/query` or `@ydbjs/core` as usual — spans are created automatically for instrumented gRPC calls.
+3. Pass both `tracer` and `hooks` to the Driver using the `withTracing()` helper:
 
-4. Pass the tracer to the Driver: `new Driver(url, { tracer: createOpenTelemetryTracer() })`.
+```typescript
+import { Driver } from '@ydbjs/core'
+import { withTracing } from '@ydbjs/tracing'
+
+const driver = new Driver('grpc://localhost:2136/local', {
+  ...withTracing(),
+})
+```
+
+`withTracing()` returns `{ tracer, hooks }` and is the recommended way to enable full tracing. Passing only `tracer` creates spans, but they won't have real node address and gRPC status attributes — those are populated by `hooks`.
+
+You can also pass a custom tracer (e.g. for testing):
+
+```typescript
+import { withTracing } from '@ydbjs/tracing'
+import { NoopTracer } from '@ydbjs/telemetry'
+
+const driver = new Driver(url, {
+  ...withTracing(myCustomTracer),
+})
+```
+
+### How tracer and hooks work together
+
+- **`tracer`** — creates spans for instrumented gRPC calls (CreateSession, ExecuteQuery, Commit, Rollback). Spans are started in the gRPC middleware layer before each call.
+- **`hooks`** — listens to driver-level events and enriches the active span with information that is only known after endpoint selection:
+  - `ydb.node.id` — ID of the selected YDB node
+  - `ydb.node.dc` — datacenter/availability zone of the node
+  - `network.peer.address` — actual node address (after discovery)
+  - `network.peer.port` — actual node port
+  - `rpc.grpc.status_code` — gRPC status code of the completed call
+
+Without hooks, spans will still be created, but the above attributes will be missing or reflect only the initial connection string values.
 
 ### Span.getId() and SpanFinalizer
 
