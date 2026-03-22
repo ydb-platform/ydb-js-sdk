@@ -1,7 +1,7 @@
 import { beforeEach, expect, inject, onTestFinished, test } from 'vitest'
 
 import { Driver } from '@ydbjs/core'
-import { CoordinationClient } from '@ydbjs/coordination'
+import { CoordinationClient, SessionClosedError } from '@ydbjs/coordination'
 
 // #region setup
 declare module 'vitest' {
@@ -121,4 +121,27 @@ test('createSession rejects when signal is already aborted', async () => {
 	let aborted = AbortSignal.abort(new Error('pre-aborted'))
 
 	await expect(client.createSession(testNodePath, {}, aborted)).rejects.toThrow('pre-aborted')
+})
+
+test('session.signal.reason is SessionClosedError after close', async () => {
+	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+
+	let session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await session.close(AbortSignal.timeout(5000))
+
+	expect(session.signal.aborted).toBe(true)
+	expect(session.signal.reason).toBeInstanceOf(SessionClosedError)
+})
+
+test('session.signal carries custom reason after destroy', async () => {
+	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+
+	let session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let reason = new Error('custom destroy reason')
+	session.destroy(reason)
+
+	await new Promise((r) => setTimeout(r, 100))
+
+	expect(session.signal.aborted).toBe(true)
+	expect(session.signal.reason).toBe(reason)
 })

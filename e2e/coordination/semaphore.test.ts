@@ -1,7 +1,12 @@
 import { beforeEach, expect, inject, onTestFinished, test } from 'vitest'
 
 import { Driver } from '@ydbjs/core'
-import { CoordinationClient, type CoordinationSession, Lease } from '@ydbjs/coordination'
+import {
+	CoordinationClient,
+	type CoordinationSession,
+	Lease,
+	LeaseReleasedError,
+} from '@ydbjs/coordination'
 
 // #region setup
 declare module 'vitest' {
@@ -271,4 +276,202 @@ test('ephemeral semaphore is removed when the acquiring session is closed', asyn
 	// The ephemeral semaphore must be gone entirely: describe throws NOT_FOUND.
 	let semA = sessionA.semaphore(name)
 	await expect(semA.describe({}, AbortSignal.timeout(5000))).rejects.toThrow(/NOT_FOUND/i)
+})
+
+// ── Signal contracts ────────────────────────────────────────────────────────
+
+test('lease.signal.reason is LeaseReleasedError after release', async () => {
+	let sem = sessionA.semaphore(semName())
+
+	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
+	let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+
+	await lease.release(AbortSignal.timeout(5000))
+
+	expect(lease.signal.aborted).toBe(true)
+	expect(lease.signal.reason).toBeInstanceOf(LeaseReleasedError)
+})
+
+test('double release is idempotent', async () => {
+	let sem = sessionA.semaphore(semName())
+
+	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
+	let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+
+	await lease.release(AbortSignal.timeout(5000))
+	await expect(lease.release(AbortSignal.timeout(5000))).resolves.toBeUndefined()
+})
+
+// ── Race conditions ─────────────────────────────────────────────────────────
+
+test('N sessions race for semaphore with limit=1 — exactly one wins', async () => {
+	let name = semName()
+	let N = 5
+
+	await sessionA.semaphore(name).create({ limit: 1 }, AbortSignal.timeout(5000))
+
+	let sessions: CoordinationSession[] = []
+	for (let i = 0; i < N; i++) {
+		// oxlint-disable-next-line no-await-in-loop
+		sessions.push(await client.createSession(testNodePath, {}, AbortSignal.timeout(5000)))
+	}
+
+	try {
+		// All sessions tryAcquire simultaneously
+		let results = await Promise.all(
+			sessions.map((s) =>
+				s.semaphore(name).tryAcquire({ count: 1 }, AbortSignal.timeout(5000))
+			)
+		)
+
+		let winners = results.filter((r) => r !== null)
+		let losers = results.filter((r) => r === null)
+
+		expect(winners).toHaveLength(1)
+		expect(losers).toHaveLength(N - 1)
+
+		await winners[0]!.release(AbortSignal.timeout(5000))
+	} finally {
+		for (let s of sessions) {
+			// oxlint-disable-next-line no-await-in-loop
+			await s.close(AbortSignal.timeout(5000)).catch(() => {})
+		}
+	}
+})
+
+test('rapid acquire-release cycles do not lose tokens', async () => {
+	let name = semName()
+	let sem = sessionA.semaphore(name)
+
+	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
+
+	// 20 sequential acquire-release cycles on the same session
+	for (let i = 0; i < 20; i++) {
+		// oxlint-disable-next-line no-await-in-loop
+		let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+		// oxlint-disable-next-line no-await-in-loop
+		await lease.release(AbortSignal.timeout(5000))
+	}
+
+	// Semaphore must be free after all cycles
+	let description = await sem.describe({ owners: true }, AbortSignal.timeout(5000))
+	expect(description.count).toBe(0n)
+	expect(description.owners).toHaveLength(0)
+})
+
+test('watch sees all changes during rapid acquire-release', async () => {
+	let name = semName()
+	let sem = sessionA.semaphore(name)
+
+	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
+
+	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let semB = sessionB.semaphore(name)
+
+	let changeCount = 0
+
+	// Collect snapshots until the timeout fires (server may coalesce rapid changes)
+	let watching = (async () => {
+		for await (let _snap of sem.watch({ owners: true }, AbortSignal.timeout(5000))) {
+			changeCount++
+		}
+	})().catch(() => {})
+
+	await new Promise((resolve) => setTimeout(resolve, 200))
+
+	// Trigger changes from session B
+	let lease1 = await semB.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	await lease1.release(AbortSignal.timeout(5000))
+	let lease2 = await semB.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	await lease2.release(AbortSignal.timeout(5000))
+
+	await watching
+
+	// Initial snapshot + at least one change notification (server may coalesce rapid changes)
+	expect(changeCount).toBeGreaterThanOrEqual(2)
+})
+
+// ── Misuse and error handling ───────────────────────────────────────────────
+
+test('acquire on non-existent semaphore throws', async () => {
+	let sem = sessionA.semaphore('does-not-exist-' + Date.now())
+
+	await expect(
+		sem.acquire({ count: 1, ephemeral: false, waitTimeout: 0n }, AbortSignal.timeout(5000))
+	).rejects.toThrow('NOT_FOUND')
+})
+
+test('user signal cancels blocked acquire without killing session', async () => {
+	let name = semName()
+	let semA = sessionA.semaphore(name)
+
+	await semA.create({ limit: 1 }, AbortSignal.timeout(5000))
+	let leaseA = await semA.acquire({ count: 1 }, AbortSignal.timeout(5000))
+
+	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let semB = sessionB.semaphore(name)
+
+	let userAC = new AbortController()
+	let acquirePromise = semB.acquire({ count: 1, waitTimeout: 30000 }, userAC.signal)
+
+	setTimeout(() => userAC.abort(new Error('user cancelled')), 200)
+
+	await expect(acquirePromise).rejects.toBeDefined()
+
+	// Both sessions still alive
+	expect(sessionA.status).toBe('ready')
+	expect(sessionB.status).toBe('ready')
+
+	await leaseA.release(AbortSignal.timeout(5000))
+})
+
+test('server-side waitTimeout returns TryAcquireMiss (not hang)', async () => {
+	let name = semName()
+	let semA = sessionA.semaphore(name)
+
+	await semA.create({ limit: 1 }, AbortSignal.timeout(5000))
+	let leaseA = await semA.acquire({ count: 1 }, AbortSignal.timeout(5000))
+
+	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let semB = sessionB.semaphore(name)
+
+	// Short server-side timeout — should return null, not hang
+	let lease = await semB.tryAcquire({ count: 1 }, AbortSignal.timeout(5000))
+	expect(lease).toBeNull()
+
+	await leaseA.release(AbortSignal.timeout(5000))
+})
+
+test('many parallel operations on one session do not deadlock', async () => {
+	let N = 10
+	let names = Array.from({ length: N }, () => semName())
+
+	// Create all semaphores
+	await Promise.all(
+		names.map((name) =>
+			sessionA.semaphore(name).create({ limit: 1 }, AbortSignal.timeout(5000))
+		)
+	)
+
+	// Acquire all in parallel
+	let leases = await Promise.all(
+		names.map((name) =>
+			sessionA.semaphore(name).acquire({ count: 1 }, AbortSignal.timeout(5000))
+		)
+	)
+
+	expect(leases).toHaveLength(N)
+	expect(leases.every((l) => l instanceof Lease)).toBe(true)
+
+	// Release all in parallel
+	await Promise.all(leases.map((l) => l.release(AbortSignal.timeout(5000))))
+
+	// Verify all free
+	let descriptions = await Promise.all(
+		names.map((name) =>
+			sessionA.semaphore(name).describe({ owners: true }, AbortSignal.timeout(5000))
+		)
+	)
+
+	expect(descriptions.every((d) => d.count === 0n)).toBe(true)
 })

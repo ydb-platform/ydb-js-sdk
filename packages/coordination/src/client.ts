@@ -1,9 +1,14 @@
+import { linkSignals } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 
-import { CoordinationNodeRuntime } from './runtime/node-runtime.js'
-import { getSessionRuntime } from './internal/session-runtime.js'
-import type { CoordinationNodeConfig, CoordinationNodeDescription } from './runtime/node-runtime.js'
+import { createDeferred } from './runtime/session-registry.js'
+
+import {
+	type CoordinationNodeConfig,
+	type CoordinationNodeDescription,
+	CoordinationNodeRuntime,
+} from './node.js'
 import { CoordinationSession } from './session.js'
 
 let dbg = loggers.coordination.extend('client')
@@ -45,15 +50,13 @@ export class CoordinationClient {
 		options?: SessionOptions,
 		signal?: AbortSignal
 	): Promise<CoordinationSession> {
-		if (signal?.aborted) {
-			throw signal.reason
-		}
+		signal?.throwIfAborted()
 
 		dbg.log('creating session on %s', path)
 		let session = new CoordinationSession(this.#driver, { path, ...options }, signal)
 
 		try {
-			await getSessionRuntime(session).waitReady(signal)
+			await session.waitReady(signal)
 			dbg.log('session ready on %s (id=%s)', path, session.sessionId)
 			return session
 		} catch (error) {
@@ -108,16 +111,11 @@ let shouldOpenNextSession = async function shouldOpenNextSession(
 	session: CoordinationSession,
 	externalSignal?: AbortSignal
 ): Promise<boolean> {
-	let resolve!: () => void
-	let promise = new Promise<void>((res) => {
-		resolve = res
-	})
-	let combinedSignal = externalSignal
-		? AbortSignal.any([session.signal, externalSignal])
-		: session.signal
+	let deferred = createDeferred<void>()
 
-	combinedSignal.addEventListener('abort', resolve, { once: true })
-	await promise
+	using combined = linkSignals(session.signal, externalSignal)
+	combined.signal.addEventListener('abort', () => deferred.resolve(), { once: true })
+	await deferred.promise
 
 	if (externalSignal?.aborted) {
 		return false

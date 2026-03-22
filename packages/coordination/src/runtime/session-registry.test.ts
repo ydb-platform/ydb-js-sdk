@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 
 import {
+	PendingRequest,
 	SessionReconnectError,
 	SessionRequestRegistry,
 	createDeferred,
@@ -55,14 +56,15 @@ test('nextReqId throws after destroy()', () => {
 
 // ── SessionRequestRegistry — register ─────────────────────────────────────────
 
-test('register returns a deferred keyed by reqId', async () => {
+test('register returns a PendingRequest with promise, resolve, reject', async () => {
 	let registry = new SessionRequestRegistry()
 	let reqId = registry.nextReqId()
-	let deferred = registry.register(reqId)
+	let pending = registry.register(reqId)
 
-	expect(deferred).toBeDefined()
-	expect(typeof deferred.resolve).toBe('function')
-	expect(typeof deferred.reject).toBe('function')
+	expect(pending).toBeInstanceOf(PendingRequest)
+	expect(pending.promise).toBeInstanceOf(Promise)
+	expect(typeof pending.resolve).toBe('function')
+	expect(typeof pending.reject).toBe('function')
 })
 
 test('register throws after close()', () => {
@@ -266,4 +268,41 @@ test('Symbol.dispose blocks further use', () => {
 
 	expect(() => registry.nextReqId()).toThrow('Session request registry is closed')
 	expect(() => registry.register(1n)).toThrow('Session request registry is closed')
+})
+
+// ── PendingRequest — Symbol.dispose ───────────────────────────────────────────
+
+test('PendingRequest dispose removes entry from registry', () => {
+	let registry = new SessionRequestRegistry()
+	let reqId = registry.nextReqId()
+	let pending = registry.register(reqId)
+
+	pending[Symbol.dispose]()
+
+	// The slot was removed — resolve should return false.
+	let fakeResponse = { response: { case: 'createSemaphoreResult', value: { reqId } } } as never
+	expect(registry.resolve(reqId, fakeResponse)).toBe(false)
+})
+
+test('PendingRequest dispose is safe to call multiple times', () => {
+	let registry = new SessionRequestRegistry()
+	let reqId = registry.nextReqId()
+	let pending = registry.register(reqId)
+
+	pending[Symbol.dispose]()
+	// Second dispose must not throw.
+	expect(() => pending[Symbol.dispose]()).not.toThrow()
+})
+
+test('PendingRequest works with using declaration', () => {
+	let registry = new SessionRequestRegistry()
+	let reqId = registry.nextReqId()
+
+	{
+		using _pending = registry.register(reqId)
+	}
+
+	// After the block exits, the pending request should be removed.
+	let fakeResponse = { response: { case: 'createSemaphoreResult', value: { reqId } } } as never
+	expect(registry.resolve(reqId, fakeResponse)).toBe(false)
 })

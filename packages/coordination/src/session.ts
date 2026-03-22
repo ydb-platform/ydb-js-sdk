@@ -1,30 +1,24 @@
 import type { Driver } from '@ydbjs/core'
 
 import { Election } from './election.js'
-import { sessionRuntimeSymbol } from './internal/symbols.js'
 import { Mutex } from './mutex.js'
-import type { CoordinationSessionOptions } from './runtime/session-options.js'
 import {
+	type CreateSessionOptions,
 	type SessionRuntime,
 	type SessionStatus,
-	createRuntime as createSessionRuntime,
+	createRuntime,
 } from './runtime/session-runtime.js'
 import { Semaphore } from './semaphore.js'
 
 export type CoordinationSessionStatus = SessionStatus
 
-export interface CreateSessionOptions extends CoordinationSessionOptions {
-	path: string
-}
+export type { CreateSessionOptions }
 
 export class CoordinationSession implements AsyncDisposable {
-	#runtime: SessionRuntime;
-
-	[sessionRuntimeSymbol]!: SessionRuntime
+	#runtime: SessionRuntime
 
 	constructor(driver: Driver, options: CreateSessionOptions, signal?: AbortSignal) {
-		this.#runtime = createSessionRuntime(driver, options, signal)
-		this[sessionRuntimeSymbol] = this.#runtime
+		this.#runtime = createRuntime(driver, options, signal)
 	}
 
 	get sessionId(): bigint | null {
@@ -39,16 +33,20 @@ export class CoordinationSession implements AsyncDisposable {
 		return this.#runtime.signal
 	}
 
-	mutex(name: string): Mutex {
-		return new Mutex(this, name)
+	semaphore(name: string): Semaphore {
+		return new Semaphore(name, this.#runtime.transport, this.signal)
 	}
 
-	semaphore(name: string): Semaphore {
-		return new Semaphore(this, name)
+	mutex(name: string): Mutex {
+		return new Mutex(this.semaphore(name))
 	}
 
 	election(name: string): Election {
-		return new Election(this, name)
+		return new Election(this.semaphore(name), () => this.#runtime.sessionId)
+	}
+
+	waitReady(signal?: AbortSignal): Promise<void> {
+		return this.#runtime.transport.waitReady(signal)
 	}
 
 	close(signal?: AbortSignal): Promise<void> {

@@ -12,6 +12,15 @@ This guide outlines error classes and handling patterns used by the SDK.
 - `CommitError` — commit failed; exposes `retryable(idempotent)`.
 - `ClientError` — gRPC client-side error (e.g., `UNAVAILABLE`).
 
+### Coordination errors (`@ydbjs/coordination`)
+
+- `SessionClosedError` — session was closed gracefully or destroyed.
+- `SessionExpiredError` — recovery window expired, server dropped the session.
+- `LeaseReleasedError` — semaphore lease was released (found in `lease.signal.reason`).
+- `LeaderChangedError` — leader changed during `observe()` (found in `LeaderState.signal.reason`).
+- `ObservationEndedError` — the `observe()` iterator finished.
+- `TryAcquireMissError` — non-blocking acquire found no available tokens (internal).
+
 Use `instanceof` checks to branch logic.
 
 ```ts

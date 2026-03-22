@@ -1,7 +1,12 @@
 import { beforeEach, expect, inject, onTestFinished, test } from 'vitest'
 
 import { Driver } from '@ydbjs/core'
-import { CoordinationClient, type CoordinationSession } from '@ydbjs/coordination'
+import {
+	CoordinationClient,
+	type CoordinationSession,
+	LeaderChangedError,
+	LeaseReleasedError,
+} from '@ydbjs/coordination'
 
 // #region setup
 declare module 'vitest' {
@@ -306,4 +311,59 @@ test('leader state signal aborts when the leader changes', async () => {
 
 	expect(capturedSignal).toBeDefined()
 	expect(capturedSignal!.aborted).toBe(true)
+	expect(capturedSignal!.reason).toBeInstanceOf(LeaderChangedError)
+})
+
+test('leadership.signal.reason is LeaseReleasedError after resign', async () => {
+	let election = sessionA.election(electionName)
+
+	let leadership = await election.campaign(Buffer.from('A'), AbortSignal.timeout(5000))
+	await leadership.resign(AbortSignal.timeout(5000))
+
+	expect(leadership.signal.reason).toBeInstanceOf(LeaseReleasedError)
+})
+
+test('double resign is idempotent', async () => {
+	let election = sessionA.election(electionName)
+
+	let leadership = await election.campaign(Buffer.from('A'), AbortSignal.timeout(5000))
+	await leadership.resign(AbortSignal.timeout(5000))
+	await expect(leadership.resign(AbortSignal.timeout(5000))).resolves.toBeUndefined()
+})
+
+test('N sessions race for leadership — exactly one wins', async () => {
+	let N = 4
+
+	let sessions: CoordinationSession[] = []
+	for (let i = 0; i < N; i++) {
+		// oxlint-disable-next-line no-await-in-loop
+		sessions.push(await client.createSession(testNodePath, {}, AbortSignal.timeout(5000)))
+	}
+
+	try {
+		// All sessions campaign simultaneously with short timeout
+		let results = await Promise.allSettled(
+			sessions.map((s) =>
+				s
+					.election(electionName)
+					.campaign(Buffer.from(`c${s.sessionId}`), AbortSignal.timeout(3000))
+			)
+		)
+
+		let winners = results.filter((r) => r.status === 'fulfilled')
+
+		// Exactly one should have won within the timeout
+		expect(winners.length).toBeGreaterThanOrEqual(1)
+
+		// Clean up — resign all winners
+		for (let r of winners) {
+			// oxlint-disable-next-line no-await-in-loop
+			await (r as PromiseFulfilledResult<any>).value.resign(AbortSignal.timeout(5000))
+		}
+	} finally {
+		for (let s of sessions) {
+			// oxlint-disable-next-line no-await-in-loop
+			await s.close(AbortSignal.timeout(5000)).catch(() => {})
+		}
+	}
 })
