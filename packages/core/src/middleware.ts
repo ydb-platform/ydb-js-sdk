@@ -14,13 +14,16 @@ import { ClientError, type ClientMiddleware, Metadata } from 'nice-grpc'
 
 let log = loggers.grpc
 
-const QUERY_SERVICE_PATH = '/Ydb.Query.V1.QueryService/'
-const EXECUTE_QUERY_PATH = QUERY_SERVICE_PATH + 'ExecuteQuery'
-const PATH_TO_SPAN: Record<string, string> = {
-	[QUERY_SERVICE_PATH + 'CreateSession']: SPAN_NAMES.CreateSession,
-	[EXECUTE_QUERY_PATH]: SPAN_NAMES.ExecuteQuery,
-	[QUERY_SERVICE_PATH + 'CommitTransaction']: SPAN_NAMES.Commit,
-	[QUERY_SERVICE_PATH + 'RollbackTransaction']: SPAN_NAMES.Rollback,
+const EXECUTE_QUERY_METHOD = 'ExecuteQuery'
+const METHOD_TO_SPAN: Record<string, string> = {
+	CreateSession: SPAN_NAMES.CreateSession,
+	ExecuteQuery: SPAN_NAMES.ExecuteQuery,
+	CommitTransaction: SPAN_NAMES.Commit,
+	RollbackTransaction: SPAN_NAMES.Rollback,
+}
+
+function grpcMethodName(path: string): string {
+	return path.slice(path.lastIndexOf('/') + 1)
 }
 
 export function createTracingMiddleware(
@@ -36,7 +39,8 @@ export function createTracingMiddleware(
 	)
 
 	return async function* (call, options) {
-		const spanName = PATH_TO_SPAN[call.method.path]
+		const methodName = grpcMethodName(call.method.path)
+		const spanName = METHOD_TO_SPAN[methodName]
 		if (!spanName) {
 			return yield* call.next(call.request, options)
 		}
@@ -47,7 +51,7 @@ export function createTracingMiddleware(
 			kind: SpanKind.CLIENT,
 			attributes: baseAttrs,
 		})
-		if (existingQueryText && call.method.path === EXECUTE_QUERY_PATH) {
+		if (existingQueryText && methodName === EXECUTE_QUERY_METHOD) {
 			span.setAttribute('db.query.text', existingQueryText)
 		}
 		if (typeof process !== 'undefined' && process.env.YDB_TRACE_DEBUG) {
@@ -73,7 +77,7 @@ export function createTracingMiddleware(
 
 		return yield* span.runInContext(async function* () {
 			try {
-				if (call.method.path === EXECUTE_QUERY_PATH) {
+				if (methodName === EXECUTE_QUERY_METHOD) {
 					// Server streaming: iterate the generator and end span when the stream ends or a part.status !== SUCCESS.
 					const nextGen = call.next(call.request, nextOptions)
 					let ended = false
