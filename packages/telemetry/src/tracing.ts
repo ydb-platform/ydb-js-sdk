@@ -101,8 +101,7 @@ export function getBaseAttributes(
 			dbNamespace = options
 		} else {
 			dbNamespace = options.dbNamespace
-			if (options.peerAddress !== undefined)
-				peerAddress = options.peerAddress
+			if (options.peerAddress !== undefined) peerAddress = options.peerAddress
 			if (options.peerPort !== undefined) peerPort = options.peerPort
 			nodeId = options.nodeId
 			nodeDc = options.nodeDc
@@ -146,8 +145,7 @@ export function recordErrorAttributes(error: unknown): {
 
 	// gRPC/transport errors (ClientError from nice-grpc): map code to stable error.type
 	if (error instanceof ClientError) {
-		const codeName =
-			(Status as Record<number, string>)[error.code] ?? 'UNKNOWN'
+		const codeName = (Status as Record<number, string>)[error.code] ?? 'UNKNOWN'
 		return {
 			'db.response.status_code': codeName,
 			'error.type': codeName,
@@ -177,9 +175,7 @@ export function recordErrorAttributes(error: unknown): {
 		}
 		// Message-based fallback for protocol/transport errors (e.g. PROTOCOL_ERROR)
 		const msg = String((error as Error).message ?? '')
-		if (
-			/PROTOCOL_ERROR|TRANSPORT|UNAVAILABLE|DEADLINE|CANCELLED/i.test(msg)
-		) {
+		if (/PROTOCOL_ERROR|TRANSPORT|UNAVAILABLE|DEADLINE|CANCELLED/i.test(msg)) {
 			const type = /PROTOCOL/i.test(msg)
 				? 'TRANSPORT_ERROR'
 				: /UNAVAILABLE/i.test(msg)
@@ -202,11 +198,7 @@ export function recordErrorAttributes(error: unknown): {
 	}
 }
 
-export function formatTraceparent(
-	traceId: string,
-	spanId: string,
-	traceFlags: number
-): string {
+export function formatTraceparent(traceId: string, spanId: string, traceFlags: number): string {
 	let flags = traceFlags.toString(16)
 	if (flags.length < 2) flags = '0' + flags
 	return `00-${traceId}-${spanId}-${flags}`
@@ -219,9 +211,7 @@ export const SpanFinalizer = {
 	finishByError(span: Span, error: unknown): void {
 		const errAttrs = recordErrorAttributes(error)
 		span.setAttributes(errAttrs)
-		span.recordException(
-			error instanceof Error ? error : new Error(String(error))
-		)
+		span.recordException(error instanceof Error ? error : new Error(String(error)))
 		span.setStatus({ code: 2, message: String(error) })
 		span.end()
 	},

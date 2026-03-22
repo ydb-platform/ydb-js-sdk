@@ -42,7 +42,7 @@ import type { DriverHooks, EndpointInfo } from './hooks.js'
 import { createTracingMiddleware, debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
-import { NoopTracer, type Tracer } from './tracing.js'
+import { NoopTracer, type Tracer } from '@ydbjs/telemetry'
 
 export type { DriverHooks, EndpointInfo }
 

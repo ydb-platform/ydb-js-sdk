@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { ClientError, Status } from 'nice-grpc'
-import { recordErrorAttributes } from './tracing.js'
+import { recordErrorAttributes } from '@ydbjs/telemetry'
 
 test('recordErrorAttributes maps nice-grpc ClientError to gRPC status name', () => {
 	const error = new ClientError(

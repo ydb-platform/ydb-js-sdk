@@ -1,7 +1,6 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { tracingContext } from './tracing-context.js'
 import {
 	SPAN_NAMES,
 	SpanFinalizer,
@@ -9,7 +8,8 @@ import {
 	type Tracer,
 	formatTraceparent,
 	getBaseAttributes,
-} from './tracing.js'
+	tracingContext,
+} from '@ydbjs/telemetry'
 import { ClientError, type ClientMiddleware, Metadata } from 'nice-grpc'
 
 let log = loggers.grpc
@@ -56,9 +56,7 @@ export function createTracingMiddleware(
 			console.log('[ydb-tracing]', spanName, 'traceId:', ctx.traceId)
 		}
 		tracingContext.enterWith(
-			existingQueryText
-				? { span, queryText: existingQueryText }
-				: { span }
+			existingQueryText ? { span, queryText: existingQueryText } : { span }
 		)
 
 		const ctx = span.spanContext()
@@ -68,11 +66,7 @@ export function createTracingMiddleware(
 						...options,
 						metadata: Metadata(options.metadata).set(
 							'traceparent',
-							formatTraceparent(
-								ctx.traceId,
-								ctx.spanId,
-								ctx.traceFlags
-							)
+							formatTraceparent(ctx.traceId, ctx.spanId, ctx.traceFlags)
 						),
 					}
 				: options
@@ -81,17 +75,17 @@ export function createTracingMiddleware(
 			try {
 				if (call.method.path === EXECUTE_QUERY_PATH) {
 					// Server streaming: iterate the generator and end span when the stream ends or a part.status !== SUCCESS.
-				const nextGen = call.next(call.request, nextOptions)
-				let ended = false
-				const endSpan = (err?: unknown) => {
-					if (ended) return
-					ended = true
-					if (err !== undefined) {
-						SpanFinalizer.finishByError(span, err)
-					} else {
-						SpanFinalizer.finishSuccess(span)
+					const nextGen = call.next(call.request, nextOptions)
+					let ended = false
+					const endSpan = (err?: unknown) => {
+						if (ended) return
+						ended = true
+						if (err !== undefined) {
+							SpanFinalizer.finishByError(span, err)
+						} else {
+							SpanFinalizer.finishSuccess(span)
+						}
 					}
-				}
 					try {
 						for await (const part of nextGen) {
 							if (
