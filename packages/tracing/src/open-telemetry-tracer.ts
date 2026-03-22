@@ -6,7 +6,7 @@ import {
 	type StartSpanOptions,
 	type Tracer,
 	recordErrorAttributes,
-} from '@ydbjs/core'
+} from '@ydbjs/telemetry'
 import { formatTraceparent } from './traceparent.js'
 import pkg from '../package.json' with { type: 'json' }
 
@@ -52,8 +52,7 @@ export function createOpenTelemetryTracer(): Tracer {
 	const tracer = trace.getTracer('Ydb.Sdk', pkg.version)
 	return {
 		startSpan(name: string, options?: StartSpanOptions): Span {
-			const kind =
-				options?.kind === 1 ? SpanKind.CLIENT : SpanKind.INTERNAL
+			const kind = options?.kind === 1 ? SpanKind.CLIENT : SpanKind.INTERNAL
 			const attrs = options?.attributes
 			const otelSpan = tracer.startSpan(name, {
 				kind,

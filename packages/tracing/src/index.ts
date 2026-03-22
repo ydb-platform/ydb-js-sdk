@@ -8,5 +8,5 @@ export {
 	SpanFinalizer,
 	type GetBaseAttributesOptions,
 	type SpanBaseAttributes,
-} from '@ydbjs/core'
-export type { Tracer, Span, SpanContext } from '@ydbjs/core'
+} from '@ydbjs/telemetry'
+export type { Tracer, Span, SpanContext } from '@ydbjs/telemetry'

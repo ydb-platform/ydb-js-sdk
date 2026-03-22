@@ -1,1 +1,1 @@
-export { DB_SYSTEM, SPAN_NAMES } from '@ydbjs/core'
+export { DB_SYSTEM, SPAN_NAMES } from '@ydbjs/telemetry'
