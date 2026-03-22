@@ -43,7 +43,8 @@
 		"@ydbjs/telemetry": "^6.0.0"
 	},
 	"peerDependencies": {
-		"@ydbjs/api": "^6.0.0"
+		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/core": "^6.1.0"
 	},
 	"devDependencies": {
 		"@opentelemetry/sdk-trace-base": "^1.28.0",

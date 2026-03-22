@@ -3,6 +3,8 @@ export { createSpan } from './span.js'
 export { recordErrorAttributes } from './error.js'
 export { DB_SYSTEM, SPAN_NAMES } from './constants.js'
 export { formatTraceparent } from './traceparent.js'
+export { createTracingHooks } from './hooks.js'
+export { withTracing } from './setup.js'
 export {
 	getBaseAttributes,
 	SpanFinalizer,
