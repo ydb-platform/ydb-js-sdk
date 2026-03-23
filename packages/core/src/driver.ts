@@ -39,10 +39,9 @@ import {
 	DriverResponseError,
 } from './errors.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
-import { createTracingMiddleware, debug } from './middleware.js'
+import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
-import { NoopTracer, type Tracer } from '@ydbjs/telemetry'
 
 export type { DriverHooks, EndpointInfo }
 
@@ -57,9 +56,12 @@ export type DriverOptions = {
 	channelOptions?: ChannelOptions
 	credentialsProvider?: CredentialsProvider
 	/**
-	 * Tracer for spans. Default is NoopTracer. Use createOpenTelemetryTracer() from @ydbjs/tracing for OTel.
+	 * Optional low-level gRPC middleware extension point.
+	 *
+	 * Use this to attach custom middleware (for example, telemetry) without
+	 * coupling `@ydbjs/core` to a specific observability implementation.
 	 */
-	tracer?: Tracer
+	middleware?: ClientMiddleware
 
 	/**
 	 * Optional driver hooks.
@@ -205,12 +207,8 @@ export class Driver implements Disposable {
 			this.#credentialsProvider = this.options.credentialsProvider
 		}
 
-		this.#middleware = createTracingMiddleware(
-			this.cs.hostname,
-			Number.parseInt(this.cs.port || '2135', 10),
-			this.database || undefined,
-			this.options.tracer ?? NoopTracer
-		)
+		this.#middleware =
+			this.options.middleware ?? ((call, options) => call.next(call.request, options))
 
 		const metadataMiddleware: ClientMiddleware = (call, options) => {
 			let metadata = Metadata(options.metadata)

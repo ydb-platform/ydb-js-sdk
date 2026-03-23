@@ -1,8 +1,8 @@
-# @ydbjs/tracing
+# @ydbjs/telemetry
 
 OpenTelemetry tracing for YDB JavaScript SDK. Instruments QueryService operations according to [OpenTelemetry Database Spans semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-spans/).
 
-This package is an **optional** add-on — `@ydbjs/core` and `@ydbjs/query` have no dependency on OpenTelemetry. Tracing is opt-in: you enable it by passing `tracer` and `hooks` to the `Driver` constructor.
+This package is an **optional** add-on — `@ydbjs/core` and `@ydbjs/query` have no runtime dependency on OpenTelemetry. Telemetry is opt-in: you enable it by passing `middleware` and `hooks` to the `Driver` constructor.
 
 ## Instrumented operations
 
@@ -48,33 +48,34 @@ provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter()))
 provider.register()
 ```
 
-3. Pass both `tracer` and `hooks` to the Driver using the `withTracing()` helper:
+3. Pass both telemetry `middleware` and `hooks` to the Driver using the `withTracing()` helper:
 
 ```typescript
 import { Driver } from '@ydbjs/core'
-import { withTracing } from '@ydbjs/tracing'
+import { withTracing } from '@ydbjs/telemetry'
 
-const driver = new Driver('grpc://localhost:2136/local', {
-  ...withTracing(),
+const connectionString = 'grpc://localhost:2136/local'
+const driver = new Driver(connectionString, {
+  ...withTracing(connectionString),
 })
 ```
 
-`withTracing()` returns `{ tracer, hooks }` and is the recommended way to enable full tracing. Passing only `tracer` creates spans, but they won't have real node address and gRPC status attributes — those are populated by `hooks`.
+`withTracing()` returns `{ middleware, hooks }` and is the recommended way to enable full tracing.
 
 You can also pass a custom tracer (e.g. for testing):
 
 ```typescript
-import { withTracing } from '@ydbjs/tracing'
+import { withTracing } from '@ydbjs/telemetry'
 import { NoopTracer } from '@ydbjs/telemetry'
 
 const driver = new Driver(url, {
-  ...withTracing(myCustomTracer),
+  ...withTracing(url, myCustomTracer),
 })
 ```
 
-### How tracer and hooks work together
+### How middleware and hooks work together
 
-- **`tracer`** — creates spans for instrumented gRPC calls (CreateSession, ExecuteQuery, Commit, Rollback). Spans are started in the gRPC middleware layer before each call.
+- **`middleware`** — creates spans for instrumented gRPC calls (CreateSession, ExecuteQuery, Commit, Rollback). Spans are started in the gRPC middleware layer before each call.
 - **`hooks`** — listens to driver-level events and enriches the active span with information that is only known after endpoint selection:
   - `ydb.node.id` — ID of the selected YDB node
   - `ydb.node.dc` — datacenter/availability zone of the node
@@ -89,7 +90,7 @@ Without hooks, spans will still be created, but the above attributes will be mis
 Spans from `createOpenTelemetryTracer()` implement `getId()` returning a W3C `traceparent` string for propagation. For manual span completion you can use `SpanFinalizer`:
 
 ```typescript
-import { SpanFinalizer } from '@ydbjs/tracing'
+import { SpanFinalizer } from '@ydbjs/telemetry'
 
 // On success
 SpanFinalizer.finishSuccess(span)
@@ -134,7 +135,7 @@ The repo's local stack includes Grafana and Tempo. To see YDB traces in Grafana:
    ```
 
    Then use the driver as usual; spans will be sent to Tempo.  
-   **Note:** Vitest tracing tests use `InMemorySpanExporter` and do not send data to Tempo; run your app (e.g. `node test-ydb.js`) to see traces in Grafana.
+   **Note:** Vitest telemetry tests use `InMemorySpanExporter` and do not send data to Tempo; run your app (e.g. `node test-ydb.js`) to see traces in Grafana.
 
 3. **Tempo datasource in Grafana**  
    The stack provisions a Tempo datasource automatically (URL `http://tempo:3200`). If you added Tempo manually before and see "Failed to connect", remove the old datasource in **Connections** → **Data sources** and restart Grafana, or use the provisioned "Tempo" source.

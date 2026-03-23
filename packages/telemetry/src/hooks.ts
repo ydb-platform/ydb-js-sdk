@@ -1,10 +1,11 @@
-import type { DriverHooks } from '@ydbjs/core'
-import { tracingContext } from '@ydbjs/telemetry'
+import type { CallCompleteEvent, CallStartEvent, DriverHooks } from '@ydbjs/core'
+import type { Span } from './tracing.js'
+import { tracingContext } from './tracing-context.js'
 
 export function createTracingHooks(): DriverHooks {
 	return {
-		onCall(event) {
-			const span = tracingContext.getStore()?.span
+		onCall(event: CallStartEvent) {
+			const span = tracingContext.getStore()?.span as Span | undefined
 			if (!span) return
 
 			span.setAttribute('ydb.node.id', Number(event.endpoint.nodeId))
@@ -22,7 +23,7 @@ export function createTracingHooks(): DriverHooks {
 				)
 			}
 
-			return (complete) => {
+			return (complete: CallCompleteEvent) => {
 				span.setAttribute('rpc.grpc.status_code', complete.grpcStatusCode)
 			}
 		},

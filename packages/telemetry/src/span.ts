@@ -1,7 +1,7 @@
 import { SpanKind, trace } from '@opentelemetry/api'
 import type { Span as OtelSpan } from '@opentelemetry/api'
-import { DB_SYSTEM, recordErrorAttributes } from '@ydbjs/telemetry'
-import type { SpanBaseAttributes } from '@ydbjs/telemetry'
+import { DB_SYSTEM, recordErrorAttributes } from './tracing.js'
+import type { SpanBaseAttributes } from './tracing.js'
 import pkg from '../package.json' with { type: 'json' }
 
 /**

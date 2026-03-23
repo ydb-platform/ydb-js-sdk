@@ -1,11 +1,11 @@
 {
 	"name": "@ydbjs/telemetry",
 	"version": "6.0.0",
-	"description": "Abstract telemetry interfaces and no-op implementation for YDB SDK. No OpenTelemetry dependency.",
+	"description": "OpenTelemetry tracing for YDB JavaScript SDK. Instrumentation for QueryService operations.",
 	"keywords": [
 		"ydb",
 		"database",
-		"telemetry",
+		"opentelemetry",
 		"tracing",
 		"typescript"
 	],
@@ -39,9 +39,17 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
+		"@opentelemetry/api": "^1.9.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"nice-grpc": "^2.1.13"
+	},
+	"peerDependencies": {
+		"@ydbjs/core": "^6.1.0"
+	},
+	"devDependencies": {
+		"@opentelemetry/sdk-trace-base": "^1.28.0",
+		"@opentelemetry/sdk-trace-node": "^1.28.0"
 	},
 	"files": [
 		"dist",

@@ -1,10 +1,7 @@
 import { expect, test } from 'vitest'
 
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
-import {
-	InMemorySpanExporter,
-	SimpleSpanProcessor,
-} from '@opentelemetry/sdk-trace-base'
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 

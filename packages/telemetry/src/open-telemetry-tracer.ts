@@ -6,7 +6,7 @@ import {
 	type StartSpanOptions,
 	type Tracer,
 	recordErrorAttributes,
-} from '@ydbjs/telemetry'
+} from './tracing.js'
 import { formatTraceparent } from './traceparent.js'
 import pkg from '../package.json' with { type: 'json' }
 
