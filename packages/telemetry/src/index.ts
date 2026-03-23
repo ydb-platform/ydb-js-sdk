@@ -1,7 +1,7 @@
 export { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 export { createSpan } from './span.js'
 export { createTracingMiddleware } from './middleware.js'
-export { createTracingHooks } from './hooks.js'
+export { createTracingHooks } from './driver-hooks.js'
 export { withTracing } from './setup.js'
 export {
 	DB_SYSTEM,

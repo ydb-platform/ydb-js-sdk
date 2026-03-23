@@ -2,7 +2,7 @@ import type { DriverHooks } from '@ydbjs/core'
 import type { ClientMiddleware } from 'nice-grpc'
 import type { Tracer } from './tracing.js'
 
-import { createTracingHooks } from './hooks.js'
+import { createTracingHooks } from './driver-hooks.js'
 import { createTracingMiddleware } from './middleware.js'
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 
