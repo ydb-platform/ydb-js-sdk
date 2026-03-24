@@ -49,7 +49,7 @@ function wrapOtelSpan(otelSpan: OtelSpan): Span {
 }
 
 export function createOpenTelemetryTracer(): Tracer {
-	const tracer = trace.getTracer('Ydb.Sdk', pkg.version)
+	const tracer = trace.getTracer('ydb-sdk', pkg.version)
 	return {
 		startSpan(name: string, options?: StartSpanOptions): Span {
 			const kind = options?.kind === 1 ? SpanKind.CLIENT : SpanKind.INTERNAL

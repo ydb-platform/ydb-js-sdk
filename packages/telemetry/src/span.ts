@@ -13,7 +13,7 @@ export function createSpan<T>(
 	baseAttributes: SpanBaseAttributes & { 'db.system.name'?: string },
 	fn: (span: OtelSpan) => Promise<T>
 ): Promise<T> {
-	const tracer = trace.getTracer('Ydb.Sdk', pkg.version)
+	const tracer = trace.getTracer('ydb-sdk', pkg.version)
 	const attrs = {
 		'db.system.name': DB_SYSTEM,
 		...baseAttributes,
