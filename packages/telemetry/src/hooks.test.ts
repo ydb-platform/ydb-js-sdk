@@ -1,8 +1,9 @@
 import type { CallStartEvent } from '@ydbjs/core'
 import { expect, test, vi } from 'vitest'
 
-import { createTracingHooks } from './driver-hooks.js'
+import { createTracingHooks } from './hooks.js'
 import { tracingContext } from './tracing-context.js'
+import { SPAN_NAMES } from './tracing.js'
 
 function makeCallStartEvent(overrides?: Partial<CallStartEvent>): CallStartEvent {
 	return {
@@ -21,61 +22,101 @@ function makeCallStartEvent(overrides?: Partial<CallStartEvent>): CallStartEvent
 	}
 }
 
-test('onCall does nothing when no span in context', () => {
-	const hooks = createTracingHooks()
-	const complete = tracingContext.run({}, () => hooks.onCall?.(makeCallStartEvent()))
-
-	expect(complete).toBeUndefined()
-})
-
-test('onCall sets endpoint attributes and completion status', () => {
+function makeTracer() {
 	const setAttribute = vi.fn()
-	const span = { setAttribute }
-	const hooks = createTracingHooks()
+	const setAttributes = vi.fn()
+	const recordException = vi.fn()
+	const setStatus = vi.fn()
+	const end = vi.fn()
+	const span = {
+		setAttribute,
+		setAttributes,
+		recordException,
+		setStatus,
+		end,
+		spanContext: () => ({ traceId: 'trace-id', spanId: 'span-id', traceFlags: 1 }),
+		getId: () => '',
+		runInContext: <T>(fn: () => T) => fn(),
+	}
+	const startSpan = vi.fn(() => span)
+	const tracer = { startSpan }
 
-	const complete = tracingContext.run({ span }, () => hooks.onCall?.(makeCallStartEvent()))
+	return { tracer, startSpan, span, setAttribute, setAttributes, recordException, setStatus, end }
+}
 
+test('onCall creates span and sets endpoint attributes', () => {
+	const { tracer, startSpan, setAttribute, end } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+	const complete = hooks.onCall?.(makeCallStartEvent())
+
+	expect(startSpan).toHaveBeenCalledWith(
+		SPAN_NAMES.ExecuteQuery,
+		expect.objectContaining({ kind: 1 })
+	)
 	expect(setAttribute).toHaveBeenCalledWith('ydb.node.id', 42)
 	expect(setAttribute).toHaveBeenCalledWith('ydb.node.dc', 'sas')
 	expect(setAttribute).toHaveBeenCalledWith('network.peer.address', '10.1.2.3')
 	expect(setAttribute).toHaveBeenCalledWith('network.peer.port', 2135)
 	expect(typeof complete).toBe('function')
-
-	complete?.({ grpcStatusCode: 14, duration: 25 })
-
-	expect(setAttribute).toHaveBeenCalledWith('rpc.grpc.status_code', 14)
+	complete?.({ grpcStatusCode: 0, duration: 25 })
+	expect(end).toHaveBeenCalledTimes(1)
 })
 
-test('rpc.grpc.status_code is set only after completion callback call', () => {
-	const setAttribute = vi.fn()
-	const span = { setAttribute }
-	const hooks = createTracingHooks()
+test('onBeforeCall injects traceparent when active span exists', () => {
+	const { tracer } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+	const metadata = { set: vi.fn() }
 
-	const complete = tracingContext.run({ span }, () => hooks.onCall?.(makeCallStartEvent()))
+	tracingContext.run(
+		{
+			span: {
+				getId: () => '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+			},
+		},
+		() => hooks.onBeforeCall?.(makeCallStartEvent(), metadata as any)
+	)
+
+	expect(metadata.set).toHaveBeenCalledWith(
+		'traceparent',
+		'00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'
+	)
+})
+
+test('onCall ignores methods outside instrumented set', () => {
+	const { tracer, startSpan } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+	const complete = hooks.onCall?.(
+		makeCallStartEvent({ method: '/Ydb.Scripting.V1.ScriptingService/ExplainYqlScript' })
+	)
+	expect(complete).toBeUndefined()
+	expect(startSpan).not.toHaveBeenCalled()
+})
+
+test('rpc.grpc.status_code is set and error is finalized on grpc failure', () => {
+	const { tracer, setAttribute, setAttributes, recordException, setStatus, end } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+	const complete = hooks.onCall?.(makeCallStartEvent())
+
 	expect(typeof complete).toBe('function')
-
-	expect(setAttribute).not.toHaveBeenCalledWith('rpc.grpc.status_code', expect.anything())
-
-	complete?.({ grpcStatusCode: 0, duration: 1 })
-
-	expect(setAttribute).toHaveBeenCalledWith('rpc.grpc.status_code', 0)
+	complete?.({ grpcStatusCode: 14, duration: 1 })
+	expect(setAttribute).toHaveBeenCalledWith('rpc.grpc.status_code', 14)
+	expect(setAttributes).toHaveBeenCalled()
+	expect(recordException).toHaveBeenCalled()
+	expect(setStatus).toHaveBeenCalled()
+	expect(end).toHaveBeenCalledTimes(1)
 })
 
 test('onCall skips dc and peer parsing when endpoint data is not parseable', () => {
-	const setAttribute = vi.fn()
-	const span = { setAttribute }
-	const hooks = createTracingHooks()
-
-	const complete = tracingContext.run({ span }, () =>
-		hooks.onCall?.(
-			makeCallStartEvent({
-				endpoint: {
-					nodeId: 7n,
-					address: 'localhost',
-					location: '',
-				},
-			})
-		)
+	const { tracer, setAttribute } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+	const complete = hooks.onCall?.(
+		makeCallStartEvent({
+			endpoint: {
+				nodeId: 7n,
+				address: 'localhost',
+				location: '',
+			},
+		})
 	)
 
 	expect(setAttribute).toHaveBeenCalledWith('ydb.node.id', 7)
@@ -83,4 +124,15 @@ test('onCall skips dc and peer parsing when endpoint data is not parseable', () 
 	expect(setAttribute).not.toHaveBeenCalledWith('network.peer.address', expect.anything())
 	expect(setAttribute).not.toHaveBeenCalledWith('network.peer.port', expect.anything())
 	expect(typeof complete).toBe('function')
+})
+
+test('onCall adds db.query.text when present in context', () => {
+	const { tracer, setAttribute } = makeTracer()
+	const hooks = createTracingHooks('localhost', 2135, '/local', tracer)
+
+	tracingContext.run({ queryText: 'SELECT 1' }, () => {
+		hooks.onCall?.(makeCallStartEvent())
+	})
+
+	expect(setAttribute).toHaveBeenCalledWith('db.query.text', 'SELECT 1')
 })

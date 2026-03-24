@@ -2,11 +2,11 @@
 
 OpenTelemetry tracing for YDB JavaScript SDK. Instruments QueryService operations according to [OpenTelemetry Database Spans semantic conventions](https://opentelemetry.io/docs/specs/semconv/db/database-spans/).
 
-This package is an **optional** add-on — `@ydbjs/core` and `@ydbjs/query` have no runtime dependency on OpenTelemetry. Telemetry is opt-in: you enable it by passing `middleware` and `hooks` to the `Driver` constructor.
+This package is an **optional** add-on — `@ydbjs/core` and `@ydbjs/query` have no runtime dependency on OpenTelemetry. Telemetry is opt-in: you enable it by passing telemetry `hooks` to the `Driver` constructor.
 
 ## Instrumented operations
 
-Spans are created **automatically** in the gRPC middleware layer when these QueryService methods are called:
+Spans are created **automatically** by driver hooks when these QueryService methods are called:
 
 - **ydb.CreateSession** — CreateSession
 - **ydb.ExecuteQuery** — ExecuteQuery (including streaming)
@@ -24,7 +24,7 @@ Spans are created **automatically** in the gRPC middleware layer when these Quer
 - `ydb.node.id` — node id (when using discovery)
 - `ydb.node.dc` — node location/datacenter (when available)
 
-The `traceparent` header (W3C Trace Context) is set on gRPC metadata for propagation. Spans created via `createOpenTelemetryTracer()` implement `getId()` returning the traceparent string.
+Spans created via `createOpenTelemetryTracer()` implement `getId()` returning the traceparent string.
 
 On error:
 
@@ -48,7 +48,7 @@ provider.addSpanProcessor(new BatchSpanProcessor(new OTLPTraceExporter()))
 provider.register()
 ```
 
-3. Pass both telemetry `middleware` and `hooks` to the Driver using the `withTracing()` helper:
+3. Pass telemetry `hooks` to the Driver using the `withTracing()` helper:
 
 ```typescript
 import { Driver } from '@ydbjs/core'
@@ -60,7 +60,7 @@ const driver = new Driver(connectionString, {
 })
 ```
 
-`withTracing()` returns `{ middleware, hooks }` and is the recommended way to enable full tracing.
+`withTracing()` returns `{ hooks }` and is the recommended way to enable tracing.
 
 You can also pass a custom tracer (e.g. for testing):
 
@@ -73,17 +73,15 @@ const driver = new Driver(url, {
 })
 ```
 
-### How middleware and hooks work together
+### How hooks-based tracing works
 
-- **`middleware`** — creates spans for instrumented gRPC calls (CreateSession, ExecuteQuery, Commit, Rollback). Spans are started in the gRPC middleware layer before each call.
-- **`hooks`** — listens to driver-level events and enriches the active span with information that is only known after endpoint selection:
+- **`hooks`** create spans for instrumented calls (CreateSession, ExecuteQuery, Commit, Rollback).
+- The same hooks enrich spans with endpoint-specific attributes:
   - `ydb.node.id` — ID of the selected YDB node
   - `ydb.node.dc` — datacenter/availability zone of the node
   - `network.peer.address` — actual node address (after discovery)
   - `network.peer.port` — actual node port
   - `rpc.grpc.status_code` — gRPC status code of the completed call
-
-Without hooks, spans will still be created, but the above attributes will be missing or reflect only the initial connection string values.
 
 ### Span.getId() and SpanFinalizer
 
