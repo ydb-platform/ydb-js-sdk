@@ -7,6 +7,18 @@ import { YDBError } from '@ydbjs/error'
 
 let dbg = loggers.query.extend('session')
 
+export class SessionAbortedError extends Error {
+	sessionId: string
+	reason: 'invalidated' | 'closed'
+
+	constructor(sessionId: string, reason: 'invalidated' | 'closed') {
+		super(`Session ${sessionId} aborted: ${reason}`)
+		this.name = 'SessionAbortedError'
+		this.sessionId = sessionId
+		this.reason = reason
+	}
+}
+
 export type SessionState = 'idle' | 'busy' | 'closed' | 'invalidated'
 
 export let SESSION_STATE = {
@@ -24,6 +36,7 @@ export class Session {
 	#createdAt: number = Date.now()
 	#lastUsedAt: number = Date.now()
 	#attachController?: AbortController | undefined
+	#abortController: AbortController = new AbortController()
 	#onInvalidated?: () => void
 
 	constructor(driver: Driver, sessionId: string, nodeId: bigint) {
@@ -61,6 +74,14 @@ export class Session {
 		return this.#lastUsedAt
 	}
 
+	/**
+	 * Signal that aborts when session is invalidated or closed
+	 * Use this to cancel ongoing operations when session becomes unusable
+	 */
+	get signal(): AbortSignal {
+		return this.#abortController.signal
+	}
+
 	get isIdle(): boolean {
 		return this.#state === SESSION_STATE.IDLE
 	}
@@ -81,15 +102,15 @@ export class Session {
 	 * Mark session as invalidated by server or attach failure
 	 */
 	markInvalidated(): void {
-		if (
-			this.#state === SESSION_STATE.CLOSED ||
-			this.#state === SESSION_STATE.INVALIDATED
-		) {
+		if (this.#state === SESSION_STATE.CLOSED || this.#state === SESSION_STATE.INVALIDATED) {
 			return
 		}
 
 		this.#state = SESSION_STATE.INVALIDATED
 		dbg.log('marked session %s as invalidated', this.#sessionId)
+
+		// Abort all operations using this session
+		this.#abortController.abort(new SessionAbortedError(this.#sessionId, 'invalidated'))
 
 		// Clean up attach stream if it exists
 		if (this.#attachController) {
@@ -133,10 +154,7 @@ export class Session {
 
 		this.#attachController = new AbortController()
 
-		let attachClient = this.#driver.createClient(
-			QueryServiceDefinition,
-			this.#nodeId
-		)
+		let attachClient = this.#driver.createClient(QueryServiceDefinition, this.#nodeId)
 		let attachStream = attachClient.attachSession(
 			{ sessionId: this.#sessionId },
 			{ signal: this.#attachController.signal }
@@ -149,15 +167,9 @@ export class Session {
 			: await attachIterator.next()
 
 		if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
-			dbg.log(
-				'failed to attach session, status: %d',
-				attachSessionResult.value.status
-			)
+			dbg.log('failed to attach session, status: %d', attachSessionResult.value.status)
 
-			throw new YDBError(
-				attachSessionResult.value.status,
-				attachSessionResult.value.issues
-			)
+			throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
 		}
 
 		dbg.log('attached to session %s', this.#sessionId)
@@ -169,13 +181,8 @@ export class Session {
 	 * Monitor attach stream for session invalidation
 	 * Runs in background and marks session as invalidated when stream ends or errors
 	 */
-	async #monitorAttachStream(
-		attachStream: AsyncIterable<any>
-	): Promise<void> {
-		dbg.log(
-			'starting attach stream monitor for session %s',
-			this.#sessionId
-		)
+	async #monitorAttachStream(attachStream: AsyncIterable<any>): Promise<void> {
+		dbg.log('starting attach stream monitor for session %s', this.#sessionId)
 
 		try {
 			for await (let message of attachStream) {
@@ -191,11 +198,7 @@ export class Session {
 
 			dbg.log('attach stream closed for session %s', this.#sessionId)
 		} catch (error) {
-			dbg.log(
-				'attach stream error for session %s: %O',
-				this.#sessionId,
-				error
-			)
+			dbg.log('attach stream error for session %s: %O', this.#sessionId, error)
 		} finally {
 			this.markInvalidated()
 		}
@@ -226,41 +229,32 @@ export class Session {
 		dbg.log('deleting session %s', this.#sessionId)
 
 		try {
-			let client = this.#driver.createClient(
-				QueryServiceDefinition,
-				this.#nodeId
-			)
+			let client = this.#driver.createClient(QueryServiceDefinition, this.#nodeId)
 
-			await client.deleteSession(
-				{ sessionId: this.#sessionId },
-				signal ? { signal } : {}
-			)
+			await client.deleteSession({ sessionId: this.#sessionId }, signal ? { signal } : {})
 
-			this.#state = SESSION_STATE.CLOSED
 			dbg.log('deleted session %s', this.#sessionId)
+		} catch (error) {
+			dbg.log('failed to delete session %s: %O', this.#sessionId, error)
+			throw error
+		} finally {
+			this.#state = SESSION_STATE.CLOSED
+
+			// Abort all operations using this session
+			this.#abortController.abort(new SessionAbortedError(this.#sessionId, 'closed'))
 
 			if (this.#attachController) {
-				dbg.log(
-					'aborting attach stream for session %s',
-					this.#sessionId
-				)
+				dbg.log('aborting attach stream for session %s', this.#sessionId)
 				this.#attachController.abort()
 				this.#attachController = undefined
 			}
-		} catch (error) {
-			dbg.log('failed to delete session %s: %O', this.#sessionId, error)
-			this.#state = SESSION_STATE.CLOSED
-			throw error
 		}
 	}
 
 	/**
 	 * Create a new session
 	 */
-	static async create(
-		driver: Driver,
-		signal?: AbortSignal
-	): Promise<Session> {
+	static async create(driver: Driver, signal?: AbortSignal): Promise<Session> {
 		dbg.log('creating new session')
 
 		let client = driver.createClient(QueryServiceDefinition)

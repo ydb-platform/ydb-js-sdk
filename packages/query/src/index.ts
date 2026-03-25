@@ -133,10 +133,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 	): Query<T> {
 		let { text, params } = yql(strings, ...values)
 		dbg.log('creating query instance for text: %s', text)
-		return ctx.run(
-			ctx.getStore() ?? {},
-			() => new Query<T>(driver, text, params, sessionPool)
-		)
+		return ctx.run(ctx.getStore() ?? {}, () => new Query<T>(driver, text, params, sessionPool))
 	}
 
 	function txIml<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
@@ -182,11 +179,18 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		options.isolation ??= 'serializableReadWrite'
 		options.idempotent = options.idempotent ?? false
 
+		let sessionSignal: AbortSignal | undefined
+
 		return retry(
 			{
 				...defaultRetryConfig,
 				signal: options.signal,
 				idempotent: true,
+				retry: (error, idempotent) => {
+					let sessionSignalAborted = sessionSignal?.aborted ?? false
+					sessionSignal = undefined
+					return isRetryableError(error, idempotent) || sessionSignalAborted
+				},
 				onRetry: (ctx) => {
 					dbg.log('retrying transaction, attempt %d, error: %O', ctx.attempt, ctx.error)
 				},
@@ -194,16 +198,16 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 			async (signal) => {
 				dbg.log('acquiring session from pool for transaction')
 				using sessionLease = await sessionPool.acquire(signal)
+				sessionSignal = sessionLease.signal
 				dbg.log('session %s acquired for transaction', sessionLease.id)
+
+				signal = AbortSignal.any([signal, sessionLease.signal])
 
 				store.signal = signal
 				store.nodeId = sessionLease.nodeId
 				store.sessionId = sessionLease.id
 
-				let client = driver.createClient(
-					QueryServiceDefinition,
-					sessionLease.nodeId
-				)
+				let client = driver.createClient(QueryServiceDefinition, sessionLease.nodeId)
 
 				let beginTransactionResult = await client.beginTransaction(
 					{
@@ -219,17 +223,12 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 						'failed to begin transaction, status: %d',
 						beginTransactionResult.status
 					)
-					throw new YDBError(
-						beginTransactionResult.status,
-						beginTransactionResult.issues
-					)
+					throw new YDBError(beginTransactionResult.status, beginTransactionResult.issues)
 				}
 
 				store.transactionId = beginTransactionResult.txMeta!.id
 
-				let commitHooks: Array<
-					(signal?: AbortSignal) => Promise<void> | void
-				> = []
+				let commitHooks: Array<(signal?: AbortSignal) => Promise<void> | void> = []
 				let rollbackHooks: Array<
 					(error: unknown, signal?: AbortSignal) => Promise<void> | void
 				> = []

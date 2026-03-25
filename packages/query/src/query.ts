@@ -15,7 +15,13 @@ import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
+import {
+	type RetryConfig,
+	type RetryContext,
+	defaultRetryConfig,
+	isRetryableError,
+	retry,
+} from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
@@ -134,10 +140,17 @@ export class Query<T extends any[] = unknown[]>
 			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
 		}
 
+		let sessionSignal: AbortSignal | undefined
+
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal,
 			idempotent: this.#idempotent,
+			retry: (error, idempotent) => {
+				let sessionSignalAborted = sessionSignal?.aborted ?? false
+				sessionSignal = undefined
+				return isRetryableError(error, idempotent) || sessionSignalAborted
+			},
 			onRetry: (retryCtx) => {
 				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)
@@ -147,14 +160,14 @@ export class Query<T extends any[] = unknown[]>
 		await this.#driver.ready(signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
-			using sessionLease = !sessionId
-				? await this.#sessionPool.acquire(signal)
-				: undefined
+			using sessionLease = !sessionId ? await this.#sessionPool.acquire(signal) : undefined
+			sessionSignal = sessionLease?.signal
 
 			if (sessionLease) {
 				dbg.log('acquired session %s from pool', sessionLease.id)
 				nodeId = sessionLease.nodeId
 				sessionId = sessionLease.id
+				signal = AbortSignal.any([signal, sessionLease.signal])
 			}
 
 			dbg.log('creating query client for nodeId: %s', nodeId)

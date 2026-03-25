@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
 import type { Driver } from '@ydbjs/core'
-import { SESSION_STATE, Session, type SessionState } from './session.ts'
+import { SESSION_STATE, Session, SessionAbortedError, type SessionState } from './session.ts'
 import { SessionPool } from './session-pool.ts'
 
 function createMockDriver(): Driver {
@@ -21,6 +21,7 @@ function createMockDriver(): Driver {
 function createMockSession(id = 'test-session-id'): Session {
 	let state: SessionState = SESSION_STATE.IDLE
 	let invalidatedCallback: (() => void) | undefined
+	let abortController = new AbortController()
 
 	return {
 		id,
@@ -42,12 +43,17 @@ function createMockSession(id = 'test-session-id'): Session {
 			return state === SESSION_STATE.INVALIDATED
 		},
 
+		get signal() {
+			return abortController.signal
+		},
+
 		markClosed: vi.fn(() => {
 			state = SESSION_STATE.CLOSED
 		}),
 
 		markInvalidated: vi.fn(() => {
 			state = SESSION_STATE.INVALIDATED
+			abortController.abort(new SessionAbortedError(id, 'invalidated'))
 			invalidatedCallback?.()
 		}),
 
@@ -71,6 +77,7 @@ function createMockSession(id = 'test-session-id'): Session {
 
 		delete: vi.fn(async (_signal?: AbortSignal) => {
 			state = SESSION_STATE.CLOSED
+			abortController.abort(new SessionAbortedError(id, 'closed'))
 		}),
 	} as unknown as Session
 }
@@ -130,11 +137,7 @@ test('does not create more than maxSize', async () => {
 		return s
 	})
 
-	const [a, b, c] = [
-		pool.acquireSession(),
-		pool.acquireSession(),
-		pool.acquireSession(),
-	]
+	const [a, b, c] = [pool.acquireSession(), pool.acquireSession(), pool.acquireSession()]
 
 	expect(pool.stats.waiting).toBe(1)
 
@@ -272,9 +275,7 @@ test('invalidating idle session allows creating a new one next time', async () =
 	const s1 = createMockSession('s1')
 	const s2 = createMockSession('s2')
 
-	vi.spyOn(Session, 'create')
-		.mockResolvedValueOnce(s1)
-		.mockResolvedValueOnce(s2)
+	vi.spyOn(Session, 'create').mockResolvedValueOnce(s1).mockResolvedValueOnce(s2)
 
 	const a1 = await pool.acquireSession()
 	pool.release(a1)
@@ -297,9 +298,7 @@ test('close(): rejects waiters and deletes all sessions (and does not throw on d
 
 	const s1 = createMockSession('s1')
 	const s2 = createMockSession('s2')
-	vi.spyOn(Session, 'create')
-		.mockResolvedValueOnce(s1)
-		.mockResolvedValueOnce(s2)
+	vi.spyOn(Session, 'create').mockResolvedValueOnce(s1).mockResolvedValueOnce(s2)
 
 	const a1 = await pool.acquireSession()
 	const a2 = await pool.acquireSession()
@@ -335,4 +334,22 @@ test('using sessionLease automatically releases session', async () => {
 	// After exiting the block, session should be released automatically
 	expect(pool.stats.busy).toBe(0)
 	expect(pool.stats.idle).toBe(1)
+})
+
+test('sessionLease.signal aborts when session is invalidated', async () => {
+	const driver = createMockDriver()
+	pool = new SessionPool(driver, { maxSize: 1 })
+
+	const s1 = createMockSession('s1')
+	vi.spyOn(Session, 'create').mockResolvedValue(s1)
+
+	using sessionLease = await pool.acquire()
+
+	expect(sessionLease.signal.aborted).toBe(false)
+
+	// Simulate session invalidation
+	s1.markInvalidated()
+
+	expect(sessionLease.signal.aborted).toBe(true)
+	expect(sessionLease.signal.reason).toEqual(new SessionAbortedError('s1', 'invalidated'))
 })

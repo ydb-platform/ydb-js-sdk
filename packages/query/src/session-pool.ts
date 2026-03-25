@@ -44,6 +44,14 @@ export class SessionLease implements Disposable {
 		return this.#session.nodeId
 	}
 
+	/**
+	 * Signal that aborts when session is invalidated or closed
+	 * Use this to cancel ongoing operations when session becomes unusable
+	 */
+	get signal(): AbortSignal {
+		return this.#session.signal
+	}
+
 	[Symbol.dispose](): void {
 		this.#pool.release(this.#session)
 	}
