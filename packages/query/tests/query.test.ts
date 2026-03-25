@@ -342,7 +342,7 @@ test('executes parallel transactions and queries', async () => {
 })
 
 test('works with custom session pool size', async () => {
-	await using sql = query(driver, { maxSize: 2 })
+	await using sql = query(driver, { poolOptions: { maxSize: 2 } })
 
 	let result1 = await sql`SELECT 1 AS id`
 	let result2 = await sql`SELECT 2 AS id`
@@ -368,7 +368,7 @@ test('works with custom session pool size', async () => {
 })
 
 test('reuses sessions from pool', async () => {
-	await using sql = query(driver, { maxSize: 1 })
+	await using sql = query(driver, { poolOptions: { maxSize: 1 } })
 
 	let result1 = await sql`SELECT 1 AS id`
 	let result2 = await sql`SELECT 2 AS id`
@@ -380,7 +380,7 @@ test('reuses sessions from pool', async () => {
 })
 
 test('handles concurrent queries with limited pool', async () => {
-	await using sql = query(driver, { maxSize: 3 })
+	await using sql = query(driver, { poolOptions: { maxSize: 3 } })
 
 	let results = await Promise.all(
 		Array.from({ length: 10 }, (_, i) => sql`SELECT ${i + 1} AS id`)
@@ -393,7 +393,7 @@ test('handles concurrent queries with limited pool', async () => {
 })
 
 test('releases sessions back to pool after query', async () => {
-	await using sql = query(driver, { maxSize: 1 })
+	await using sql = query(driver, { poolOptions: { maxSize: 1 } })
 
 	let result1 = await sql`SELECT 1 AS id`
 	expect(result1).toEqual([[{ id: 1 }]])
@@ -406,7 +406,7 @@ test('releases sessions back to pool after query', async () => {
 })
 
 test('handles session pool with transactions', async () => {
-	await using sql = query(driver, { maxSize: 1 })
+	await using sql = query(driver, { poolOptions: { maxSize: 1 } })
 
 	let result = await sql.begin(async (tx) => {
 		let r1 = await tx`SELECT 1 AS id`
@@ -418,7 +418,7 @@ test('handles session pool with transactions', async () => {
 })
 
 test('handles multiple concurrent transactions', async () => {
-	await using sql = query(driver, { maxSize: 2 })
+	await using sql = query(driver, { poolOptions: { maxSize: 2 } })
 
 	let results = await Promise.all([
 		sql.begin(async (tx) => {
