@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { DB_SYSTEM, SPAN_NAMES } from './constants.js'
+import { DB_SYSTEM, SPAN_NAMES } from './tracing.js'
 
 test('DB_SYSTEM equals ydb', () => {
 	expect(DB_SYSTEM).toBe('ydb')

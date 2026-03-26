@@ -198,11 +198,7 @@ export function recordErrorAttributes(error: unknown): {
 	}
 }
 
-export function formatTraceparent(traceId: string, spanId: string, traceFlags: number): string {
-	let flags = traceFlags.toString(16)
-	if (flags.length < 2) flags = '0' + flags
-	return `00-${traceId}-${spanId}-${flags}`
-}
+export { formatTraceparent } from './traceparent.js'
 
 export const SpanFinalizer = {
 	finishSuccess(span: Span): void {

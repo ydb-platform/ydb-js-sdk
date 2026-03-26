@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 
-import { recordErrorAttributes } from './error.js'
+import { recordErrorAttributes } from './tracing.js'
 
 test('recordErrorAttributes returns status and type for YDBError', () => {
 	let error = new YDBError(StatusIds_StatusCode.ABORTED, [])

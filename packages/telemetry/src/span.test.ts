@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { getBaseAttributes } from './tracing.js'
-import { DB_SYSTEM } from './constants.js'
+import { DB_SYSTEM, getBaseAttributes } from './tracing.js'
 import { createSpan } from './span.js'
 
 test('getBaseAttributes returns db.system.name, server and network.peer fields', () => {
