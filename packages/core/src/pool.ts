@@ -517,4 +517,8 @@ export class ConnectionPool implements Disposable {
 	[POOL_RUN_IDLE_SWEEP_FOR_TESTING](): void {
 		this.#idleSweep()
 	}
+
+	[Symbol.iterator](): IterableIterator<Connection> {
+		return this.#connections[Symbol.iterator]()
+	}
 }
