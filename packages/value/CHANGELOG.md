@@ -1,5 +1,15 @@
 # @ydbjs/value
 
+## 6.0.6
+
+### Patch Changes
+
+- [`b2bf87d`](https://github.com/ydb-platform/ydb-js-sdk/commit/b2bf87d72ebbd8b7028e2c831f354f2a40f99fa9) Thanks [@polRk](https://github.com/polRk)! - Add extra js native values to parse
+  - Float32Array
+  - Float64Array
+  - BigInt64Array
+  - BigUint64Array
+
 ## 6.0.5
 
 ### Patch Changes
