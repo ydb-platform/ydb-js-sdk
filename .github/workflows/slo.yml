@@ -140,7 +140,8 @@ jobs:
 
       - name: Build workload images
         run: |
-          npm --prefix "$GITHUB_WORKSPACE/current" install
+          npm --prefix "$GITHUB_WORKSPACE/current" ci
+          npm --prefix "$GITHUB_WORKSPACE/current" run build
           npm --prefix "$GITHUB_WORKSPACE/current/tests/slo" run build:kv
 
           docker build \
@@ -150,7 +151,8 @@ jobs:
 
           docker tag ydb-app-current ydb-app-baseline
 
-          # npm --prefix "$GITHUB_WORKSPACE/baseline" install
+          # npm --prefix "$GITHUB_WORKSPACE/baseline" ci
+          # npm --prefix "$GITHUB_WORKSPACE/baseline" run build
           # npm --prefix "$GITHUB_WORKSPACE/baseline/tests/slo" run build:kv
 
           # docker build \
