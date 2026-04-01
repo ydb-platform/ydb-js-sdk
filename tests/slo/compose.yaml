@@ -1,0 +1,20 @@
+services:
+  ydb:
+    image: ydbplatform/local-ydb
+    restart: always
+    platform: linux/amd64
+    hostname: localhost
+    ports:
+      - '2136:2136'
+      - '8765:8765'
+
+  prometheus:
+    image: prom/prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --web.enable-otlp-receiver
+      - --web.enable-admin-api
+    ports:
+      - '9090:9090'
