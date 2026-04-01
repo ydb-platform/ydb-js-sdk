@@ -98,15 +98,15 @@ jobs:
           if [[ -n "${{ inputs.baseline_ref }}" ]]; then
             BASELINE="${{ inputs.baseline_ref }}"
           else
-            BASELINE=$(git merge-base HEAD origin/master)
+            BASELINE=$(git merge-base HEAD origin/main)
           fi
           echo "sha=$BASELINE" >> $GITHUB_OUTPUT
 
           # Try to determine a human-readable ref name for baseline
-          # Check if baseline is on master
-          if git merge-base --is-ancestor $BASELINE origin/master && \
-             [ "$(git rev-parse origin/master)" = "$BASELINE" ]; then
-            BASELINE_REF="master"
+          # Check if baseline is on main
+          if git merge-base --is-ancestor $BASELINE origin/main && \
+             [ "$(git rev-parse origin/main)" = "$BASELINE" ]; then
+             BASELINE_REF="main"
           else
             # Try to find a branch containing this commit
             BRANCH=$(git branch -r --contains $BASELINE | grep -v HEAD | head -1 | sed 's/.*\///' || echo "")
