@@ -1,8 +1,10 @@
-FROM node
+# node, oven/bun
+ARG image="node"
 
-COPY .env .env
-COPY ./lib/ ./lib/
-COPY ./kv.test.ts ./main.ts
+FROM ${image}
+WORKDIR /usr/src/app
+
+COPY .env package.json dist/ ./
 
 ENTRYPOINT [ "node", "--env-file=.env" ]
-CMD [ "main.ts" ]
+CMD [ "kv.test.js" ]
