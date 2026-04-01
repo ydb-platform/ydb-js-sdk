@@ -4,7 +4,7 @@ ARG image="node"
 FROM ${image}
 WORKDIR /usr/src/app
 
-COPY .env package.json dist/ ./
+COPY package.json dist/ ./
 
-ENTRYPOINT [ "node", "--env-file=.env" ]
+ENTRYPOINT [ "node" ]
 CMD [ "kv.test.js" ]
