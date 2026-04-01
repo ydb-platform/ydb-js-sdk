@@ -243,10 +243,10 @@ process.on('SIGINT', async () => {
 	ctrl.abort()
 })
 
-setTimeout(parseInt(process.env['WORKLOAD_DURATION'] || '60') * 1000, () => {
+setTimeout(parseInt(process.env['WORKLOAD_DURATION'] || '60') * 1000).then(() => {
 	console.error('Timeout, closing workers...')
 
-	ctrl.abort()
+	return ctrl.abort()
 })
 
 for await (let _ of setInterval(1000 / QPS, void 0, { signal: ctrl.signal })) {
