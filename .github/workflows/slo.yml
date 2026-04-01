@@ -3,12 +3,13 @@ name: SLO
 on:
   push:
     branches:
-      - master
+      - main
+
   pull_request:
     types: [opened, reopened, synchronize, labeled]
     branches:
-      - master
-      - release-*
+      - main
+
   workflow_dispatch:
     inputs:
       github_issue:
