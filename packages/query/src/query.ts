@@ -157,7 +157,7 @@ export class Query<T extends any[] = unknown[]>
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 				this.#cleanup.push(async () => {
 					dbg.log('deleting session %s', sessionId)
-					await client.deleteSession({ sessionId: sessionId! })
+					void client.deleteSession({ sessionId: sessionId! }).catch(() => {})
 				})
 
 				let attachSession = client
