@@ -198,12 +198,12 @@ async function write(curId: number) {
 		latency_write.recordValue(performance.now() - start)
 	} finally {
 		sdk_operations_total.add(1, {
-			operation_type: 'read',
+			operation_type: 'write',
 			operation_status: status ? 'success' : 'failure',
 		})
 
 		sdk_retry_attempts_total.add(retries, {
-			operation_type: 'read',
+			operation_type: 'write',
 			operation_status: status ? 'success' : 'failure',
 		})
 	}
