@@ -101,12 +101,12 @@ meter
 		valueType: 1,
 	})
 	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(0.5) / 1000, {
+		observableResult.observe(latency_read.getValueAtPercentile(50) / 1000, {
 			operation_type: 'read',
 			operation_status: 'success',
 		})
 
-		observableResult.observe(latency_write.getValueAtPercentile(0.5) / 1000, {
+		observableResult.observe(latency_write.getValueAtPercentile(50) / 1000, {
 			operation_type: 'write',
 			operation_status: 'success',
 		})
@@ -118,12 +118,12 @@ meter
 		valueType: 1,
 	})
 	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(0.95), {
+		observableResult.observe(latency_read.getValueAtPercentile(95) / 1000, {
 			operation_type: 'read',
 			operation_status: 'success',
 		})
 
-		observableResult.observe(latency_write.getValueAtPercentile(0.95), {
+		observableResult.observe(latency_write.getValueAtPercentile(95) / 1000, {
 			operation_type: 'write',
 			operation_status: 'success',
 		})
@@ -135,12 +135,12 @@ meter
 		valueType: 1,
 	})
 	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(0.99), {
+		observableResult.observe(latency_read.getValueAtPercentile(99) / 1000, {
 			operation_type: 'read',
 			operation_status: 'success',
 		})
 
-		observableResult.observe(latency_write.getValueAtPercentile(0.99), {
+		observableResult.observe(latency_write.getValueAtPercentile(99) / 1000, {
 			operation_type: 'write',
 			operation_status: 'success',
 		})
