@@ -158,6 +158,7 @@ async function read(maxId: number) {
 		await sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
 			.idempotent(true)
 			.isolation('onlineReadOnly')
+			.signal(ctrl.signal)
 			.on('retry', () => retries++)
 
 		status = 1
@@ -192,6 +193,7 @@ async function write(curId: number) {
 			${new Timestamp(new Date())}
 		);`
 			.isolation('serializableReadWrite')
+			.signal(ctrl.signal)
 			.on('retry', () => retries++)
 
 		status = 1
@@ -248,12 +250,13 @@ setTimeout(parseInt(process.env['WORKLOAD_DURATION'] || '60') * 1000).then(() =>
 
 	return ctrl.abort()
 })
-
-for await (let _ of setInterval(1000 / QPS, void 0, { signal: ctrl.signal })) {
-	await spawn_write()
-	await spawn_read()
+try {
+	for await (let _ of setInterval(1000 / QPS, void 0, { signal: ctrl.signal })) {
+		await spawn_write()
+		await spawn_read()
+	}
+} finally {
+	await meterProvider.shutdown()
 }
-
-await meterProvider.shutdown()
 
 process.exit(0)
