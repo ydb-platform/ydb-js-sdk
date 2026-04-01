@@ -125,6 +125,14 @@ jobs:
           path: baseline
           fetch-depth: 1
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: latest
+
       - name: Build workload images
         run: |
           npm --prefix "$GITHUB_WORKSPACE/current" install
