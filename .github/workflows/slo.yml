@@ -57,6 +57,11 @@ jobs:
       cancel-in-progress: true
 
     steps:
+      - name: Update deps
+        run: |
+          sudo apt update
+          sudo apt install libatomic1
+
       - name: Install dependencies
         run: |
           YQ_VERSION=v4.48.2
