@@ -6,8 +6,9 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-tr
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 
 const exporter = new InMemorySpanExporter()
-const provider = new NodeTracerProvider()
-provider.addSpanProcessor(new SimpleSpanProcessor(exporter))
+const provider = new NodeTracerProvider({
+	spanProcessors: [new SimpleSpanProcessor(exporter)],
+})
 provider.register()
 
 const TRACEPARENT_REGEX = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/

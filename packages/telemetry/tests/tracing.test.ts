@@ -8,8 +8,9 @@ import { query } from '@ydbjs/query'
 import { SPAN_NAMES, createOpenTelemetryTracer, withTracing } from '../src/index.js'
 
 const exporter = new InMemorySpanExporter()
-const provider = new NodeTracerProvider()
-provider.addSpanProcessor(new SimpleSpanProcessor(exporter))
+const provider = new NodeTracerProvider({
+	spanProcessors: [new SimpleSpanProcessor(exporter)],
+})
 provider.register()
 
 let driver: Driver

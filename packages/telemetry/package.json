@@ -48,8 +48,8 @@
 		"@ydbjs/core": "^6.1.0"
 	},
 	"devDependencies": {
-		"@opentelemetry/sdk-trace-base": "^1.28.0",
-		"@opentelemetry/sdk-trace-node": "^1.28.0"
+		"@opentelemetry/sdk-trace-base": "^2.0.0",
+		"@opentelemetry/sdk-trace-node": "^2.0.0"
 	},
 	"files": [
 		"dist",
