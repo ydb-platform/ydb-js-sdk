@@ -13,9 +13,16 @@ import {
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
+import { tracingContext } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
+import {
+	type RetryConfig,
+	type RetryContext,
+	type RetryTracer,
+	defaultRetryConfig,
+	retry,
+} from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
@@ -124,10 +131,13 @@ export class Query<T extends any[] = unknown[]>
 
 		let linkedSignal = linkSignals(...signals)
 
+		const tracer = tracingContext.getStore()?.tracer as RetryTracer | undefined
+
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
+			...(tracer !== undefined && { tracer }),
 			onRetry: (retryCtx) => {
 				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)
@@ -207,6 +217,9 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
+			let results = [] as ArrayifyTuple<T>
+
+			tracingContext.enterWith({ ...tracingContext.getStore(), queryText: this.text })
 			let stream = client.executeQuery(
 				{
 					sessionId,
@@ -230,8 +243,6 @@ export class Query<T extends any[] = unknown[]>
 					},
 				}
 			)
-
-			let results = [] as ArrayifyTuple<T>
 
 			for await (let part of stream) {
 				signal.throwIfAborted()
