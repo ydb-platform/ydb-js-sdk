@@ -1,3 +1,14 @@
+import {
+	isBigInt64Array,
+	isBigUint64Array,
+	isDate,
+	isFloat32Array,
+	isFloat64Array,
+	isMap,
+	isSet,
+	isUint8Array,
+} from 'node:util/types'
+
 import { TZDate } from '@date-fns/tz'
 import * as Ydb from '@ydbjs/api/value'
 
@@ -10,12 +21,14 @@ import {
 	Bytes,
 	Datetime,
 	Double,
+	Float,
 	Int32,
 	Int64,
 	Primitive,
 	PrimitiveType,
 	Text,
 	TzDatetime,
+	Uint64,
 	Uuid,
 } from './primitive.js'
 import { Struct, StructType } from './struct.js'
@@ -122,7 +135,7 @@ export function fromJs(native: JSValue): Value {
 				return native as unknown as Value
 			}
 
-			if (native instanceof Date) {
+			if (isDate(native)) {
 				return new Datetime(native)
 			}
 
@@ -130,19 +143,35 @@ export function fromJs(native: JSValue): Value {
 				return new TzDatetime(native)
 			}
 
-			if (native instanceof Uint8Array) {
+			if (isUint8Array(native)) {
 				return new Bytes(native)
 			}
 
-			if (native instanceof Set) {
-				return new Tuple(...Array.from(native).map(fromJs))
+			if (isFloat32Array(native)) {
+				return new List(...Array.from(native, (v) => new Float(v)))
 			}
 
-			if (native instanceof Map) {
+			if (isFloat64Array(native)) {
+				return new List(...Array.from(native, (v) => new Float(v)))
+			}
+
+			if (isBigInt64Array(native)) {
+				return new List(...Array.from(native, (v) => new Int64(v)))
+			}
+
+			if (isBigUint64Array(native)) {
+				return new List(...Array.from(native, (v) => new Uint64(v)))
+			}
+
+			if (isSet(native)) {
+				return new Tuple(...Array.from(native, fromJs))
+			}
+
+			if (isMap(native)) {
 				let pairs: [Value, Value][] = []
 
 				for (let [key, value] of native.entries()) {
-					pairs.push([fromJs(key), fromJs(value)])
+					pairs.push([fromJs(key as JSValue), fromJs(value as JSValue)])
 				}
 
 				return new Dict(...pairs)
