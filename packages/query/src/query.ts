@@ -12,6 +12,7 @@ import {
 	TransactionControlSchema,
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
+import { linkSignals } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
@@ -107,9 +108,8 @@ export class Query<T extends any[] = unknown[]>
 		return Promise
 	}
 
-	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<ArrayifyTuple<T>> {
-		let { nodeId, sessionId, transactionId, signal } = ctx.getStore() || {}
+		let { nodeId, sessionId, transactionId, signal: txSignal } = ctx.getStore() || {}
 
 		if (this.#disposed) {
 			dbg.log('query disposed, aborting execution')
@@ -130,21 +130,18 @@ export class Query<T extends any[] = unknown[]>
 		dbg.log('starting query execution: %s', this.text)
 		this.#active = true
 
-		signal = signal
-			? AbortSignal.any([signal, this.#controller.signal])
-			: this.#controller.signal
-		if (this.#signal) {
-			signal = AbortSignal.any([signal, this.#signal])
-		}
-		if (this.#timeout) {
-			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
-		}
+		let signals: AbortSignal[] = [this.#controller.signal]
+		if (txSignal) signals.push(txSignal)
+		if (this.#signal) signals.push(this.#signal)
+		if (this.#timeout) signals.push(AbortSignal.timeout(this.#timeout))
+
+		let linkedSignal = linkSignals(...signals)
 
 		let sessionSignal: AbortSignal | undefined
 
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
-			signal,
+			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
 			retry: (error, idempotent) => {
 				let sessionSignalAborted = sessionSignal?.aborted ?? false
@@ -157,7 +154,7 @@ export class Query<T extends any[] = unknown[]>
 			},
 		}
 
-		await this.#driver.ready(signal)
+		await this.#driver.ready(linkedSignal.signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
 			using sessionLease = !sessionId ? await this.#sessionPool.acquire(signal) : undefined
@@ -291,13 +288,14 @@ export class Query<T extends any[] = unknown[]>
 			.finally(async () => {
 				this.#active = false
 				this.#controller.abort('Query completed.')
+
+				linkedSignal[Symbol.dispose]()
 			})
 
 		return this.#promise
 	}
 
 	/** Returns the result of the query */
-	/* oxlint-disable unicorn/no-thenable */
 	then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
 		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
 		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
@@ -482,6 +480,7 @@ export class Query<T extends any[] = unknown[]>
 		}
 
 		this.#controller.abort('Query disposed.')
+		this.#signal = void 0
 		this.#promise = null
 		this.#disposed = true
 	}

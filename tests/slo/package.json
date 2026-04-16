@@ -1,0 +1,20 @@
+{
+	"type": "module",
+	"scripts": {
+		"start:kv": "node --env-file=.env ./dist/kv.test.js",
+		"build:kv": "bun build --target node ./kv.test.ts --outdir ./dist --format esm"
+	},
+	"dependencies": {
+		"hdr-histogram-js": "3.0.1",
+		"@opentelemetry/exporter-metrics-otlp-http": "^0.214.0",
+		"@opentelemetry/resources": "^2.6.1",
+		"@opentelemetry/sdk-metrics": "^2.6.1",
+		"@ydbjs/api": "*",
+		"@ydbjs/core": "*",
+		"@ydbjs/query": "*",
+		"@ydbjs/value": "*"
+	},
+	"overrides": {
+		"@grpc/proto-loader": "npm:dry-uninstall"
+	}
+}
