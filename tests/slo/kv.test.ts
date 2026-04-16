@@ -1,194 +1,151 @@
 import { randomInt, randomUUID } from 'node:crypto'
-import { setInterval, setTimeout } from 'node:timers/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { performance } from 'node:perf_hooks'
 
+import { ValueType } from '@opentelemetry/api'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { Timestamp, Uint64 } from '@ydbjs/value/primitive'
 import * as hdr from 'hdr-histogram-js'
 
-import { meterProvider } from './lib/telemetry.ts'
+import { type LatencyAttributes, meterProvider, registerLatencyGauges } from './lib/telemetry.ts'
 
-const QPS = 100
-const MAX_CONCURRENCY_READ = 200
-const MAX_CONCURRENCY_WRITE = 50
+const READ_RPS = parseInt(process.env['READ_RPS'] || '1000', 10)
+const WRITE_RPS = parseInt(process.env['WRITE_RPS'] || '100', 10)
+const PREFILL_COUNT = parseInt(process.env['PREFILL_COUNT'] || '1000', 10)
+const PREFILL_CONCURRENCY = parseInt(process.env['PREFILL_CONCURRENCY'] || '50', 10)
+const DURATION = parseInt(process.env['WORKLOAD_DURATION'] || '60', 10)
 
 let ctrl = new AbortController()
+process.on('SIGINT', () => {
+	console.error('SIGINT received, stopping workers...')
+	ctrl.abort()
+})
+
+// ---- Rate limiter ---------------------------------------------------------
+// Token-bucket-like "min interval" limiter. Thread-safe by virtue of the JS
+// single-threaded event loop: each call reserves its slot synchronously
+// (updating `next`) before awaiting the sleep, so N concurrent workers
+// fan out onto an evenly-spaced schedule at the configured RPS.
+class RateLimiter {
+	#next = 0
+	readonly #intervalMs: number
+
+	constructor(rps: number) {
+		this.#intervalMs = rps > 0 ? 1000 / rps : 0
+	}
+
+	async wait(signal: AbortSignal): Promise<void> {
+		signal.throwIfAborted()
+		if (this.#intervalMs === 0) return
+
+		let now = performance.now()
+		let reservedAt: number
+		if (now >= this.#next) {
+			reservedAt = now
+		} else {
+			reservedAt = this.#next
+		}
+		this.#next = reservedAt + this.#intervalMs
+
+		let delay = reservedAt - now
+		if (delay > 0) await sleep(delay, undefined, { signal })
+	}
+}
+
+// ---- Driver ---------------------------------------------------------------
 let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+await driver.ready()
 
 let sql = query(driver)
-let [[[version]]] = (await sql`SELECT CAST(version() as Text);`.values()) as [[[string]]]
 
-console.log('YDB Server version:', version)
-
-await sql`
-DROP TABLE IF EXISTS test;
-CREATE TABLE IF NOT EXISTS test (
-	hash				Uint64,
-	id					Uint64,
-	payload_str			Text,
-	payload_double		Double,
-	payload_timestamp	Timestamp,
-	payload_hash		Uint64,
-
-	PRIMARY KEY			(hash, id)
-)
-WITH (
-	STORE = ROW,
-	AUTO_PARTITIONING_BY_SIZE = ENABLED,
-	AUTO_PARTITIONING_MIN_PARTITIONS_COUNT = 6,
-	AUTO_PARTITIONING_MAX_PARTITIONS_COUNT = 1000
-);`
-
+// ---- Metrics --------------------------------------------------------------
 let meter = meterProvider.getMeter('slo-meter')
 
-let latency_read = hdr.build({
-	highestTrackableValue: 60 * 1000,
-	numberOfSignificantValueDigits: 5,
-})
-
-let latency_write = hdr.build({
-	highestTrackableValue: 60 * 1000,
-	numberOfSignificantValueDigits: 5,
-})
-
-type OperationAttributes = {
-	operation_type: 'read' | 'write'
-	operation_status: 'success' | 'error'
+let latency = {
+	read: hdr.build({ highestTrackableValue: 60_000, numberOfSignificantValueDigits: 5 }),
+	write: hdr.build({ highestTrackableValue: 60_000, numberOfSignificantValueDigits: 5 }),
 }
 
-type RetryAttributes = {
-	operation_type: 'read' | 'write'
-}
-
-let sdk_operations_total = meter.createCounter<OperationAttributes>('sdk_operations_total', {
-	valueType: 0,
+let sdk_operations_total = meter.createCounter<LatencyAttributes>('sdk_operations_total', {
+	valueType: ValueType.INT,
 })
 
-let sdk_retry_attempts_total = meter.createCounter<RetryAttributes>('sdk_retry_attempts_total', {
-	valueType: 0,
-})
+let sdk_retry_attempts_total = meter.createCounter<{ operation_type: 'read' | 'write' }>(
+	'sdk_retry_attempts_total',
+	{ valueType: ValueType.INT }
+)
 
-let inFlightRead = 0
-let inFlightWrite = 0
+let inFlight = { read: 0, write: 0 }
 
 meter
 	.createObservableGauge('sdk_memory_usage', {
 		unit: 'bytes',
-		valueType: 0,
+		valueType: ValueType.INT,
 		description: 'Memory usage',
 	})
-	.addCallback((observableResult) => {
+	.addCallback((r) => {
 		let usage = process.memoryUsage()
-
-		observableResult.observe(usage.rss, { type: 'rss' })
-		observableResult.observe(usage.external, { type: 'external' })
-		observableResult.observe(usage.heapUsed, { type: 'heapUsed' })
-		observableResult.observe(usage.heapTotal, { type: 'heapTotal' })
-		observableResult.observe(usage.arrayBuffers, { type: 'arrayBuffers' })
+		r.observe(usage.rss, { type: 'rss' })
+		r.observe(usage.external, { type: 'external' })
+		r.observe(usage.heapUsed, { type: 'heapUsed' })
+		r.observe(usage.heapTotal, { type: 'heapTotal' })
+		r.observe(usage.arrayBuffers, { type: 'arrayBuffers' })
 	})
 
 meter
 	.createObservableGauge('sdk_pending_operations', {
 		unit: 'operations',
-		valueType: 0,
+		valueType: ValueType.INT,
 		description: 'Pending operations',
 	})
-	.addCallback((observableResult) => {
-		observableResult.observe(inFlightRead, { operation_type: 'read' })
-		observableResult.observe(inFlightWrite, { operation_type: 'write' })
+	.addCallback((r) => {
+		r.observe(inFlight.read, { operation_type: 'read' })
+		r.observe(inFlight.write, { operation_type: 'write' })
 	})
 
-meter
-	.createObservableGauge<OperationAttributes>('sdk_operation_latency_p50_seconds', {
-		unit: 'seconds',
-		valueType: 1,
-	})
-	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(50) / 1000, {
-			operation_type: 'read',
-			operation_status: 'success',
-		})
+registerLatencyGauges(meter, latency)
 
-		observableResult.observe(latency_write.getValueAtPercentile(50) / 1000, {
-			operation_type: 'write',
-			operation_status: 'success',
-		})
-	})
-
-meter
-	.createObservableGauge<OperationAttributes>('sdk_operation_latency_p95_seconds', {
-		unit: 'seconds',
-		valueType: 1,
-	})
-	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(95) / 1000, {
-			operation_type: 'read',
-			operation_status: 'success',
-		})
-
-		observableResult.observe(latency_write.getValueAtPercentile(95) / 1000, {
-			operation_type: 'write',
-			operation_status: 'success',
-		})
-	})
-
-meter
-	.createObservableGauge<OperationAttributes>('sdk_operation_latency_p99_seconds', {
-		unit: 'seconds',
-		valueType: 1,
-	})
-	.addCallback((observableResult) => {
-		observableResult.observe(latency_read.getValueAtPercentile(99) / 1000, {
-			operation_type: 'read',
-			operation_status: 'success',
-		})
-
-		observableResult.observe(latency_write.getValueAtPercentile(99) / 1000, {
-			operation_type: 'write',
-			operation_status: 'success',
-		})
-
-		latency_read.reset()
-		latency_write.reset()
-	})
-
-async function read(maxId: number) {
-	if (ctrl.signal.aborted) return
-
+// ---- Operations -----------------------------------------------------------
+async function readOp(): Promise<void> {
+	let id = new Uint64(BigInt(randomInt(PREFILL_COUNT)))
 	let start = performance.now()
-	let randomId = new Uint64(BigInt(randomInt(maxId)))
-
-	let status = 0
 	let retries = 0
+	let status: 'success' | 'error' | 'aborted' = 'error'
+	inFlight.read++
+
 	try {
-		await sql`SELECT * from test WHERE id = ${randomId} AND hash = Digest::NumericHash(${randomId})`
+		await sql`SELECT * FROM test WHERE id = ${id} AND hash = Digest::NumericHash(${id})`
 			.idempotent(true)
 			.isolation('onlineReadOnly')
 			.signal(ctrl.signal)
 			.on('retry', () => retries++)
-
-		status = 1
-		latency_read.recordValue(performance.now() - start)
+		status = 'success'
+		latency.read.recordValue(performance.now() - start)
+	} catch (err) {
+		if ((err as Error)?.name === 'AbortError' && ctrl.signal.aborted) {
+			status = 'aborted'
+		} else {
+			console.error('read failed:', err)
+		}
 	} finally {
-		sdk_operations_total.add(1, {
-			operation_type: 'read',
-			operation_status: status ? 'success' : 'error',
-		})
-
-		sdk_retry_attempts_total.add(retries, {
-			operation_type: 'read',
-		})
+		inFlight.read--
 	}
+
+	if (status === 'aborted') return
+	sdk_operations_total.add(1, { operation_type: 'read', operation_status: status })
+	sdk_retry_attempts_total.add(1 + retries, { operation_type: 'read' })
 }
 
-async function write(curId: number) {
-	if (ctrl.signal.aborted) return
+let writeCounter = 0
 
+async function writeOp(): Promise<void> {
+	let id = new Uint64(BigInt(writeCounter++))
 	let start = performance.now()
-	let id = new Uint64(BigInt(curId))
-
-	let status = 0
 	let retries = 0
+	let status: 'success' | 'error' | 'aborted' = 'error'
+	inFlight.write++
+
 	try {
 		await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 			Digest::NumericHash(${id}),
@@ -200,76 +157,113 @@ async function write(curId: number) {
 			.isolation('serializableReadWrite')
 			.signal(ctrl.signal)
 			.on('retry', () => retries++)
-
-		status = 1
-		latency_write.recordValue(performance.now() - start)
+		status = 'success'
+		latency.write.recordValue(performance.now() - start)
+	} catch (err) {
+		if ((err as Error)?.name === 'AbortError' && ctrl.signal.aborted) {
+			status = 'aborted'
+		} else {
+			console.error('write failed:', err)
+		}
 	} finally {
-		sdk_operations_total.add(1, {
-			operation_type: 'write',
-			operation_status: status ? 'success' : 'error',
+		inFlight.write--
+	}
+
+	if (status === 'aborted') return
+	sdk_operations_total.add(1, { operation_type: 'write', operation_status: status })
+	sdk_retry_attempts_total.add(1 + retries, { operation_type: 'write' })
+}
+
+// ---- Phase: setup ---------------------------------------------------------
+async function setup(): Promise<void> {
+	let [[[version]]] = (await sql`SELECT CAST(version() as Text);`.values()) as [[[string]]]
+	console.log('YDB Server version:', version)
+
+	await sql`
+		DROP TABLE IF EXISTS test;
+		CREATE TABLE IF NOT EXISTS test (
+			hash				Uint64,
+			id					Uint64,
+			payload_str			Text,
+			payload_double		Double,
+			payload_timestamp	Timestamp,
+			payload_hash		Uint64,
+
+			PRIMARY KEY			(hash, id)
+		)
+		WITH (
+			STORE = ROW,
+			AUTO_PARTITIONING_BY_SIZE = ENABLED,
+			AUTO_PARTITIONING_MIN_PARTITIONS_COUNT = 6,
+			AUTO_PARTITIONING_MAX_PARTITIONS_COUNT = 1000
+		);`
+
+	console.log('prefilling %d rows (concurrency=%d)', PREFILL_COUNT, PREFILL_CONCURRENCY)
+	await Promise.all(
+		Array.from({ length: PREFILL_CONCURRENCY }, async () => {
+			// eslint-disable-next-line no-await-in-loop -- parallelism via PREFILL_CONCURRENCY fan-out; each worker runs sequentially
+			while (writeCounter < PREFILL_COUNT) await writeOp()
 		})
+	)
+	console.log('prefill done')
+}
 
-		sdk_retry_attempts_total.add(retries, {
-			operation_type: 'write',
-		})
+// ---- Phase: run -----------------------------------------------------------
+async function pace(rps: number, op: () => Promise<void>): Promise<void> {
+	let limiter = new RateLimiter(rps)
+	let inflight = new Set<Promise<void>>()
+	while (!ctrl.signal.aborted) {
+		try {
+			// eslint-disable-next-line no-await-in-loop -- rate limiter must pace sequentially
+			await limiter.wait(ctrl.signal)
+		} catch {
+			break
+		}
+		let p = op().finally(() => inflight.delete(p))
+		inflight.add(p)
+	}
+	await Promise.allSettled(inflight)
+}
+
+async function run(): Promise<void> {
+	console.log('running for %ds: read %d RPS, write %d RPS', DURATION, READ_RPS, WRITE_RPS)
+
+	sleep(DURATION * 1000).then(() => {
+		console.error('duration elapsed, stopping workers...')
+		ctrl.abort()
+	})
+
+	await Promise.all([pace(READ_RPS, readOp), pace(WRITE_RPS, writeOp)])
+}
+
+// ---- Phase: cleanup -------------------------------------------------------
+async function cleanup(): Promise<void> {
+	try {
+		await meterProvider.forceFlush()
+	} catch (err) {
+		console.error('meter flush failed:', err)
+	}
+	try {
+		await meterProvider.shutdown()
+	} catch (err) {
+		console.error('meter shutdown failed:', err)
+	}
+	try {
+		driver.close()
+	} catch (err) {
+		console.error('driver close failed:', err)
 	}
 }
 
-let curId: number = 0
-
-async function spawn_read() {
-	if (ctrl.signal.aborted) return
-
-	while (inFlightRead < MAX_CONCURRENCY_READ) {
-		ctrl.signal.throwIfAborted()
-
-		inFlightRead += 1
-		void read(curId)
-			.catch(() => {})
-			.finally(() => (inFlightRead = Math.max(0, inFlightRead - 1)))
-	}
-}
-
-async function spawn_write() {
-	if (ctrl.signal.aborted) return
-
-	while (inFlightWrite < MAX_CONCURRENCY_WRITE) {
-		ctrl.signal.throwIfAborted()
-
-		inFlightWrite += 1
-		void write(curId++)
-			.catch(() => {})
-			.finally(() => (inFlightWrite = Math.max(0, inFlightWrite - 1)))
-	}
-}
-
-process.on('SIGINT', async () => {
-	console.error(' SIGINT received, closing workers...')
-
-	ctrl.abort()
-})
-
-setTimeout(parseInt(process.env['WORKLOAD_DURATION'] || '60') * 1000).then(() => {
-	console.error('Timeout, closing workers...')
-
-	return ctrl.abort()
-})
-
+// ---- Entry ----------------------------------------------------------------
+let exitCode = 0
 try {
-	for await (let _ of setInterval(1000 / QPS, void 0, { signal: ctrl.signal })) {
-		await spawn_write()
-		await spawn_read()
-	}
+	await setup()
+	await run()
 } catch (err) {
-	if (err instanceof Error && err.name === 'AbortError') {
-		process.exit(0)
-	} else {
-		console.error(err)
-	}
+	console.error('workload failed:', err)
+	exitCode = 1
 } finally {
-	latency_read.reset()
-	latency_write.reset()
-	await meterProvider.shutdown()
+	await cleanup()
 }
-
-process.exit(0)
+process.exit(exitCode)
