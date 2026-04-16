@@ -28,6 +28,7 @@ import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
+import { linkSignals } from '@ydbjs/abortable'
 
 let dbg = loggers.query
 
@@ -101,9 +102,8 @@ export class Query<T extends any[] = unknown[]>
 		return Promise
 	}
 
-	/* oxlint-disable max-lines-per-function  */
 	async #execute(): Promise<ArrayifyTuple<T>> {
-		let { nodeId, sessionId, transactionId, signal } = ctx.getStore() || {}
+		let { nodeId, sessionId, transactionId, signal: txSignal } = ctx.getStore() || {}
 
 		if (this.#disposed) {
 			dbg.log('query disposed, aborting execution')
@@ -124,21 +124,18 @@ export class Query<T extends any[] = unknown[]>
 		dbg.log('starting query execution: %s', this.text)
 		this.#active = true
 
-		signal = signal
-			? AbortSignal.any([signal, this.#controller.signal])
-			: this.#controller.signal
-		if (this.#signal) {
-			signal = AbortSignal.any([signal, this.#signal])
-		}
-		if (this.#timeout) {
-			signal = AbortSignal.any([signal, AbortSignal.timeout(this.#timeout)])
-		}
+		let signals: AbortSignal[] = [this.#controller.signal]
+		if (txSignal) signals.push(txSignal)
+		if (this.#signal) signals.push(this.#signal)
+		if (this.#timeout) signals.push(AbortSignal.timeout(this.#timeout))
+
+		let linkedSignal = linkSignals(...signals)
 
 		const tracer = tracingContext.getStore()?.tracer as RetryTracer | undefined
 
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
-			signal,
+			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
 			...(tracer !== undefined && { tracer }),
 			onRetry: (retryCtx) => {
@@ -147,7 +144,7 @@ export class Query<T extends any[] = unknown[]>
 			},
 		}
 
-		await this.#driver.ready(signal)
+		await this.#driver.ready(linkedSignal.signal)
 
 		this.#promise = retry(retryConfig, async (signal) => {
 			dbg.log('creating query client for nodeId: %s', nodeId)
@@ -167,7 +164,7 @@ export class Query<T extends any[] = unknown[]>
 				client = this.#driver.createClient(QueryServiceDefinition, nodeId)
 				this.#cleanup.push(async () => {
 					dbg.log('deleting session %s', sessionId)
-					await client.deleteSession({ sessionId: sessionId! })
+					void client.deleteSession({ sessionId: sessionId! }).catch(() => {})
 				})
 
 				let attachSession = client
@@ -309,13 +306,14 @@ export class Query<T extends any[] = unknown[]>
 
 				this.#cleanup.forEach((fn) => void fn())
 				this.#cleanup = []
+
+				linkedSignal[Symbol.dispose]()
 			})
 
 		return this.#promise
 	}
 
 	/** Returns the result of the query */
-	/* oxlint-disable unicorn/no-thenable */
 	then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
 		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
 		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
@@ -501,6 +499,7 @@ export class Query<T extends any[] = unknown[]>
 
 		this.#controller.abort('Query disposed.')
 		await Promise.all(this.#cleanup.map((fn) => fn()))
+		this.#signal = void 0
 		this.#cleanup = []
 		this.#promise = null
 		this.#disposed = true
