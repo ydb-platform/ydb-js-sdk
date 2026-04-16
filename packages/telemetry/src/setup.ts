@@ -8,7 +8,10 @@ function parseConnectionString(connectionString: string): URL {
 	return new URL(connectionString.replace(/^grpc/, 'http'))
 }
 
-export function withTracing(connectionString: string, tracer?: Tracer): { hooks: DriverHooks } {
+export function withTracing(
+	connectionString: string,
+	tracer?: Tracer
+): { hooks: DriverHooks; tracer: Tracer } {
 	const cs = parseConnectionString(connectionString)
 	const activeTracer = tracer ?? createOpenTelemetryTracer()
 
@@ -19,5 +22,6 @@ export function withTracing(connectionString: string, tracer?: Tracer): { hooks:
 			cs.pathname && cs.pathname !== '/' ? cs.pathname : undefined,
 			activeTracer
 		),
+		tracer: activeTracer,
 	}
 }

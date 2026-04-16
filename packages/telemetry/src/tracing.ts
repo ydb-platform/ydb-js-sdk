@@ -3,6 +3,7 @@ import { YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 
 export const SpanKind = {
+	INTERNAL: 0,
 	CLIENT: 1,
 } as const
 
@@ -62,6 +63,8 @@ export const NoopTracer: Tracer = {
 export const DB_SYSTEM = 'ydb'
 
 export const SPAN_NAMES = {
+	RunWithRetry: 'ydb.RunWithRetry',
+	Try: 'ydb.Try',
 	CreateSession: 'ydb.CreateSession',
 	ExecuteQuery: 'ydb.ExecuteQuery',
 	Commit: 'ydb.Commit',

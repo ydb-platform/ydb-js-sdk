@@ -52,7 +52,8 @@ export function createTracingHooks(
 			const spanName = METHOD_TO_SPAN[methodName]
 			if (!spanName) return
 
-			const existingQueryText = tracingContext.getStore()?.queryText
+			const existingStore = tracingContext.getStore()
+			const existingQueryText = existingStore?.queryText
 			const span = tracer.startSpan(spanName, {
 				kind: SpanKind.CLIENT,
 				attributes: baseAttrs,
@@ -60,9 +61,11 @@ export function createTracingHooks(
 			if (existingQueryText && methodName === 'ExecuteQuery') {
 				span.setAttribute('db.query.text', existingQueryText)
 			}
-			tracingContext.enterWith(
-				existingQueryText ? { span, queryText: existingQueryText } : { span }
-			)
+			tracingContext.enterWith({
+				...existingStore,
+				span,
+				...(existingQueryText !== undefined && { queryText: existingQueryText }),
+			})
 
 			span.setAttribute('ydb.node.id', Number(event.endpoint.nodeId))
 
