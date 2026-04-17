@@ -202,6 +202,7 @@ export class Driver implements Disposable {
 
 		this.#middleware = composeClientMiddleware(debug, (call, options) => {
 			let metadata = Metadata(options.metadata)
+				.set('x-ydb-sdk-build-info', `ydb-js-sdk/${pkg.version}`)
 				.set('x-ydb-database', this.database)
 				.set('x-ydb-application-name', this.application)
 
