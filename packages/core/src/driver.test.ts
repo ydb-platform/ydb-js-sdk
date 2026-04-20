@@ -64,14 +64,18 @@ test('allows custom channel options override', () => {
 
 test('adds x-ydb-sdk-build-info header with current sdk version', async () => {
 	let server = createServer()
-	let receivedBuildInfo = ''
-	let serviceDefinition = {
+	let receivedBuildInfo: string | undefined
+	let discoveryService = {
 		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+		whoAmI: DiscoveryServiceDefinition.whoAmI,
 	}
 
-	server.add(serviceDefinition, {
+	server.add(discoveryService, {
 		async listEndpoints(_, context) {
-			receivedBuildInfo = context.metadata.get('x-ydb-sdk-build-info') ?? ''
+			receivedBuildInfo = context.metadata.get('x-ydb-sdk-build-info')
+			return {}
+		},
+		async whoAmI() {
 			return {}
 		},
 	})
@@ -82,7 +86,7 @@ test('adds x-ydb-sdk-build-info header with current sdk version', async () => {
 	})
 
 	try {
-		let client = driver.createClient(serviceDefinition)
+		let client = driver.createClient(discoveryService)
 		await client.listEndpoints({ database: driver.database })
 
 		expect(receivedBuildInfo).toBe(`ydb-js-sdk/${pkg.version}`)
