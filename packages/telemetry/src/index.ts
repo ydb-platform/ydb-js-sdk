@@ -8,6 +8,7 @@ export {
 	NoopTracer,
 	SpanKind,
 	formatTraceparent,
+	makeRetryTracingHooks,
 	recordErrorAttributes,
 	getBaseAttributes,
 	SpanFinalizer,

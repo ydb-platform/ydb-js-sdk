@@ -173,6 +173,7 @@ export function query(driver: Driver): QueryClient {
 		return retry(
 			{
 				...defaultRetryConfig,
+				...(driver.options.retryHooks?.() ?? {}),
 				signal: options.signal,
 				idempotent: true,
 				onRetry: (ctx) => {

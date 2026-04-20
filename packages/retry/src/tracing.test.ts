@@ -1,239 +1,231 @@
 import { expect, test, vi } from 'vitest'
 
+import type { RetryContext, RetryHooks } from './config.ts'
 import { retry } from './index.ts'
-import type { RetrySpan, RetryTracer } from './config.ts'
 
-function makeTracer() {
-	const spans: {
-		name: string
-		opts?: { kind?: number }
-		attributes: Record<string, string | number | boolean>
-		exceptions: Error[]
-		status: { code: number; message?: string } | null
-		ended: boolean
-	}[] = []
+function makeHooks() {
+	const calls: {
+		wrapRun: number
+		wrapAttempt: { ctx: RetryContext }[]
+		onAttemptSuccess: { ctx: RetryContext }[]
+		onAttemptError: { ctx: RetryContext; backoffMs: number; error: unknown }[]
+		runInContextCalls: string[]
+	} = {
+		wrapRun: 0,
+		wrapAttempt: [],
+		onAttemptSuccess: [],
+		onAttemptError: [],
+		runInContextCalls: [],
+	}
 
-	const tracer: RetryTracer = {
-		startSpan(name: string, opts?: { kind?: number }): RetrySpan {
-			const spanRecord = {
-				name,
-				opts,
-				attributes: {} as Record<string, string | number | boolean>,
-				exceptions: [] as Error[],
-				status: null as { code: number; message?: string } | null,
-				ended: false,
-			}
-			spans.push(spanRecord)
-			const span: RetrySpan = {
-				setAttribute(key, value) {
-					spanRecord.attributes[key] = value
-				},
-				recordException(error) {
-					spanRecord.exceptions.push(error)
-				},
-				setStatus(s) {
-					spanRecord.status = s
-				},
-				end() {
-					spanRecord.ended = true
-				},
-				runInContext<T>(fn: () => T): T {
-					return fn()
-				},
-			}
-			return span
+	const hooks: RetryHooks = {
+		wrapRun<T>(fn: () => Promise<T>): Promise<T> {
+			calls.wrapRun++
+			calls.runInContextCalls.push('wrapRun')
+			return fn()
+		},
+		wrapAttempt<T>(ctx: RetryContext, fn: () => T): T {
+			calls.wrapAttempt.push({ ctx: { ...ctx } })
+			calls.runInContextCalls.push('wrapAttempt')
+			return fn()
+		},
+		onAttemptSuccess(ctx: RetryContext) {
+			calls.onAttemptSuccess.push({ ctx: { ...ctx } })
+		},
+		onAttemptError(ctx: RetryContext, error: unknown, backoffMs: number) {
+			calls.onAttemptError.push({ ctx: { ...ctx }, error, backoffMs })
 		},
 	}
 
-	return { tracer, spans }
+	return { hooks, calls }
 }
 
-test('creates ydb.RunWithRetry span wrapping successful operation', async () => {
-	const { tracer, spans } = makeTracer()
+test('wrapRun is called once for a successful operation', async () => {
+	const { hooks, calls } = makeHooks()
 
-	await retry({ retry: false, budget: 1, tracer }, async () => 'ok')
+	await retry({ retry: false, budget: 1, ...hooks }, async () => 'ok')
 
-	const run = spans.find((s) => s.name === 'ydb.RunWithRetry')
-	expect(run).toBeDefined()
-	expect(run!.ended).toBe(true)
-	expect(run!.status).toBeNull()
+	expect(calls.wrapRun).toBe(1)
 })
 
-test('creates ydb.Try span for each attempt', async () => {
-	const { tracer, spans } = makeTracer()
+test('wrapAttempt is called once per attempt', async () => {
+	const { hooks, calls } = makeHooks()
 	let attempts = 0
 
-	await retry({ retry: (e) => e instanceof Error, budget: 5, strategy: 0, tracer }, async () => {
-		attempts++
-		if (attempts < 3) throw new Error(`fail ${attempts}`)
-		return 'ok'
-	})
+	await retry(
+		{ retry: (e) => e instanceof Error, budget: 5, strategy: 0, ...hooks },
+		async () => {
+			attempts++
+			if (attempts < 3) throw new Error(`fail ${attempts}`)
+			return 'ok'
+		}
+	)
 
-	const trySpans = spans.filter((s) => s.name === 'ydb.Try')
-	expect(trySpans).toHaveLength(3)
+	expect(calls.wrapAttempt).toHaveLength(3)
 })
 
-test('ydb.Try span has kind INTERNAL (0)', async () => {
-	const { tracer, spans } = makeTracer()
+test('onAttemptSuccess is called on successful attempt', async () => {
+	const { hooks, calls } = makeHooks()
 
-	await retry({ retry: false, budget: 1, tracer }, async () => 'ok')
+	await retry({ retry: false, budget: 1, ...hooks }, async () => 'ok')
 
-	const trySpan = spans.find((s) => s.name === 'ydb.Try')
-	expect(trySpan).toBeDefined()
-	expect(trySpan!.opts?.kind).toBe(0)
+	expect(calls.onAttemptSuccess).toHaveLength(1)
+	expect(calls.onAttemptError).toHaveLength(0)
 })
 
-test('ydb.RunWithRetry span has kind INTERNAL (0)', async () => {
-	const { tracer, spans } = makeTracer()
-
-	await retry({ retry: false, budget: 1, tracer }, async () => 'ok')
-
-	const runSpan = spans.find((s) => s.name === 'ydb.RunWithRetry')
-	expect(runSpan!.opts?.kind).toBe(0)
-})
-
-test('failed ydb.Try span records exception and sets error status', async () => {
-	const { tracer, spans } = makeTracer()
+test('onAttemptError is called for each failed attempt', async () => {
+	const { hooks, calls } = makeHooks()
 	let attempts = 0
 
-	await retry({ retry: (e) => e instanceof Error, budget: 5, strategy: 0, tracer }, async () => {
-		attempts++
-		if (attempts === 1) throw new Error('transient error')
-		return 'ok'
-	})
+	await retry(
+		{ retry: (e) => e instanceof Error, budget: 5, strategy: 0, ...hooks },
+		async () => {
+			attempts++
+			if (attempts < 3) throw new Error(`fail ${attempts}`)
+			return 'ok'
+		}
+	)
 
-	const failedTry = spans.filter((s) => s.name === 'ydb.Try')[0]!
-	expect(failedTry.exceptions).toHaveLength(1)
-	expect(failedTry.exceptions[0]!.message).toBe('transient error')
-	expect(failedTry.status?.code).toBe(2)
-	expect(failedTry.ended).toBe(true)
+	expect(calls.onAttemptError).toHaveLength(2)
+	expect(calls.onAttemptSuccess).toHaveLength(1)
 })
 
-test('successful ydb.Try span has no exception and no error status', async () => {
-	const { tracer, spans } = makeTracer()
-
-	await retry({ retry: false, budget: 1, tracer }, async () => 'ok')
-
-	const successTry = spans.filter((s) => s.name === 'ydb.Try').at(-1)!
-	expect(successTry.exceptions).toHaveLength(0)
-	expect(successTry.status).toBeNull()
-	expect(successTry.ended).toBe(true)
-})
-
-test('ydb.Try span records ydb.retry.backoff_ms attribute equal to sleep duration', async () => {
-	const { tracer, spans } = makeTracer()
-	let attempts = 0
-
-	await retry({ retry: (e) => e instanceof Error, budget: 5, strategy: 50, tracer }, async () => {
-		attempts++
-		if (attempts === 1) throw new Error('transient')
-		return 'ok'
-	})
-
-	const failedTry = spans.filter((s) => s.name === 'ydb.Try')[0]!
-	expect(failedTry.attributes['ydb.retry.backoff_ms']).toBeGreaterThanOrEqual(0)
-})
-
-test('ydb.RunWithRetry uses custom spanName when provided', async () => {
-	const { tracer, spans } = makeTracer()
-
-	await retry({ retry: false, budget: 1, tracer, spanName: 'custom.op' }, async () => 'ok')
-
-	expect(spans.find((s) => s.name === 'custom.op')).toBeDefined()
-	expect(spans.find((s) => s.name === 'ydb.RunWithRetry')).toBeUndefined()
-})
-
-test('ydb.RunWithRetry span records exception and error status when all retries fail', async () => {
-	const { tracer, spans } = makeTracer()
+test('onAttemptError receives error and backoffMs=0 for non-retryable errors', async () => {
+	const { hooks, calls } = makeHooks()
 	const err = new Error('permanent failure')
 
 	await expect(
-		retry({ retry: false, budget: 1, tracer }, async () => {
+		retry({ retry: false, budget: 3, ...hooks }, async () => {
 			throw err
 		})
 	).rejects.toThrow('permanent failure')
 
-	const runSpan = spans.find((s) => s.name === 'ydb.RunWithRetry')!
-	expect(runSpan.exceptions).toHaveLength(1)
-	expect(runSpan.status?.code).toBe(2)
-	expect(runSpan.ended).toBe(true)
+	expect(calls.onAttemptError).toHaveLength(1)
+	expect(calls.onAttemptError[0]!.backoffMs).toBe(0)
+	expect(calls.onAttemptError[0]!.error).toBe(err)
 })
 
-test('context.cancel (AbortError) ends ydb.Try span with error and rethrows', async () => {
-	const { tracer, spans } = makeTracer()
+test('onAttemptError receives non-zero backoffMs when retrying with delay', async () => {
+	const { hooks, calls } = makeHooks()
+	let attempts = 0
 
-	const abortError = Object.assign(new Error('operation cancelled by context'), {
-		name: 'AbortError',
-	})
+	await retry(
+		{ retry: (e) => e instanceof Error, budget: 5, strategy: 50, ...hooks },
+		async () => {
+			attempts++
+			if (attempts === 1) throw new Error('transient')
+			return 'ok'
+		}
+	)
+
+	expect(calls.onAttemptError).toHaveLength(1)
+	expect(calls.onAttemptError[0]!.backoffMs).toBeGreaterThanOrEqual(0)
+})
+
+test('onAttemptError receives backoffMs=0 for AbortError', async () => {
+	const { hooks, calls } = makeHooks()
+
+	const abortError = Object.assign(new Error('operation cancelled'), { name: 'AbortError' })
 
 	await expect(
-		retry({ retry: true, budget: 5, tracer }, async () => {
+		retry({ retry: true, budget: 5, ...hooks }, async () => {
 			throw abortError
 		})
 	).rejects.toMatchObject({ name: 'AbortError' })
 
-	const trySpan = spans.find((s) => s.name === 'ydb.Try')!
-	expect(trySpan.status?.code).toBe(2)
-	expect(trySpan.exceptions).toHaveLength(1)
-	expect(trySpan.ended).toBe(true)
+	expect(calls.onAttemptError).toHaveLength(1)
+	expect(calls.onAttemptError[0]!.backoffMs).toBe(0)
 })
 
-test('context.cancel via pre-aborted signal immediately fails with RunWithRetry error span', async () => {
-	const { tracer, spans } = makeTracer()
+test('errors propagate through wrapRun', async () => {
+	const { hooks, calls } = makeHooks()
+	const err = new Error('permanent failure')
+
+	await expect(
+		retry({ retry: false, budget: 1, ...hooks }, async () => {
+			throw err
+		})
+	).rejects.toThrow('permanent failure')
+
+	expect(calls.wrapRun).toBe(1)
+})
+
+test('no hooks called when none are provided', async () => {
+	const result = await retry({ retry: false, budget: 1 }, async () => 'ok')
+	expect(result).toBe('ok')
+})
+
+test('wrapAttempt context propagates to fn (runInContext)', async () => {
+	const runInContextCalls: string[] = []
+
+	const hooks: RetryHooks = {
+		wrapRun: vi.fn(<T>(fn: () => Promise<T>) => fn()),
+		wrapAttempt<T>(_ctx: RetryContext, fn: () => T): T {
+			runInContextCalls.push('wrapAttempt')
+			return fn()
+		},
+	}
+
+	await retry({ retry: false, budget: 1, ...hooks }, async () => 'ok')
+
+	expect(runInContextCalls).toContain('wrapAttempt')
+	expect(hooks.wrapRun).toHaveBeenCalledTimes(1)
+})
+
+test('wrapRun not called when not provided', async () => {
+	const wrapAttemptCalls: number[] = []
+
+	const hooks: RetryHooks = {
+		wrapAttempt<T>(_ctx: RetryContext, fn: () => T): T {
+			wrapAttemptCalls.push(1)
+			return fn()
+		},
+	}
+
+	await retry({ retry: false, budget: 1, ...hooks }, async () => 'ok')
+
+	expect(wrapAttemptCalls).toHaveLength(1)
+})
+
+test('pre-aborted signal triggers onAttemptError with AbortError and fails immediately', async () => {
+	const { hooks, calls } = makeHooks()
 	const ac = new AbortController()
 	ac.abort()
 
 	await expect(
-		retry({ retry: true, budget: 5, tracer, signal: ac.signal }, async () => 'ok')
-	).rejects.toThrow('This operation was aborted')
+		retry({ retry: true, budget: 5, signal: ac.signal, ...hooks }, async () => 'ok')
+	).rejects.toMatchObject({ name: 'AbortError' })
 
-	const runSpan = spans.find((s) => s.name === 'ydb.RunWithRetry')!
-	expect(runSpan).toBeDefined()
-	expect(runSpan.status?.code).toBe(2)
-	expect(runSpan.ended).toBe(true)
+	expect(calls.onAttemptError).toHaveLength(1)
+	expect((calls.onAttemptError[0]!.error as Error).name).toBe('AbortError')
+	expect(calls.wrapRun).toBe(1)
 })
 
-test('no spans created when tracer is not provided', async () => {
-	const { spans } = makeTracer()
-	const result = await retry({ retry: false, budget: 1 }, async () => 'ok')
-	expect(result).toBe('ok')
-	expect(spans).toHaveLength(0)
-})
-
-test('all ydb.Try spans are ended even after non-retryable error', async () => {
-	const { tracer, spans } = makeTracer()
+test('context cancellation mid-execution ends Try span with backoffMs=0 and no retry', async () => {
+	const { hooks, calls } = makeHooks()
+	const ac = new AbortController()
 
 	await expect(
-		retry({ retry: false, budget: 3, tracer }, async () => {
-			throw new Error('not retryable')
-		})
-	).rejects.toThrow('not retryable')
-
-	const trySpans = spans.filter((s) => s.name === 'ydb.Try')
-	expect(trySpans).toHaveLength(1)
-	expect(trySpans.every((s) => s.ended)).toBe(true)
-})
-
-test('runInContext is called so child spans can be nested inside ydb.Try', async () => {
-	const runInContextCalls: string[] = []
-
-	const tracer: RetryTracer = {
-		startSpan(name) {
-			return {
-				setAttribute: vi.fn(),
-				recordException: vi.fn(),
-				setStatus: vi.fn(),
-				end: vi.fn(),
-				runInContext<T>(fn: () => T): T {
-					runInContextCalls.push(name)
-					return fn()
-				},
+		retry(
+			{ retry: true, budget: 5, strategy: 100, ...hooks, signal: ac.signal },
+			async (signal) => {
+				// Cancel context mid-execution (after wrapAttempt has already started)
+				ac.abort()
+				await new Promise<never>((_, reject) =>
+					signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+				)
 			}
-		},
-	}
+		)
+	).rejects.toMatchObject({ name: 'AbortError' })
 
-	await retry({ retry: false, budget: 1, tracer }, async () => 'ok')
-
-	expect(runInContextCalls).toContain('ydb.RunWithRetry')
-	expect(runInContextCalls).toContain('ydb.Try')
+	// wrapRun wraps the entire loop — called once
+	expect(calls.wrapRun).toBe(1)
+	// wrapAttempt wraps each attempt — called once (aborted on first)
+	expect(calls.wrapAttempt).toHaveLength(1)
+	// onAttemptError called with AbortError and backoffMs=0 (no next attempt)
+	expect(calls.onAttemptError).toHaveLength(1)
+	expect((calls.onAttemptError[0]!.error as Error).name).toBe('AbortError')
+	expect(calls.onAttemptError[0]!.backoffMs).toBe(0)
+	// onAttemptSuccess must not be called
+	expect(calls.onAttemptSuccess).toHaveLength(0)
 })

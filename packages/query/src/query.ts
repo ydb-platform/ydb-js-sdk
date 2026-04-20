@@ -16,13 +16,7 @@ import type { Driver } from '@ydbjs/core'
 import { tracingContext } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import {
-	type RetryConfig,
-	type RetryContext,
-	type RetryTracer,
-	defaultRetryConfig,
-	retry,
-} from '@ydbjs/retry'
+import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
@@ -131,13 +125,13 @@ export class Query<T extends any[] = unknown[]>
 
 		let linkedSignal = linkSignals(...signals)
 
-		const tracer = tracingContext.getStore()?.tracer as RetryTracer | undefined
+		const retryHooks = this.#driver.options.retryHooks?.()
 
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
-			...(tracer !== undefined && { tracer }),
+			...(retryHooks ?? {}),
 			onRetry: (retryCtx) => {
 				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)

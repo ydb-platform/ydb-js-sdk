@@ -28,9 +28,6 @@ export async function retry<R>(
 	let config = Object.assign({}, defaultRetryConfig, cfg)
 	let ctx: RetryContext = { attempt: 0, error: null }
 
-	const tracer = config.tracer
-	const runSpan = tracer?.startSpan(config.spanName ?? 'ydb.RunWithRetry', { kind: 0 })
-
 	const execute = async (): Promise<R> => {
 		let budget: number
 		while (
@@ -43,17 +40,20 @@ export async function retry<R>(
 
 			let start = Date.now()
 			let signal = linkedSignal.signal
-			const trySpan = tracer?.startSpan('ydb.Try', { kind: 0 })
+
+			const wrappedFn = () => {
+				signal.throwIfAborted()
+				return abortable(signal, Promise.resolve(fn(signal)))
+			}
 
 			try {
-				signal.throwIfAborted()
 				dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
 				// oxlint-disable-next-line no-await-in-loop
-				let result = await (trySpan
-					? trySpan.runInContext(() => abortable(signal, Promise.resolve(fn(signal))))
-					: abortable(signal, Promise.resolve(fn(signal))))
+				let result = await (config.wrapAttempt
+					? config.wrapAttempt(ctx, wrappedFn)
+					: wrappedFn())
 				dbg.log('attempt %d: success', ctx.attempt + 1)
-				trySpan?.end()
+				config.onAttemptSuccess?.(ctx)
 				return result
 			} catch (error) {
 				ctx.error = error
@@ -61,23 +61,13 @@ export async function retry<R>(
 
 				if (error instanceof Error && error.name === 'AbortError') {
 					dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
-					if (trySpan) {
-						trySpan.setAttribute('ydb.retry.backoff_ms', 0)
-						trySpan.recordException(error)
-						trySpan.setStatus({ code: 2, message: String(error) })
-						trySpan.end()
-					}
+					config.onAttemptError?.(ctx, error, 0)
 					throw error
 				}
 
 				if (error instanceof Error && error.name === 'TimeoutError') {
 					dbg.log('attempt %d: timeout error, not retryable', ctx.attempt)
-					if (trySpan) {
-						trySpan.setAttribute('ydb.retry.backoff_ms', 0)
-						trySpan.recordException(error)
-						trySpan.setStatus({ code: 2, message: String(error) })
-						trySpan.end()
-					}
+					config.onAttemptError?.(ctx, error, 0)
 					throw error
 				}
 
@@ -90,14 +80,7 @@ export async function retry<R>(
 
 				if (!willRetry || ctx.attempt >= budget) {
 					dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
-					if (trySpan) {
-						trySpan.setAttribute('ydb.retry.backoff_ms', 0)
-						trySpan.recordException(
-							error instanceof Error ? error : new Error(String(error))
-						)
-						trySpan.setStatus({ code: 2, message: String(error) })
-						trySpan.end()
-					}
+					config.onAttemptError?.(ctx, error, 0)
 					break
 				}
 
@@ -110,25 +93,16 @@ export async function retry<R>(
 
 				let remaining = Math.max(delay - (Date.now() - start), 0)
 
-				if (trySpan) {
-					trySpan.setAttribute('ydb.retry.backoff_ms', remaining)
-					trySpan.recordException(
-						error instanceof Error ? error : new Error(String(error))
-					)
-					trySpan.setStatus({ code: 2, message: String(error) })
-				}
+				config.onAttemptError?.(ctx, error, remaining)
 
 				if (!remaining) {
 					dbg.log('attempt %d: no delay before next retry', ctx.attempt)
-					trySpan?.end()
 					continue
 				}
 
 				dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
 				// oxlint-disable no-await-in-loop
 				await setTimeout(remaining, void 0, { signal })
-
-				trySpan?.end()
 
 				if (config.onRetry) {
 					config.onRetry(ctx)
@@ -142,16 +116,8 @@ export async function retry<R>(
 		throw ctx.error
 	}
 
-	if (runSpan) {
-		try {
-			return await runSpan.runInContext(execute)
-		} catch (error) {
-			runSpan.recordException(error instanceof Error ? error : new Error(String(error)))
-			runSpan.setStatus({ code: 2, message: String(error) })
-			throw error
-		} finally {
-			runSpan.end()
-		}
+	if (config.wrapRun) {
+		return config.wrapRun(execute)
 	}
 
 	return execute()

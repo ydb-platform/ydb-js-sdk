@@ -4,30 +4,30 @@ import type { RetryBudget } from './budget.js'
 import type { RetryContext } from './context.js'
 import type { RetryStrategy } from './strategy.js'
 
-/**
- * Minimal span interface for retry instrumentation.
- * Structurally compatible with @ydbjs/telemetry Span.
- */
-export interface RetrySpan {
-	setAttribute(key: string, value: string | number | boolean): void
-	recordException(error: Error): void
-	setStatus(status: { code: number; message?: string }): void
-	end(): void
-	runInContext<T>(fn: () => T): T
+export interface RetryHooks {
+	/**
+	 * Wraps the entire retry loop.
+	 * Use this to establish a parent span and run all attempts within its context.
+	 */
+	wrapRun?: <T>(fn: () => Promise<T>) => Promise<T>
+
+	/**
+	 * Wraps each individual attempt.
+	 * Use this to establish a per-attempt span and run the attempt within its context.
+	 */
+	wrapAttempt?: <T>(ctx: RetryContext, fn: () => T) => T
+
+	/** Called when an attempt completes successfully. */
+	onAttemptSuccess?: (ctx: RetryContext) => void
+
+	/**
+	 * Called when an attempt fails.
+	 * @param backoffMs - delay before the next attempt; 0 means no retry or no delay.
+	 */
+	onAttemptError?: (ctx: RetryContext, error: unknown, backoffMs: number) => void
 }
 
-/**
- * Minimal tracer interface for retry instrumentation.
- * Structurally compatible with @ydbjs/telemetry Tracer.
- */
-export interface RetryTracer {
-	startSpan(name: string, options?: { kind?: number }): RetrySpan
-}
-
-/**
- * Options for retry configuration
- */
-export interface RetryConfig extends Abortable {
+export interface RetryConfig extends Abortable, RetryHooks {
 	/** Predicate to determine if an error is retryable */
 	retry?: boolean | ((error: RetryContext['error'], idempotent: boolean) => boolean)
 	/** Budget for retry attempts */
@@ -39,16 +39,4 @@ export interface RetryConfig extends Abortable {
 
 	/** Hook to be called before retrying */
 	onRetry?: (ctx: RetryContext) => void
-
-	/**
-	 * Optional tracer for instrumentation.
-	 * When provided, wraps the entire operation in a `ydb.RunWithRetry` span
-	 * and each attempt in a `ydb.Try` span with a `ydb.retry.backoff_ms` attribute.
-	 */
-	tracer?: RetryTracer
-
-	/**
-	 * Override the name of the top-level span. Defaults to `ydb.RunWithRetry`.
-	 */
-	spanName?: string
 }

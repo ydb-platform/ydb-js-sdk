@@ -1,4 +1,5 @@
 import type { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import type { RetryContext, RetryHooks } from '@ydbjs/retry'
 import { YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 
@@ -202,6 +203,67 @@ export function recordErrorAttributes(error: unknown): {
 }
 
 export { formatTraceparent } from './traceparent.js'
+
+/**
+ * Creates a fresh set of RetryHooks that instrument a single retry() call
+ * with two spans: a parent `ydb.RunWithRetry` span wrapping the entire loop,
+ * and a child `ydb.Try` span per attempt.
+ *
+ * Call this once per retry invocation (not once per driver) so that each
+ * concurrent query gets its own independent span state.
+ */
+export function makeRetryTracingHooks(
+	tracer: Tracer,
+	spanName = SPAN_NAMES.RunWithRetry
+): RetryHooks {
+	let currentTrySpan: Span | null = null
+
+	return {
+		wrapRun<T>(fn: () => Promise<T>): Promise<T> {
+			const runSpan = tracer.startSpan(spanName, { kind: SpanKind.INTERNAL })
+			return runSpan.runInContext(async () => {
+				try {
+					return await fn()
+				} catch (error) {
+					runSpan.recordException(
+						error instanceof Error ? error : new Error(String(error))
+					)
+					runSpan.setStatus({ code: 2, message: String(error) })
+					throw error
+				} finally {
+					runSpan.end()
+				}
+			})
+		},
+
+		wrapAttempt<T>(_ctx: RetryContext, fn: () => T): T {
+			const trySpan = tracer.startSpan(SPAN_NAMES.Try, { kind: SpanKind.INTERNAL })
+			currentTrySpan = trySpan
+			return trySpan.runInContext(fn)
+		},
+
+		onAttemptSuccess(_ctx: RetryContext): void {
+			currentTrySpan?.end()
+			currentTrySpan = null
+		},
+
+		onAttemptError(_ctx: RetryContext, error: unknown, backoffMs: number): void {
+			if (currentTrySpan) {
+				// backoff_ms represents sleep duration before the next attempt.
+				// Only set when > 0 (actual sleep); omit for final failures (no next attempt).
+				if (backoffMs > 0) {
+					currentTrySpan.setAttribute('ydb.retry.backoff_ms', backoffMs)
+				}
+				currentTrySpan.recordException(
+					error instanceof Error ? error : new Error(String(error))
+				)
+				currentTrySpan.setStatus({ code: 2, message: String(error) })
+				currentTrySpan.end()
+				currentTrySpan = null
+			}
+		},
+	}
+}
 
 export const SpanFinalizer = {
 	finishSuccess(span: Span): void {

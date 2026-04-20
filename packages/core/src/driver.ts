@@ -15,7 +15,7 @@ import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
+import { type RetryConfig, type RetryHooks, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
 	type Channel,
 	type ChannelOptions,
@@ -76,6 +76,13 @@ export type DriverOptions = {
 	 * ```
 	 */
 	hooks?: DriverHooks
+
+	/**
+	 * Factory that creates a fresh RetryHooks instance per retry call.
+	 * When provided, each query's retry loop is instrumented with lifecycle hooks.
+	 * Typically set by spreading the return value of `withTracing()`.
+	 */
+	retryHooks?: () => RetryHooks
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
