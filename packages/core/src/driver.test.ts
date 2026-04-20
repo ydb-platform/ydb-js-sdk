@@ -1,6 +1,9 @@
 import { expect, test } from 'vitest'
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { createServer } from 'nice-grpc'
 
 import { Driver } from './driver.ts'
+import pkg from '../package.json' with { type: 'json' }
 
 test('database in pathname', async () => {
 	let driver = new Driver('grpc://ydb:2136/local', {
@@ -57,4 +60,34 @@ test('allows custom channel options override', () => {
 	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(5_000)
 
 	driver.close()
+})
+
+test('adds x-ydb-sdk-build-info header with current sdk version', async () => {
+	let server = createServer()
+	let receivedBuildInfo = ''
+	let serviceDefinition = {
+		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+	}
+
+	server.add(serviceDefinition, {
+		async listEndpoints(_, context) {
+			receivedBuildInfo = context.metadata.get('x-ydb-sdk-build-info') ?? ''
+			return {}
+		},
+	})
+
+	let port = await server.listen('127.0.0.1:0')
+	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+
+	try {
+		let client = driver.createClient(serviceDefinition)
+		await client.listEndpoints({ database: driver.database })
+
+		expect(receivedBuildInfo).toBe(`ydb-js-sdk/${pkg.version}`)
+	} finally {
+		driver.close()
+		await server.shutdown()
+	}
 })
