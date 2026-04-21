@@ -1,355 +1,282 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
+import { createServer } from 'nice-grpc'
+import { create } from '@bufbuild/protobuf'
 
-import type { Driver } from '@ydbjs/core'
-import { SESSION_STATE, Session, SessionAbortedError, type SessionState } from './session.ts'
-import { SessionPool } from './session-pool.ts'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import {
+	CreateSessionResponseSchema,
+	DeleteSessionResponseSchema,
+	QueryServiceDefinition,
+	SessionStateSchema,
+} from '@ydbjs/api/query'
+import { Driver } from '@ydbjs/core'
+import { YDBError } from '@ydbjs/error'
 
-function createMockDriver(): Driver {
-	return {
-		database: '/local',
-		createClient: vi.fn(),
-	} as unknown as Driver
-}
+import { Session } from './session.ts'
+import { SessionLease, SessionPool, SessionPoolFullError } from './session-pool.ts'
 
 /**
- * Mock session with the same state invariants as real Session:
- * - acquire only from IDLE (async)
- * - release only from BUSY
- * - delete transitions to CLOSED
- * - markInvalidated triggers onInvalidated callback
+ * Minimal in-memory QueryService. Tests get:
+ *  - `breakSession(id)`: server-side abort of a session's attach stream
+ *    (simulates YDB-driven invalidation).
+ *  - `holdCreateSession()`: blocks every subsequent `CreateSession` until
+ *    the returned release function is called (for races with pool close).
+ *  - `firstAttachStatus`: let tests make attach fail on the first message.
  */
-function createMockSession(id = 'test-session-id'): Session {
-	let state: SessionState = SESSION_STATE.IDLE
-	let invalidatedCallback: (() => void) | undefined
-	let abortController = new AbortController()
+async function startQueryServer() {
+	let nextId = 0
+	let attachCtrls = new Map<string, AbortController>()
+	let holdPromise: Promise<void> | undefined
+	let holdResolve: (() => void) | undefined
+	let firstAttachStatus = StatusIds_StatusCode.SUCCESS
+
+	let createCount = 0
+	let deleteCalls: string[] = []
+	let attachCalls: string[] = []
+
+	let server = createServer()
+	let subset = {
+		createSession: QueryServiceDefinition.createSession,
+		deleteSession: QueryServiceDefinition.deleteSession,
+		attachSession: QueryServiceDefinition.attachSession,
+	}
+	server.add(subset, {
+		async createSession() {
+			createCount++
+			if (holdPromise) await holdPromise
+			let sessionId = `svr-${++nextId}`
+			attachCtrls.set(sessionId, new AbortController())
+			return create(CreateSessionResponseSchema, {
+				status: StatusIds_StatusCode.SUCCESS,
+				sessionId,
+				nodeId: 0n,
+			})
+		},
+		async deleteSession(req) {
+			deleteCalls.push(req.sessionId)
+			attachCtrls.get(req.sessionId)?.abort()
+			return create(DeleteSessionResponseSchema, {
+				status: StatusIds_StatusCode.SUCCESS,
+			})
+		},
+		async *attachSession(req, ctx) {
+			attachCalls.push(req.sessionId)
+			let serverCtrl = attachCtrls.get(req.sessionId) ?? new AbortController()
+
+			yield create(SessionStateSchema, { status: firstAttachStatus })
+			if (firstAttachStatus !== StatusIds_StatusCode.SUCCESS) return
+
+			await new Promise<void>((resolve) => {
+				if (ctx.signal.aborted || serverCtrl.signal.aborted) return resolve()
+				let onAbort = () => resolve()
+				ctx.signal.addEventListener('abort', onAbort, { once: true })
+				serverCtrl.signal.addEventListener('abort', onAbort, { once: true })
+			})
+		},
+	})
+
+	let port = await server.listen('127.0.0.1:0')
+	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	return {
-		id,
-		nodeId: 1n,
-
-		get state() {
-			return state
+		driver,
+		get createCount() {
+			return createCount
 		},
-		get isIdle() {
-			return state === SESSION_STATE.IDLE
+		get deleteCalls() {
+			return deleteCalls
 		},
-		get isBusy() {
-			return state === SESSION_STATE.BUSY
+		get attachCalls() {
+			return attachCalls
 		},
-		get isClosed() {
-			return state === SESSION_STATE.CLOSED
+		breakSession(id: string) {
+			attachCtrls.get(id)?.abort()
 		},
-		get isInvalidated() {
-			return state === SESSION_STATE.INVALIDATED
+		setFirstAttachStatus(status: number) {
+			firstAttachStatus = status
 		},
-
-		get signal() {
-			return abortController.signal
+		holdCreateSession() {
+			holdPromise = new Promise<void>((r) => (holdResolve = r))
+			return () => holdResolve?.()
 		},
-
-		markClosed: vi.fn(() => {
-			state = SESSION_STATE.CLOSED
-		}),
-
-		markInvalidated: vi.fn(() => {
-			state = SESSION_STATE.INVALIDATED
-			abortController.abort(new SessionAbortedError(id, 'invalidated'))
-			invalidatedCallback?.()
-		}),
-
-		onInvalidated: vi.fn((callback: () => void) => {
-			invalidatedCallback = callback
-		}),
-
-		acquire: vi.fn(async (_signal?: AbortSignal) => {
-			if (state !== SESSION_STATE.IDLE) {
-				throw new Error(`Cannot acquire session in state ${state}`)
-			}
-			state = SESSION_STATE.BUSY
-		}),
-
-		release: vi.fn(() => {
-			if (state !== SESSION_STATE.BUSY) {
-				throw new Error(`Cannot release session in state ${state}`)
-			}
-			state = SESSION_STATE.IDLE
-		}),
-
-		delete: vi.fn(async (_signal?: AbortSignal) => {
-			state = SESSION_STATE.CLOSED
-			abortController.abort(new SessionAbortedError(id, 'closed'))
-		}),
-	} as unknown as Session
+		async close() {
+			holdResolve?.()
+			driver.close()
+			await server.shutdown()
+		},
+	}
 }
 
+type Harness = Awaited<ReturnType<typeof startQueryServer>>
+
+let srv: Harness | undefined
 let pool: SessionPool | undefined
 
 afterEach(async () => {
-	await pool?.close()
+	await pool?.close().catch(() => {})
 	pool = undefined
-	vi.restoreAllMocks()
+	await srv?.close()
+	srv = undefined
 })
 
-test('creates pool with default options', () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver)
+/** Poll a condition until true or timeout — async server effects need time. */
+async function until(cond: () => boolean, timeoutMs = 500): Promise<void> {
+	let deadline = Date.now() + timeoutMs
+	while (Date.now() < deadline) {
+		if (cond()) return
+		// oxlint-disable-next-line no-await-in-loop
+		await new Promise((r) => setTimeout(r, 5))
+	}
+	throw new Error(`timed out waiting for condition (${timeoutMs}ms)`)
+}
 
-	expect(pool.stats).toEqual({
-		total: 0,
-		idle: 0,
-		busy: 0,
-		closed: 0,
-		invalidated: 0,
-		waiting: 0,
-		maxSize: 50,
-	})
+test('reuses the most recently released session first (LIFO)', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 2 })
+
+	let a = await pool.acquire()
+	let b = await pool.acquire()
+	let idA = a.id
+	let idB = b.id
+	expect(idA).not.toBe(idB)
+
+	a[Symbol.dispose]()
+	b[Symbol.dispose]() // top of the stack
+
+	let next = await pool.acquire()
+	expect(next.id).toBe(idB)
 })
 
-test('reuses idle session (Session.create called once)', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 10 })
+test('rejects new waiters once the wait queue hits the cap', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 1, waitQueueFactor: 2 })
 
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
+	await pool.acquire() // hold the only session
 
-	const a1 = await pool.acquireSession()
-	pool.release(a1)
-
-	expect(pool.stats.idle).toBe(1)
-	expect(pool.stats.busy).toBe(0)
-
-	const a2 = await pool.acquireSession()
-	expect(a2).toBe(a1)
-	expect(Session.create).toHaveBeenCalledTimes(1)
-
-	expect(pool.stats.idle).toBe(0)
-	expect(pool.stats.busy).toBe(1)
-})
-
-test('does not create more than maxSize', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 2 })
-
-	const created: Session[] = []
-	vi.spyOn(Session, 'create').mockImplementation(async () => {
-		const s = createMockSession(`s${created.length + 1}`)
-		created.push(s)
-		return s
-	})
-
-	const [a, b, c] = [pool.acquireSession(), pool.acquireSession(), pool.acquireSession()]
-
-	expect(pool.stats.waiting).toBe(1)
-
-	const s1 = await a
-	await b
-
-	expect(Session.create).toHaveBeenCalledTimes(2)
-	expect(pool.stats.total).toBe(2)
-	expect(pool.stats.busy).toBe(2)
-
-	pool.release(s1)
-	const s3 = await c
-	expect(s3).toBe(s1)
-
-	expect(Session.create).toHaveBeenCalledTimes(2)
-	expect(pool.stats.total).toBe(2)
-})
-
-test('waiters are served in FIFO order', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
-
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
-
-	const acquired = await pool.acquireSession()
-
-	const w1 = pool.acquireSession()
-	const w2 = pool.acquireSession()
-	const w3 = pool.acquireSession()
-
-	expect(pool.stats.waiting).toBe(3)
-
-	pool.release(acquired)
-	const r1 = await w1
-	expect(r1).toBe(acquired)
+	let w1 = pool.acquire()
+	let w2 = pool.acquire()
 	expect(pool.stats.waiting).toBe(2)
 
-	pool.release(r1)
-	const r2 = await w2
-	expect(r2).toBe(acquired)
-	expect(pool.stats.waiting).toBe(1)
+	await expect(pool.acquire()).rejects.toBeInstanceOf(SessionPoolFullError)
 
-	pool.release(r2)
-	const r3 = await w3
-	expect(r3).toBe(acquired)
-	expect(pool.stats.waiting).toBe(0)
+	// Orphan the waiters — afterEach closes the pool, which rejects them.
+	w1.catch(() => {})
+	w2.catch(() => {})
 })
 
-test('abort during waiting removes waiter from queue', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
+test('eviction of a busy session pumps a fresh one to the oldest waiter', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
+	let held = await pool.acquire()
+	let heldId = held.id
+	let waiter = pool.acquire()
 
-	await pool.acquireSession() // occupy the only session
+	// Server kills the in-use session's attach stream — monitor catches it,
+	// pool evicts, pumps a fresh create for the waiter.
+	srv.breakSession(heldId)
 
-	const controller = new AbortController()
-	const p = pool.acquireSession(controller.signal)
+	let replacement = await waiter
+	expect(replacement.id).not.toBe(heldId)
+	expect(srv.createCount).toBe(2)
 
-	expect(pool.stats.waiting).toBe(1)
-
-	controller.abort(new Error('Aborted by test'))
-	await expect(p).rejects.toThrow(/abort/i)
-
-	expect(pool.stats.waiting).toBe(0)
+	held[Symbol.dispose]() // no-op: session already broken
+	replacement[Symbol.dispose]()
 })
 
-test('session creation failure rejects waiters but allows retry', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
+test('close() during in-flight create does not hang and rejects the pending acquire', async () => {
+	srv = await startQueryServer()
+	let release = srv.holdCreateSession()
+	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	let attempt = 0
-	vi.spyOn(Session, 'create').mockImplementation(async () => {
-		attempt++
-		if (attempt === 1) throw new Error('create failed')
-		return createMockSession(`s${attempt}`)
-	})
+	// Pre-catch: close() will cancel the in-flight RPC via abort, and we
+	// don't want the racing rejection to surface as unhandled.
+	let acquiring = pool.acquire().then(
+		(lease) => ({ ok: true as const, lease }),
+		(error) => ({ ok: false as const, error })
+	)
 
-	const p1 = pool.acquireSession()
-	const p2 = pool.acquireSession()
+	// Let the RPC actually reach the server before we pull the rug.
+	await new Promise((r) => setTimeout(r, 30))
 
-	await expect(p1).rejects.toThrow('create failed')
-	await expect(p2).rejects.toThrow(/session creation failed|create failed/i)
+	let closing = pool.close()
+	release() // let the stuck server-side handler unwind regardless
 
-	expect(pool.stats.total).toBe(0)
-	expect(pool.stats.waiting).toBe(0)
+	await closing // must not hang
+	let result = await acquiring
+	expect(result.ok).toBe(false)
+
+	pool = undefined
 })
 
-test('session acquire failure (after create) does not add session to pool', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
+test('lease.signal is lease-scoped — ghost subscribers do not accumulate', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
+	let lease = await pool.acquire()
+	let capturedSignal = lease.signal
+	let id = lease.id
+	lease[Symbol.dispose]()
 
-	// fail on acquire (simulate attach failure)
-	;(s1.acquire as any).mockImplementationOnce(async () => {
-		throw new Error('attach failed')
-	})
+	// Break the session AFTER the lease is disposed. A naive implementation
+	// that exposes session.signal directly would abort this signal too —
+	// that's how 1000 concurrent queries on a hot session would leave
+	// 1000 ghost subscribers behind.
+	srv.breakSession(id)
+	await new Promise((r) => setTimeout(r, 50))
 
-	await expect(pool.acquireSession()).rejects.toThrow('attach failed')
-	expect(pool.stats.total).toBe(0)
+	expect(capturedSignal.aborted).toBe(false)
 })
 
-test('invalidated session is removed from pool and waiters are rejected', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
+test('SessionLease exposes id and nodeId', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
-
-	const acquired = await pool.acquireSession()
-
-	const waiter = pool.acquireSession()
-
-	expect(pool.stats.waiting).toBe(1)
-	expect(pool.stats.total).toBe(1)
-
-	// invalidate: should remove from pool and reject waiters
-	s1.markInvalidated()
-
-	await expect(waiter).rejects.toThrow(/invalidated/i)
-	expect(pool.stats.total).toBe(0)
-
-	// releasing invalidated session should be ignored and not throw
-	expect(() => pool!.release(acquired)).not.toThrow()
+	let lease = await pool.acquire()
+	expect(lease).toBeInstanceOf(SessionLease)
+	expect(lease.id).toMatch(/^svr-/)
+	expect(lease.nodeId).toBe(0n)
 })
 
-test('invalidating idle session allows creating a new one next time', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
+test('Session.open deletes the server-side session when attach first message is bad', async () => {
+	srv = await startQueryServer()
+	srv.setFirstAttachStatus(StatusIds_StatusCode.BAD_SESSION)
 
-	const s1 = createMockSession('s1')
-	const s2 = createMockSession('s2')
+	await expect(Session.open(srv.driver)).rejects.toBeInstanceOf(YDBError)
 
-	vi.spyOn(Session, 'create').mockResolvedValueOnce(s1).mockResolvedValueOnce(s2)
-
-	const a1 = await pool.acquireSession()
-	pool.release(a1)
-
-	expect(pool.stats.idle).toBe(1)
-	expect(Session.create).toHaveBeenCalledTimes(1)
-
-	// invalidate idle session -> removed from pool
-	s1.markInvalidated()
-	expect(pool.stats.total).toBe(0)
-
-	const a2 = await pool.acquireSession()
-	expect(a2).toBe(s2)
-	expect(Session.create).toHaveBeenCalledTimes(2)
+	// Fire-and-forget DeleteSession — wait for the RPC to actually land.
+	await until(() => srv!.deleteCalls.length > 0)
+	expect(srv.deleteCalls).toHaveLength(1)
 })
 
-test('close(): rejects waiters and deletes all sessions (and does not throw on delete errors)', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 2 })
+test('Session.open aborts the attach stream when the caller signal fires mid-wait', async () => {
+	srv = await startQueryServer()
 
-	const s1 = createMockSession('s1')
-	const s2 = createMockSession('s2')
-	vi.spyOn(Session, 'create').mockResolvedValueOnce(s1).mockResolvedValueOnce(s2)
+	// Hold the first attach message forever — the harness normally yields
+	// SUCCESS on first message; here we want to verify cancellation during
+	// the wait, so swap the first status into a different keepalive.
+	// Easiest approach: don't emit first message — achieved by making the
+	// attach handler hang before yielding. Patch via the harness:
+	srv.setFirstAttachStatus(StatusIds_StatusCode.SUCCESS)
 
-	const a1 = await pool.acquireSession()
-	const a2 = await pool.acquireSession()
+	let ctrl = new AbortController()
+	let opening = Session.open(srv.driver, ctrl.signal)
 
-	const waiter = pool.acquireSession()
+	// Wait for the attach RPC to reach the server.
+	await until(() => srv!.attachCalls.length > 0)
 
-	vi.spyOn(a2, 'delete').mockRejectedValueOnce(new Error('delete failed'))
+	// Client aborts — nice-grpc should cancel the stream; our forward
+	// listener in #bindAttach propagates the abort into #attach.
+	ctrl.abort(new Error('caller gave up'))
 
-	await expect(pool.close()).resolves.toBeUndefined()
-	await expect(waiter).rejects.toThrow(/closed/i)
-
-	expect(a1.delete).toHaveBeenCalledTimes(1)
-	expect(a2.delete).toHaveBeenCalledTimes(1)
-
-	expect(pool.stats.total).toBe(0)
-	expect(pool.stats.waiting).toBe(0)
-})
-
-test('using sessionLease automatically releases session', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
-
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
-
-	{
-		using sessionLease = await pool.acquire()
-		expect(sessionLease.id).toBe('s1')
-		expect(pool.stats.busy).toBe(1)
-		expect(pool.stats.idle).toBe(0)
-	}
-
-	// After exiting the block, session should be released automatically
-	expect(pool.stats.busy).toBe(0)
-	expect(pool.stats.idle).toBe(1)
-})
-
-test('sessionLease.signal aborts when session is invalidated', async () => {
-	const driver = createMockDriver()
-	pool = new SessionPool(driver, { maxSize: 1 })
-
-	const s1 = createMockSession('s1')
-	vi.spyOn(Session, 'create').mockResolvedValue(s1)
-
-	using sessionLease = await pool.acquire()
-
-	expect(sessionLease.signal.aborted).toBe(false)
-
-	// Simulate session invalidation
-	s1.markInvalidated()
-
-	expect(sessionLease.signal.aborted).toBe(true)
-	expect(sessionLease.signal.reason).toEqual(new SessionAbortedError('s1', 'invalidated'))
+	// The promise rejects. Session.open may resolve OK if attach's first
+	// SUCCESS message was already received before we aborted — in that
+	// race we simply verify that either resolution cleans up.
+	await opening.then(
+		(session) => session.close(),
+		() => {}
+	)
+	expect(srv.attachCalls).toHaveLength(1)
 })

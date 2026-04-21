@@ -1,424 +1,306 @@
+/**
+ * Alternative SessionPool.
+ *
+ * Design notes (diverges from session-pool.ts):
+ *   - Single source of truth: #all (Set). Idle is a derived LIFO stack.
+ *   - Idle is LIFO for cache warmth (server-side plan cache).
+ *   - Busy has no explicit marker — it's "in #all but not in #available".
+ *   - No background sweeper. Dead sessions are evicted lazily on acquire.
+ *   - Waiters have a hard cap (maxSize * 8) — caller gets fast failure
+ *     under thundering-herd rather than unbounded queue growth.
+ *   - An evicted session opens a slot; we proactively refill for waiters.
+ *   - close() is atomic w.r.t. in-flight creates: we own their abort
+ *     controllers, cancel them on close, and allSettle before returning.
+ *
+ * Memory-leak hygiene (important on Node <22.6 and Bun):
+ *   - No AbortSignal.any anywhere. Every `abort`-listener we add is also
+ *     explicitly removed on success paths (see #mergeSignals / detach()).
+ *   - SessionLease mirrors session.signal into a *lease-scoped* controller
+ *     so each acquire/release cycle attaches exactly one listener on the
+ *     long-lived session signal and removes it on dispose. Otherwise a
+ *     hot session serving N queries would accumulate N listeners.
+ */
+
+import { linkSignals } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { Session } from './session.js'
 
-let dbg = loggers.query.extend('pool')
+let dbg = loggers.query.extend('pool2')
 
-if (!Promise.withResolvers) {
-	Promise.withResolvers = function <T>(): {
-		promise: Promise<T>
-		resolve: (value: T | PromiseLike<T>) => void
-		reject: (reason?: any) => void
-	} {
-		let resolve: (value: T | PromiseLike<T>) => void
-		let reject: (reason?: any) => void
-		const promise = new Promise<T>((res, rej) => {
-			resolve = res
-			reject = rej
-		})
-		return { promise, resolve: resolve!, reject: reject! }
+export class SessionPoolClosedError extends Error {
+	constructor() {
+		super('session pool is closed')
+		this.name = 'SessionPoolClosedError'
 	}
 }
 
-/**
- * Wrapper for acquired session that automatically releases it when disposed
- */
-export class SessionLease implements Disposable {
-	#session: Session
-	#pool: SessionPool
-
-	constructor(session: Session, pool: SessionPool) {
-		this.#session = session
-		this.#pool = pool
-	}
-
-	get session(): Session {
-		return this.#session
-	}
-
-	get id(): string {
-		return this.#session.id
-	}
-
-	get nodeId(): bigint {
-		return this.#session.nodeId
-	}
-
-	/**
-	 * Signal that aborts when session is invalidated or closed
-	 * Use this to cancel ongoing operations when session becomes unusable
-	 */
-	get signal(): AbortSignal {
-		return this.#session.signal
-	}
-
-	[Symbol.dispose](): void {
-		this.#pool.release(this.#session)
+export class SessionPoolFullError extends Error {
+	constructor(limit: number) {
+		super(`session pool wait queue is full (limit=${limit})`)
+		this.name = 'SessionPoolFullError'
 	}
 }
 
 export type SessionPoolOptions = {
-	/**
-	 * Maximum number of sessions in the pool
-	 * @default 50
-	 */
+	/** Hard cap on simultaneously-live sessions (idle + busy + creating). */
 	maxSize?: number
-
-	/**
-	 * Time in milliseconds after which an idle session is considered stale and removed
-	 * @default 600000 (10 minutes)
-	 */
-	idleTimeoutMs?: number
-
-	/**
-	 * Interval in milliseconds for checking and removing stale sessions
-	 * @default 60000 (1 minute)
-	 */
-	cleanupIntervalMs?: number
+	/** Multiplier over maxSize for the wait queue. Default 8. */
+	waitQueueFactor?: number
 }
 
-const defaultOptions: Required<SessionPoolOptions> = {
+const DEFAULTS = {
 	maxSize: 50,
-	idleTimeoutMs: 600_000, // 10 minutes
-	cleanupIntervalMs: 60_000, // 1 minute
+	waitQueueFactor: 8,
+} satisfies Required<SessionPoolOptions>
+
+type Waiter = {
+	resolve: (s: Session) => void
+	reject: (e: Error) => void
+	/** Detaches the external AbortSignal listener if any. */
+	detach: () => void
 }
 
-export class SessionPool implements Disposable {
+/**
+ * A lease's signal is NOT session.signal directly — it's a private
+ * controller that mirrors session.signal for the lifetime of the lease.
+ * When the lease is disposed, we explicitly detach from session.signal so
+ * a hot session serving thousands of queries doesn't accrue thousands of
+ * listeners. For merging further signals with `lease.signal` downstream,
+ * use `linkSignals` (@ydbjs/abortable) — it cleans up on dispose, unlike
+ * `AbortSignal.any` which leaks on Node <22.6 / Bun.
+ */
+export class SessionLease implements Disposable {
+	#pool: SessionPool
+	readonly session: Session
+	#mirror = new AbortController()
+	#detach: (() => void) | undefined
+
+	constructor(pool: SessionPool, session: Session) {
+		this.#pool = pool
+		this.session = session
+
+		if (session.signal.aborted) {
+			this.#mirror.abort(session.signal.reason)
+			return
+		}
+
+		let handler = () => this.#mirror.abort(session.signal.reason)
+		session.signal.addEventListener('abort', handler, { once: true })
+		this.#detach = () => session.signal.removeEventListener('abort', handler)
+	}
+
+	get id(): string {
+		return this.session.id
+	}
+	get nodeId(): bigint {
+		return this.session.nodeId
+	}
+	/** Aborts when the session dies. Lease-scoped: safe to chain further. */
+	get signal(): AbortSignal {
+		return this.#mirror.signal
+	}
+
+	[Symbol.dispose](): void {
+		if (this.#detach) {
+			this.#detach()
+			this.#detach = undefined
+		}
+		this.#pool.release(this.session)
+	}
+}
+
+export class SessionPool implements AsyncDisposable {
 	#driver: Driver
-	#options: Required<SessionPoolOptions>
+	#maxSize: number
+	#maxWaiters: number
 
-	#sessions: Session[] = []
-	#waitQueue: Array<{
-		resolve: (session: Session) => void
-		reject: (error: Error) => void
-	}> = []
-
-	#cleanupTimer?: NodeJS.Timeout
-	#closed: boolean = false
-	#creating: number = 0 // Track sessions being created
+	#all = new Set<Session>()
+	#available: Session[] = [] // LIFO: pop from end, push to end
+	#waiters: Waiter[] = [] // FIFO
+	#creates = new Set<Promise<unknown>>()
+	#close = new AbortController()
 
 	constructor(driver: Driver, options: SessionPoolOptions = {}) {
 		this.#driver = driver
-		this.#options = { ...defaultOptions, ...options }
-
-		dbg.log('creating session pool (max: %d)', this.#options.maxSize)
-
-		// Start cleanup timer
-		this.#cleanupTimer = setInterval(() => {
-			void this.#cleanup()
-		}, this.#options.cleanupIntervalMs)
-
-		// Unref so it doesn't keep process alive
-		this.#cleanupTimer.unref()
+		this.#maxSize = options.maxSize ?? DEFAULTS.maxSize
+		this.#maxWaiters = this.#maxSize * (options.waitQueueFactor ?? DEFAULTS.waitQueueFactor)
 	}
 
-	/**
-	 * Get pool statistics
-	 */
+	get closed(): boolean {
+		return this.#close.signal.aborted
+	}
+
 	get stats() {
-		let idle = 0
-		let busy = 0
-		let closed = 0
-		let invalidated = 0
-
-		for (let session of this.#sessions) {
-			if (session.isIdle) idle++
-			else if (session.isBusy) busy++
-			else if (session.isClosed) closed++
-			else if (session.isInvalidated) invalidated++
-		}
-
 		return {
-			total: this.#sessions.length,
-			idle,
-			busy,
-			closed,
-			invalidated,
-			waiting: this.#waitQueue.length,
-			maxSize: this.#options.maxSize,
+			total: this.#all.size,
+			idle: this.#available.length,
+			busy: this.#all.size - this.#available.length,
+			creating: this.#creates.size,
+			waiting: this.#waiters.length,
+			maxSize: this.#maxSize,
 		}
 	}
 
-	/**
-	 * Acquire a session from the pool with automatic release on dispose
-	 */
 	async acquire(signal?: AbortSignal): Promise<SessionLease> {
-		let session = await this.acquireSession(signal)
-		return new SessionLease(session, this)
+		let session = await this.#acquireSession(signal)
+		return new SessionLease(this, session)
 	}
 
-	/**
-	 * Acquire a session from the pool (manual release required)
-	 */
-	async acquireSession(signal?: AbortSignal): Promise<Session> {
-		if (this.#closed) {
-			throw new Error('Session pool is closed')
-		}
-
-		if (signal?.aborted) {
-			throw signal.reason || new Error('Aborted')
-		}
-
-		let session = this.#findIdleSession()
-		if (session) {
-			await session.acquire(signal)
-			dbg.log(
-				'acquired existing session %s (pool stats: %o)',
-				session.id,
-				this.stats
-			)
-			return session
-		}
-
-		let totalSessions = this.#sessions.length + this.#creating
-		if (totalSessions < this.#options.maxSize) {
-			dbg.log(
-				'creating new session (current: %d, creating: %d, max: %d)',
-				this.#sessions.length,
-				this.#creating,
-				this.#options.maxSize
-			)
-
-			this.#creating++
-
-			let failed = false
-			let createError: unknown
-
-			try {
-				let session = await Session.create(this.#driver, signal)
-
-				session.onInvalidated(() => {
-					dbg.log(
-						'session %s invalidated, removing from pool',
-						session.id
-					)
-					this.#removeSession(session)
-					this.#rejectAllWaiters(new Error('Session invalidated'))
-				})
-
-				await session.acquire(signal)
-
-				dbg.log(
-					'acquired new session %s (pool stats: %o)',
-					session.id,
-					this.stats
-				)
-
-				this.#sessions.push(session)
-
-				return session
-			} catch (error) {
-				failed = true
-				createError = error
-				throw error
-			} finally {
-				this.#creating--
-
-				if (failed) {
-					dbg.log(
-						'rejecting %d waiters to trigger retry',
-						this.#waitQueue.length
-					)
-
-					this.#rejectAllWaiters(createError)
-				}
-			}
-		}
-
-		dbg.log(
-			'pool is full (%d+%d/%d), waiting for session',
-			this.#sessions.length,
-			this.#creating,
-			this.#options.maxSize
-		)
-
-		return this.#waitForSession(signal)
-	}
-
-	/**
-	 * Release a session back to the pool
-	 */
 	release(session: Session): void {
-		if (this.#closed) {
-			dbg.log(
-				'pool is closed, ignoring release of session %s',
-				session.id
-			)
+		// Session died while someone was using it. The eviction listener
+		// already popped it from #all; `close()` fires DeleteSession in the
+		// background.
+		if (!session.alive || !this.#all.has(session)) {
+			session.close()
 			return
 		}
 
-		if (session.isInvalidated) {
-			dbg.log(
-				'session %s is invalidated, ignoring its release',
-				session.id
-			)
+		if (this.closed) {
+			this.#all.delete(session)
+			session.close()
 			return
 		}
 
-		let waiter = this.#waitQueue.shift()
+		session.lastUsedAt = Date.now()
+
+		// Direct handoff: no bounce through #available.
+		let waiter = this.#waiters.shift()
 		if (waiter) {
-			dbg.log('giving session %s to waiter', session.id)
+			waiter.detach()
 			waiter.resolve(session)
 			return
 		}
 
-		// No waiters, mark session as idle
-		session.release()
-
-		dbg.log('released session %s (pool stats: %o)', session.id, this.stats)
+		this.#available.push(session)
 	}
 
-	/**
-	 * Find an idle session in the pool
-	 */
-	#findIdleSession(): Session | null {
-		for (let session of this.#sessions) {
-			if (session.isIdle) {
-				return session
-			}
+	async close(): Promise<void> {
+		if (this.closed) return
+		this.#close.abort(new SessionPoolClosedError())
+
+		// Reject every waiter with a clear cause.
+		let waiters = this.#waiters.splice(0)
+		for (let w of waiters) {
+			w.detach()
+			w.reject(new SessionPoolClosedError())
 		}
-		return null
+
+		// Only thing worth awaiting: in-flight Session.open calls. The
+		// pool-close signal already propagated into them, so they'll bail
+		// quickly. Once settled, nothing new can land in the pool.
+		await Promise.allSettled([...this.#creates])
+
+		let sessions = [...this.#all]
+		this.#all.clear()
+		this.#available.length = 0
+		// close() is sync + fire-and-forget — no need to await each RPC.
+		for (let s of sessions) s.close()
+		dbg.log('pool closed (%d sessions)', sessions.length)
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		await this.close()
+	}
+
+	// --- internals -------------------------------------------------------
+
+	async #acquireSession(signal?: AbortSignal): Promise<Session> {
+		if (this.closed) throw new SessionPoolClosedError()
+		signal?.throwIfAborted()
+
+		// 1. Fast path: pop a warm idle session (LIFO). Skip dead ones lazily.
+		while (this.#available.length > 0) {
+			let candidate = this.#available.pop()!
+			if (candidate.alive) return candidate
+			this.#all.delete(candidate) // already reaped by eviction, belt & braces
+		}
+
+		// 2. Grow the pool if there's capacity.
+		if (this.#all.size + this.#creates.size < this.#maxSize) {
+			return this.#grow(signal)
+		}
+
+		// 3. Queue behind existing waiters.
+		return this.#enqueue(signal)
+	}
+
+	async #grow(signal?: AbortSignal): Promise<Session> {
+		// `using` auto-detaches listeners from every input (external + pool-
+		// close) when the block exits — no accumulation on #close.signal as
+		// many concurrent creates fan out.
+		using linked = linkSignals(signal, this.#close.signal)
+		let promise = Session.open(this.#driver, linked.signal)
+		this.#creates.add(promise)
+
+		try {
+			let session = await promise
+
+			// The pool closed while we were creating. Dispose it, don't leak.
+			if (this.closed) {
+				session.close()
+				throw new SessionPoolClosedError()
+			}
+
+			this.#all.add(session)
+			this.#bindEviction(session)
+			return session
+		} finally {
+			this.#creates.delete(promise)
+		}
+	}
+
+	#bindEviction(session: Session): void {
+		session.signal.addEventListener(
+			'abort',
+			() => {
+				this.#all.delete(session)
+				let idx = this.#available.indexOf(session)
+				if (idx !== -1) this.#available.splice(idx, 1)
+				dbg.log('evicted session %s', session.id)
+				this.#pumpWaitersAfterEviction()
+			},
+			{ once: true }
+		)
 	}
 
 	/**
-	 * Wait for a session to become available
+	 * An eviction just opened a slot. If any waiters are queued, spin up a
+	 * replacement session for the oldest one. We only replace one session
+	 * per eviction — if the caller's request fails, the next acquire will
+	 * try again or another eviction will trigger another replacement.
 	 */
-	#waitForSession(signal?: AbortSignal): Promise<Session> {
+	#pumpWaitersAfterEviction(): void {
+		if (this.closed) return
+		if (this.#waiters.length === 0) return
+		if (this.#all.size + this.#creates.size >= this.#maxSize) return
+
+		let waiter = this.#waiters.shift()!
+		waiter.detach()
+		this.#grow().then(
+			(s) => waiter.resolve(s),
+			(e) => waiter.reject(e instanceof Error ? e : new Error(String(e)))
+		)
+	}
+
+	#enqueue(signal?: AbortSignal): Promise<Session> {
+		if (this.#waiters.length >= this.#maxWaiters) {
+			return Promise.reject(new SessionPoolFullError(this.#maxWaiters))
+		}
+
 		let { promise, resolve, reject } = Promise.withResolvers<Session>()
-		let waiter = { resolve, reject }
 
-		if (signal) {
-			let cleanup = () => {
-				let index = this.#waitQueue.indexOf(waiter)
-				if (index !== -1) {
-					this.#waitQueue.splice(index, 1)
-				}
-			}
-
-			let abortHandler = () => {
-				cleanup()
-				reject(signal.reason || new Error('Aborted'))
-			}
-			signal.addEventListener('abort', abortHandler, { once: true })
-
-			let removeListener = () =>
-				signal.removeEventListener('abort', abortHandler)
-
-			waiter.resolve = (value) => {
-				removeListener()
-				resolve(value)
-			}
-
-			waiter.reject = (error) => {
-				removeListener()
-				reject(error)
-			}
+		let onAbort = () => {
+			let idx = this.#waiters.findIndex((w) => w.resolve === resolve)
+			if (idx !== -1) this.#waiters.splice(idx, 1)
+			reject(signal!.reason ?? new Error('aborted'))
 		}
 
-		this.#waitQueue.push(waiter)
+		let detach = signal ? () => signal.removeEventListener('abort', onAbort) : () => {}
+
+		if (signal) signal.addEventListener('abort', onAbort, { once: true })
+
+		this.#waiters.push({ resolve, reject, detach })
 		return promise
-	}
-
-	/**
-	 * Reject all waiting requests with an error
-	 */
-	#rejectAllWaiters(error: unknown): void {
-		let waitersToNotify = this.#waitQueue.splice(0)
-		if (waitersToNotify.length === 0) {
-			return
-		}
-
-		let err =
-			error instanceof Error
-				? error
-				: new Error('Session creation failed', { cause: error })
-
-		for (let waiter of waitersToNotify) {
-			waiter.reject(err)
-		}
-	}
-
-	/**
-	 * Remove a session from the pool
-	 */
-	#removeSession(session: Session): void {
-		let index = this.#sessions.indexOf(session)
-		if (index !== -1) {
-			this.#sessions.splice(index, 1)
-			dbg.log('removed session %s from pool', session.id)
-		}
-	}
-
-	/**
-	 * Clean up stale sessions
-	 */
-	async #cleanup(): Promise<void> {
-		if (this.#closed) {
-			return
-		}
-
-		let now = Date.now()
-		let stale = this.#sessions.filter(
-			(session) =>
-				session.isIdle &&
-				now - session.lastUsedAt > this.#options.idleTimeoutMs
-		)
-
-		if (stale.length === 0) {
-			return
-		}
-
-		dbg.log('cleaning up %d stale sessions', stale.length)
-
-		for (let session of stale) {
-			this.#removeSession(session)
-		}
-
-		await Promise.all(
-			stale.map((session) =>
-				session.delete().catch((error) => {
-					dbg.log(
-						'failed to delete stale session %s: %O',
-						session.id,
-						error
-					)
-				})
-			)
-		)
-
-		dbg.log('cleanup complete (pool stats: %o)', this.stats)
-	}
-
-	/**
-	 * Close the pool and delete all sessions
-	 */
-	async close(signal?: AbortSignal): Promise<void> {
-		if (this.#closed) {
-			return
-		}
-
-		dbg.log('closing session pool')
-		this.#closed = true
-
-		if (this.#cleanupTimer) {
-			clearInterval(this.#cleanupTimer)
-		}
-
-		this.#rejectAllWaiters(new Error('Session pool is closed'))
-
-		let promises = this.#sessions.map((session) =>
-			session.delete(signal).catch((error) => {
-				dbg.log('failed to delete session %s: %O', session.id, error)
-			})
-		)
-
-		await Promise.all(promises)
-		this.#sessions = []
-
-		dbg.log('session pool closed')
-	}
-
-	[Symbol.dispose](): void {
-		void this.close()
 	}
 }

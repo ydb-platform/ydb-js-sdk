@@ -109,7 +109,17 @@ export class Query<T extends any[] = unknown[]>
 	}
 
 	async #execute(): Promise<ArrayifyTuple<T>> {
-		let { nodeId, sessionId, transactionId, signal: txSignal } = ctx.getStore() || {}
+		let store = ctx.getStore() || {}
+		// `txSessionId` / `txNodeId` are set only when we run inside a
+		// transaction — the transaction body owns the session. Outside a
+		// transaction they stay undefined and every retry attempt grabs a
+		// fresh lease from the pool. Treating these as closure-local (vs
+		// mutating them per attempt) prevents a released session from being
+		// reused across retries by a different caller.
+		let txSessionId = store.sessionId
+		let txNodeId = store.nodeId
+		let transactionId = store.transactionId
+		let txSignal = store.signal
 
 		if (this.#disposed) {
 			dbg.log('query disposed, aborting execution')
@@ -137,16 +147,19 @@ export class Query<T extends any[] = unknown[]>
 
 		let linkedSignal = linkSignals(...signals)
 
-		let sessionSignal: AbortSignal | undefined
+		let sessionDiedLastAttempt = false
 
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
 			retry: (error, idempotent) => {
-				let sessionSignalAborted = sessionSignal?.aborted ?? false
-				sessionSignal = undefined
-				return isRetryableError(error, idempotent) || sessionSignalAborted
+				let sessionDied = sessionDiedLastAttempt
+				sessionDiedLastAttempt = false
+				// A session abort mid-call is only a safe reason to retry if
+				// the operation itself is idempotent — otherwise we can't tell
+				// whether the server applied it before the stream dropped.
+				return isRetryableError(error, idempotent) || (sessionDied && idempotent)
 			},
 			onRetry: (retryCtx) => {
 				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
@@ -156,19 +169,26 @@ export class Query<T extends any[] = unknown[]>
 
 		await this.#driver.ready(linkedSignal.signal)
 
-		this.#promise = retry(retryConfig, async (signal) => {
-			using sessionLease = !sessionId ? await this.#sessionPool.acquire(signal) : undefined
-			sessionSignal = sessionLease?.signal
+		this.#promise = retry(retryConfig, async (retrySignal) => {
+			// Transaction-owned session stays pinned; out-of-transaction
+			// attempts always get a fresh lease — no cross-attempt reuse.
+			using sessionLease = txSessionId
+				? undefined
+				: await this.#sessionPool.acquire(retrySignal)
+			let attemptSessionId = txSessionId ?? sessionLease!.id
+			let attemptNodeId = txNodeId ?? sessionLease!.nodeId
+
+			// linkSignals cleans up listeners on dispose — no accumulation
+			// on the long-lived session signal across many queries.
+			using linked = linkSignals(retrySignal, sessionLease?.signal)
+			let signal = linked.signal
 
 			if (sessionLease) {
 				dbg.log('acquired session %s from pool', sessionLease.id)
-				nodeId = sessionLease.nodeId
-				sessionId = sessionLease.id
-				signal = AbortSignal.any([signal, sessionLease.signal])
 			}
 
-			dbg.log('creating query client for nodeId: %s', nodeId)
-			let client = this.#driver.createClient(QueryServiceDefinition, nodeId)
+			dbg.log('creating query client for nodeId: %s', attemptNodeId)
+			let client = this.#driver.createClient(QueryServiceDefinition, attemptNodeId)
 
 			let parameters: Record<string, TypedValue> = {}
 			for (let key in this.#parameters) {
@@ -205,7 +225,7 @@ export class Query<T extends any[] = unknown[]>
 
 			let stream = client.executeQuery(
 				{
-					sessionId: sessionId!,
+					sessionId: attemptSessionId,
 					execMode: ExecMode.EXECUTE,
 					query: {
 						case: 'queryContent',
@@ -229,44 +249,56 @@ export class Query<T extends any[] = unknown[]>
 
 			let results = [] as ArrayifyTuple<T>
 
-			for await (let part of stream) {
-				signal.throwIfAborted()
+			try {
+				for await (let part of stream) {
+					signal.throwIfAborted()
 
-				if (part.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log('query part failed, status: %d', part.status)
-					throw new YDBError(part.status, part.issues)
-				}
-
-				if (part.execStats) {
-					dbg.log('received query stats')
-					this.#stats = part.execStats
-				}
-
-				if (!part.resultSet) {
-					continue
-				}
-
-				while (part.resultSetIndex >= results.length) {
-					results.push([])
-				}
-
-				for (let i = 0; i < part.resultSet.rows.length; i++) {
-					let result: any = this.#values ? [] : {}
-
-					for (let j = 0; j < part.resultSet.columns.length; j++) {
-						let column = part.resultSet.columns[j]!
-						let value = part.resultSet.rows[i]!.items[j]!
-
-						if (this.#values) {
-							result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
-							continue
-						}
-
-						result[column.name] = this.#raw ? value : toJs(fromYdb(value, column.type!))
+					if (part.status !== StatusIds_StatusCode.SUCCESS) {
+						dbg.log('query part failed, status: %d', part.status)
+						throw new YDBError(part.status, part.issues)
 					}
 
-					results[Number(part.resultSetIndex)]!.push(result)
+					if (part.execStats) {
+						dbg.log('received query stats')
+						this.#stats = part.execStats
+					}
+
+					if (!part.resultSet) {
+						continue
+					}
+
+					while (part.resultSetIndex >= results.length) {
+						results.push([])
+					}
+
+					for (let i = 0; i < part.resultSet.rows.length; i++) {
+						let result: any = this.#values ? [] : {}
+
+						for (let j = 0; j < part.resultSet.columns.length; j++) {
+							let column = part.resultSet.columns[j]!
+							let value = part.resultSet.rows[i]!.items[j]!
+
+							if (this.#values) {
+								result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
+								continue
+							}
+
+							result[column.name] = this.#raw
+								? value
+								: toJs(fromYdb(value, column.type!))
+						}
+
+						results[Number(part.resultSetIndex)]!.push(result)
+					}
 				}
+			} catch (err) {
+				// Record whether this attempt failed because the session died.
+				// The retry callback uses this to decide — together with the
+				// idempotent flag — whether to retry against a fresh session.
+				if (sessionLease?.signal.aborted) {
+					sessionDiedLastAttempt = true
+				}
+				throw err
 			}
 
 			dbg.log('query executed successfully')
