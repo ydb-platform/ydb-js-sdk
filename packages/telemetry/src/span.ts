@@ -1,5 +1,5 @@
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
-import { DB_SYSTEM, SpanKind, recordErrorAttributes } from './tracing.js'
+import { DB_SYSTEM, SpanFinalizer, SpanKind } from './tracing.js'
 import type { Span, SpanBaseAttributes, Tracer } from './tracing.js'
 
 /**
@@ -20,15 +20,11 @@ export function createSpan<T>(
 
 	return fn(span)
 		.then((result) => {
-			span.end()
+			SpanFinalizer.finishSuccess(span)
 			return result
 		})
 		.catch((error) => {
-			const errAttrs = recordErrorAttributes(error)
-			span.setAttributes(errAttrs)
-			span.recordException(error instanceof Error ? error : new Error(String(error)))
-			span.setStatus({ code: 2, message: String(error) })
-			span.end()
+			SpanFinalizer.finishByError(span, error)
 			throw error
 		})
 }

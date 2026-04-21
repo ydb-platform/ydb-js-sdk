@@ -65,7 +65,6 @@ export class BalancedChannel implements Channel {
 
 		let conn = this.#pool.acquire(this.#nodeId)
 		let start = performance.now()
-		let startEvent = this.#buildStartEvent(conn, method)
 
 		// Capture all active AsyncLocalStorage contexts (including OpenTelemetry's
 		// internal store) so we can restore them in the onReceiveStatus callback,
@@ -74,13 +73,14 @@ export class BalancedChannel implements Channel {
 
 		// Fire onCall in the original async context (we're still in it here).
 		// The optional return value is a completion callback — captured in closure.
+		let startEvent = this.#buildStartEvent(conn, method)
 		let onComplete = this.#safeHook('onCall', this.#hooks?.onCall, startEvent)
 
 		dbg.log('createCall %s → node %d %s', method, conn.endpoint.nodeId, conn.endpoint.address)
 
 		let call = conn.channel.createCall(method, deadline, host, parentCall, propagateFlags)
 
-		return this.#wrapCall(call, conn, startEvent, start, restoreContext, onComplete ?? null)
+		return this.#wrapCall(call, conn, start, restoreContext, startEvent, onComplete ?? null)
 	}
 
 	// ── Channel interface — pool-level implementations ─────────────────────────
@@ -158,9 +158,9 @@ export class BalancedChannel implements Channel {
 	#wrapCall(
 		call: ReturnType<Channel['createCall']>,
 		conn: Connection,
-		startEvent: CallStartEvent,
 		startTime: number,
 		restoreContext: <T>(fn: (...args: unknown[]) => T) => T,
+		startEvent: CallStartEvent,
 		onComplete: ((event: CallCompleteEvent) => void) | null
 	): ReturnType<Channel['createCall']> {
 		let pool = this.#pool
@@ -174,12 +174,11 @@ export class BalancedChannel implements Channel {
 				}
 
 				return (metadata: Metadata, listener: InterceptingListener) => {
-					// Hook for outbound metadata mutation (e.g. trace propagation).
-					try {
-						hooks?.onBeforeCall?.(startEvent, metadata)
-					} catch (error) {
-						dbg.log('hook %s threw an error (swallowed): %O', 'onBeforeCall', error)
-					}
+					safeHook(
+						'onBeforeCall',
+						(event: CallStartEvent) => hooks.onBeforeCall?.(event, metadata),
+						startEvent
+					)
 
 					let onReceiveStatus: InterceptingListener['onReceiveStatus'] = (status) => {
 						// Pessimize BEFORE propagating the error to nice-grpc.
