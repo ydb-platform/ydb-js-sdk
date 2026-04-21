@@ -8,6 +8,10 @@ inputs:
     description: 'Node.js version'
     required: true
     default: '24'
+  bun-version:
+    description: 'Bun version'
+    required: false
+    default: 'latest'
 
 runs:
   using: composite
@@ -17,6 +21,11 @@ runs:
       with:
         cache: 'npm'
         node-version: ${{ inputs.node-version }}
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
 
     - name: Setup turbo
       uses: actions/cache@v4

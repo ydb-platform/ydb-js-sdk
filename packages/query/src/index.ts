@@ -1,5 +1,6 @@
 import type { Abortable } from 'node:events'
 
+import { linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
@@ -172,46 +173,60 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 	): Promise<T> {
 		dbg.log('starting transaction')
 		await driver.ready()
-		let store = ctx.getStore() || {}
+		// Snapshot the parent context once — we'll build a fresh attempt-scoped
+		// store inside each retry so failed attempts don't leave stale
+		// sessionId/transactionId in the shared store for the next one.
+		let parentStore = ctx.getStore() || {}
 
 		let caller = typeof optOrFn === 'function' ? optOrFn : fn
 		let options = typeof optOrFn === 'function' ? ({} as TransactionExecuteOptions) : optOrFn
 		options.isolation ??= 'serializableReadWrite'
-		options.idempotent = options.idempotent ?? false
+		let idempotent = options.idempotent ?? false
 
-		let sessionSignal: AbortSignal | undefined
+		let sessionDiedLastAttempt = false
 
 		return retry(
 			{
 				...defaultRetryConfig,
 				signal: options.signal,
-				idempotent: true,
+				// Caller's flag flows through the retry layer unchanged and
+				// lands back in the callback as the second arg — single source
+				// of truth for whether the body is safe to replay.
+				idempotent,
 				retry: (error, idempotent) => {
-					let sessionSignalAborted = sessionSignal?.aborted ?? false
-					sessionSignal = undefined
-					return isRetryableError(error, idempotent) || sessionSignalAborted
+					let sessionDied = sessionDiedLastAttempt
+					sessionDiedLastAttempt = false
+					// A session abort mid-tx means we don't know whether the
+					// server applied any side effects — only re-open if the
+					// caller opted into idempotent retries.
+					return isRetryableError(error, idempotent) || (sessionDied && idempotent)
 				},
 				onRetry: (ctx) => {
 					dbg.log('retrying transaction, attempt %d, error: %O', ctx.attempt, ctx.error)
 				},
 			},
-			async (signal) => {
+			async (retrySignal) => {
 				dbg.log('acquiring session from pool for transaction')
-				using sessionLease = await sessionPool.acquire(signal)
-				sessionSignal = sessionLease.signal
+				using sessionLease = await sessionPool.acquire(retrySignal)
 				dbg.log('session %s acquired for transaction', sessionLease.id)
 
-				signal = AbortSignal.any([signal, sessionLease.signal])
+				// linkSignals is disposed on scope exit — no listener buildup
+				// on the long-lived session signal across tx retries.
+				using linked = linkSignals(retrySignal, sessionLease.signal)
+				let signal = linked.signal
 
-				store.signal = signal
-				store.nodeId = sessionLease.nodeId
-				store.sessionId = sessionLease.id
+				let attemptStore: typeof parentStore = {
+					...parentStore,
+					signal,
+					nodeId: sessionLease.nodeId,
+					sessionId: sessionLease.id,
+				}
 
 				let client = driver.createClient(QueryServiceDefinition, sessionLease.nodeId)
 
 				let beginTransactionResult = await client.beginTransaction(
 					{
-						sessionId: store.sessionId,
+						sessionId: attemptStore.sessionId!,
 						txSettings: {
 							txMode: { case: options.isolation!, value: {} },
 						},
@@ -226,7 +241,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					throw new YDBError(beginTransactionResult.status, beginTransactionResult.issues)
 				}
 
-				store.transactionId = beginTransactionResult.txMeta!.id
+				attemptStore.transactionId = beginTransactionResult.txMeta!.id
 
 				let commitHooks: Array<(signal?: AbortSignal) => Promise<void> | void> = []
 				let rollbackHooks: Array<
@@ -236,12 +251,12 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					(committed: boolean, signal?: AbortSignal) => Promise<void> | void
 				> = []
 
-				let commited = false
+				let committed = false
 				try {
 					let tx = Object.assign(yqlQuery, {
-						nodeId: store.nodeId,
-						sessionId: store.sessionId,
-						transactionId: store.transactionId,
+						nodeId: attemptStore.nodeId,
+						sessionId: attemptStore.sessionId,
+						transactionId: attemptStore.transactionId,
 						onRollback: (fn: () => Promise<void> | void) => {
 							rollbackHooks.push(fn)
 						},
@@ -254,7 +269,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					}) as TX
 
 					dbg.log('executing transaction body')
-					let result = await ctx.run(store, () => caller!(tx, signal))
+					let result = await ctx.run(attemptStore, () => caller!(tx, signal))
 
 					dbg.log('executing %d commit hooks', commitHooks.length)
 					await Promise.all(
@@ -268,8 +283,8 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					dbg.log('committing transaction')
 					let commitResult = await client.commitTransaction(
 						{
-							sessionId: store.sessionId,
-							txId: store.transactionId,
+							sessionId: attemptStore.sessionId!,
+							txId: attemptStore.transactionId,
 						},
 						{ signal }
 					)
@@ -281,11 +296,18 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 						)
 					}
 
-					commited = true
+					committed = true
 					dbg.log('transaction committed successfully')
 					return result
 				} catch (error) {
 					dbg.log('transaction error: %O', error)
+
+					// Signal up to the retry callback that this attempt tore down
+					// because the session died — lets it retry with a fresh one
+					// if the caller opted into idempotent retries.
+					if (sessionLease.signal.aborted) {
+						sessionDiedLastAttempt = true
+					}
 
 					dbg.log('executing %d rollback hooks', rollbackHooks.length)
 					await Promise.all(
@@ -296,12 +318,14 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 						})
 					)
 
-					void client.rollbackTransaction({
-						sessionId: store.sessionId,
-						txId: store.transactionId,
-					})
+					client
+						.rollbackTransaction({
+							sessionId: attemptStore.sessionId!,
+							txId: attemptStore.transactionId,
+						})
+						.catch(() => {})
 
-					if (!isRetryableError(error, options.idempotent)) {
+					if (!isRetryableError(error, idempotent)) {
 						dbg.log('transaction not retryable, aborting')
 						throw new Error('Transaction failed.', { cause: error })
 					}
@@ -312,7 +336,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					await Promise.all(
 						closeHooks.map(async (hook, i) => {
 							dbg.log('executing close hook #%d', i + 1)
-							await hook(commited, signal)
+							await hook(committed, signal)
 							dbg.log('close hook #%d completed', i + 1)
 						})
 					)

@@ -1,6 +1,17 @@
+/**
+ * Alternative Session: lifecycle is driven by a single AbortSignal.
+ *
+ *   alive      -> signal.aborted === false
+ *   broken     -> signal.aborted === true
+ *
+ * No BUSY/IDLE state on the session itself — that belongs to the pool.
+ * A session entering the pool is guaranteed to be attached; if attach
+ * fails during `Session.open`, the server-side session is deleted
+ * before the error propagates to the caller. No leaks.
+ */
+
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { QueryServiceDefinition } from '@ydbjs/api/query'
-import { abortable } from '@ydbjs/abortable'
+import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
@@ -8,269 +19,152 @@ import { YDBError } from '@ydbjs/error'
 let dbg = loggers.query.extend('session')
 
 export class SessionAbortedError extends Error {
-	sessionId: string
-	reason: 'invalidated' | 'closed'
+	readonly sessionId: string
+	readonly reason: 'stream-closed' | 'stream-error' | 'deleted' | 'pool-closed'
 
-	constructor(sessionId: string, reason: 'invalidated' | 'closed') {
-		super(`Session ${sessionId} aborted: ${reason}`)
+	constructor(sessionId: string, reason: SessionAbortedError['reason']) {
+		super(`session ${sessionId} aborted: ${reason}`)
 		this.name = 'SessionAbortedError'
 		this.sessionId = sessionId
 		this.reason = reason
 	}
 }
 
-export type SessionState = 'idle' | 'busy' | 'closed' | 'invalidated'
-
-export let SESSION_STATE = {
-	IDLE: 'idle' as const,
-	BUSY: 'busy' as const,
-	CLOSED: 'closed' as const,
-	INVALIDATED: 'invalidated' as const,
-}
-
 export class Session {
+	readonly id: string
+	readonly nodeId: bigint
+	lastUsedAt: number = Date.now()
+
 	#driver: Driver
-	#sessionId: string
-	#nodeId: bigint
-	#state: SessionState = SESSION_STATE.IDLE
-	#createdAt: number = Date.now()
-	#lastUsedAt: number = Date.now()
-	#attachController?: AbortController | undefined
-	#abortController: AbortController = new AbortController()
-	#onInvalidated?: () => void
+	#life = new AbortController()
+	#attach = new AbortController()
+	#closing = false
 
-	constructor(driver: Driver, sessionId: string, nodeId: bigint) {
+	private constructor(driver: Driver, id: string, nodeId: bigint) {
 		this.#driver = driver
-		this.#sessionId = sessionId
-		this.#nodeId = nodeId
-
-		dbg.log('created session %s on node %d', sessionId, nodeId)
+		this.id = id
+		this.nodeId = nodeId
 	}
 
-	/**
-	 * Set callback to be called when session is invalidated by server
-	 */
-	onInvalidated(callback: () => void): void {
-		this.#onInvalidated = callback
-	}
-
-	get id(): string {
-		return this.#sessionId
-	}
-
-	get nodeId(): bigint {
-		return this.#nodeId
-	}
-
-	get state(): SessionState {
-		return this.#state
-	}
-
-	get createdAt(): number {
-		return this.#createdAt
-	}
-
-	get lastUsedAt(): number {
-		return this.#lastUsedAt
-	}
-
-	/**
-	 * Signal that aborts when session is invalidated or closed
-	 * Use this to cancel ongoing operations when session becomes unusable
-	 */
+	/** Fires as soon as the session is known unusable. Stays aborted forever after. */
 	get signal(): AbortSignal {
-		return this.#abortController.signal
+		return this.#life.signal
 	}
 
-	get isIdle(): boolean {
-		return this.#state === SESSION_STATE.IDLE
-	}
-
-	get isBusy(): boolean {
-		return this.#state === SESSION_STATE.BUSY
-	}
-
-	get isClosed(): boolean {
-		return this.#state === SESSION_STATE.CLOSED
-	}
-
-	get isInvalidated(): boolean {
-		return this.#state === SESSION_STATE.INVALIDATED
+	get alive(): boolean {
+		return !this.#life.signal.aborted
 	}
 
 	/**
-	 * Mark session as invalidated by server or attach failure
+	 * Create a session on the server and bind an attachSession stream to it.
+	 * On attach failure, DeleteSession is fired and forgotten — the caller
+	 * doesn't pay latency for cleanup, and if the RPC fails the server-side
+	 * TTL reaps the session anyway.
 	 */
-	markInvalidated(): void {
-		if (this.#state === SESSION_STATE.CLOSED || this.#state === SESSION_STATE.INVALIDATED) {
-			return
+	static async open(driver: Driver, signal?: AbortSignal): Promise<Session> {
+		let bootstrap = driver.createClient(QueryServiceDefinition)
+		let resp = await bootstrap.createSession({}, signal ? { signal } : {})
+		if (resp.status !== StatusIds_StatusCode.SUCCESS) {
+			throw new YDBError(resp.status, resp.issues)
 		}
 
-		this.#state = SESSION_STATE.INVALIDATED
-		dbg.log('marked session %s as invalidated', this.#sessionId)
-
-		// Abort all operations using this session
-		this.#abortController.abort(new SessionAbortedError(this.#sessionId, 'invalidated'))
-
-		// Clean up attach stream if it exists
-		if (this.#attachController) {
-			this.#attachController.abort()
-			this.#attachController = undefined
-		}
-
-		if (this.#onInvalidated) {
-			this.#onInvalidated()
+		let session = new Session(driver, resp.sessionId, resp.nodeId)
+		try {
+			await session.#bindAttach(signal)
+			return session
+		} catch (err) {
+			dbg.log('attach failed for %s, firing DeleteSession in background', session.id)
+			session.#attach.abort() // defensive: ensure stream is torn down
+			session.#deleteOnServer() // fire-and-forget
+			throw err
 		}
 	}
 
-	/**
-	 * Mark session as busy (in use)
-	 */
-	async acquire(signal?: AbortSignal): Promise<void> {
-		if (this.#state !== SESSION_STATE.IDLE) {
-			throw new Error(`Cannot acquire session in state ${this.#state}`)
+	async #bindAttach(signal?: AbortSignal): Promise<void> {
+		signal?.throwIfAborted()
+
+		// Forward external cancellation into our attach controller so the
+		// gRPC stream is torn down as soon as the caller aborts. `detach`
+		// is only set when we actually subscribed, so we can't accidentally
+		// remove a listener that was never added.
+		let detach: (() => void) | undefined
+		if (signal) {
+			let handler = () => this.#attach.abort(signal.reason)
+			signal.addEventListener('abort', handler, { once: true })
+			detach = () => signal.removeEventListener('abort', handler)
 		}
-
-		this.#state = SESSION_STATE.BUSY
-		this.#lastUsedAt = Date.now()
-		dbg.log('acquired session %s', this.#sessionId)
-
-		if (!this.#attachController) {
-			try {
-				await this.#attach(signal)
-			} catch (error) {
-				// Mark as invalidated on attach failure
-				this.markInvalidated()
-				throw error
-			}
-		}
-	}
-
-	/**
-	 * Attach session to keep it alive
-	 */
-	async #attach(signal?: AbortSignal): Promise<void> {
-		dbg.log('attaching session %s', this.#sessionId)
-
-		this.#attachController = new AbortController()
-
-		let attachClient = this.#driver.createClient(QueryServiceDefinition, this.#nodeId)
-		let attachStream = attachClient.attachSession(
-			{ sessionId: this.#sessionId },
-			{ signal: this.#attachController.signal }
-		)
-
-		let attachIterator = attachStream[Symbol.asyncIterator]()
-
-		let attachSessionResult = signal
-			? await abortable(signal, attachIterator.next())
-			: await attachIterator.next()
-
-		if (attachSessionResult.value.status !== StatusIds_StatusCode.SUCCESS) {
-			dbg.log('failed to attach session, status: %d', attachSessionResult.value.status)
-
-			throw new YDBError(attachSessionResult.value.status, attachSessionResult.value.issues)
-		}
-
-		dbg.log('attached to session %s', this.#sessionId)
-
-		this.#monitorAttachStream(attachStream)
-	}
-
-	/**
-	 * Monitor attach stream for session invalidation
-	 * Runs in background and marks session as invalidated when stream ends or errors
-	 */
-	async #monitorAttachStream(attachStream: AsyncIterable<any>): Promise<void> {
-		dbg.log('starting attach stream monitor for session %s', this.#sessionId)
 
 		try {
-			for await (let message of attachStream) {
-				if (message.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log(
-						'attach stream error for session %s, status: %d',
-						this.#sessionId,
-						message.status
-					)
+			let client = this.#driver.createClient(QueryServiceDefinition, this.nodeId)
+			let stream = client.attachSession(
+				{ sessionId: this.id },
+				{ signal: this.#attach.signal }
+			)
+			let iterator = stream[Symbol.asyncIterator]()
+
+			let first = await iterator.next()
+			if (first.done) {
+				throw new YDBError(StatusIds_StatusCode.BAD_SESSION, [])
+			}
+			if (first.value.status !== StatusIds_StatusCode.SUCCESS) {
+				throw new YDBError(first.value.status, first.value.issues)
+			}
+
+			dbg.log('attached session %s on node %d', this.id, this.nodeId)
+			this.#runMonitor(stream).catch(() => {})
+		} finally {
+			detach?.()
+		}
+	}
+
+	/**
+	 * Drives the attach stream until it closes or errors. `for await` on
+	 * break/throw auto-calls the iterator's `return()`, which cancels the
+	 * underlying gRPC call — no dangling stream.
+	 */
+	async #runMonitor(stream: AsyncIterable<SessionState>): Promise<void> {
+		let reason: SessionAbortedError['reason'] = 'stream-closed'
+		try {
+			for await (let msg of stream) {
+				if (msg.status !== StatusIds_StatusCode.SUCCESS) {
+					reason = 'stream-error'
 					break
 				}
 			}
-
-			dbg.log('attach stream closed for session %s', this.#sessionId)
-		} catch (error) {
-			dbg.log('attach stream error for session %s: %O', this.#sessionId, error)
+		} catch {
+			reason = 'stream-error'
 		} finally {
-			this.markInvalidated()
+			this.#markBroken(reason)
 		}
 	}
 
-	/**
-	 * Mark session as idle (available for reuse)
-	 */
-	release(): void {
-		if (this.#state !== SESSION_STATE.BUSY) {
-			throw new Error(`Cannot release session in state ${this.#state}`)
-		}
+	#markBroken(reason: SessionAbortedError['reason']): void {
+		if (this.#life.signal.aborted) return
+		this.#life.abort(new SessionAbortedError(this.id, reason))
+		this.#attach.abort()
+		dbg.log('session %s marked broken (%s)', this.id, reason)
+	}
 
-		this.#state = SESSION_STATE.IDLE
-		this.#lastUsedAt = Date.now()
-		dbg.log('released session %s', this.#sessionId)
+	/** Fire-and-forget DeleteSession. Server TTL is the ultimate backstop. */
+	#deleteOnServer(): void {
+		let client = this.#driver.createClient(QueryServiceDefinition, this.nodeId)
+		client.deleteSession({ sessionId: this.id }).catch((err) => {
+			dbg.log('deleteSession for %s failed: %O', this.id, err)
+		})
 	}
 
 	/**
-	 * Delete session on the server
+	 * Synchronous shutdown: flip state, fire DeleteSession in the
+	 * background. Callers never wait on the RPC.
 	 */
-	async delete(signal?: AbortSignal): Promise<void> {
-		if (this.#state === SESSION_STATE.CLOSED) {
-			dbg.log('session %s already closed', this.#sessionId)
-			return
-		}
-
-		dbg.log('deleting session %s', this.#sessionId)
-
-		try {
-			let client = this.#driver.createClient(QueryServiceDefinition, this.#nodeId)
-
-			await client.deleteSession({ sessionId: this.#sessionId }, signal ? { signal } : {})
-
-			dbg.log('deleted session %s', this.#sessionId)
-		} catch (error) {
-			dbg.log('failed to delete session %s: %O', this.#sessionId, error)
-			throw error
-		} finally {
-			this.#state = SESSION_STATE.CLOSED
-
-			// Abort all operations using this session
-			this.#abortController.abort(new SessionAbortedError(this.#sessionId, 'closed'))
-
-			if (this.#attachController) {
-				dbg.log('aborting attach stream for session %s', this.#sessionId)
-				this.#attachController.abort()
-				this.#attachController = undefined
-			}
-		}
+	close(): void {
+		if (this.#closing) return
+		this.#closing = true
+		if (this.alive) this.#deleteOnServer()
+		this.#markBroken('deleted')
 	}
 
-	/**
-	 * Create a new session
-	 */
-	static async create(driver: Driver, signal?: AbortSignal): Promise<Session> {
-		dbg.log('creating new session')
-
-		let client = driver.createClient(QueryServiceDefinition)
-
-		let response = await client.createSession({}, signal ? { signal } : {})
-
-		if (response.status !== StatusIds_StatusCode.SUCCESS) {
-			dbg.log('failed to create session, status: %d', response.status)
-			throw new YDBError(response.status, response.issues)
-		}
-
-		let sessionId = response.sessionId
-		let nodeId = response.nodeId
-
-		dbg.log('created session %s on node %d', sessionId, nodeId)
-
-		return new Session(driver, sessionId, nodeId)
+	[Symbol.dispose](): void {
+		this.close()
 	}
 }
