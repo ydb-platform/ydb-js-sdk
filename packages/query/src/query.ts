@@ -13,7 +13,7 @@ import {
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
-import { tracingContext } from '@ydbjs/core'
+import { tracingContext } from '@ydbjs/telemetry'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'

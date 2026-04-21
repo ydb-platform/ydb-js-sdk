@@ -2,7 +2,7 @@ import type { CallStartEvent } from '@ydbjs/core'
 import { expect, test, vi } from 'vitest'
 
 import { createTracingHooks } from './hooks.js'
-import { tracingContext } from '@ydbjs/core'
+import { tracingContext } from './tracing-context.js'
 import { SPAN_NAMES } from './tracing.js'
 
 function makeCallStartEvent(overrides?: Partial<CallStartEvent>): CallStartEvent {

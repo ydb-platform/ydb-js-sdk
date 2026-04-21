@@ -19,4 +19,4 @@ export {
 	type StartSpanOptions,
 	type Tracer,
 } from './tracing.js'
-export { tracingContext, type TracingContextStore } from '@ydbjs/core'
+export { tracingContext, type TracingContextStore } from './tracing-context.js'

@@ -1,7 +1,7 @@
 import type { CallCompleteEvent, CallStartEvent, DriverHooks } from '@ydbjs/core'
 import { Status } from 'nice-grpc'
 import { SPAN_NAMES, SpanFinalizer, SpanKind, type Tracer, getBaseAttributes } from './tracing.js'
-import { tracingContext } from '@ydbjs/core'
+import { tracingContext } from './tracing-context.js'
 
 const METHOD_TO_SPAN: Record<string, string> = {
 	CreateSession: SPAN_NAMES.CreateSession,
