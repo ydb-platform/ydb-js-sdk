@@ -1,5 +1,11 @@
 # @ydbjs/core
 
+## 6.1.1
+
+### Patch Changes
+
+- [#590](https://github.com/ydb-platform/ydb-js-sdk/pull/590) [`5c54025`](https://github.com/ydb-platform/ydb-js-sdk/commit/5c54025de89a475f6cdbb81308c9dd106224e33a) Thanks [@vgvoleg](https://github.com/vgvoleg)! - Add x-ydb-sdk-build-info gRPC header to all requests
+
 ## 6.1.0
 
 ### Minor Changes

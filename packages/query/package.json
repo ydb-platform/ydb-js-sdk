@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/query",
-	"version": "6.0.7",
+	"version": "6.1.0",
 	"description": "High-level, type-safe YQL query and transaction client for YDB. Supports tagged template syntax, parameter binding, transactions, and statistics.",
 	"keywords": [
 		"database",
@@ -50,11 +50,11 @@
 		"@bufbuild/protobuf": "2.10.1",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/abortable": "^6.1.0",
-		"@ydbjs/core": "^6.0.7",
+		"@ydbjs/core": "^6.1.1",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"@ydbjs/retry": "^6.0.0",
-		"@ydbjs/value": "^6.0.0",
+		"@ydbjs/value": "^6.0.6",
 		"debug": "^4.4.0",
 		"nice-grpc": "^2.1.13"
 	},
