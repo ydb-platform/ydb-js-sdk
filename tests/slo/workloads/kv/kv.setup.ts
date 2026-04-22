@@ -23,8 +23,9 @@ let sql = query(driver)
 let [[[version]]] = (await sql`SELECT CAST(version() as Text);`.values()) as [[[string]]]
 console.log('[kv.setup] YDB server version:', version)
 
+await sql`DROP TABLE IF EXISTS test;`
+
 await sql`
-	DROP TABLE IF EXISTS test;
 	CREATE TABLE IF NOT EXISTS test (
 		hash				Uint64,
 		id					Uint64,

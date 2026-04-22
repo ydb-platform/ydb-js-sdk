@@ -21,6 +21,7 @@ installSafetyHandlers()
 
 let { name, params } = workerData as WorkerData
 let rps = parseInt(params['rps'] ?? '100', 10)
+let timeout = parseInt(params['timeout'] ?? '100', 10)
 let keyspace = parseInt(params['keyspace'] ?? '1000', 10)
 
 let ctrl = new AbortController()
@@ -97,6 +98,7 @@ async function writeOp(): Promise<void> {
 		);`
 			.idempotent(true)
 			.isolation('serializableReadWrite')
+			.timeout(timeout)
 			.signal(ctrl.signal)
 			.on('retry', () => retries++)
 
@@ -104,6 +106,7 @@ async function writeOp(): Promise<void> {
 		latency.recordValue(Math.round((performance.now() - start) * 1000))
 	} catch (err) {
 		if (ctrl.signal.aborted) return
+		if (err instanceof Error && err.name === 'TimeoutError') return
 		console.error(err)
 	}
 }
