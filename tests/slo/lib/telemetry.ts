@@ -70,6 +70,8 @@ export function registerLatencyGauges(
 			result.observe(p50, histogram.getValueAtPercentile(50) / 1000, attributes)
 			result.observe(p95, histogram.getValueAtPercentile(95) / 1000, attributes)
 			result.observe(p99, histogram.getValueAtPercentile(99) / 1000, attributes)
+
+			histogram.reset()
 		},
 		[p50, p95, p99]
 	)

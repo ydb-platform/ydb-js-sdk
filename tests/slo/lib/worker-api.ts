@@ -25,14 +25,20 @@ export function abortOnStop(ctrl: AbortController): Disposable {
 }
 
 // Run `op` with rate limiting to `rps` per second, aborting on `signal`.
+// `maxConcurrency` caps in-flight ops so slow ops can't accumulate unboundedly.
 export async function runPaced(
 	rps: number,
 	op: () => Promise<void>,
-	signal: AbortSignal
+	signal: AbortSignal,
+	maxConcurrency = rps * 2
 ): Promise<void> {
 	let limiter = new RateLimiter(rps)
 	let inflight = new Set<Promise<void>>()
 	while (!signal.aborted) {
+		if (inflight.size >= maxConcurrency) {
+			// oxlint-disable-next-line no-await-in-loop
+			await Promise.race(inflight)
+		}
 		try {
 			// oxlint-disable-next-line no-await-in-loop
 			await limiter.wait(signal)
