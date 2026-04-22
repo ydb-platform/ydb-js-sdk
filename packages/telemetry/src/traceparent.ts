@@ -1,8 +1,18 @@
-/**
- * Builds W3C traceparent string for propagation
- */
+import { type SpanContext, type TextMapSetter, context, trace } from '@opentelemetry/api'
+import { TRACE_PARENT_HEADER, W3CTraceContextPropagator } from '@opentelemetry/core'
+
+const propagator = new W3CTraceContextPropagator()
+
+const traceparentSetter: TextMapSetter<Record<string, string>> = {
+	set(carrier, key, value) {
+		carrier[key] = value
+	},
+}
+
 export function formatTraceparent(traceId: string, spanId: string, traceFlags: number): string {
-	let flags = traceFlags.toString(16)
-	if (flags.length < 2) flags = '0' + flags
-	return `00-${traceId}-${spanId}-${flags}`
+	const spanContext: SpanContext = { traceId, spanId, traceFlags }
+	const ctx = trace.setSpanContext(context.active(), spanContext)
+	const carrier: Record<string, string> = {}
+	propagator.inject(ctx, carrier, traceparentSetter)
+	return carrier[TRACE_PARENT_HEADER] ?? ''
 }
