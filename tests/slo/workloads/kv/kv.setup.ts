@@ -48,19 +48,39 @@ console.log('[kv.setup] prefilling %d rows (concurrency=%d)', prefill, concurren
 let next = 0
 async function prefillOp(): Promise<void> {
 	let id = new Uint64(BigInt(next++))
-	try {
-		await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
-			Digest::NumericHash(${id}),
-			${id},
-			${randomUUID()},
-			${Math.random()},
-			${new Timestamp(new Date())}
-		);`
-			.idempotent(false)
-			.isolation('serializableReadWrite')
-	} catch (err) {
-		if (err instanceof YDBError && err.code === StatusIds_StatusCode.PRECONDITION_FAILED) return
-		throw err
+	// Retry SCHEME_ERROR: schema cache on query nodes propagates async from
+	// SchemeBoard after CREATE TABLE returns — first INSERTs can hit a node
+	// whose cache still misses the table (ydb-platform/ydb#23386, #36335).
+	let attempt = 0
+	while (true) {
+		try {
+			// oxlint-disable-next-line no-await-in-loop
+			await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+				Digest::NumericHash(${id}),
+				${id},
+				${randomUUID()},
+				${Math.random()},
+				${new Timestamp(new Date())}
+			);`.isolation('serializableReadWrite')
+			return
+		} catch (err) {
+			if (err instanceof YDBError && err.code === StatusIds_StatusCode.PRECONDITION_FAILED) {
+				return
+			}
+
+			if (
+				err instanceof YDBError &&
+				err.code === StatusIds_StatusCode.SCHEME_ERROR &&
+				attempt < 10
+			) {
+				attempt++
+				// oxlint-disable-next-line no-await-in-loop
+				await new Promise((r) => setTimeout(r, 50 * attempt))
+				continue
+			}
+
+			throw err
+		}
 	}
 }
 
