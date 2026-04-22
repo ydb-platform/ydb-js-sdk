@@ -45,7 +45,7 @@ console.log('[kv.setup] prefilling %d rows (concurrency=%d)', prefill, concurren
 let next = 0
 async function prefillOp(): Promise<void> {
 	let id = new Uint64(BigInt(next++))
-	await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+	await sql`UPSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 		Digest::NumericHash(${id}),
 		${id},
 		${randomUUID()},
