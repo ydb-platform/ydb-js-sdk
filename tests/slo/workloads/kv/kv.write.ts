@@ -106,7 +106,6 @@ async function writeOp(): Promise<void> {
 		latency.recordValue(Math.round((performance.now() - start) * 1000))
 	} catch (err) {
 		if (ctrl.signal.aborted) return
-		if (err instanceof Error && err.name === 'TimeoutError') return
 		console.error(err)
 	}
 }
