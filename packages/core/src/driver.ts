@@ -15,7 +15,7 @@ import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
+import { type RetryConfig, type RetryHooks, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
 	type Channel,
 	type ChannelOptions,
@@ -76,6 +76,13 @@ export type DriverOptions = {
 	 * ```
 	 */
 	hooks?: DriverHooks
+
+	/**
+	 * Factory that creates a fresh RetryHooks instance per retry call.
+	 * When provided, each query's retry loop is instrumented with lifecycle hooks.
+	 * Typically set by spreading the return value of `withTracing()`.
+	 */
+	retryHooks?: () => RetryHooks
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
@@ -200,15 +207,19 @@ export class Driver implements Disposable {
 			this.#credentialsProvider = this.options.credentialsProvider
 		}
 
-		this.#middleware = composeClientMiddleware(debug, (call, options) => {
+		this.#middleware = (call, options) => call.next(call.request, options)
+
+		const metadataMiddleware: ClientMiddleware = (call, options) => {
 			let metadata = Metadata(options.metadata)
 				.set('x-ydb-sdk-build-info', `ydb-js-sdk/${pkg.version}`)
 				.set('x-ydb-database', this.database)
 				.set('x-ydb-application-name', this.application)
 
 			return call.next(call.request, Object.assign(options, { metadata }))
-		})
+		}
 
+		this.#middleware = composeClientMiddleware(this.#middleware, debug)
+		this.#middleware = composeClientMiddleware(this.#middleware, metadataMiddleware)
 		this.#middleware = composeClientMiddleware(
 			this.#middleware,
 			this.#credentialsProvider.middleware
@@ -251,6 +262,12 @@ export class Driver implements Disposable {
 			idleInterval: this.options['ydb.sdk.connection_idle_interval_ms']!,
 			pessimizationTimeout: this.options['ydb.sdk.connection_pessimization_timeout_ms']!,
 		})
+
+		// When discovery is disabled but hooks are enabled, route calls through
+		// BalancedChannel so onCall/onComplete hooks still fire.
+		if (this.options['ydb.sdk.enable_discovery'] === false && this.options.hooks) {
+			this.#pool.add(initialEndpoint)
+		}
 	}
 
 	get token(): Promise<string> {
@@ -397,7 +414,7 @@ export class Driver implements Disposable {
 
 		let channel = this.#connection.channel
 
-		if (this.options['ydb.sdk.enable_discovery'] === true) {
+		if (this.options['ydb.sdk.enable_discovery'] === true || this.options.hooks) {
 			channel = new BalancedChannel(
 				this.#pool,
 				this.options.hooks,

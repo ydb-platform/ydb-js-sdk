@@ -28,77 +28,99 @@ export async function retry<R>(
 	let config = Object.assign({}, defaultRetryConfig, cfg)
 	let ctx: RetryContext = { attempt: 0, error: null }
 
-	let budget: number
-	while (
-		ctx.attempt <
-		(budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))
-	) {
-		let ac = new AbortController()
-		using linkedSignal = linkSignals(cfg.signal, ac.signal)
+	const execute = async (): Promise<R> => {
+		let budget: number
+		while (
+			ctx.attempt <
+			(budget =
+				typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))
+		) {
+			let ac = new AbortController()
+			using linkedSignal = linkSignals(cfg.signal, ac.signal)
 
-		let start = Date.now()
-		let signal = linkedSignal.signal
+			let start = Date.now()
+			let signal = linkedSignal.signal
 
-		try {
-			signal.throwIfAborted()
-			dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
-			// oxlint-disable-next-line no-await-in-loop
-			let result = await abortable(signal, Promise.resolve(fn(signal)))
-			dbg.log('attempt %d: success', ctx.attempt + 1)
-			return result
-		} catch (error) {
-			ctx.error = error
-			ctx.attempt += 1
-
-			if (error instanceof Error && error.name === 'AbortError') {
-				dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
-				throw error
+			const wrappedFn = () => {
+				signal.throwIfAborted()
+				return abortable(signal, Promise.resolve(fn(signal)))
 			}
 
-			if (error instanceof Error && error.name === 'TimeoutError') {
-				dbg.log('attempt %d: timeout error, not retryable', ctx.attempt)
-				throw error
-			}
+			try {
+				dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
+				// oxlint-disable-next-line no-await-in-loop
+				let result = await (config.wrapAttempt
+					? config.wrapAttempt(ctx, wrappedFn)
+					: wrappedFn())
+				dbg.log('attempt %d: success', ctx.attempt + 1)
+				config.onAttemptSuccess?.(ctx)
+				return result
+			} catch (error) {
+				ctx.error = error
+				ctx.attempt += 1
 
-			let willRetry: boolean
-			if (typeof config.retry === 'boolean') {
-				willRetry = config.retry
-			} else {
-				willRetry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
-			}
+				if (error instanceof Error && error.name === 'AbortError') {
+					dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
+					config.onAttemptError?.(ctx, error, 0)
+					throw error
+				}
 
-			if (!willRetry || ctx.attempt >= budget) {
-				dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
-				break
-			}
+				if (error instanceof Error && error.name === 'TimeoutError') {
+					dbg.log('attempt %d: timeout error, not retryable', ctx.attempt)
+					config.onAttemptError?.(ctx, error, 0)
+					throw error
+				}
 
-			let delay: number
-			if (typeof config.strategy === 'number') {
-				delay = config.strategy
-			} else {
-				delay = config.strategy?.(ctx, config) ?? 0
-			}
+				let willRetry: boolean
+				if (typeof config.retry === 'boolean') {
+					willRetry = config.retry
+				} else {
+					willRetry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
+				}
 
-			let remaining = Math.max(delay - (Date.now() - start), 0)
-			if (!remaining) {
-				dbg.log('attempt %d: no delay before next retry', ctx.attempt)
-				continue
-			}
+				if (!willRetry || ctx.attempt >= budget) {
+					dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
+					config.onAttemptError?.(ctx, error, 0)
+					break
+				}
 
-			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
-			// oxlint-disable no-await-in-loop
-			await setTimeout(remaining, void 0, { signal })
+				let delay: number
+				if (typeof config.strategy === 'number') {
+					delay = config.strategy
+				} else {
+					delay = config.strategy?.(ctx, config) ?? 0
+				}
 
-			if (config.onRetry) {
-				config.onRetry(ctx)
+				let remaining = Math.max(delay - (Date.now() - start), 0)
+
+				config.onAttemptError?.(ctx, error, remaining)
+
+				if (!remaining) {
+					dbg.log('attempt %d: no delay before next retry', ctx.attempt)
+					continue
+				}
+
+				dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
+				// oxlint-disable no-await-in-loop
+				await setTimeout(remaining, void 0, { signal })
+
+				if (config.onRetry) {
+					config.onRetry(ctx)
+				}
+			} finally {
+				ac.abort('Retry cancelled')
 			}
-		} finally {
-			ac.abort('Retry cancelled')
 		}
+
+		dbg.log('retry failed after %d attempts, last error: %O', ctx.attempt, ctx.error)
+		throw ctx.error
 	}
 
-	dbg.log('retry failed after %d attempts, last error: %O', ctx.attempt, ctx.error)
-	throw ctx.error
+	if (config.wrapRun) {
+		return config.wrapRun(execute)
+	}
+
+	return execute()
 }
 
 export function isRetryableError(error: unknown, idempotent = false): boolean {

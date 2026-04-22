@@ -113,6 +113,13 @@ export interface DiscoveryErrorEvent {
  */
 export interface DriverHooks {
 	/**
+	 * Called right before grpc-js `Call.start(...)`.
+	 *
+	 * Allows mutating outgoing metadata for this RPC in a protocol-agnostic way
+	 */
+	onBeforeCall?(event: CallStartEvent, metadata: import('@grpc/grpc-js').Metadata): void
+
+	/**
 	 * Called when an RPC is dispatched to an endpoint.
 	 *
 	 * May return a completion callback. If returned, it is called exactly once

@@ -73,17 +73,14 @@ export class BalancedChannel implements Channel {
 
 		// Fire onCall in the original async context (we're still in it here).
 		// The optional return value is a completion callback — captured in closure.
-		let onComplete = this.#safeHook(
-			'onCall',
-			this.#hooks?.onCall,
-			this.#buildStartEvent(conn, method)
-		)
+		let startEvent = this.#buildStartEvent(conn, method)
+		let onComplete = this.#safeHook('onCall', this.#hooks?.onCall, startEvent)
 
 		dbg.log('createCall %s → node %d %s', method, conn.endpoint.nodeId, conn.endpoint.address)
 
 		let call = conn.channel.createCall(method, deadline, host, parentCall, propagateFlags)
 
-		return this.#wrapCall(call, conn, start, restoreContext, onComplete ?? null)
+		return this.#wrapCall(call, conn, start, restoreContext, startEvent, onComplete ?? null)
 	}
 
 	// ── Channel interface — pool-level implementations ─────────────────────────
@@ -163,9 +160,11 @@ export class BalancedChannel implements Channel {
 		conn: Connection,
 		startTime: number,
 		restoreContext: <T>(fn: (...args: unknown[]) => T) => T,
+		startEvent: CallStartEvent,
 		onComplete: ((event: CallCompleteEvent) => void) | null
 	): ReturnType<Channel['createCall']> {
 		let pool = this.#pool
+		let hooks = this.#hooks
 		let safeHook = this.#safeHook.bind(this)
 
 		return new Proxy(call, {
@@ -175,6 +174,12 @@ export class BalancedChannel implements Channel {
 				}
 
 				return (metadata: Metadata, listener: InterceptingListener) => {
+					safeHook(
+						'onBeforeCall',
+						(event: CallStartEvent) => hooks.onBeforeCall?.(event, metadata),
+						startEvent
+					)
+
 					let onReceiveStatus: InterceptingListener['onReceiveStatus'] = (status) => {
 						// Pessimize BEFORE propagating the error to nice-grpc.
 						// This ensures the next acquire() (e.g., from a retry)

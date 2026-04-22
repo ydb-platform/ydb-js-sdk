@@ -173,6 +173,7 @@ export function query(driver: Driver): QueryClient {
 		return retry(
 			{
 				...defaultRetryConfig,
+				...(driver.options.retryHooks?.() ?? {}),
 				signal: options.signal,
 				idempotent: true,
 				onRetry: (ctx) => {
@@ -297,10 +298,14 @@ export function query(driver: Driver): QueryClient {
 						})
 					)
 
-					void client.rollbackTransaction({
-						sessionId: store.sessionId,
-						txId: store.transactionId,
-					})
+					try {
+						await client.rollbackTransaction({
+							sessionId: store.sessionId,
+							txId: store.transactionId,
+						})
+					} catch (rollbackErr) {
+						dbg.log('rollback failed: %O', rollbackErr)
+					}
 
 					if (!isRetryableError(error, options.idempotent)) {
 						dbg.log('transaction not retryable, aborting')

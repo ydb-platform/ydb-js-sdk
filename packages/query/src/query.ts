@@ -13,6 +13,7 @@ import {
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
 import type { Driver } from '@ydbjs/core'
+import { tracingContext } from '@ydbjs/telemetry'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryConfig, type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
@@ -124,10 +125,13 @@ export class Query<T extends any[] = unknown[]>
 
 		let linkedSignal = linkSignals(...signals)
 
+		const retryHooks = this.#driver.options.retryHooks?.()
+
 		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal: linkedSignal.signal,
 			idempotent: this.#idempotent,
+			...(retryHooks ?? {}),
 			onRetry: (retryCtx) => {
 				dbg.log('retrying query, attempt %d, error: %O', retryCtx.attempt, retryCtx.error)
 				this.emit('retry', retryCtx)
@@ -207,6 +211,9 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
+			let results = [] as ArrayifyTuple<T>
+
+			tracingContext.enterWith({ ...tracingContext.getStore(), queryText: this.text })
 			let stream = client.executeQuery(
 				{
 					sessionId,
@@ -230,8 +237,6 @@ export class Query<T extends any[] = unknown[]>
 					},
 				}
 			)
-
-			let results = [] as ArrayifyTuple<T>
 
 			for await (let part of stream) {
 				signal.throwIfAborted()
