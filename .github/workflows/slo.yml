@@ -142,7 +142,6 @@ jobs:
         run: |
           npm --prefix "$GITHUB_WORKSPACE/current" ci
           npm --prefix "$GITHUB_WORKSPACE/current" run build
-          npm --prefix "$GITHUB_WORKSPACE/current/tests/slo" run build:kv
 
           docker build \
             --build-arg image=${{ matrix.sdk.image }} \
@@ -153,7 +152,6 @@ jobs:
 
           # npm --prefix "$GITHUB_WORKSPACE/baseline" ci
           # npm --prefix "$GITHUB_WORKSPACE/baseline" run build
-          # npm --prefix "$GITHUB_WORKSPACE/baseline/tests/slo" run build:kv
 
           # docker build \
           #   --build-arg image=${{ matrix.sdk.image }} \
