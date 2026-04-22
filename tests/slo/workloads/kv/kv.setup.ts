@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { workerData } from 'node:worker_threads'
 
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Driver } from '@ydbjs/core'
+import { YDBError } from '@ydbjs/error'
 import { query } from '@ydbjs/query'
 import { Timestamp, Uint64 } from '@ydbjs/value/primitive'
 
@@ -45,13 +47,20 @@ console.log('[kv.setup] prefilling %d rows (concurrency=%d)', prefill, concurren
 let next = 0
 async function prefillOp(): Promise<void> {
 	let id = new Uint64(BigInt(next++))
-	await sql`UPSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
-		Digest::NumericHash(${id}),
-		${id},
-		${randomUUID()},
-		${Math.random()},
-		${new Timestamp(new Date())}
-	);`.isolation('serializableReadWrite')
+	try {
+		await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+			Digest::NumericHash(${id}),
+			${id},
+			${randomUUID()},
+			${Math.random()},
+			${new Timestamp(new Date())}
+		);`
+			.idempotent(false)
+			.isolation('serializableReadWrite')
+	} catch (err) {
+		if (err instanceof YDBError && err.code === StatusIds_StatusCode.PRECONDITION_FAILED) return
+		throw err
+	}
 }
 
 await Promise.all(
