@@ -31,7 +31,7 @@ let sql = query(driver)
 // ---- Metrics ---------------------------------------------------------------
 let meter = meterProvider.getMeter('kv-write-meter')
 
-let latency = hdr.build({ highestTrackableValue: 60_000, numberOfSignificantValueDigits: 3 })
+let latency = hdr.build({ highestTrackableValue: 60_000_000, numberOfSignificantValueDigits: 3 })
 
 let sdk_operations = meter.createCounter<FinOpAttrs>('sdk_operations_total', {
 	valueType: ValueType.INT,
@@ -101,7 +101,7 @@ async function writeOp(): Promise<void> {
 			.on('retry', () => retries++)
 
 		opStatus = 'success'
-		latency.recordValue(performance.now() - start)
+		latency.recordValue(Math.round((performance.now() - start) * 1000))
 	} catch (err) {
 		if (ctrl.signal.aborted) return
 		console.error(err)
