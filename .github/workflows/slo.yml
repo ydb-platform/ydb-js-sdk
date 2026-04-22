@@ -47,10 +47,10 @@ jobs:
         sdk:
           - name: node-kv
             image: node
-            command: kv.test.js
+            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
           - name: bun-kv
             image: oven/bun
-            command: kv.test.js
+            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
 
     concurrency:
       group: slo-${{ github.ref }}-${{ matrix.sdk.name }}
@@ -168,10 +168,16 @@ jobs:
           workload_duration: ${{ inputs.slo_workload_duration_seconds || '600' }}
           workload_current_ref: ${{ github.head_ref || github.ref_name }}
           workload_current_image: ydb-app-current
-          workload_current_command: ${{ matrix.sdk.command }}
+          workload_current_command: >-
+            ${{ matrix.sdk.command }}
+            --kv.read.rps=${{ inputs.slo_workload_read_max_rps || '1000' }}
+            --kv.write.rps=${{ inputs.slo_workload_write_max_rps || '100' }}
           workload_baseline_ref: ${{ steps.baseline.outputs.ref }}
           workload_baseline_image: ydb-app-baseline
-          workload_baseline_command: ${{ matrix.sdk.command }}
+          workload_baseline_command: >-
+            ${{ matrix.sdk.command }}
+            --kv.read.rps=${{ inputs.slo_workload_read_max_rps || '1000' }}
+            --kv.write.rps=${{ inputs.slo_workload_write_max_rps || '100' }}
 
   ydb-slo-report:
     if: always()
