@@ -1,3 +1,5 @@
+import { inspect } from 'node:util'
+
 type OnError = (kind: 'unhandledRejection' | 'uncaughtException', err: unknown) => void
 
 let installed = false
@@ -6,7 +8,7 @@ export function installSafetyHandlers(mode: 'log' | 'exit' = 'exit', onError?: O
 	installed = true
 
 	let handle = (kind: 'unhandledRejection' | 'uncaughtException', err: unknown) => {
-		console.error(`[safety] ${kind}:`, err)
+		console.error(`[safety] ${kind}:`, inspect(err, { depth: Infinity }))
 
 		try {
 			onError?.(kind, err)
