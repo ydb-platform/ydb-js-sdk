@@ -1,0 +1,60 @@
+{
+	"name": "@ydbjs/table",
+	"version": "6.0.0",
+	"description": "High-level client for the YDB Table service. Currently exposes BulkUpsert for high-throughput non-transactional batch ingestion.",
+	"keywords": [
+		"database",
+		"table",
+		"bulk-upsert",
+		"typescript",
+		"ydb"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/table#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/table"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": "./dist/index.js"
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "2.10.1",
+		"@ydbjs/api": "^6.0.0",
+		"@ydbjs/core": "^6.1.1",
+		"@ydbjs/debug": "^6.0.0",
+		"@ydbjs/error": "^6.0.0",
+		"@ydbjs/retry": "^6.0.0",
+		"@ydbjs/value": "^6.0.6",
+		"nice-grpc": "^2.1.13"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}

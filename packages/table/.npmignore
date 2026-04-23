@@ -1,0 +1,8 @@
+/.turbo
+
+/src
+/tests
+/coverage
+
+/*.yaml
+/*.json

@@ -12,6 +12,7 @@ export type YDBLogCategory =
 	| 'grpc'
 	| 'query'
 	| 'retry'
+	| 'table'
 	| 'topic'
 	| 'tx'
 
@@ -63,6 +64,7 @@ export let loggers = {
 	grpc: new YDBDebugLogger('ydbjs:grpc'),
 	query: new YDBDebugLogger('ydbjs:query'),
 	retry: new YDBDebugLogger('ydbjs:retry'),
+	table: new YDBDebugLogger('ydbjs:table'),
 	topic: new YDBDebugLogger('ydbjs:topic'),
 	tx: new YDBDebugLogger('ydbjs:tx'),
 }
