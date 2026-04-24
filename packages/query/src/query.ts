@@ -25,10 +25,15 @@ import {
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'
 import type { SessionPool } from './session-pool.js'
+
+const retryCh = tracingChannel('tracing:@ydbjs:retry')
+const executeQueryCh = tracingChannel('tracing:@ydbjs:query.execute')
+const sessionAcquireCh = tracingChannel('tracing:@ydbjs:session.acquire')
 
 let dbg = loggers.query
 
@@ -169,141 +174,165 @@ export class Query<T extends any[] = unknown[]>
 
 		await this.#driver.ready(linkedSignal.signal)
 
-		this.#promise = retry(retryConfig, async (retrySignal) => {
-			// Transaction-owned session stays pinned; out-of-transaction
-			// attempts always get a fresh lease — no cross-attempt reuse.
-			using sessionLease = txSessionId
-				? undefined
-				: await this.#sessionPool.acquire(retrySignal)
-			let attemptSessionId = txSessionId ?? sessionLease!.id
-			let attemptNodeId = txNodeId ?? sessionLease!.nodeId
+		this.#promise = retryCh
+			.tracePromise(
+				() =>
+					retry(retryConfig, async (retrySignal) => {
+						// Transaction-owned session stays pinned; out-of-transaction
+						// attempts always get a fresh lease — no cross-attempt reuse.
+						using sessionLease = txSessionId
+							? undefined
+							: await sessionAcquireCh.tracePromise(
+									() => this.#sessionPool.acquire(retrySignal),
+									{}
+								)
+						let attemptSessionId = txSessionId ?? sessionLease!.id
+						let attemptNodeId = txNodeId ?? sessionLease!.nodeId
 
-			// linkSignals cleans up listeners on dispose — no accumulation
-			// on the long-lived session signal across many queries.
-			using linked = linkSignals(retrySignal, sessionLease?.signal)
-			let signal = linked.signal
+						// linkSignals cleans up listeners on dispose — no accumulation
+						// on the long-lived session signal across many queries.
+						using linked = linkSignals(retrySignal, sessionLease?.signal)
+						let signal = linked.signal
 
-			if (sessionLease) {
-				dbg.log('acquired session %s from pool', sessionLease.id)
-			}
-
-			dbg.log('creating query client for nodeId: %s', attemptNodeId)
-			let client = this.#driver.createClient(QueryServiceDefinition, attemptNodeId)
-
-			let parameters: Record<string, TypedValue> = {}
-			for (let key in this.#parameters) {
-				parameters[key] = create(TypedValueSchema, {
-					type: this.#parameters[key]!.type.encode(),
-					value: this.#parameters[key]!.encode(),
-				})
-			}
-
-			// If we have a transactionId, we should use it
-			// If we have an isolation level, we should use it
-			let txControl: TransactionControl | undefined
-			if (transactionId) {
-				txControl = create(TransactionControlSchema, {
-					txSelector: {
-						case: 'txId',
-						value: transactionId,
-					},
-				})
-			} else if (this.#isolation !== 'implicit') {
-				txControl = create(TransactionControlSchema, {
-					commitTx: true,
-					txSelector: {
-						case: 'beginTx',
-						value: {
-							txMode: {
-								case: this.#isolation,
-								value: this.#isolationSettings as {},
-							},
-						},
-					},
-				})
-			}
-
-			let stream = client.executeQuery(
-				{
-					sessionId: attemptSessionId,
-					execMode: ExecMode.EXECUTE,
-					query: {
-						case: 'queryContent',
-						value: {
-							syntax: this.#syntax,
-							text: this.text,
-						},
-					},
-					parameters,
-					statsMode: this.#statsMode,
-					...(this.#poolId && { poolId: this.#poolId }),
-					...(txControl && { txControl }),
-				},
-				{
-					signal,
-					onTrailer: (trailer) => {
-						this.emit('metadata', trailer)
-					},
-				}
-			)
-
-			let results = [] as ArrayifyTuple<T>
-
-			try {
-				for await (let part of stream) {
-					signal.throwIfAborted()
-
-					if (part.status !== StatusIds_StatusCode.SUCCESS) {
-						dbg.log('query part failed, status: %d', part.status)
-						throw new YDBError(part.status, part.issues)
-					}
-
-					if (part.execStats) {
-						dbg.log('received query stats')
-						this.#stats = part.execStats
-					}
-
-					if (!part.resultSet) {
-						continue
-					}
-
-					while (part.resultSetIndex >= results.length) {
-						results.push([])
-					}
-
-					for (let i = 0; i < part.resultSet.rows.length; i++) {
-						let result: any = this.#values ? [] : {}
-
-						for (let j = 0; j < part.resultSet.columns.length; j++) {
-							let column = part.resultSet.columns[j]!
-							let value = part.resultSet.rows[i]!.items[j]!
-
-							if (this.#values) {
-								result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
-								continue
-							}
-
-							result[column.name] = this.#raw
-								? value
-								: toJs(fromYdb(value, column.type!))
+						if (sessionLease) {
+							dbg.log('acquired session %s from pool', sessionLease.id)
 						}
 
-						results[Number(part.resultSetIndex)]!.push(result)
-					}
-				}
-			} catch (err) {
-				// Record whether this attempt failed because the session died.
-				// The retry callback uses this to decide — together with the
-				// idempotent flag — whether to retry against a fresh session.
-				if (sessionLease?.signal.aborted) {
-					sessionDiedLastAttempt = true
-				}
-				throw err
-			}
+						dbg.log('creating query client for nodeId: %s', attemptNodeId)
+						let client = this.#driver.createClient(
+							QueryServiceDefinition,
+							attemptNodeId
+						)
 
-			dbg.log('query executed successfully')
-			return results
-		})
+						let parameters: Record<string, TypedValue> = {}
+						for (let key in this.#parameters) {
+							parameters[key] = create(TypedValueSchema, {
+								type: this.#parameters[key]!.type.encode(),
+								value: this.#parameters[key]!.encode(),
+							})
+						}
+
+						// If we have a transactionId, we should use it
+						// If we have an isolation level, we should use it
+						let txControl: TransactionControl | undefined
+						if (transactionId) {
+							txControl = create(TransactionControlSchema, {
+								txSelector: {
+									case: 'txId',
+									value: transactionId,
+								},
+							})
+						} else if (this.#isolation !== 'implicit') {
+							txControl = create(TransactionControlSchema, {
+								commitTx: true,
+								txSelector: {
+									case: 'beginTx',
+									value: {
+										txMode: {
+											case: this.#isolation,
+											value: this.#isolationSettings as {},
+										},
+									},
+								},
+							})
+						}
+
+						try {
+							return await executeQueryCh.tracePromise(
+								async () => {
+									let stream = client.executeQuery(
+										{
+											sessionId: attemptSessionId,
+											execMode: ExecMode.EXECUTE,
+											query: {
+												case: 'queryContent',
+												value: {
+													syntax: this.#syntax,
+													text: this.text,
+												},
+											},
+											parameters,
+											statsMode: this.#statsMode,
+											...(this.#poolId && { poolId: this.#poolId }),
+											...(txControl && { txControl }),
+										},
+										{
+											signal,
+											onTrailer: (trailer) => {
+												this.emit('metadata', trailer)
+											},
+										}
+									)
+
+									let results = [] as ArrayifyTuple<T>
+									for await (let part of stream) {
+										signal.throwIfAborted()
+
+										if (part.status !== StatusIds_StatusCode.SUCCESS) {
+											dbg.log('query part failed, status: %d', part.status)
+											throw new YDBError(part.status, part.issues)
+										}
+
+										if (part.execStats) {
+											dbg.log('received query stats')
+											this.#stats = part.execStats
+										}
+
+										if (!part.resultSet) {
+											continue
+										}
+
+										while (part.resultSetIndex >= results.length) {
+											results.push([])
+										}
+
+										for (let i = 0; i < part.resultSet.rows.length; i++) {
+											let result: any = this.#values ? [] : {}
+
+											for (
+												let j = 0;
+												j < part.resultSet.columns.length;
+												j++
+											) {
+												let column = part.resultSet.columns[j]!
+												let value = part.resultSet.rows[i]!.items[j]!
+
+												if (this.#values) {
+													result.push(
+														this.#raw
+															? value
+															: toJs(fromYdb(value, column.type!))
+													)
+													continue
+												}
+
+												result[column.name] = this.#raw
+													? value
+													: toJs(fromYdb(value, column.type!))
+											}
+
+											results[Number(part.resultSetIndex)]!.push(result)
+										}
+									}
+
+									dbg.log('query executed successfully')
+									return results
+								},
+								{
+									text: this.text,
+									sessionId: attemptSessionId,
+									idempotent: this.#idempotent,
+								}
+							)
+						} catch (err) {
+							if (sessionLease?.signal.aborted) {
+								sessionDiedLastAttempt = true
+							}
+							throw err
+						}
+					}),
+				{ text: this.text, idempotent: this.#idempotent }
+			)
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)

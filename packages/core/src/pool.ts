@@ -1,5 +1,6 @@
 import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
 import { connectivityState } from '@grpc/grpc-js'
+import { channel as dcChannel } from 'node:diagnostics_channel'
 
 import { loggers } from '@ydbjs/debug'
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
@@ -121,6 +122,10 @@ export class ConnectionPool implements Disposable {
 		this.#pessimized.set(conn, Date.now() + this.options.pessimizationTimeout)
 
 		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
+		dcChannel('ydb:pessimize').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+		})
 
 		this.#safeHook('onPessimize', () => {
 			this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
@@ -185,6 +190,11 @@ export class ConnectionPool implements Disposable {
 			conn.endpoint.address,
 			this.#connections.length
 		)
+		dcChannel('ydb:pool.connection.add').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+		})
 	}
 
 	/**
@@ -218,6 +228,12 @@ export class ConnectionPool implements Disposable {
 			this.#acquired.delete(conn)
 			this.#retired.add(conn)
 			removed.push(conn.endpoint)
+			dcChannel('ydb:pool.connection.remove').publish({
+				nodeId: conn.endpoint.nodeId,
+				address: conn.endpoint.address,
+				location: conn.endpoint.location,
+				reason: 'discovery.stale_active',
+			})
 			dbg.log('removed stale active node %d from routing', conn.endpoint.nodeId)
 		}
 
@@ -232,6 +248,12 @@ export class ConnectionPool implements Disposable {
 			this.#acquired.delete(conn)
 			this.#retired.add(conn)
 			removed.push(conn.endpoint)
+			dcChannel('ydb:pool.connection.remove').publish({
+				nodeId: conn.endpoint.nodeId,
+				address: conn.endpoint.address,
+				location: conn.endpoint.location,
+				reason: 'discovery.stale_pessimized',
+			})
 			dbg.log('removed stale pessimized node %d from routing', conn.endpoint.nodeId)
 		}
 
@@ -367,6 +389,10 @@ export class ConnectionPool implements Disposable {
 					conn.endpoint.nodeId,
 					conn.endpoint.address
 				)
+				dcChannel('ydb:unpessimize').publish({
+					nodeId: conn.endpoint.nodeId,
+					address: conn.endpoint.address,
+				})
 
 				this.#safeHook('onUnpessimize', () => {
 					this.options.hooks?.onUnpessimize?.({ endpoint: conn.endpoint })

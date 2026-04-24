@@ -1,5 +1,6 @@
 import * as tls from 'node:tls'
 import * as assert from 'node:assert/strict'
+import { channel as dcChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
@@ -305,6 +306,11 @@ export class Driver implements Disposable {
 						duration: performance.now() - discoveryStart,
 					})
 				)
+				dcChannel('ydb:discovery.error').publish({
+					error: ctx.error,
+					attempt: ctx.attempt,
+					database: this.database,
+				})
 			},
 		}
 
@@ -346,6 +352,13 @@ export class Driver implements Disposable {
 				endpoints,
 			})
 		)
+		dcChannel('ydb:discovery').publish({
+			endpoints,
+			added,
+			removed,
+			duration: performance.now() - discoveryStart,
+			database: this.database,
+		})
 	}
 
 	async ready(signal?: AbortSignal): Promise<void> {
