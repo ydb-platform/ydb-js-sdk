@@ -76,7 +76,7 @@ The conversion between JavaScript and YDB types in `@ydbjs/value` is automatic a
 
 ### Special Handling for Arrays of Objects
 
-If you pass an array of objects with different sets of fields, the converter will automatically create a unified Struct type containing all fields from all objects. Missing fields in each object will be set as Optional (nullable) in the resulting YDB Struct. This allows you to pass heterogeneous arrays of objects and have them represented as a single List of Structs in YDB.
+If you pass an array of objects, the converter creates a unified Struct type containing the union of fields from all objects and wraps **every** field in `Optional`. Missing fields become `null`. This allows heterogeneous arrays of objects to be represented as a single List of Structs in YDB.
 
 #### Example
 
@@ -88,6 +88,22 @@ fromJs([
 ```
 
 This will produce a YDB List where each element is a Struct with fields: `id`, `name`, and `age`. Fields not present in an object will be set to null (Optional).
+
+#### `NOT NULL` columns
+
+Because `fromJs` always wraps struct fields in `Optional`, the resulting type does not match `NOT NULL` columns on the server side — the query will fail with `Can't set NULL or optional value to not null column`. `fromJs` cannot know the target schema, so if you need pinned non-nullable types, construct values explicitly:
+
+```ts
+import { List } from '@ydbjs/value/list'
+import { Struct } from '@ydbjs/value/struct'
+import { Text, Uint8, Bytes } from '@ydbjs/value/primitive'
+
+const rows = new List(
+  new Struct({ key: new Text('a'), partNumber: new Uint8(0), data: new Bytes(buf) })
+)
+```
+
+Or build a `StructType` once and pass it to `new Struct(obj, type)` to pin field types across rows.
 
 ### Utility Exports
 

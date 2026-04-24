@@ -1,7 +1,8 @@
 import { create } from '@bufbuild/protobuf'
 import * as Ydb from '@ydbjs/api/value'
 
-import { Optional } from './optional.js'
+import { Optional, OptionalType } from './optional.js'
+import { typeToString } from './print.js'
 import { type Type, TypeKind } from './type.js'
 import type { Value } from './value.js'
 
@@ -68,14 +69,25 @@ export class Struct<
 			this.type = def
 
 			for (let [name, type] of def) {
-				let value = obj[name]
-				if (value && value.type.kind !== type.kind) {
+				let objValue = obj[name] ?? null
+
+				if (objValue && objValue.type.kind !== type.kind) {
 					throw new Error(
-						`Invalid type for ${name}: expected ${type.kind}, got ${value.type.kind}`
+						`Invalid type for ${name}: expected ${typeToString(type)}, got ${typeToString(objValue.type)}`
 					)
 				}
 
-				this.items.push(new Optional((value ??= null), type))
+				if (objValue === null && type.kind !== TypeKind.OPTIONAL) {
+					throw new Error(
+						`Field ${name} is declared as ${typeToString(type)} but no value provided.`
+					)
+				}
+
+				if (objValue === null) {
+					this.items.push(new Optional(null, (type as OptionalType).itemType))
+				} else {
+					this.items.push(objValue)
+				}
 			}
 
 			return

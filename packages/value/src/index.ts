@@ -107,6 +107,27 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 	throw new Error('Unsupported value.')
 }
 
+/**
+ * Convert a native JavaScript value into a YDB `Value`. Types are inferred from
+ * the input structure.
+ *
+ * Note: when converting an array of plain objects (`[{}, ...]`), every struct
+ * field is wrapped in `Optional`. This keeps the conversion single-pass and
+ * lets heterogeneous arrays (objects with different key sets) produce a single
+ * unified struct type. As a consequence, the resulting type never matches
+ * `NOT NULL` columns on the YDB side.
+ *
+ * If you target a schema with `NOT NULL` columns, construct values explicitly:
+ *
+ * ```ts
+ * new List(
+ *   new Struct({ key: new Text('a'), n: new Uint8(1) })
+ * )
+ * ```
+ *
+ * or build a `StructType` and pass it to `new Struct(obj, type)` to pin the
+ * field types.
+ */
 export function fromJs(native: JSValue): Value {
 	switch (typeof native) {
 		case 'undefined':
