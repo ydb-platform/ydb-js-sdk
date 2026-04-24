@@ -1,5 +1,6 @@
 import { test } from 'vitest'
 import { fromJs, toJs } from './index.ts'
+import { typeToString } from './print.ts'
 
 test('transforms fromJs with primitives', async (t) => {
 	let boolVal = fromJs(true)
@@ -133,6 +134,10 @@ test('toJs with null', async (t) => {
 test('fromJs with array of objects with different fields', async (t) => {
 	let arrVal = fromJs([{ name: 'Test' }, { age: 99 }])
 
+	t.expect(typeToString(arrVal.type)).toMatchInlineSnapshot(
+		`"List<Struct<age:Optional<Int32>,name:Optional<Utf8>>>"`
+	)
+
 	t.expect(arrVal).toMatchInlineSnapshot(`
 		List {
 		  "items": [
@@ -141,25 +146,16 @@ test('fromJs with array of objects with different fields', async (t) => {
 		        Optional {
 		          "item": null,
 		          "type": OptionalType {
-		            "itemType": OptionalType {
-		              "itemType": Int32Type {},
-		            },
+		            "itemType": Int32Type {},
 		          },
 		        },
 		        Optional {
-		          "item": Optional {
-		            "item": Text {
-		              "type": TextType {},
-		              "value": "Test",
-		            },
-		            "type": OptionalType {
-		              "itemType": TextType {},
-		            },
+		          "item": Text {
+		            "type": TextType {},
+		            "value": "Test",
 		          },
 		          "type": OptionalType {
-		            "itemType": OptionalType {
-		              "itemType": TextType {},
-		            },
+		            "itemType": TextType {},
 		          },
 		        },
 		      ],
@@ -181,27 +177,18 @@ test('fromJs with array of objects with different fields', async (t) => {
 		    Struct {
 		      "items": [
 		        Optional {
-		          "item": Optional {
-		            "item": Int32 {
-		              "type": Int32Type {},
-		              "value": 99,
-		            },
-		            "type": OptionalType {
-		              "itemType": Int32Type {},
-		            },
+		          "item": Int32 {
+		            "type": Int32Type {},
+		            "value": 99,
 		          },
 		          "type": OptionalType {
-		            "itemType": OptionalType {
-		              "itemType": Int32Type {},
-		            },
+		            "itemType": Int32Type {},
 		          },
 		        },
 		        Optional {
 		          "item": null,
 		          "type": OptionalType {
-		            "itemType": OptionalType {
-		              "itemType": TextType {},
-		            },
+		            "itemType": TextType {},
 		          },
 		        },
 		      ],
