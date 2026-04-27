@@ -190,7 +190,7 @@ export class ConnectionPool implements Disposable {
 			conn.endpoint.address,
 			this.#connections.length
 		)
-		dcChannel('ydb:pool.connection.add').publish({
+		dcChannel('ydb:pool.connection.added').publish({
 			nodeId: conn.endpoint.nodeId,
 			address: conn.endpoint.address,
 			location: conn.endpoint.location,
@@ -228,7 +228,7 @@ export class ConnectionPool implements Disposable {
 			this.#acquired.delete(conn)
 			this.#retired.add(conn)
 			removed.push(conn.endpoint)
-			dcChannel('ydb:pool.connection.remove').publish({
+			dcChannel('ydb:pool.connection.removed').publish({
 				nodeId: conn.endpoint.nodeId,
 				address: conn.endpoint.address,
 				location: conn.endpoint.location,
@@ -248,7 +248,7 @@ export class ConnectionPool implements Disposable {
 			this.#acquired.delete(conn)
 			this.#retired.add(conn)
 			removed.push(conn.endpoint)
-			dcChannel('ydb:pool.connection.remove').publish({
+			dcChannel('ydb:pool.connection.removed').publish({
 				nodeId: conn.endpoint.nodeId,
 				address: conn.endpoint.address,
 				location: conn.endpoint.location,

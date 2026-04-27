@@ -21,10 +21,15 @@
  *     hot session serving N queries would accumulate N listeners.
  */
 
+import { channel as dcChannel, tracingChannel } from 'node:diagnostics_channel'
+
 import { linkSignals } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { Session } from './session.js'
+
+export const sessionAcquireCh = tracingChannel('tracing:ydb:session.acquire')
+const sessionCreateCh = tracingChannel('tracing:ydb:session.create')
 
 let dbg = loggers.query.extend('pool2')
 
@@ -195,7 +200,10 @@ export class SessionPool implements AsyncDisposable {
 		this.#all.clear()
 		this.#available.length = 0
 		// close() is sync + fire-and-forget — no need to await each RPC.
-		for (let s of sessions) s.close()
+		for (let s of sessions) {
+			s.close()
+			dcChannel('ydb:session.destroyed').publish({ sessionId: s.id, nodeId: s.nodeId })
+		}
 		dbg.log('pool closed (%d sessions)', sessions.length)
 	}
 
@@ -230,7 +238,12 @@ export class SessionPool implements AsyncDisposable {
 		// close) when the block exits — no accumulation on #close.signal as
 		// many concurrent creates fan out.
 		using linked = linkSignals(signal, this.#close.signal)
-		let promise = Session.open(this.#driver, linked.signal)
+
+		const createCtx = {}
+		let promise = sessionCreateCh.tracePromise(
+			() => Session.open(this.#driver, linked.signal),
+			createCtx
+		)
 		this.#creates.add(promise)
 
 		try {
@@ -244,6 +257,10 @@ export class SessionPool implements AsyncDisposable {
 
 			this.#all.add(session)
 			this.#bindEviction(session)
+			dcChannel('ydb:session.created').publish({
+				sessionId: session.id,
+				nodeId: session.nodeId,
+			})
 			return session
 		} finally {
 			this.#creates.delete(promise)
@@ -258,6 +275,10 @@ export class SessionPool implements AsyncDisposable {
 				let idx = this.#available.indexOf(session)
 				if (idx !== -1) this.#available.splice(idx, 1)
 				dbg.log('evicted session %s', session.id)
+				dcChannel('ydb:session.evicted').publish({
+					sessionId: session.id,
+					nodeId: session.nodeId,
+				})
 				this.#pumpWaitersAfterEviction()
 			},
 			{ once: true }
