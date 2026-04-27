@@ -122,7 +122,7 @@ export class ConnectionPool implements Disposable {
 		this.#pessimized.set(conn, Date.now() + this.options.pessimizationTimeout)
 
 		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
-		dcChannel('ydb:pessimize').publish({
+		dcChannel('ydb:pool.pessimize').publish({
 			nodeId: conn.endpoint.nodeId,
 			address: conn.endpoint.address,
 		})
@@ -389,7 +389,7 @@ export class ConnectionPool implements Disposable {
 					conn.endpoint.nodeId,
 					conn.endpoint.address
 				)
-				dcChannel('ydb:unpessimize').publish({
+				dcChannel('ydb:pool.unpessimize').publish({
 					nodeId: conn.endpoint.nodeId,
 					address: conn.endpoint.address,
 				})
