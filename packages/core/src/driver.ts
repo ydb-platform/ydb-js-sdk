@@ -318,33 +318,33 @@ export class Driver implements Disposable {
 			return res
 		}
 
-		// ── entry point ─────────────────────────────────────────────────────
+		const traceRetryAttempt = (signal: AbortSignal) => {
+			attempt++
+			return retryAttemptCh.tracePromise(() => fetchEndpoints(signal), {
+				attempt,
+				database: this.database,
+			})
+		}
+
+		const retryConfig: RetryConfig = {
+			...defaultRetryConfig,
+			signal: outerSignal,
+			onRetry: (ctx) => {
+				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
+				this.#safeHook('onDiscoveryError', () =>
+					this.options.hooks?.onDiscoveryError?.({
+						error: ctx.error,
+						attempt: ctx.attempt,
+						duration: performance.now() - discoveryStart,
+					})
+				)
+			},
+		}
+
 		await discoveryCh.tracePromise(
 			async () => {
-				let retryConfig: RetryConfig = {
-					...defaultRetryConfig,
-					signal: outerSignal,
-					onRetry: (ctx) => {
-						dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
-						this.#safeHook('onDiscoveryError', () =>
-							this.options.hooks?.onDiscoveryError?.({
-								error: ctx.error,
-								attempt: ctx.attempt,
-								duration: performance.now() - discoveryStart,
-							})
-						)
-					},
-				}
-
 				let result = await retryRunCh.tracePromise(
-					() =>
-						retry(retryConfig, (signal) => {
-							attempt++
-							return retryAttemptCh.tracePromise(() => fetchEndpoints(signal), {
-								attempt,
-								database: this.database,
-							})
-						}),
+					() => retry(retryConfig, traceRetryAttempt),
 					{ database: this.database }
 				)
 

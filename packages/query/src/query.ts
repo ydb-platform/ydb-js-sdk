@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -25,7 +26,6 @@ import {
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
-import { tracingChannel } from 'node:diagnostics_channel'
 
 import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'
@@ -301,19 +301,20 @@ export class Query<T extends any[] = unknown[]>
 			}
 		}
 
+		const traceRetryAttempt = (retrySignal: AbortSignal) => {
+			attempt++
+			return retryAttemptCh.tracePromise(() => tracedAttempt(retrySignal), {
+				attempt,
+				text: this.text,
+				idempotent: this.#idempotent,
+			})
+		}
+
 		this.#promise = retryRunCh
-			.tracePromise(
-				() =>
-					retry(retryConfig, (retrySignal) => {
-						attempt++
-						return retryAttemptCh.tracePromise(() => tracedAttempt(retrySignal), {
-							attempt,
-							text: this.text,
-							idempotent: this.#idempotent,
-						})
-					}),
-				{ text: this.text, idempotent: this.#idempotent }
-			)
+			.tracePromise(() => retry(retryConfig, traceRetryAttempt), {
+				text: this.text,
+				idempotent: this.#idempotent,
+			})
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)

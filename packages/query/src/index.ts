@@ -352,20 +352,21 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 			},
 		}
 
+		const traceRetryAttempt = (retrySignal: AbortSignal) => {
+			attempt++
+			return retryAttemptCh.tracePromise(() => runAttempt(retrySignal), {
+				attempt,
+				isolation: options.isolation!,
+				idempotent,
+			})
+		}
+
 		return transactionCh.tracePromise(
 			() =>
-				retryRunCh.tracePromise(
-					() =>
-						retry(retryConfig, (retrySignal) => {
-							attempt++
-							return retryAttemptCh.tracePromise(() => runAttempt(retrySignal), {
-								attempt,
-								isolation: options.isolation!,
-								idempotent,
-							})
-						}),
-					{ isolation: options.isolation!, idempotent }
-				),
+				retryRunCh.tracePromise(() => retry(retryConfig, traceRetryAttempt), {
+					isolation: options.isolation!,
+					idempotent,
+				}),
 			{ isolation: options.isolation!, idempotent }
 		)
 	}
