@@ -17,11 +17,11 @@ let debug = loggers.auth.extend('static')
 
 let authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
 
-// Timeouts sized to typical token-service SLAs and JWT expiry windows
-let ACQUIRE_TOKEN_TIMEOUT_MS = 5_000
-let HARD_EXPIRY_BUFFER_SECONDS = 30
-let SOFT_EXPIRY_BUFFER_SECONDS = 120
-let BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
+// Token refresh strategy configuration
+let ACQUIRE_TOKEN_TIMEOUT_MS = 5_000 // 5 seconds timeout for token acquisition
+let HARD_EXPIRY_BUFFER_SECONDS = 30 // Hard limit - must refresh
+let SOFT_EXPIRY_BUFFER_SECONDS = 120 // Soft limit - start background refresh
+let BACKGROUND_REFRESH_TIMEOUT_MS = 30_000 // 30 seconds timeout for background refresh
 
 export type StaticCredentialsToken = {
 	value: string
