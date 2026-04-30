@@ -1,7 +1,11 @@
+import { channel as dcChannel, tracingChannel } from 'node:diagnostics_channel'
+
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { backoff } from '@ydbjs/retry/strategy'
 import { CredentialsProvider } from './index.js'
+
+let authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
 
 let dbg = loggers.auth.extend('metadata')
 
@@ -72,6 +76,10 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 			return this.#token.value
 		}
 
+		if (this.#token && this.#token.expired_at <= Date.now()) {
+			dcChannel('ydb:auth.token.expired').publish({ provider: 'metadata' })
+		}
+
 		if (this.#promise) {
 			dbg.log('token fetch already in progress, waiting for result')
 			return this.#promise
@@ -89,50 +97,57 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 			},
 		}
 
-		this.#promise = retry(retryConfig, async (signal) => {
-			dbg.log('attempting to fetch token from %s', this.#endpoint)
-			let response = await fetch(this.#endpoint, {
-				headers: {
-					'Metadata-Flavor': this.#flavor,
-				},
-				signal,
+		this.#promise = authTokenFetchCh
+			.tracePromise(() => retry(retryConfig, (s) => this.#fetchTokenAttempt(s)), {
+				provider: 'metadata',
+			})
+			.catch((err) => {
+				dcChannel('ydb:auth.provider.failed').publish({ provider: 'metadata' })
+				throw err
+			})
+			.finally(() => {
+				this.#promise = null
 			})
 
-			dbg.log(
-				'%s %s %s',
-				this.#endpoint,
-				response.status,
-				response.headers.get('Content-Type')
-			)
+		return this.#promise
+	}
 
-			if (!response.ok) {
-				let error = new Error(
-					`Failed to fetch token: ${response.status} ${response.statusText}`
-				)
-				dbg.log('error fetching token: %O', error)
-				throw error
-			}
-
-			let token = JSON.parse(await response.text()) as {
-				access_token?: string
-				expires_in?: number
-			}
-			if (!token.access_token) {
-				dbg.log('missing access token in response, response: %O', token)
-				throw new Error('No access token exists in response')
-			}
-
-			this.#token = {
-				value: token.access_token,
-				expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
-			}
-
-			dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
-			return this.#token.value
-		}).finally(() => {
-			this.#promise = null
+	async #fetchTokenAttempt(signal: AbortSignal): Promise<string> {
+		dbg.log('attempting to fetch token from %s', this.#endpoint)
+		let response = await fetch(this.#endpoint, {
+			headers: { 'Metadata-Flavor': this.#flavor },
+			signal,
 		})
 
-		return this.#promise
+		dbg.log('%s %s %s', this.#endpoint, response.status, response.headers.get('Content-Type'))
+
+		if (!response.ok) {
+			let error = new Error(
+				`Failed to fetch token: ${response.status} ${response.statusText}`
+			)
+			dbg.log('error fetching token: %O', error)
+			throw error
+		}
+
+		let token = JSON.parse(await response.text()) as {
+			access_token?: string
+			expires_in?: number
+		}
+		if (!token.access_token) {
+			dbg.log('missing access token in response, response: %O', token)
+			throw new Error('No access token exists in response')
+		}
+
+		this.#token = {
+			value: token.access_token,
+			expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
+		}
+
+		dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
+		dcChannel('ydb:auth.token.refreshed').publish({
+			provider: 'metadata',
+			expiresIn: token.expires_in ?? 3600,
+		})
+		return this.#token.value
 	}
 }

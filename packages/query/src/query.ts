@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
+import { linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	ExecMode,
@@ -27,8 +29,11 @@ import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
-import { linkSignals } from '@ydbjs/abortable'
-import type { SessionPool } from './session-pool.js'
+import { type SessionPool, sessionAcquireCh } from './session-pool.js'
+
+let retryRunCh = tracingChannel('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
+let executeQueryCh = tracingChannel('tracing:ydb:query.execute')
 
 let dbg = loggers.query
 
@@ -110,12 +115,6 @@ export class Query<T extends any[] = unknown[]>
 
 	async #execute(): Promise<ArrayifyTuple<T>> {
 		let store = ctx.getStore() || {}
-		// `txSessionId` / `txNodeId` are set only when we run inside a
-		// transaction — the transaction body owns the session. Outside a
-		// transaction they stay undefined and every retry attempt grabs a
-		// fresh lease from the pool. Treating these as closure-local (vs
-		// mutating them per attempt) prevents a released session from being
-		// reused across retries by a different caller.
 		let txSessionId = store.sessionId
 		let txNodeId = store.nodeId
 		let transactionId = store.transactionId
@@ -169,12 +168,23 @@ export class Query<T extends any[] = unknown[]>
 
 		await this.#driver.ready(linkedSignal.signal)
 
-		this.#promise = retry(retryConfig, async (retrySignal) => {
+		let attempt = 0
+
+		let acquireSession = (signal: AbortSignal) =>
+			sessionAcquireCh.tracePromise(() => this.#sessionPool.acquire(signal), {
+				kind: 'query',
+			})
+
+		let tracedAttempt = (retrySignal: AbortSignal) =>
+			executeQueryCh.tracePromise(() => runAttempt(retrySignal), {
+				text: this.text,
+				idempotent: this.#idempotent,
+			})
+
+		let runAttempt = async (retrySignal: AbortSignal) => {
 			// Transaction-owned session stays pinned; out-of-transaction
 			// attempts always get a fresh lease — no cross-attempt reuse.
-			using sessionLease = txSessionId
-				? undefined
-				: await this.#sessionPool.acquire(retrySignal)
+			using sessionLease = txSessionId ? undefined : await acquireSession(retrySignal)
 			let attemptSessionId = txSessionId ?? sessionLease!.id
 			let attemptNodeId = txNodeId ?? sessionLease!.nodeId
 
@@ -198,15 +208,10 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
-			// If we have a transactionId, we should use it
-			// If we have an isolation level, we should use it
 			let txControl: TransactionControl | undefined
 			if (transactionId) {
 				txControl = create(TransactionControlSchema, {
-					txSelector: {
-						case: 'txId',
-						value: transactionId,
-					},
+					txSelector: { case: 'txId', value: transactionId },
 				})
 			} else if (this.#isolation !== 'implicit') {
 				txControl = create(TransactionControlSchema, {
@@ -223,33 +228,29 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
-			let stream = client.executeQuery(
-				{
-					sessionId: attemptSessionId,
-					execMode: ExecMode.EXECUTE,
-					query: {
-						case: 'queryContent',
-						value: {
-							syntax: this.#syntax,
-							text: this.text,
-						},
-					},
-					parameters,
-					statsMode: this.#statsMode,
-					...(this.#poolId && { poolId: this.#poolId }),
-					...(txControl && { txControl }),
-				},
-				{
-					signal,
-					onTrailer: (trailer) => {
-						this.emit('metadata', trailer)
-					},
-				}
-			)
-
-			let results = [] as ArrayifyTuple<T>
-
 			try {
+				let stream = client.executeQuery(
+					{
+						sessionId: attemptSessionId,
+						execMode: ExecMode.EXECUTE,
+						query: {
+							case: 'queryContent',
+							value: { syntax: this.#syntax, text: this.text },
+						},
+						parameters,
+						statsMode: this.#statsMode,
+						...(this.#poolId && { poolId: this.#poolId }),
+						...(txControl && { txControl }),
+					},
+					{
+						signal,
+						onTrailer: (trailer) => {
+							this.emit('metadata', trailer)
+						},
+					}
+				)
+
+				let results = [] as ArrayifyTuple<T>
 				for await (let part of stream) {
 					signal.throwIfAborted()
 
@@ -263,9 +264,7 @@ export class Query<T extends any[] = unknown[]>
 						this.#stats = part.execStats
 					}
 
-					if (!part.resultSet) {
-						continue
-					}
+					if (!part.resultSet) continue
 
 					while (part.resultSetIndex >= results.length) {
 						results.push([])
@@ -291,19 +290,31 @@ export class Query<T extends any[] = unknown[]>
 						results[Number(part.resultSetIndex)]!.push(result)
 					}
 				}
+
+				dbg.log('query executed successfully')
+				return results
 			} catch (err) {
-				// Record whether this attempt failed because the session died.
-				// The retry callback uses this to decide — together with the
-				// idempotent flag — whether to retry against a fresh session.
 				if (sessionLease?.signal.aborted) {
 					sessionDiedLastAttempt = true
 				}
 				throw err
 			}
+		}
 
-			dbg.log('query executed successfully')
-			return results
-		})
+		let traceRetryAttempt = (retrySignal: AbortSignal) => {
+			attempt++
+			return retryAttemptCh.tracePromise(() => tracedAttempt(retrySignal), {
+				attempt,
+				text: this.text,
+				idempotent: this.#idempotent,
+			})
+		}
+
+		this.#promise = retryRunCh
+			.tracePromise(() => retry(retryConfig, traceRetryAttempt), {
+				text: this.text,
+				idempotent: this.#idempotent,
+			})
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)

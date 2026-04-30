@@ -1,5 +1,6 @@
 import * as tls from 'node:tls'
 import * as assert from 'node:assert/strict'
+import { channel as dcChannel, tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
@@ -42,6 +43,10 @@ import type { DriverHooks, EndpointInfo } from './hooks.js'
 import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
+
+let discoveryCh = tracingChannel('tracing:ydb:discovery')
+let retryRunCh = tracingChannel('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
 
 export type { DriverHooks, EndpointInfo }
 
@@ -90,7 +95,7 @@ export type DriverOptions = {
 
 let dbg = loggers.driver
 
-const defaultOptions: DriverOptions = {
+let defaultOptions: DriverOptions = {
 	'ydb.sdk.ready_timeout_ms': 30_000,
 	'ydb.sdk.token_timeout_ms': 10_000,
 	'ydb.sdk.enable_discovery': true,
@@ -101,7 +106,7 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.connection_pessimization_timeout_ms': 60_000,
 } as const satisfies DriverOptions
 
-const defaultChannelOptions: ChannelOptions = {
+let defaultChannelOptions: ChannelOptions = {
 	'grpc.primary_user_agent': `ydb-js-sdk/${pkg.version}`,
 	'grpc.secondary_user_agent': detectRuntime(),
 
@@ -124,7 +129,7 @@ if (!Promise.withResolvers) {
 	} {
 		let resolve: (value: T | PromiseLike<T>) => void
 		let reject: (reason?: any) => void
-		const promise = new Promise<T>((res, rej) => {
+		let promise = new Promise<T>((res, rej) => {
 			resolve = res
 			reject = rej
 		})
@@ -217,6 +222,7 @@ export class Driver implements Disposable {
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
 			this.#ready.resolve()
+			dcChannel('ydb:driver.ready').publish({ database: this.database })
 		}
 
 		if (this.options['ydb.sdk.enable_discovery'] === true) {
@@ -226,7 +232,8 @@ export class Driver implements Disposable {
 			this.#discovery(AbortSignal.timeout(discoveryTimeout))
 				.then(() => {
 					dbg.log('initial discovery completed successfully')
-					return this.#ready.resolve()
+					this.#ready.resolve()
+					dcChannel('ydb:driver.ready').publish({ database: this.database })
 				})
 				.catch((error) => {
 					dbg.log('initial discovery failed: %O', error)
@@ -291,24 +298,9 @@ export class Driver implements Disposable {
 		dbg.log('starting discovery for database: %s', this.database)
 
 		let discoveryStart = performance.now()
-		let retryConfig: RetryConfig = {
-			...defaultRetryConfig,
-			signal: outerSignal,
-			onRetry: (ctx) => {
-				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
+		let attempt = 0
 
-				// Fire onDiscoveryError hook for each failed attempt
-				this.#safeHook('onDiscoveryError', () =>
-					this.options.hooks?.onDiscoveryError?.({
-						error: ctx.error,
-						attempt: ctx.attempt,
-						duration: performance.now() - discoveryStart,
-					})
-				)
-			},
-		}
-
-		let result = await retry(retryConfig, async (signal) => {
+		let fetchEndpoints = async (signal: AbortSignal) => {
 			let client = (this.#discoveryClient ??= createClientFactory()
 				.use(this.#middleware)
 				.create(DiscoveryServiceDefinition, this.#connection.channel))
@@ -324,27 +316,60 @@ export class Driver implements Disposable {
 			assert.ok(res, new DriverResponseError('Missing result in operation data.'))
 
 			return res
-		})
+		}
 
-		dbg.log('discovered %d endpoints: %O', result.endpoints.length, result.endpoints)
-
-		let { added, removed } = this.#pool.sync(result.endpoints)
-
-		let endpoints: EndpointInfo[] = result.endpoints.map((ep) =>
-			Object.freeze<EndpointInfo>({
-				nodeId: BigInt(ep.nodeId),
-				address: `${ep.address}:${ep.port}`,
-				location: ep.location,
+		let traceRetryAttempt = (signal: AbortSignal) => {
+			attempt++
+			return retryAttemptCh.tracePromise(() => fetchEndpoints(signal), {
+				attempt,
+				database: this.database,
 			})
-		)
+		}
 
-		this.#safeHook('onDiscovery', () =>
-			this.options.hooks?.onDiscovery?.({
-				added,
-				removed,
-				duration: performance.now() - discoveryStart,
-				endpoints,
-			})
+		let retryConfig: RetryConfig = {
+			...defaultRetryConfig,
+			signal: outerSignal,
+			onRetry: (ctx) => {
+				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
+				this.#safeHook('onDiscoveryError', () =>
+					this.options.hooks?.onDiscoveryError?.({
+						error: ctx.error,
+						attempt: ctx.attempt,
+						duration: performance.now() - discoveryStart,
+					})
+				)
+			},
+		}
+
+		await discoveryCh.tracePromise(
+			async () => {
+				let result = await retryRunCh.tracePromise(
+					() => retry(retryConfig, traceRetryAttempt),
+					{ database: this.database }
+				)
+
+				dbg.log('discovered %d endpoints: %O', result.endpoints.length, result.endpoints)
+
+				let { added, removed } = this.#pool.sync(result.endpoints)
+
+				let endpoints: EndpointInfo[] = result.endpoints.map((ep) =>
+					Object.freeze<EndpointInfo>({
+						nodeId: BigInt(ep.nodeId),
+						address: `${ep.address}:${ep.port}`,
+						location: ep.location,
+					})
+				)
+
+				this.#safeHook('onDiscovery', () =>
+					this.options.hooks?.onDiscovery?.({
+						added,
+						removed,
+						duration: performance.now() - discoveryStart,
+						endpoints,
+					})
+				)
+			},
+			{ database: this.database }
 		)
 	}
 
@@ -375,6 +400,7 @@ export class Driver implements Disposable {
 		dbg.log('closing primary connection')
 		this.#connection.close()
 		dbg.log('driver closed')
+		dcChannel('ydb:driver.closed').publish({ database: this.database })
 	}
 
 	/**
