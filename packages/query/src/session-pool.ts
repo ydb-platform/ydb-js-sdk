@@ -28,8 +28,8 @@ import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { Session } from './session.js'
 
-export const sessionAcquireCh = tracingChannel('tracing:ydb:session.acquire')
-const sessionCreateCh = tracingChannel('tracing:ydb:session.create')
+export let sessionAcquireCh = tracingChannel('tracing:ydb:session.acquire')
+let sessionCreateCh = tracingChannel('tracing:ydb:session.create')
 
 let dbg = loggers.query.extend('pool2')
 
@@ -54,7 +54,7 @@ export type SessionPoolOptions = {
 	waitQueueFactor?: number
 }
 
-const DEFAULTS = {
+let DEFAULTS = {
 	maxSize: 50,
 	waitQueueFactor: 8,
 } satisfies Required<SessionPoolOptions>
@@ -239,7 +239,7 @@ export class SessionPool implements AsyncDisposable {
 		// many concurrent creates fan out.
 		using linked = linkSignals(signal, this.#close.signal)
 
-		const createCtx = {
+		let createCtx = {
 			poolSize: this.#all.size,
 			maxSize: this.#maxSize,
 		}

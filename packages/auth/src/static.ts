@@ -8,20 +8,20 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { defaultRetryConfig, retry } from '@ydbjs/retry'
+import { linkSignals } from '@ydbjs/abortable'
 import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
-import { linkSignals } from '@ydbjs/abortable'
 
 let debug = loggers.auth.extend('static')
 
-const authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
+let authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
 
-// Token refresh strategy configuration
-const ACQUIRE_TOKEN_TIMEOUT_MS = 5_000 // 5 seconds timeout for token acquisition
-const HARD_EXPIRY_BUFFER_SECONDS = 30 // Hard limit - must refresh
-const SOFT_EXPIRY_BUFFER_SECONDS = 120 // Soft limit - start background refresh
-const BACKGROUND_REFRESH_TIMEOUT_MS = 30_000 // 30 seconds timeout for background refresh
+// Timeouts sized to typical token-service SLAs and JWT expiry windows
+let ACQUIRE_TOKEN_TIMEOUT_MS = 5_000
+let HARD_EXPIRY_BUFFER_SECONDS = 30
+let SOFT_EXPIRY_BUFFER_SECONDS = 120
+let BACKGROUND_REFRESH_TIMEOUT_MS = 30_000
 
 export type StaticCredentialsToken = {
 	value: string

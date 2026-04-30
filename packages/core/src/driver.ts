@@ -44,9 +44,9 @@ import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
 
-const discoveryCh = tracingChannel('tracing:ydb:discovery')
-const retryRunCh = tracingChannel('tracing:ydb:retry.run')
-const retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
+let discoveryCh = tracingChannel('tracing:ydb:discovery')
+let retryRunCh = tracingChannel('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
 
 export type { DriverHooks, EndpointInfo }
 
@@ -95,7 +95,7 @@ export type DriverOptions = {
 
 let dbg = loggers.driver
 
-const defaultOptions: DriverOptions = {
+let defaultOptions: DriverOptions = {
 	'ydb.sdk.ready_timeout_ms': 30_000,
 	'ydb.sdk.token_timeout_ms': 10_000,
 	'ydb.sdk.enable_discovery': true,
@@ -106,7 +106,7 @@ const defaultOptions: DriverOptions = {
 	'ydb.sdk.connection_pessimization_timeout_ms': 60_000,
 } as const satisfies DriverOptions
 
-const defaultChannelOptions: ChannelOptions = {
+let defaultChannelOptions: ChannelOptions = {
 	'grpc.primary_user_agent': `ydb-js-sdk/${pkg.version}`,
 	'grpc.secondary_user_agent': detectRuntime(),
 
@@ -129,7 +129,7 @@ if (!Promise.withResolvers) {
 	} {
 		let resolve: (value: T | PromiseLike<T>) => void
 		let reject: (reason?: any) => void
-		const promise = new Promise<T>((res, rej) => {
+		let promise = new Promise<T>((res, rej) => {
 			resolve = res
 			reject = rej
 		})
@@ -300,7 +300,7 @@ export class Driver implements Disposable {
 		let discoveryStart = performance.now()
 		let attempt = 0
 
-		const fetchEndpoints = async (signal: AbortSignal) => {
+		let fetchEndpoints = async (signal: AbortSignal) => {
 			let client = (this.#discoveryClient ??= createClientFactory()
 				.use(this.#middleware)
 				.create(DiscoveryServiceDefinition, this.#connection.channel))
@@ -318,7 +318,7 @@ export class Driver implements Disposable {
 			return res
 		}
 
-		const traceRetryAttempt = (signal: AbortSignal) => {
+		let traceRetryAttempt = (signal: AbortSignal) => {
 			attempt++
 			return retryAttemptCh.tracePromise(() => fetchEndpoints(signal), {
 				attempt,
@@ -326,7 +326,7 @@ export class Driver implements Disposable {
 			})
 		}
 
-		const retryConfig: RetryConfig = {
+		let retryConfig: RetryConfig = {
 			...defaultRetryConfig,
 			signal: outerSignal,
 			onRetry: (ctx) => {

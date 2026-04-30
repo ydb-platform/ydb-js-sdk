@@ -1,7 +1,7 @@
-import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
-import { connectivityState } from '@grpc/grpc-js'
 import { channel as dcChannel } from 'node:diagnostics_channel'
 
+import { connectivityState } from '@grpc/grpc-js'
+import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
 import { loggers } from '@ydbjs/debug'
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
 

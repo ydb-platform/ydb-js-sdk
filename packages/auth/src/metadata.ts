@@ -5,7 +5,7 @@ import { type RetryConfig, retry } from '@ydbjs/retry'
 import { backoff } from '@ydbjs/retry/strategy'
 import { CredentialsProvider } from './index.js'
 
-const authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
+let authTokenFetchCh = tracingChannel('tracing:ydb:auth.token.fetch')
 
 let dbg = loggers.auth.extend('metadata')
 

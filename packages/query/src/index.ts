@@ -14,9 +14,9 @@ import { ctx } from './ctx.js'
 import { UnsafeString, identifier, unsafe, yql } from './yql.js'
 import { SessionPool, type SessionPoolOptions, sessionAcquireCh } from './session-pool.js'
 
-const transactionCh = tracingChannel('tracing:ydb:query.transaction')
-const retryRunCh = tracingChannel('tracing:ydb:retry.run')
-const retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
+let transactionCh = tracingChannel('tracing:ydb:query.transaction')
+let retryRunCh = tracingChannel('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
 
 let dbg = loggers.query
 
@@ -98,7 +98,7 @@ export interface QueryClient extends SQL, AsyncDisposable {
 	unsafe(value: string | { toString(): string }): UnsafeString
 }
 
-const doImpl = function <T = unknown>(): Promise<T> {
+let doImpl = function <T = unknown>(): Promise<T> {
 	throw new Error('Not implemented')
 }
 
@@ -188,12 +188,12 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		let sessionDiedLastAttempt = false
 		let attempt = 0
 
-		const acquireSession = (signal: AbortSignal) =>
+		let acquireSession = (signal: AbortSignal) =>
 			sessionAcquireCh.tracePromise(() => sessionPool.acquire(signal), {
 				kind: 'transaction',
 			})
 
-		const runAttempt = async (retrySignal: AbortSignal) => {
+		let runAttempt = async (retrySignal: AbortSignal) => {
 			dbg.log('acquiring session from pool for transaction')
 			using sessionLease = await acquireSession(retrySignal)
 			dbg.log('session %s acquired for transaction', sessionLease.id)
@@ -328,7 +328,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 			}
 		}
 
-		const retryConfig = {
+		let retryConfig = {
 			...defaultRetryConfig,
 			signal: options.signal,
 			// Caller's flag flows through the retry layer unchanged and
@@ -352,7 +352,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 			},
 		}
 
-		const traceRetryAttempt = (retrySignal: AbortSignal) => {
+		let traceRetryAttempt = (retrySignal: AbortSignal) => {
 			attempt++
 			return retryAttemptCh.tracePromise(() => runAttempt(retrySignal), {
 				attempt,

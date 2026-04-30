@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
+import { linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	ExecMode,
@@ -28,12 +29,11 @@ import { typeToString } from '@ydbjs/value/print'
 import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
-import { linkSignals } from '@ydbjs/abortable'
 import { type SessionPool, sessionAcquireCh } from './session-pool.js'
 
-const retryRunCh = tracingChannel('tracing:ydb:retry.run')
-const retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
-const executeQueryCh = tracingChannel('tracing:ydb:query.execute')
+let retryRunCh = tracingChannel('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel('tracing:ydb:retry.attempt')
+let executeQueryCh = tracingChannel('tracing:ydb:query.execute')
 
 let dbg = loggers.query
 
@@ -170,18 +170,18 @@ export class Query<T extends any[] = unknown[]>
 
 		let attempt = 0
 
-		const acquireSession = (signal: AbortSignal) =>
+		let acquireSession = (signal: AbortSignal) =>
 			sessionAcquireCh.tracePromise(() => this.#sessionPool.acquire(signal), {
 				kind: 'query',
 			})
 
-		const tracedAttempt = (retrySignal: AbortSignal) =>
+		let tracedAttempt = (retrySignal: AbortSignal) =>
 			executeQueryCh.tracePromise(() => runAttempt(retrySignal), {
 				text: this.text,
 				idempotent: this.#idempotent,
 			})
 
-		const runAttempt = async (retrySignal: AbortSignal) => {
+		let runAttempt = async (retrySignal: AbortSignal) => {
 			// Transaction-owned session stays pinned; out-of-transaction
 			// attempts always get a fresh lease — no cross-attempt reuse.
 			using sessionLease = txSessionId ? undefined : await acquireSession(retrySignal)
@@ -301,7 +301,7 @@ export class Query<T extends any[] = unknown[]>
 			}
 		}
 
-		const traceRetryAttempt = (retrySignal: AbortSignal) => {
+		let traceRetryAttempt = (retrySignal: AbortSignal) => {
 			attempt++
 			return retryAttemptCh.tracePromise(() => tracedAttempt(retrySignal), {
 				attempt,
