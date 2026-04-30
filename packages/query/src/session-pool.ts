@@ -239,7 +239,10 @@ export class SessionPool implements AsyncDisposable {
 		// many concurrent creates fan out.
 		using linked = linkSignals(signal, this.#close.signal)
 
-		const createCtx = {}
+		const createCtx = {
+			poolSize: this.#all.size,
+			maxSize: this.#maxSize,
+		}
 		let promise = sessionCreateCh.tracePromise(
 			() => Session.open(this.#driver, linked.signal),
 			createCtx
