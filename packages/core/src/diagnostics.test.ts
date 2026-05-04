@@ -124,6 +124,20 @@ test('publishes ydb:pool.connection.pessimized with deadline when pessimize() is
 	expect(p.until).toBeGreaterThanOrEqual(before + 60_000)
 })
 
+test('does not re-publish ydb:pool.connection.pessimized when pessimize() refreshes an already-pessimized conn', () => {
+	using pool = makePool({ pessimizationTimeout: 60_000 })
+	pool.sync([makeProtoEndpoint(20)])
+	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
+
+	using pessimized = collect('ydb:pool.connection.pessimized')
+
+	pool.pessimize(conn!) // active → pessimized: fires
+	pool.pessimize(conn!) // already pessimized: timeout refresh, must not fire
+	pool.pessimize(conn!)
+
+	expect(pessimized.payloads).toHaveLength(1)
+})
+
 test('publishes ydb:pool.connection.unpessimized after the pessimization timeout elapses', async () => {
 	// 1ms timeout + a small wait so `until < Date.now()` holds inside
 	// #refreshPessimized when acquire() runs.
@@ -360,6 +374,70 @@ test('traces tracing:ydb:discovery start and asyncEnd around a successful round'
 	expect(trace.asyncEnd.length).toBeGreaterThanOrEqual(1)
 	expect(trace.error).toHaveLength(0)
 	expect(trace.start[0]?.ctx).toMatchObject({ database: '/local' })
+})
+
+test('close() during in-flight initial discovery suppresses ydb:driver.ready / .failed', async () => {
+	// Discovery server that hangs forever — the only way out is the per-round
+	// timeout (driver close should kick in first).
+	let release: () => void = () => {}
+	let server = createServer()
+	let port = 0
+	server.add(
+		{
+			listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+			whoAmI: DiscoveryServiceDefinition.whoAmI,
+		},
+		{
+			async listEndpoints() {
+				await new Promise<void>((r) => (release = r))
+				let result = create(ListEndpointsResultSchema, {
+					endpoints: [
+						create(EndpointInfoSchema, {
+							nodeId: 1,
+							address: '127.0.0.1',
+							port,
+							location: 'dc1',
+						}),
+					],
+				})
+				return {
+					operation: {
+						status: StatusIds_StatusCode.SUCCESS,
+						ready: true,
+						result: anyPack(ListEndpointsResultSchema, result),
+					},
+				} as any
+			},
+			async whoAmI() {
+				return {} as any
+			},
+		}
+	)
+	port = await server.listen('127.0.0.1:0')
+
+	using ready = collect('ydb:driver.ready')
+	using failed = collect('ydb:driver.failed')
+	using closed = collect('ydb:driver.closed')
+
+	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.discovery_timeout_ms': 5_000,
+		'ydb.sdk.ready_timeout_ms': 5_000,
+	})
+
+	// Give the RPC time to land on the server.
+	await new Promise((r) => setTimeout(r, 50))
+	driver.close()
+
+	// Let the listEndpoints handler resolve so the (now-cancelled) discovery
+	// callbacks have a chance to run #markReady on a closed driver.
+	release()
+	await new Promise((r) => setTimeout(r, 50))
+
+	expect(closed.payloads).toHaveLength(1)
+	expect(ready.payloads).toHaveLength(0)
+	expect(failed.payloads).toHaveLength(0)
+
+	await server.shutdown()
 })
 
 test('traces tracing:ydb:discovery error when listEndpoints fails', async () => {

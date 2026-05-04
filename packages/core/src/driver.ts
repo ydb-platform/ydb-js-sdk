@@ -161,6 +161,9 @@ export class Driver implements Disposable {
 
 	#discoveryClient!: Client<typeof DiscoveryServiceDefinition>
 	#rediscoverTimer?: NodeJS.Timeout
+	// Aborted by close(); links into discovery signals so in-flight rounds
+	// stop ASAP and don't publish ready/failed after driver.closed.
+	#shutdown = new AbortController()
 
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
 
@@ -173,6 +176,10 @@ export class Driver implements Disposable {
 		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, userOptions)
 
 		this.#initAt = performance.now()
+
+		// close() rejects #ready to unblock awaiters; silence unhandled
+		// rejection when no one observes the promise.
+		this.#ready.promise.catch(() => {})
 
 		this.cs = this.#parseConnectionString(connectionString)
 		this.options = this.#mergeOptions(userOptions)
@@ -264,6 +271,13 @@ export class Driver implements Disposable {
 
 		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
 		dbg.log('closing driver (uptime %d ms)', uptime)
+
+		// Cancel any in-flight discovery so its callbacks bail out instead of
+		// publishing `ydb:driver.ready` / `ydb:driver.failed` after this point.
+		this.#shutdown.abort(new Error('driver closed'))
+		// Unblock anyone waiting on ready() — markReady/markFailed are now
+		// guarded by #closed and won't settle the latch.
+		this.#ready.reject(new Error('driver closed'))
 
 		if (this.#rediscoverTimer) {
 			clearInterval(this.#rediscoverTimer)
@@ -381,20 +395,30 @@ export class Driver implements Disposable {
 
 		dbg.log('discovery enabled, initial timeout %d ms, interval %d ms', timeout, interval)
 
-		this.#discovery(AbortSignal.timeout(timeout)).then(
+		this.#discovery(this.#discoverySignal(timeout)).then(
 			() => this.#markReady(),
 			(error) => this.#markFailed(error)
 		)
 
 		this.#rediscoverTimer = setInterval(() => {
-			void this.#discovery(AbortSignal.timeout(timeout))
+			if (this.#closed) return
+			void this.#discovery(this.#discoverySignal(timeout))
 		}, interval)
 
 		// Don't keep the process alive solely for rediscovery.
 		this.#rediscoverTimer.unref()
 	}
 
+	#discoverySignal(timeoutMs: number): AbortSignal {
+		// AbortSignal.any: closes when either the per-round timeout fires or
+		// the driver shuts down — whichever comes first.
+		return AbortSignal.any([this.#shutdown.signal, AbortSignal.timeout(timeoutMs)])
+	}
+
 	#markReady(): void {
+		// Discovery resolved after close() — drop the event so subscribers don't
+		// see `ready` after `closed`. ready() already rejected via shutdown signal.
+		if (this.#closed) return
 		this.#readyAt = performance.now()
 		let duration = this.#readyAt - this.#initAt
 		dbg.log('driver ready in %d ms', duration)
@@ -403,6 +427,8 @@ export class Driver implements Disposable {
 	}
 
 	#markFailed(error: unknown): void {
+		// Same reason as #markReady — don't publish failure after `closed`.
+		if (this.#closed) return
 		let duration = performance.now() - this.#initAt
 		dbg.log('driver init failed after %d ms: %O', duration, error)
 		this.#ready.reject(error)

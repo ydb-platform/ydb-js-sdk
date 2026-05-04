@@ -134,21 +134,28 @@ export class ConnectionPool implements Disposable {
 		}
 
 		// Don't double-pessimize — refresh the timestamp if already pessimized
+		let wasPessimized = this.#pessimized.has(conn)
 		let until = Date.now() + this.options.pessimizationTimeout
 		this.#pessimized.set(conn, until)
 
 		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
 
-		dc('ydb:pool.connection.pessimized').publish({
-			nodeId: conn.endpoint.nodeId,
-			address: conn.endpoint.address,
-			location: conn.endpoint.location,
-			until,
-		})
+		// Only fire on the active→pessimized transition. Re-pessimize of an
+		// already-pessimized connection is a timeout refresh, not a state
+		// change — subscribers reconstructing pool state from delta events
+		// must not see it as a fresh transition.
+		if (!wasPessimized) {
+			dc('ydb:pool.connection.pessimized').publish({
+				nodeId: conn.endpoint.nodeId,
+				address: conn.endpoint.address,
+				location: conn.endpoint.location,
+				until,
+			})
 
-		this.#safeHook('onPessimize', () => {
-			this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
-		})
+			this.#safeHook('onPessimize', () => {
+				this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
+			})
+		}
 	}
 
 	/**
