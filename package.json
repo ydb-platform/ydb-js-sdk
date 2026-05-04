@@ -26,10 +26,8 @@
 		"publish": "npx changeset publish",
 		"prepare": "git config core.hooksPath scripts/hooks"
 	},
-	"dependencies": {
-		"@types/node": "^25.5.0"
-	},
 	"devDependencies": {
+		"@types/node": "^25.6.0",
 		"@vitest/coverage-v8": "^4.1.5",
 		"@vitest/ui": "^4.1.5",
 		"oxfmt": "^0.46.0",
