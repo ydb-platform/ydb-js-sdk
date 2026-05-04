@@ -1,11 +1,27 @@
-import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
-import { connectivityState } from '@grpc/grpc-js'
+import { channel as dc } from 'node:diagnostics_channel'
 
+import { connectivityState } from '@grpc/grpc-js'
+import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
 import { loggers } from '@ydbjs/debug'
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
 
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
+
+/**
+ * Reasons a connection was retired from active routing while its gRPC
+ * channel is left open to drain in-flight streams. See `#retireConnection`.
+ */
+type RetiredReason = 'stale_active' | 'stale_pessimized'
+
+/**
+ * Reasons a connection's gRPC channel was physically closed.
+ *   - 'replaced'   — discovery returned the same nodeId, channel was rebuilt.
+   - 'idle'       — idle sweep closed an unused or drained channel.
+ *   - 'pool_close' — pool itself is shutting down.
+ * See `#dropConnection`.
+ */
+type RemovedReason = 'replaced' | 'idle' | 'pool_close'
 
 export const POOL_INJECT_FOR_TESTING: unique symbol = Symbol('POOL_INJECT')
 export const POOL_GET_ACTIVE_FOR_TESTING: unique symbol = Symbol('POOL_ACTIVE')
@@ -118,9 +134,17 @@ export class ConnectionPool implements Disposable {
 		}
 
 		// Don't double-pessimize — refresh the timestamp if already pessimized
-		this.#pessimized.set(conn, Date.now() + this.options.pessimizationTimeout)
+		let until = Date.now() + this.options.pessimizationTimeout
+		this.#pessimized.set(conn, until)
 
 		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
+
+		dc('ydb:pool.connection.pessimized').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+			until,
+		})
 
 		this.#safeHook('onPessimize', () => {
 			this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
@@ -145,7 +169,8 @@ export class ConnectionPool implements Disposable {
 			}
 
 			let old = this.#connections.splice(i, 1)[0]!
-			old.close()
+			this.#acquired.delete(old)
+			this.#dropConnection(old, 'replaced')
 			dbg.log('replaced active connection to node %d', nodeId)
 		}
 
@@ -156,7 +181,8 @@ export class ConnectionPool implements Disposable {
 			}
 
 			this.#pessimized.delete(conn)
-			conn.close()
+			this.#acquired.delete(conn)
+			this.#dropConnection(conn, 'replaced')
 			dbg.log('replaced pessimized connection to node %d', nodeId)
 		}
 
@@ -167,7 +193,7 @@ export class ConnectionPool implements Disposable {
 			}
 
 			this.#retired.delete(conn)
-			conn.close()
+			this.#dropConnection(conn, 'replaced')
 			dbg.log('replaced retired connection to node %d', nodeId)
 		}
 
@@ -185,6 +211,12 @@ export class ConnectionPool implements Disposable {
 			conn.endpoint.address,
 			this.#connections.length
 		)
+
+		dc('ydb:pool.connection.added').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+		})
 	}
 
 	/**
@@ -216,9 +248,8 @@ export class ConnectionPool implements Disposable {
 
 			this.#connections.splice(i, 1)
 			this.#acquired.delete(conn)
-			this.#retired.add(conn)
+			this.#retireConnection(conn, 'stale_active')
 			removed.push(conn.endpoint)
-			dbg.log('removed stale active node %d from routing', conn.endpoint.nodeId)
 		}
 
 		// Remove stale endpoints from pessimized map.
@@ -230,9 +261,8 @@ export class ConnectionPool implements Disposable {
 
 			this.#pessimized.delete(conn)
 			this.#acquired.delete(conn)
-			this.#retired.add(conn)
+			this.#retireConnection(conn, 'stale_pessimized')
 			removed.push(conn.endpoint)
-			dbg.log('removed stale pessimized node %d from routing', conn.endpoint.nodeId)
 		}
 
 		// Determine which endpoints in the discovery response are genuinely new
@@ -312,15 +342,15 @@ export class ConnectionPool implements Disposable {
 		}
 
 		for (let conn of this.#connections) {
-			conn.close()
+			this.#dropConnection(conn, 'pool_close')
 		}
 
 		for (let conn of this.#pessimized.keys()) {
-			conn.close()
+			this.#dropConnection(conn, 'pool_close')
 		}
 
 		for (let conn of this.#retired) {
-			conn.close()
+			this.#dropConnection(conn, 'pool_close')
 		}
 
 		this.#connections.length = 0
@@ -367,6 +397,13 @@ export class ConnectionPool implements Disposable {
 					conn.endpoint.nodeId,
 					conn.endpoint.address
 				)
+
+				dc('ydb:pool.connection.unpessimized').publish({
+					nodeId: conn.endpoint.nodeId,
+					address: conn.endpoint.address,
+					location: conn.endpoint.location,
+					pessimizedDuration: this.options.pessimizationTimeout - (until - now),
+				})
 
 				this.#safeHook('onUnpessimize', () => {
 					this.options.hooks?.onUnpessimize?.({ endpoint: conn.endpoint })
@@ -425,9 +462,7 @@ export class ConnectionPool implements Disposable {
 
 			if (idleStates.includes(state)) {
 				this.#retired.delete(conn)
-				conn.close()
-
-				dbg.log('closed retired connection to node %d', conn.endpoint.nodeId)
+				this.#dropConnection(conn, 'idle')
 			}
 		}
 
@@ -441,8 +476,7 @@ export class ConnectionPool implements Disposable {
 				if (state !== connectivityState.READY) {
 					this.#connections.splice(i, 1)
 					this.#acquired.delete(conn)
-					conn.close()
-					dbg.log('closed idle active connection to node %d', conn.endpoint.nodeId)
+					this.#dropConnection(conn, 'idle')
 				}
 			}
 		}
@@ -460,6 +494,51 @@ export class ConnectionPool implements Disposable {
 		} catch (error) {
 			dbg.log('hook %s threw an error (swallowed): %O', name, error)
 		}
+	}
+
+	/**
+	 * Move a connection to the retired set. The gRPC channel stays open so
+	 * in-flight streams can drain; the idle sweep closes it later. Caller
+	 * removes the connection from `#connections` / `#pessimized` first.
+	 */
+	#retireConnection(conn: Connection, reason: RetiredReason): void {
+		this.#retired.add(conn)
+
+		dbg.log(
+			'retired node %d address %s (reason: %s)',
+			conn.endpoint.nodeId,
+			conn.endpoint.address,
+			reason
+		)
+
+		dc('ydb:pool.connection.retired').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+			reason,
+		})
+	}
+
+	/**
+	 * Close a connection's gRPC channel. Caller removes the connection from
+	 * any container (active list, pessimized map, retired set) first.
+	 */
+	#dropConnection(conn: Connection, reason: RemovedReason): void {
+		conn.close()
+
+		dbg.log(
+			'closed node %d address %s (reason: %s)',
+			conn.endpoint.nodeId,
+			conn.endpoint.address,
+			reason
+		)
+
+		dc('ydb:pool.connection.removed').publish({
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+			reason,
+		})
 	}
 
 	/**
