@@ -1,7 +1,13 @@
+import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { backoff } from '@ydbjs/retry/strategy'
 import { CredentialsProvider } from './index.js'
+
+let authTokenFetchCh = tracingChannel<{ provider: 'metadata' }, { provider: 'metadata' }>(
+	'tracing:ydb:auth.token.fetch'
+)
 
 let dbg = loggers.auth.extend('metadata')
 
@@ -31,6 +37,10 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	#flavor: string = 'Google'
 	#endpoint: string =
 		'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token'
+
+	// See StaticCredentialsProvider — fire `token.expired` at most once per
+	// incident; reset on every successful refresh.
+	#expiredReported = false
 
 	/**
 	 * Creates an instance of `MetadataCredentialsProvider`.
@@ -72,6 +82,12 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 			return this.#token.value
 		}
 
+		if (this.#token && this.#token.expired_at <= Date.now() && !this.#expiredReported) {
+			this.#expiredReported = true
+			let stalenessMs = Date.now() - this.#token.expired_at
+			dc('ydb:auth.token.expired').publish({ provider: 'metadata', stalenessMs })
+		}
+
 		if (this.#promise) {
 			dbg.log('token fetch already in progress, waiting for result')
 			return this.#promise
@@ -89,50 +105,62 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 			},
 		}
 
-		this.#promise = retry(retryConfig, async (signal) => {
-			dbg.log('attempting to fetch token from %s', this.#endpoint)
-			let response = await fetch(this.#endpoint, {
-				headers: {
-					'Metadata-Flavor': this.#flavor,
-				},
-				signal,
+		this.#promise = authTokenFetchCh
+			.tracePromise(
+				() => retry(retryConfig, (attemptSignal) => this.#fetchTokenAttempt(attemptSignal)),
+				{ provider: 'metadata' }
+			)
+			.catch((error) => {
+				dc('ydb:auth.provider.failed').publish({ provider: 'metadata', error })
+				throw error
+			})
+			.finally(() => {
+				this.#promise = null
 			})
 
-			dbg.log(
-				'%s %s %s',
-				this.#endpoint,
-				response.status,
-				response.headers.get('Content-Type')
-			)
+		return this.#promise
+	}
 
-			if (!response.ok) {
-				let error = new Error(
-					`Failed to fetch token: ${response.status} ${response.statusText}`
-				)
-				dbg.log('error fetching token: %O', error)
-				throw error
-			}
-
-			let token = JSON.parse(await response.text()) as {
-				access_token?: string
-				expires_in?: number
-			}
-			if (!token.access_token) {
-				dbg.log('missing access token in response, response: %O', token)
-				throw new Error('No access token exists in response')
-			}
-
-			this.#token = {
-				value: token.access_token,
-				expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
-			}
-
-			dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
-			return this.#token.value
-		}).finally(() => {
-			this.#promise = null
+	async #fetchTokenAttempt(signal: AbortSignal): Promise<string> {
+		dbg.log('attempting to fetch token from %s', this.#endpoint)
+		let response = await fetch(this.#endpoint, {
+			headers: { 'Metadata-Flavor': this.#flavor },
+			signal,
 		})
 
-		return this.#promise
+		dbg.log('%s %s %s', this.#endpoint, response.status, response.headers.get('Content-Type'))
+
+		if (!response.ok) {
+			let error = new Error(
+				`Failed to fetch token: ${response.status} ${response.statusText}`
+			)
+			dbg.log('error fetching token: %O', error)
+			throw error
+		}
+
+		let token = JSON.parse(await response.text()) as {
+			access_token?: string
+			expires_in?: number
+		}
+		if (!token.access_token) {
+			dbg.log('missing access token in response, response: %O', token)
+			throw new Error('No access token exists in response')
+		}
+
+		this.#token = {
+			value: token.access_token,
+			expired_at: Date.now() + (token.expires_in ?? 3600) * 1000,
+		}
+
+		dbg.log('token fetched successfully, expires in %d seconds', token.expires_in ?? 3600)
+
+		// Allow the next expiration incident to be reported.
+		this.#expiredReported = false
+
+		dc('ydb:auth.token.refreshed').publish({
+			provider: 'metadata',
+			expiresAt: this.#token.expired_at,
+		})
+		return this.#token.value
 	}
 }

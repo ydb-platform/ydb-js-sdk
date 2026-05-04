@@ -1,12 +1,18 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { constants, createPrivateKey, sign } from 'node:crypto'
+import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 import { CredentialsProvider } from '@ydbjs/auth'
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { type RetryStrategy, exponential, fixed } from '@ydbjs/retry/strategy'
 
 let dbg = loggers.auth.extend('yc-sa')
+
+let authTokenFetchCh = tracingChannel<
+	{ provider: 'yc-service-account' },
+	{ provider: 'yc-service-account' }
+>('tracing:ydb:auth.token.fetch')
 
 /**
  * HTTP error with status code for IAM API requests.
@@ -64,6 +70,10 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	#token: IamToken | null = null
 	#promise: Promise<string> | null = null
 	#iamEndpoint: string = 'https://iam.api.cloud.yandex.net/iam/v1/tokens'
+
+	// Fire `token.expired` at most once per incident; reset on every successful
+	// refresh. Mirrors the per-incident semantics of @ydbjs/auth providers.
+	#expiredReported = false
 
 	/**
 	 * Creates an instance of ServiceAccountCredentialsProvider.
@@ -183,62 +193,83 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
+		if (this.#token && this.#token.expires_at <= now && !this.#expiredReported) {
+			this.#expiredReported = true
+			dc('ydb:auth.token.expired').publish({
+				provider: 'yc-service-account',
+				stalenessMs: now - this.#token.expires_at,
+			})
+		}
+
 		dbg.log('fetching new IAM token (token expired or force=true, key ID: %s)', this.#key.id)
 
-		this.#promise = (async (): Promise<string> => {
-			try {
-				this.#token = await this.#fetchIamToken(signal)
-				dbg.log(
-					'IAM token fetched successfully, expires at %s (key ID: %s)',
-					new Date(this.#token.expires_at).toISOString(),
-					this.#key.id
-				)
-				return this.#token.value
-			} finally {
-				this.#promise = null
-			}
-		})()
+		this.#promise = this.#refreshOnce(signal).finally(() => {
+			this.#promise = null
+		})
 
 		return this.#promise
 	}
 
 	/**
-	 * Refreshes token in background without blocking.
-	 * Does nothing if refresh is already in progress.
+	 * Refresh the token in the background without blocking the caller.
+	 * Reuses the same refresh path as `getToken(force)` so blocking and
+	 * opportunistic refreshes behave identically from the caller's point
+	 * of view.
 	 */
 	#refreshTokenInBackground(signal?: AbortSignal): void {
 		if (this.#promise) {
 			return
 		}
 
-		// Track promise to prevent duplicate refreshes, but don't await it (non-blocking)
 		let refreshPromise: Promise<string> | null = null
-		refreshPromise = (async (): Promise<string> => {
-			try {
-				this.#token = await this.#fetchIamToken(signal)
-				dbg.log(
-					'background IAM token refresh successful, expires at %s (key ID: %s)',
-					new Date(this.#token.expires_at).toISOString(),
-					this.#key.id
-				)
-				return this.#token.value
-			} catch (error) {
-				// Don't throw - failed background refresh will retry on next getToken call
-				// Return existing token if available to avoid breaking ongoing requests
+		refreshPromise = this.#refreshOnce(signal)
+			.catch((error) => {
+				// Don't throw — failed background refresh will retry on next
+				// getToken call. Return the existing token to avoid breaking
+				// ongoing requests; if there's nothing cached, propagate.
 				dbg.log('background IAM token refresh failed: %O (key ID: %s)', error, this.#key.id)
-				if (this.#token) {
-					return this.#token.value
-				}
+				if (this.#token) return this.#token.value
 				throw error
-			} finally {
-				// Check promise reference to avoid clearing if another refresh started (race condition)
+			})
+			.finally(() => {
 				if (this.#promise === refreshPromise) {
 					this.#promise = null
 				}
-			}
-		})()
+			})
 
 		this.#promise = refreshPromise
+	}
+
+	/**
+	 * Performs one IAM-token exchange against Yandex Cloud and updates the
+	 * cached token. Used by both blocking and background refresh.
+	 */
+	async #refreshOnce(signal?: AbortSignal): Promise<string> {
+		try {
+			return await authTokenFetchCh.tracePromise(
+				async (): Promise<string> => {
+					this.#token = await this.#fetchIamToken(signal)
+					dbg.log(
+						'IAM token fetched successfully, expires at %s (key ID: %s)',
+						new Date(this.#token.expires_at).toISOString(),
+						this.#key.id
+					)
+					this.#expiredReported = false
+					dc('ydb:auth.token.refreshed').publish({
+						provider: 'yc-service-account',
+						expiresAt: this.#token.expires_at,
+					})
+					return this.#token.value
+				},
+				{ provider: 'yc-service-account' }
+			)
+		} catch (error) {
+			dc('ydb:auth.provider.failed').publish({
+				provider: 'yc-service-account',
+				error,
+			})
+			throw error
+		}
 	}
 
 	/**

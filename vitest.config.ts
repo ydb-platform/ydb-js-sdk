@@ -11,10 +11,13 @@ export default defineConfig({
 						label: 'uni',
 						color: 'yellow',
 					},
-					include: ['packages/*/src/**/*.test.ts'],
+					include: ['packages/*/src/**/*.test.ts', 'third-parties/*/src/**/*.test.ts'],
 					environment: 'node',
 					benchmark: {
-						include: ['packages/*/src/**/*.bench.ts'],
+						include: [
+							'packages/*/src/**/*.bench.ts',
+							'third-parties/*/src/**/*.bench.ts',
+						],
 					},
 				},
 			},

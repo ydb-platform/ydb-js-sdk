@@ -164,6 +164,72 @@ You do not need to manually set headers; the SDK handles this for you.
 
 ---
 
+## Observability via `node:diagnostics_channel`
+
+`@ydbjs/auth` publishes events to [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) so external subscribers (`@ydbjs/telemetry`, OpenTelemetry, custom loggers) can build traces and metrics for token lifecycle without coupling the SDK to a specific telemetry stack.
+
+### Channels
+
+| Channel                        | Type    | Payload                                                                             |
+| ------------------------------ | ------- | ----------------------------------------------------------------------------------- |
+| `tracing:ydb:auth.token.fetch` | tracing | `{ provider: string }` — wraps the full token fetch (with retries)                  |
+| `ydb:auth.token.refreshed`     | publish | `{ provider: string, expiresAt: number }` — unix milliseconds                       |
+| `ydb:auth.token.expired`       | publish | `{ provider: string, stalenessMs: number }` — fires once per incident, not per call |
+| `ydb:auth.provider.failed`     | publish | `{ provider: string, error: unknown }` — fires after all retries are exhausted      |
+
+### `provider` values
+
+The `provider` field is an open, extensible string set. Built-in values published
+by SDK packages:
+
+- `'static'` — `StaticCredentialsProvider` (username/password → JWT via Auth API)
+- `'metadata'` — `MetadataCredentialsProvider` (cloud metadata service)
+- `'yc-service-account'` — `ServiceAccountCredentialsProvider` from `@ydbjs/auth-yandex-cloud`
+
+Third-party `CredentialsProvider` implementations are expected to mint their own
+stable, namespaced provider id and document it. Subscribers should not assume the
+set is exhaustive — prefer label-based metric attributes over hard-coded switches
+over provider names.
+
+### Per-incident `token.expired` semantics
+
+`ydb:auth.token.expired` fires **once** per expiration incident, even if many concurrent calls observe the same expired cached token. The flag is reset on every successful refresh, so the next expiration produces a new event. This makes the channel suitable as a counter for "token went stale" incidents rather than "calls hit a stale cache".
+
+### Subscribing
+
+```ts
+import { channel, tracingChannel } from 'node:diagnostics_channel'
+
+tracingChannel('tracing:ydb:auth.token.fetch').subscribe({
+  start(ctx) {
+    span.start({ name: 'auth.token.fetch', attributes: { 'auth.provider': ctx.provider } })
+  },
+  asyncEnd() {
+    span.end()
+  },
+  error(ctx) {
+    span.recordException(ctx.error)
+    span.end()
+  },
+})
+
+channel('ydb:auth.token.expired').subscribe((msg) => {
+  metrics.tokenExpired.add(1, { provider: msg.provider })
+})
+```
+
+Retry-loop spans are emitted from `@ydbjs/retry` automatically (`tracing:ydb:retry.run`, `tracing:ydb:retry.attempt`, `ydb:retry.exhausted`) and nest correctly under the `auth.token.fetch` span via `AsyncLocalStorage` propagation.
+
+### ⚠️ Subscribers must be safe
+
+**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy subscriber can break a `getToken()` call. `@ydbjs/auth` does **not** wrap your subscribers; wrap them yourself in `try/catch`.
+
+### Stability
+
+Channel names, payload field names, and the `provider` enum follow semantic versioning. Adding new optional fields or new enum values is a minor change; renaming or removing fields is a major change.
+
+---
+
 ## License
 
 This project is licensed under the [Apache 2.0 License](../../LICENSE).
