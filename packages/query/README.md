@@ -185,6 +185,9 @@ Security note: identifier() only quotes the name and escapes backticks. Do not p
 | ------------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
 | `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation, stage }` — one `ExecuteQuery` RPC           |
 | `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop |
+| `tracing:ydb:query.begin`       | tracing | `{ sessionId, nodeId, isolation }` — one `BeginTransaction` RPC                                |
+| `tracing:ydb:query.commit`      | tracing | `{ sessionId, nodeId, txId }` — one `CommitTransaction` RPC                                    |
+| `tracing:ydb:query.rollback`    | tracing | `{ sessionId, nodeId, txId }` — one `RollbackTransaction` RPC (fire-and-forget)                |
 
 `stage` is `'standalone'` for single-shot queries, `'tx'` for queries inside a transaction body, and `'do'` reserved for the future `sql.do(...)` runner.
 
@@ -208,12 +211,14 @@ ydb.query.transaction
 └─ ydb.retry.run
    ├─ ydb.retry.attempt #1
    │  ├─ ydb.session.acquire
-   │  ├─ ydb.query.execute  (BEGIN)
-   │  ├─ ydb.query.execute  (SELECT ...)
-   │  └─ ydb.query.execute  (COMMIT)
+   │  ├─ ydb.query.begin
+   │  ├─ ydb.query.execute   (SELECT ...)
+   │  └─ ydb.query.commit            ← or ydb.query.rollback on body throw
    └─ ydb.retry.attempt #2
       ...
 ```
+
+`query.begin` / `query.commit` / `query.rollback` each wrap exactly one server RPC. Use them for "begin/commit/rollback latency" and "rollback rate" metrics; `query.execute` is reserved for `ExecuteQuery` only. Rollback is fire-and-forget — its `start` always fires, but `asyncEnd` may land after the surrounding `query.transaction.error`.
 
 ### Subscribing
 

@@ -1,4 +1,5 @@
 import { expect, inject, test } from 'vitest'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { Driver } from '@ydbjs/core'
 import { fromJs } from '@ydbjs/value'
@@ -7,6 +8,31 @@ import { Uint64, Uint64Type } from '@ydbjs/value/primitive'
 
 import { query } from '../src/index.js'
 import { SessionBusyError } from '../src/session.js'
+
+function collectTrace(name: string): {
+	start: object[]
+	asyncEnd: object[]
+	error: (object & { error: unknown })[]
+} & Disposable {
+	let ch = tracingChannel(name)
+	let start: object[] = []
+	let asyncEnd: object[] = []
+	let error: (object & { error: unknown })[] = []
+	let handlers = {
+		start: (ctx: any) => start.push({ ...ctx }),
+		asyncEnd: (ctx: any) => asyncEnd.push({ ...ctx }),
+		error: (ctx: any) => error.push({ ...ctx }),
+	}
+	ch.subscribe(handlers as any)
+	return {
+		start,
+		asyncEnd,
+		error,
+		[Symbol.dispose]() {
+			ch.unsubscribe(handlers as any)
+		},
+	}
+}
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -398,4 +424,50 @@ test('rejects parallel statements inside a single transaction with SessionBusyEr
 
 	expect(caught).toBeInstanceOf(Error)
 	expect((caught as Error).cause).toBeInstanceOf(SessionBusyError)
+})
+
+test('emits tracing:ydb:query.begin and query.commit on a successful transaction', async () => {
+	await using sql = query(driver)
+
+	using begin = collectTrace('tracing:ydb:query.begin')
+	using commit = collectTrace('tracing:ydb:query.commit')
+
+	await sql.begin(async (tx) => {
+		await tx`SELECT 1 AS a`
+	})
+
+	expect(begin.start).toHaveLength(1)
+	expect(begin.asyncEnd).toHaveLength(1)
+	expect(begin.error).toHaveLength(0)
+	expect(begin.start[0]).toMatchObject({ isolation: 'serializableReadWrite' })
+
+	expect(commit.start).toHaveLength(1)
+	expect(commit.asyncEnd).toHaveLength(1)
+	expect(commit.error).toHaveLength(0)
+	let cstart = commit.start[0] as any
+	expect(typeof cstart.sessionId).toBe('string')
+	expect(typeof cstart.txId).toBe('string')
+})
+
+test('emits tracing:ydb:query.rollback when the transaction body throws', async () => {
+	await using sql = query(driver)
+
+	using rollback = collectTrace('tracing:ydb:query.rollback')
+
+	await expect(
+		sql.begin(async (tx) => {
+			await tx`SELECT 1`
+			throw new Error('boom')
+		})
+	).rejects.toThrow(/Transaction failed|boom/)
+
+	// rollback is fire-and-forget; give the RPC a moment to settle so its
+	// asyncEnd lands before we assert.
+	await new Promise((r) => setTimeout(r, 50))
+
+	expect(rollback.start.length).toBeGreaterThanOrEqual(1)
+	expect(rollback.start[0]).toMatchObject({})
+	let rstart = rollback.start[0] as any
+	expect(typeof rstart.sessionId).toBe('string')
+	expect(typeof rstart.txId).toBe('string')
 })
