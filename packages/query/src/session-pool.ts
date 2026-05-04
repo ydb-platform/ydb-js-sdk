@@ -21,10 +21,28 @@
  *     hot session serving N queries would accumulate N listeners.
  */
 
+import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+
 import { linkSignals } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { Session } from './session.js'
+
+/** Reasons a session left the pool. See `ydb:session.closed`. */
+type SessionClosedReason = 'evicted' | 'pool_close'
+
+/** Call-site classifier for `tracing:ydb:session.acquire`. */
+type SessionAcquireKind = 'query' | 'transaction'
+
+export let sessionAcquireCh = tracingChannel<
+	{ kind: SessionAcquireKind },
+	{ kind: SessionAcquireKind }
+>('tracing:ydb:session.acquire')
+
+let sessionCreateCh = tracingChannel<
+	{ liveSessions: number; maxSize: number; creating: number },
+	{ liveSessions: number; maxSize: number; creating: number }
+>('tracing:ydb:session.create')
 
 let dbg = loggers.query.extend('pool2')
 
@@ -49,7 +67,7 @@ export type SessionPoolOptions = {
 	waitQueueFactor?: number
 }
 
-const DEFAULTS = {
+let DEFAULTS = {
 	maxSize: 50,
 	waitQueueFactor: 8,
 } satisfies Required<SessionPoolOptions>
@@ -121,6 +139,12 @@ export class SessionPool implements AsyncDisposable {
 	#creates = new Set<Promise<unknown>>()
 	#close = new AbortController()
 
+	// Per-session metadata used by `ydb:session.closed`. Held weakly so a
+	// session removed from #all without going through #publishClosed (defence
+	// in depth) doesn't keep its createdAt entry alive.
+	#createdAt = new WeakMap<Session, number>()
+	#evictionHandlers = new WeakMap<Session, () => void>()
+
 	constructor(driver: Driver, options: SessionPoolOptions = {}) {
 		this.#driver = driver
 		this.#maxSize = options.maxSize ?? DEFAULTS.maxSize
@@ -149,14 +173,18 @@ export class SessionPool implements AsyncDisposable {
 
 	release(session: Session): void {
 		// Session died while someone was using it. The eviction listener
-		// already popped it from #all; `close()` fires DeleteSession in the
-		// background.
+		// already popped it from #all and published `closed{evicted}`; just
+		// fire DeleteSession in the background.
 		if (!session.alive || !this.#all.has(session)) {
 			session.close()
 			return
 		}
 
 		if (this.closed) {
+			// Pool was closed between acquire() and release(); already-tracked
+			// sessions get a `pool_close` event so subscribers see one event
+			// per session lifecycle regardless of timing.
+			this.#publishClosed(session, 'pool_close')
 			this.#all.delete(session)
 			session.close()
 			return
@@ -195,7 +223,13 @@ export class SessionPool implements AsyncDisposable {
 		this.#all.clear()
 		this.#available.length = 0
 		// close() is sync + fire-and-forget — no need to await each RPC.
-		for (let s of sessions) s.close()
+		// Detach the eviction listener BEFORE close() so we don't double-fire
+		// `closed{evicted}` for sessions that the pool itself is tearing down.
+		for (let s of sessions) {
+			this.#detachEviction(s)
+			this.#publishClosed(s, 'pool_close')
+			s.close()
+		}
 		dbg.log('pool closed (%d sessions)', sessions.length)
 	}
 
@@ -230,7 +264,16 @@ export class SessionPool implements AsyncDisposable {
 		// close) when the block exits — no accumulation on #close.signal as
 		// many concurrent creates fan out.
 		using linked = linkSignals(signal, this.#close.signal)
-		let promise = Session.open(this.#driver, linked.signal)
+
+		let createCtx = {
+			liveSessions: this.#all.size,
+			maxSize: this.#maxSize,
+			creating: this.#creates.size,
+		}
+		let promise = sessionCreateCh.tracePromise(
+			() => Session.open(this.#driver, linked.signal),
+			createCtx
+		)
 		this.#creates.add(promise)
 
 		try {
@@ -243,7 +286,12 @@ export class SessionPool implements AsyncDisposable {
 			}
 
 			this.#all.add(session)
+			this.#createdAt.set(session, Date.now())
 			this.#bindEviction(session)
+			dc('ydb:session.created').publish({
+				sessionId: session.id,
+				nodeId: session.nodeId,
+			})
 			return session
 		} finally {
 			this.#creates.delete(promise)
@@ -251,17 +299,42 @@ export class SessionPool implements AsyncDisposable {
 	}
 
 	#bindEviction(session: Session): void {
-		session.signal.addEventListener(
-			'abort',
-			() => {
-				this.#all.delete(session)
-				let idx = this.#available.indexOf(session)
-				if (idx !== -1) this.#available.splice(idx, 1)
-				dbg.log('evicted session %s', session.id)
-				this.#pumpWaitersAfterEviction()
-			},
-			{ once: true }
-		)
+		let handler = () => {
+			this.#evictionHandlers.delete(session)
+			this.#all.delete(session)
+			let idx = this.#available.indexOf(session)
+			if (idx !== -1) this.#available.splice(idx, 1)
+			dbg.log('evicted session %s', session.id)
+			this.#publishClosed(session, 'evicted')
+			this.#pumpWaitersAfterEviction()
+		}
+		this.#evictionHandlers.set(session, handler)
+		session.signal.addEventListener('abort', handler, { once: true })
+	}
+
+	/**
+	 * Detach the eviction listener bound by #bindEviction. Used by close()
+	 * to avoid a double `closed` event when the pool itself tears down a
+	 * session (which abort() would otherwise reflect back through the
+	 * eviction listener).
+	 */
+	#detachEviction(session: Session): void {
+		let handler = this.#evictionHandlers.get(session)
+		if (!handler) return
+		this.#evictionHandlers.delete(session)
+		session.signal.removeEventListener('abort', handler)
+	}
+
+	#publishClosed(session: Session, reason: SessionClosedReason): void {
+		let createdAt = this.#createdAt.get(session)
+		let uptime = createdAt ? Date.now() - createdAt : 0
+		this.#createdAt.delete(session)
+		dc('ydb:session.closed').publish({
+			sessionId: session.id,
+			nodeId: session.nodeId,
+			reason,
+			uptime,
+		})
 	}
 
 	/**

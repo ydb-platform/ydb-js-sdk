@@ -6,6 +6,7 @@ import { Optional } from '@ydbjs/value/optional'
 import { Uint64, Uint64Type } from '@ydbjs/value/primitive'
 
 import { query } from '../src/index.js'
+import { SessionBusyError } from '../src/session.js'
 
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,
@@ -277,70 +278,6 @@ test('executes transaction with multiple queries', async () => {
 	`)
 })
 
-test('executes parallel transactions and queries', async () => {
-	await using sql = query(driver)
-
-	let results = await Promise.all([
-		sql.begin(async (tx) => {
-			return await Promise.all([tx`SELECT 1 AS id`, tx`SELECT 2 AS id`, tx`SELECT 3 AS id`])
-		}),
-		sql.begin(async (tx) => {
-			return await Promise.all([tx`SELECT 4 AS id`, tx`SELECT 5 AS id`, tx`SELECT 6 AS id`])
-		}),
-	])
-
-	expect(results).toMatchInlineSnapshot(`
-		[
-		  [
-		    [
-		      [
-		        {
-		          "id": 1,
-		        },
-		      ],
-		    ],
-		    [
-		      [
-		        {
-		          "id": 2,
-		        },
-		      ],
-		    ],
-		    [
-		      [
-		        {
-		          "id": 3,
-		        },
-		      ],
-		    ],
-		  ],
-		  [
-		    [
-		      [
-		        {
-		          "id": 4,
-		        },
-		      ],
-		    ],
-		    [
-		      [
-		        {
-		          "id": 5,
-		        },
-		      ],
-		    ],
-		    [
-		      [
-		        {
-		          "id": 6,
-		        },
-		      ],
-		    ],
-		  ],
-		]
-	`)
-})
-
 test('works with custom session pool size', async () => {
 	await using sql = query(driver, { poolOptions: { maxSize: 2 } })
 
@@ -441,4 +378,24 @@ test('handles multiple concurrent transactions', async () => {
 	expect(results[0]).toEqual([[[{ id: 1 }]], [[{ id: 2 }]]])
 	expect(results[1]).toEqual([[[{ id: 3 }]], [[{ id: 4 }]]])
 	expect(results[2]).toEqual([[[{ id: 5 }]], [[{ id: 6 }]]])
+})
+
+test('rejects parallel statements inside a single transaction with SessionBusyError', async () => {
+	await using sql = query(driver)
+
+	// Two `tx` calls without `await` between them — same session, parallel.
+	// YDB sessions are single-threaded; the SDK must surface this eagerly.
+	// The tx runner wraps the body's error into `Error('Transaction failed.',
+	// { cause })`, so we assert against the cause chain.
+	let caught: unknown
+	try {
+		await sql.begin(async (tx) => {
+			return await Promise.all([tx`SELECT 1 AS a`, tx`SELECT 2 AS b`])
+		})
+	} catch (err) {
+		caught = err
+	}
+
+	expect(caught).toBeInstanceOf(Error)
+	expect((caught as Error).cause).toBeInstanceOf(SessionBusyError)
 })

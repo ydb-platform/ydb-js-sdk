@@ -12,7 +12,7 @@ import {
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 
-import { Session } from './session.ts'
+import { Session, SessionBusyError } from './session.ts'
 import { SessionLease, SessionPool, SessionPoolFullError } from './session-pool.ts'
 
 /**
@@ -279,4 +279,46 @@ test('Session.open aborts the attach stream when the caller signal fires mid-wai
 		() => {}
 	)
 	expect(srv.attachCalls).toHaveLength(1)
+})
+
+test('claim() throws SessionBusyError on a second concurrent caller', async () => {
+	srv = await startQueryServer()
+	let session = await Session.open(srv.driver)
+
+	let first = session.claim()
+	try {
+		expect(() => session.claim()).toThrow(SessionBusyError)
+	} finally {
+		first[Symbol.dispose]()
+		session.close()
+	}
+})
+
+test('claim() releases on dispose so the next caller succeeds', async () => {
+	srv = await startQueryServer()
+	let session = await Session.open(srv.driver)
+
+	{
+		using _ = session.claim()
+		// scope holds the slot
+	}
+
+	// previous claim disposed — a fresh claim must succeed
+	let again = session.claim()
+	again[Symbol.dispose]()
+	session.close()
+})
+
+test('claim() dispose is idempotent', async () => {
+	srv = await startQueryServer()
+	let session = await Session.open(srv.driver)
+
+	let held = session.claim()
+	held[Symbol.dispose]()
+	held[Symbol.dispose]() // second dispose is a no-op
+
+	// the slot must still be free
+	let again = session.claim()
+	again[Symbol.dispose]()
+	session.close()
 })

@@ -30,6 +30,24 @@ export class SessionAbortedError extends Error {
 	}
 }
 
+/**
+ * Thrown when an RPC is started against a session that already has an in-flight
+ * RPC. YDB processes RPCs on a session sequentially, so concurrent statements
+ * on the same session would otherwise block on a server-side lock.
+ */
+export class SessionBusyError extends Error {
+	readonly sessionId: string
+
+	constructor(sessionId: string) {
+		super(
+			`session ${sessionId} is already executing another RPC. ` +
+				`YDB sessions are single-threaded; await the previous statement before starting a new one.`
+		)
+		this.name = 'SessionBusyError'
+		this.sessionId = sessionId
+	}
+}
+
 export class Session {
 	readonly id: string
 	readonly nodeId: bigint
@@ -39,6 +57,10 @@ export class Session {
 	#life = new AbortController()
 	#attach = new AbortController()
 	#closing = false
+	// In-flight RPCs on this session. YDB sessions are single-threaded, so
+	// this counter must never exceed 1. `claim()` throws SessionBusyError on
+	// the second concurrent caller.
+	#inflight = 0
 
 	private constructor(driver: Driver, id: string, nodeId: bigint) {
 		this.#driver = driver
@@ -53,6 +75,27 @@ export class Session {
 
 	get alive(): boolean {
 		return !this.#life.signal.aborted
+	}
+
+	/**
+	 * Mark the session as serving an RPC. Throws SessionBusyError if another
+	 * RPC is already in flight on this session. The returned `Disposable`
+	 * releases the slot on dispose; pair every `claim()` with `using` or an
+	 * explicit dispose.
+	 */
+	claim(): Disposable {
+		if (this.#inflight > 0) {
+			throw new SessionBusyError(this.id)
+		}
+		this.#inflight++
+		let released = false
+		return {
+			[Symbol.dispose]: () => {
+				if (released) return
+				released = true
+				this.#inflight = Math.max(0, this.#inflight - 1)
+			},
+		}
 	}
 
 	/**

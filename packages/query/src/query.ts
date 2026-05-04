@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -28,7 +29,29 @@ import type { Metadata } from 'nice-grpc'
 
 import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'
-import type { SessionPool } from './session-pool.js'
+import { type SessionPool, sessionAcquireCh } from './session-pool.js'
+
+/**
+ * Where this query was issued from. Lets subscribers split latency by
+ * shape:
+ *   - 'standalone' — single-shot `sql\`...\`` outside any transaction.
+ *   - 'tx'         — inside a `sql.begin()` / `sql.transaction()` body.
+ *   - 'do'         — reserved for the future `sql.do(...)` runner.
+ */
+type QueryStage = 'standalone' | 'tx' | 'do'
+
+type QueryExecuteContext = {
+	text: string
+	sessionId: string
+	nodeId: bigint
+	idempotent: boolean
+	isolation: string
+	stage: QueryStage
+}
+
+let executeQueryCh = tracingChannel<QueryExecuteContext, QueryExecuteContext>(
+	'tracing:ydb:query.execute'
+)
 
 let dbg = loggers.query
 
@@ -110,14 +133,12 @@ export class Query<T extends any[] = unknown[]>
 
 	async #execute(): Promise<ArrayifyTuple<T>> {
 		let store = ctx.getStore() || {}
-		// `txSessionId` / `txNodeId` are set only when we run inside a
-		// transaction — the transaction body owns the session. Outside a
-		// transaction they stay undefined and every retry attempt grabs a
-		// fresh lease from the pool. Treating these as closure-local (vs
-		// mutating them per attempt) prevents a released session from being
-		// reused across retries by a different caller.
-		let txSessionId = store.sessionId
-		let txNodeId = store.nodeId
+		// `txSession` is set only when we run inside a transaction — the tx
+		// body owns the session. Outside a transaction it stays undefined and
+		// every retry attempt grabs a fresh lease from the pool. Treating
+		// this as closure-local (vs mutating per attempt) prevents a released
+		// session from being reused across retries by a different caller.
+		let txSession = store.session
 		let transactionId = store.transactionId
 		let txSignal = store.signal
 
@@ -169,18 +190,33 @@ export class Query<T extends any[] = unknown[]>
 
 		await this.#driver.ready(linkedSignal.signal)
 
-		this.#promise = retry(retryConfig, async (retrySignal) => {
+		let stage: QueryStage = txSession ? 'tx' : 'standalone'
+
+		let runAttempt = async (retrySignal: AbortSignal) => {
 			// Transaction-owned session stays pinned; out-of-transaction
 			// attempts always get a fresh lease — no cross-attempt reuse.
-			using sessionLease = txSessionId
+			using sessionLease = txSession
 				? undefined
-				: await this.#sessionPool.acquire(retrySignal)
-			let attemptSessionId = txSessionId ?? sessionLease!.id
-			let attemptNodeId = txNodeId ?? sessionLease!.nodeId
+				: await sessionAcquireCh.tracePromise(
+						() => this.#sessionPool.acquire(retrySignal),
+						{ kind: 'query' }
+					)
+			let session = txSession ?? sessionLease!.session
+			let attemptSessionId = session.id
+			let attemptNodeId = session.nodeId
+
+			// Single-threaded session guard. YDB processes RPCs on a session
+			// sequentially, so concurrent statements on the same session
+			// (e.g. `Promise.all([tx`a`, tx`b`])`) hang on a server-side lock
+			// and confuse retry semantics. `claim()` throws SessionBusyError
+			// (non-retryable) and is released on scope exit via `using`.
+			using _claim = session.claim()
 
 			// linkSignals cleans up listeners on dispose — no accumulation
-			// on the long-lived session signal across many queries.
-			using linked = linkSignals(retrySignal, sessionLease?.signal)
+			// on the long-lived session signal across many queries. We link to
+			// `session.signal` directly: in a tx body there's no lease (the tx
+			// owns the session), so the lease-mirrored signal isn't available.
+			using linked = linkSignals(retrySignal, session.signal)
 			let signal = linked.signal
 
 			if (sessionLease) {
@@ -223,87 +259,109 @@ export class Query<T extends any[] = unknown[]>
 				})
 			}
 
-			let stream = client.executeQuery(
-				{
-					sessionId: attemptSessionId,
-					execMode: ExecMode.EXECUTE,
-					query: {
-						case: 'queryContent',
-						value: {
-							syntax: this.#syntax,
-							text: this.text,
-						},
-					},
-					parameters,
-					statsMode: this.#statsMode,
-					...(this.#poolId && { poolId: this.#poolId }),
-					...(txControl && { txControl }),
-				},
-				{
-					signal,
-					onTrailer: (trailer) => {
-						this.emit('metadata', trailer)
-					},
-				}
-			)
-
-			let results = [] as ArrayifyTuple<T>
-
-			try {
-				for await (let part of stream) {
-					signal.throwIfAborted()
-
-					if (part.status !== StatusIds_StatusCode.SUCCESS) {
-						dbg.log('query part failed, status: %d', part.status)
-						throw new YDBError(part.status, part.issues)
-					}
-
-					if (part.execStats) {
-						dbg.log('received query stats')
-						this.#stats = part.execStats
-					}
-
-					if (!part.resultSet) {
-						continue
-					}
-
-					while (part.resultSetIndex >= results.length) {
-						results.push([])
-					}
-
-					for (let i = 0; i < part.resultSet.rows.length; i++) {
-						let result: any = this.#values ? [] : {}
-
-						for (let j = 0; j < part.resultSet.columns.length; j++) {
-							let column = part.resultSet.columns[j]!
-							let value = part.resultSet.rows[i]!.items[j]!
-
-							if (this.#values) {
-								result.push(this.#raw ? value : toJs(fromYdb(value, column.type!)))
-								continue
-							}
-
-							result[column.name] = this.#raw
-								? value
-								: toJs(fromYdb(value, column.type!))
-						}
-
-						results[Number(part.resultSetIndex)]!.push(result)
-					}
-				}
-			} catch (err) {
-				// Record whether this attempt failed because the session died.
-				// The retry callback uses this to decide — together with the
-				// idempotent flag — whether to retry against a fresh session.
-				if (sessionLease?.signal.aborted) {
-					sessionDiedLastAttempt = true
-				}
-				throw err
+			let executeCtx: QueryExecuteContext = {
+				text: this.text,
+				sessionId: attemptSessionId,
+				nodeId: attemptNodeId,
+				idempotent: this.#idempotent,
+				isolation: this.#isolation,
+				stage,
 			}
 
-			dbg.log('query executed successfully')
-			return results
-		})
+			return await executeQueryCh.tracePromise(async () => {
+				let stream = client.executeQuery(
+					{
+						sessionId: attemptSessionId,
+						execMode: ExecMode.EXECUTE,
+						query: {
+							case: 'queryContent',
+							value: {
+								syntax: this.#syntax,
+								text: this.text,
+							},
+						},
+						parameters,
+						statsMode: this.#statsMode,
+						...(this.#poolId && { poolId: this.#poolId }),
+						...(txControl && { txControl }),
+					},
+					{
+						signal,
+						onTrailer: (trailer) => {
+							this.emit('metadata', trailer)
+						},
+					}
+				)
+
+				let results = [] as ArrayifyTuple<T>
+
+				try {
+					for await (let part of stream) {
+						signal.throwIfAborted()
+
+						if (part.status !== StatusIds_StatusCode.SUCCESS) {
+							dbg.log('query part failed, status: %d', part.status)
+							throw new YDBError(part.status, part.issues)
+						}
+
+						if (part.execStats) {
+							dbg.log('received query stats')
+							this.#stats = part.execStats
+						}
+
+						if (!part.resultSet) {
+							continue
+						}
+
+						while (part.resultSetIndex >= results.length) {
+							results.push([])
+						}
+
+						for (let i = 0; i < part.resultSet.rows.length; i++) {
+							let result: any = this.#values ? [] : {}
+
+							for (let j = 0; j < part.resultSet.columns.length; j++) {
+								let column = part.resultSet.columns[j]!
+								let value = part.resultSet.rows[i]!.items[j]!
+
+								if (this.#values) {
+									result.push(
+										this.#raw ? value : toJs(fromYdb(value, column.type!))
+									)
+									continue
+								}
+
+								result[column.name] = this.#raw
+									? value
+									: toJs(fromYdb(value, column.type!))
+							}
+
+							results[Number(part.resultSetIndex)]!.push(result)
+						}
+					}
+				} catch (err) {
+					// Record whether this attempt failed because the session died.
+					// The retry callback uses this to decide — together with the
+					// idempotent flag — whether to retry against a fresh session.
+					if (session.signal.aborted) {
+						sessionDiedLastAttempt = true
+					}
+					throw err
+				}
+
+				dbg.log('query executed successfully')
+				return results
+			}, executeCtx)
+		}
+
+		// Inside a transaction body, the txn callback (`sql.begin()`) owns the
+		// retry loop — retrying a single statement against the same
+		// `transactionId` after a server-side abort cannot recover the
+		// transaction. Skip the retry wrapper entirely; the tx retries the
+		// whole body if it needs to.
+		this.#promise = (
+			txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt)
+		)
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)
