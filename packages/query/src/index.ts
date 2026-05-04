@@ -29,6 +29,13 @@ let transactionCh = tracingChannel<TransactionContext, TransactionContext>(
 	'tracing:ydb:query.transaction'
 )
 
+type TxBeginContext = { sessionId: string; nodeId: bigint; isolation: string }
+type TxControlContext = { sessionId: string; nodeId: bigint; txId: string }
+
+let txBeginCh = tracingChannel<TxBeginContext, TxBeginContext>('tracing:ydb:query.begin')
+let txCommitCh = tracingChannel<TxControlContext, TxControlContext>('tracing:ydb:query.commit')
+let txRollbackCh = tracingChannel<TxControlContext, TxControlContext>('tracing:ydb:query.rollback')
+
 let dbg = loggers.query
 
 export type QueryOptions = {
@@ -226,14 +233,18 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 
 			let client = driver.createClient(QueryServiceDefinition, session.nodeId)
 
-			let beginTransactionResult = await client.beginTransaction(
-				{
-					sessionId: session.id,
-					txSettings: {
-						txMode: { case: options.isolation!, value: {} },
-					},
-				},
-				{ signal }
+			let beginTransactionResult = await txBeginCh.tracePromise(
+				() =>
+					client.beginTransaction(
+						{
+							sessionId: session.id,
+							txSettings: {
+								txMode: { case: options.isolation!, value: {} },
+							},
+						},
+						{ signal }
+					),
+				{ sessionId: session.id, nodeId: session.nodeId, isolation: options.isolation! }
 			)
 			if (beginTransactionResult.status !== StatusIds_StatusCode.SUCCESS) {
 				dbg.log('failed to begin transaction, status: %d', beginTransactionResult.status)
@@ -280,12 +291,21 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 				)
 
 				dbg.log('committing transaction')
-				let commitResult = await client.commitTransaction(
+				let txId = attemptStore.transactionId!
+				let commitResult = await txCommitCh.tracePromise(
+					() =>
+						client.commitTransaction(
+							{
+								sessionId: session.id,
+								txId,
+							},
+							{ signal }
+						),
 					{
 						sessionId: session.id,
-						txId: attemptStore.transactionId,
-					},
-					{ signal }
+						nodeId: session.nodeId,
+						txId,
+					}
 				)
 				if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
 					dbg.log('failed to commit transaction, status: %d', commitResult.status)
@@ -317,11 +337,23 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					})
 				)
 
-				client
-					.rollbackTransaction({
-						sessionId: session.id,
-						txId: attemptStore.transactionId,
-					})
+				// Fire-and-forget rollback. tracePromise sees the underlying
+				// promise (so `error` sub-channel fires on failure); the outer
+				// `.catch` keeps the rejection from becoming unhandled here.
+				let rollbackTxId = attemptStore.transactionId!
+				txRollbackCh
+					.tracePromise(
+						() =>
+							client.rollbackTransaction({
+								sessionId: session.id,
+								txId: rollbackTxId,
+							}),
+						{
+							sessionId: session.id,
+							nodeId: session.nodeId,
+							txId: rollbackTxId,
+						}
+					)
 					.catch(() => {})
 
 				if (!isRetryableError(error, idempotent)) {
