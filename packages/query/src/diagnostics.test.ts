@@ -190,6 +190,28 @@ test('publishes ydb:session.closed with reason=pool_close once per session on po
 	}
 })
 
+test('release of a checked-out session after pool.close() fires ydb:session.closed exactly once', async () => {
+	srv = await startServer()
+	pool = new SessionPool(srv.driver, { maxSize: 1 })
+
+	// Hold the session — do not release it before close().
+	let lease = await pool.acquire()
+
+	using closed = collect('ydb:session.closed')
+
+	// Race: pool.close() flips this.closed and awaits in-flight creates.
+	// While that promise pends, drop the lease so release() takes the
+	// closed-pool branch, which calls session.close() and would re-fire
+	// `evicted` through the eviction listener if it were still attached.
+	let closing = pool.close()
+	lease[Symbol.dispose]()
+	await closing
+	pool = undefined
+
+	expect(closed.payloads).toHaveLength(1)
+	expect(closed.payloads[0]).toMatchObject({ reason: 'pool_close' })
+})
+
 test('traces tracing:ydb:session.create with liveSessions/maxSize/creating context', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })

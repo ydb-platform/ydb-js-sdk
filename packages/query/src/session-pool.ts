@@ -183,7 +183,10 @@ export class SessionPool implements AsyncDisposable {
 		if (this.closed) {
 			// Pool was closed between acquire() and release(); already-tracked
 			// sessions get a `pool_close` event so subscribers see one event
-			// per session lifecycle regardless of timing.
+			// per session lifecycle regardless of timing. Detach the eviction
+			// listener first — session.close() aborts the signal, which would
+			// otherwise re-fire `closed{evicted}` for the same session.
+			this.#detachEviction(session)
 			this.#publishClosed(session, 'pool_close')
 			this.#all.delete(session)
 			session.close()
