@@ -190,6 +190,66 @@ await retry(
 )
 ```
 
+## Observability via `node:diagnostics_channel`
+
+`@ydbjs/retry` publishes events to [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) so external subscribers (`@ydbjs/telemetry`, OpenTelemetry, custom loggers) can build traces and metrics for retry behaviour without the caller knowing anything about them.
+
+Every code path that uses `retry()` — driver discovery, query execution, transactions, auth token refresh — inherits these channels automatically.
+
+### Channels
+
+| Channel                     | Type    | Payload                                                                             |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `tracing:ydb:retry.run`     | tracing | `{ idempotent: boolean }` — whole retry loop                                        |
+| `tracing:ydb:retry.attempt` | tracing | `{ attempt: number, idempotent: boolean }` — a single attempt (including the first) |
+| `ydb:retry.exhausted`       | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — see below       |
+
+`retry.attempt` is published once per attempt starting from `attempt: 1`. The corresponding `error` sub-channel of `tracing:ydb:retry.attempt` fires for failed attempts that will be retried; the final attempt's failure is also visible on `tracing:ydb:retry.run`'s `error` sub-channel.
+
+`ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the loop exits via `AbortError` or `TimeoutError`: those are rethrown immediately as caller-driven cancellations. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
+
+### Subscribing
+
+```ts
+import { channel, tracingChannel } from 'node:diagnostics_channel'
+
+tracingChannel('tracing:ydb:retry.run').subscribe({
+  start(ctx) {
+    // ctx.idempotent
+  },
+  asyncEnd() {
+    /* success */
+  },
+  error(ctx) {
+    /* ctx.error is the final failure */
+  },
+})
+
+channel('ydb:retry.exhausted').subscribe((msg) => {
+  alert.budgetExhausted.add(1, { attempts: msg.attempts })
+})
+```
+
+### ⚠️ Subscribers must be safe
+
+**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy retry subscriber can break the very operation it observes. `@ydbjs/retry` does **not** wrap subscribers; wrap them yourself:
+
+```ts
+tracingChannel('tracing:ydb:retry.attempt').subscribe({
+  start(ctx) {
+    try {
+      span.startChild({ name: 'retry.attempt', attributes: { attempt: ctx.attempt } })
+    } catch (err) {
+      console.error('telemetry subscriber failed', err)
+    }
+  },
+})
+```
+
+### Stability
+
+Channel names and payload field names follow semantic versioning. Adding new optional fields is a minor change; renaming or removing fields is a major change. Treat the channel surface as a public API.
+
 ## Development
 
 To build the package:
