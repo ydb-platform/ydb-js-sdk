@@ -1,4 +1,5 @@
 import * as tls from 'node:tls'
+import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { type ChannelOptions, credentials } from '@grpc/grpc-js'
@@ -6,13 +7,17 @@ import { AuthServiceDefinition, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { defaultRetryConfig, retry } from '@ydbjs/retry'
+import { type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
+import { linkSignals } from '@ydbjs/abortable'
 import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
-import { linkSignals } from '@ydbjs/abortable'
 
 let debug = loggers.auth.extend('static')
+
+let authTokenFetchCh = tracingChannel<{ provider: 'static' }, { provider: 'static' }>(
+	'tracing:ydb:auth.token.fetch'
+)
 
 // Token refresh strategy configuration
 const ACQUIRE_TOKEN_TIMEOUT_MS = 5_000 // 5 seconds timeout for token acquisition
@@ -47,6 +52,11 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 	#token: StaticCredentialsToken | undefined = undefined
 	#promise: Promise<string> | undefined = undefined
 	#backgroundRefreshPromise: Promise<void> | undefined = undefined
+
+	// Tracks whether the current token has already triggered a `token.expired`
+	// event so concurrent getToken() calls don't fan out into N events for the
+	// same incident. Reset on every successful refresh.
+	#expiredReported = false
 
 	constructor(
 		{ username, password }: StaticCredentials,
@@ -131,6 +141,25 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			return this.#promise
 		}
 
+		// Fire `token.expired` at most once per incident: only the first caller
+		// who observes the cached token past its hard buffer publishes; the next
+		// successful refresh resets the flag for the new token.
+		if (
+			this.#token &&
+			this.#token.exp <= currentTimeSeconds + HARD_EXPIRY_BUFFER_SECONDS &&
+			!this.#expiredReported
+		) {
+			this.#expiredReported = true
+			// `stalenessMs` measures how long we've been past the hard buffer
+			// (== exp + buffer). Negative values mean we're still inside the
+			// buffer but planning a forced refresh — normalize to 0.
+			let stalenessMs = Math.max(
+				0,
+				Date.now() - (this.#token.exp - HARD_EXPIRY_BUFFER_SECONDS) * 1000
+			)
+			dc('ydb:auth.token.expired').publish({ provider: 'static', stalenessMs })
+		}
+
 		debug.log(
 			'fetching new token (force=%s, expired=%s)',
 			force,
@@ -161,81 +190,94 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 	 * @returns the new token value
 	 */
 	async #refreshToken(signal: AbortSignal): Promise<string> {
-		this.#promise = retry(
-			{
-				...defaultRetryConfig,
-				signal,
-				idempotent: true,
-				onRetry: (ctx) => {
-					debug.log('retry attempt #%d after error: %s', ctx.attempt, ctx.error)
-				},
+		let retryConfig = {
+			...defaultRetryConfig,
+			signal,
+			idempotent: true,
+			onRetry: (ctx: RetryContext) => {
+				debug.log('retry attempt #%d after error: %s', ctx.attempt, ctx.error)
 			},
-			async (signal) => {
-				debug.log('attempting login with user: %s', this.#username)
+		}
 
-				let response = await this.#client.login(
-					{ user: this.#username, password: this.#password },
-					{ signal }
-				)
-				if (!response.operation) {
-					throw new ClientError(
-						AuthServiceDefinition.login.path,
-						Status.UNKNOWN,
-						'No operation in response'
-					)
-				}
-
-				if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
-					throw new YDBError(response.operation.status, response.operation.issues)
-				}
-
-				let result = anyUnpack(response.operation.result!, LoginResultSchema)
-				if (!result) {
-					throw new ClientError(
-						AuthServiceDefinition.login.path,
-						Status.UNKNOWN,
-						'No result in operation'
-					)
-				}
-
-				debug.log('login successful, parsing JWT token')
-
-				// The result.token is a JWT in the format header.payload.signature.
-				// We attempt to decode the payload to extract token metadata (aud, exp, iat, sub).
-				// If the token is not in the expected format, we fallback to default values.
-				let [header, payload, signature] = result.token.split('.')
-				if (header && payload && signature) {
-					let decodedPayload = JSON.parse(Buffer.from(payload, 'base64').toString())
-
-					this.#token = {
-						value: result.token,
-						...decodedPayload,
-					}
-					debug.log(
-						'token parsed successfully, expires at %s',
-						new Date(decodedPayload.exp * 1000).toISOString()
-					)
-				} else {
-					debug.log('token not in JWT format, using fallback metadata')
-					this.#token = {
-						value: result.token,
-						aud: [],
-						exp: Math.floor(Date.now() / 1000) + 5 * 60, // fallback: 5 minutes from now
-						iat: Math.floor(Date.now() / 1000),
-						sub: '',
-					}
-					debug.log(
-						'token created with fallback expiry: %s',
-						new Date(this.#token.exp * 1000).toISOString()
-					)
-				}
-
-				return this.#token!.value!
-			}
-		).finally(() => {
-			this.#promise = undefined
-		})
+		this.#promise = authTokenFetchCh
+			.tracePromise(
+				() => retry(retryConfig, (attemptSignal) => this.#loginAttempt(attemptSignal)),
+				{ provider: 'static' }
+			)
+			.catch((error) => {
+				dc('ydb:auth.provider.failed').publish({ provider: 'static', error })
+				throw error
+			})
+			.finally(() => {
+				this.#promise = undefined
+			})
 
 		return this.#promise
+	}
+
+	async #loginAttempt(signal: AbortSignal): Promise<string> {
+		debug.log('attempting login with user: %s', this.#username)
+
+		let response = await this.#client.login(
+			{ user: this.#username, password: this.#password },
+			{ signal }
+		)
+		if (!response.operation) {
+			throw new ClientError(
+				AuthServiceDefinition.login.path,
+				Status.UNKNOWN,
+				'No operation in response'
+			)
+		}
+
+		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
+			throw new YDBError(response.operation.status, response.operation.issues)
+		}
+
+		let result = anyUnpack(response.operation.result!, LoginResultSchema)
+		if (!result) {
+			throw new ClientError(
+				AuthServiceDefinition.login.path,
+				Status.UNKNOWN,
+				'No result in operation'
+			)
+		}
+
+		debug.log('login successful, parsing JWT token')
+
+		// The result.token is a JWT in the format header.payload.signature.
+		// We attempt to decode the payload to extract token metadata (aud, exp, iat, sub).
+		// If the token is not in the expected format, we fallback to default values.
+		let [header, payload, signature] = result.token.split('.')
+		if (header && payload && signature) {
+			let decodedPayload = JSON.parse(Buffer.from(payload, 'base64').toString())
+			this.#token = { value: result.token, ...decodedPayload }
+			debug.log(
+				'token parsed successfully, expires at %s',
+				new Date(decodedPayload.exp * 1000).toISOString()
+			)
+		} else {
+			debug.log('token not in JWT format, using fallback metadata')
+			this.#token = {
+				value: result.token,
+				aud: [],
+				exp: Math.floor(Date.now() / 1000) + 5 * 60, // fallback: 5 minutes from now
+				iat: Math.floor(Date.now() / 1000),
+				sub: '',
+			}
+			debug.log(
+				'token created with fallback expiry: %s',
+				new Date(this.#token.exp * 1000).toISOString()
+			)
+		}
+
+		// Allow the next expiration incident to be reported.
+		this.#expiredReported = false
+
+		dc('ydb:auth.token.refreshed').publish({
+			provider: 'static',
+			expiresAt: this.#token!.exp * 1000,
+		})
+		return this.#token!.value!
 	}
 }

@@ -99,6 +99,19 @@ Required fields:
 3. **Token Caching**: Caches the IAM token and automatically refreshes it before expiration (5 minute safety margin)
 4. **YDB Authentication**: Uses the IAM token as `x-ydb-auth-ticket` header for YDB requests
 
+## Observability
+
+This provider participates in the unified `node:diagnostics_channel` surface defined by `@ydbjs/auth`. Every token fetch publishes:
+
+- `tracing:ydb:auth.token.fetch` — span around `getToken()` (context: `{ provider: 'yc-service-account' }`).
+- `ydb:auth.token.refreshed` — fires after a successful IAM token exchange (`{ provider, expiresAt }`, unix ms).
+- `ydb:auth.token.expired` — fires once per incident when the cached token is observed past its expiry.
+- `ydb:auth.provider.failed` — fires when all retries are exhausted.
+
+Retry attempts inside the IAM exchange are also visible on `tracing:ydb:retry.run` / `tracing:ydb:retry.attempt` from `@ydbjs/retry`.
+
+See [`@ydbjs/auth` README](../../packages/auth/README.md#observability-via-nodediagnostics_channel) for the full channel contract, subscriber example, and the safety warning (subscribers run synchronously and must not throw).
+
 ## Security
 
 - Never commit authorized key files to version control
