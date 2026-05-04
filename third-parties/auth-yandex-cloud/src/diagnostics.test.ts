@@ -121,6 +121,50 @@ test('publishes ydb:auth.token.refreshed with expiresAt for yc-service-account',
 	expect(p.expiresAt).toBeGreaterThanOrEqual(before + 60_000)
 })
 
+test('opportunistic background refresh emits the same tracing/publish events as a forced refresh', async () => {
+	// First getToken populates the cache with a near-expiry token (within
+	// the 5-minute refresh window) so the next getToken returns immediately
+	// and triggers #refreshTokenInBackground.
+	mockOkResponse(4 * 60 * 1000)
+	let provider = new ServiceAccountCredentialsProvider(mockKey)
+	await provider.getToken(true)
+
+	using fetchTrace = collectTrace('tracing:ydb:auth.token.fetch')
+	using refreshed = collect('ydb:auth.token.refreshed')
+
+	mockOkResponse(60 * 60 * 1000) // background refresh returns a fresh token
+
+	await provider.getToken() // returns cached, kicks off background refresh
+
+	// Drain microtasks/timers so the background fetch settles before assert.
+	await new Promise((r) => setTimeout(r, 50))
+
+	expect(fetchTrace.start.length).toBeGreaterThanOrEqual(1)
+	expect(fetchTrace.asyncEnd.length).toBeGreaterThanOrEqual(1)
+	expect(fetchTrace.error).toHaveLength(0)
+	expect(fetchTrace.start[0]).toMatchObject({ provider: 'yc-service-account' })
+	expect(refreshed.payloads.length).toBeGreaterThanOrEqual(1)
+})
+
+test('failed background refresh publishes ydb:auth.provider.failed without breaking the cached token', async () => {
+	mockOkResponse(4 * 60 * 1000)
+	let provider = new ServiceAccountCredentialsProvider(mockKey)
+	let cached = await provider.getToken(true)
+
+	using failed = collect('ydb:auth.provider.failed')
+
+	// Background fetch fails — provider must still return the cached token.
+	global.fetch = vi.fn(async () => new Response('forbidden', { status: 403 }))
+
+	let token = await provider.getToken()
+	expect(token).toBe(cached)
+
+	await new Promise((r) => setTimeout(r, 50))
+
+	expect(failed.payloads.length).toBeGreaterThanOrEqual(1)
+	expect(failed.payloads[0]).toMatchObject({ provider: 'yc-service-account' })
+})
+
 test('publishes ydb:auth.provider.failed when IAM API rejects the JWT', async () => {
 	global.fetch = vi.fn(async () => new Response('forbidden', { status: 403 }))
 	using failed = collect('ydb:auth.provider.failed')

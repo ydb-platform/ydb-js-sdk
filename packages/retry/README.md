@@ -204,7 +204,7 @@ Every code path that uses `retry()` — driver discovery, query execution, trans
 | `tracing:ydb:retry.attempt` | tracing | `{ attempt: number, idempotent: boolean }` — a single attempt (including the first) |
 | `ydb:retry.exhausted`       | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — see below       |
 
-`retry.attempt` is published once per attempt starting from `attempt: 1`. The corresponding `error` sub-channel of `tracing:ydb:retry.attempt` fires for failed attempts that will be retried; the final attempt's failure is also visible on `tracing:ydb:retry.run`'s `error` sub-channel.
+`retry.attempt` is published once per attempt starting from `attempt: 1`. Because `tracingChannel.tracePromise` wraps every attempt, `tracing:ydb:retry.attempt.error` fires for **every** failed attempt — both the ones that will be retried and the final one that exits the loop. The final attempt's failure additionally surfaces on `tracing:ydb:retry.run.error`.
 
 `ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the loop exits via `AbortError` or `TimeoutError`: those are rethrown immediately as caller-driven cancellations. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
 

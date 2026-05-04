@@ -226,7 +226,7 @@ Retry-loop spans are emitted from `@ydbjs/retry` automatically (`tracing:ydb:ret
 
 ### Stability
 
-Channel names, payload field names, and the `provider` enum follow semantic versioning. Adding new optional fields or new enum values is a minor change; renaming or removing fields is a major change.
+Channel names and payload field names follow semantic versioning. The `provider` field is an **open string set** (custom `CredentialsProvider` implementations may contribute new values), so subscribers should treat it as a label — adding new providers is a minor change. Renaming or removing channels or fields is a major change.
 
 ---
 
