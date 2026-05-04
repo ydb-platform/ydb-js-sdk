@@ -173,6 +173,89 @@ await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 
 Security note: identifier() only quotes the name and escapes backticks. Do not pass untrusted input without validation/allow‑listing.
 
+## Observability via `node:diagnostics_channel`
+
+`@ydbjs/query` publishes events on [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) so external subscribers (`@ydbjs/telemetry`, OpenTelemetry, custom loggers) can build traces, metrics, and logs without coupling the SDK to a specific telemetry stack.
+
+### Channels
+
+#### Query execution
+
+| Channel                         | Type    | Payload                                                                                        |
+| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation, stage }` — one `ExecuteQuery` RPC           |
+| `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop |
+
+`stage` is `'standalone'` for single-shot queries, `'tx'` for queries inside a transaction body, and `'do'` reserved for the future `sql.do(...)` runner.
+
+#### Session pool
+
+| Channel                       | Type    | Payload                                                            |
+| ----------------------------- | ------- | ------------------------------------------------------------------ |
+| `tracing:ydb:session.acquire` | tracing | `{ kind: 'query' \| 'transaction' }`                               |
+| `tracing:ydb:session.create`  | tracing | `{ liveSessions, maxSize, creating }` — only when the pool grows   |
+| `ydb:session.created`         | publish | `{ sessionId, nodeId }`                                            |
+| `ydb:session.closed`          | publish | `{ sessionId, nodeId, reason: 'evicted' \| 'pool_close', uptime }` |
+
+`session.closed` fires **once** per session lifecycle. `reason` distinguishes server-side teardown (`evicted` — attach stream died, e.g. session expired or was dropped by the server) from explicit pool shutdown (`pool_close` — emitted for every session still tracked by the pool when `pool.close()` runs).
+
+### Retry hierarchy
+
+Retry-loop spans (`tracing:ydb:retry.run`, `tracing:ydb:retry.attempt`, `ydb:retry.exhausted`) come from `@ydbjs/retry` and nest correctly under `query.transaction` / `query.execute` via `AsyncLocalStorage` propagation in `tracePromise`. Subscribers see a tree like:
+
+```
+ydb.query.transaction
+└─ ydb.retry.run
+   ├─ ydb.retry.attempt #1
+   │  ├─ ydb.session.acquire
+   │  ├─ ydb.query.execute  (BEGIN)
+   │  ├─ ydb.query.execute  (SELECT ...)
+   │  └─ ydb.query.execute  (COMMIT)
+   └─ ydb.retry.attempt #2
+      ...
+```
+
+### Subscribing
+
+```ts
+import { channel, tracingChannel } from 'node:diagnostics_channel'
+
+tracingChannel('tracing:ydb:query.execute').subscribe({
+  start(ctx) {
+    span.start({
+      name: 'ydb.query.execute',
+      attributes: {
+        'db.system': 'ydb',
+        'db.statement': ctx.text,
+        'db.ydb.session_id': ctx.sessionId,
+        'db.ydb.node_id': String(ctx.nodeId),
+        'db.ydb.isolation': ctx.isolation,
+        'db.ydb.stage': ctx.stage,
+      },
+    })
+  },
+  asyncEnd() {
+    span.end()
+  },
+  error(ctx) {
+    span.recordException(ctx.error)
+    span.end()
+  },
+})
+
+channel('ydb:session.closed').subscribe((msg) => {
+  metrics.sessionLifetime.record(msg.uptime, { reason: msg.reason })
+})
+```
+
+### ⚠️ Subscribers must be safe
+
+**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy subscriber can break a query mid-flight or leak a session lease. `@ydbjs/query` does **not** wrap your subscribers; wrap them yourself in `try/catch`.
+
+### Stability
+
+Channel names, payload field names, and the `stage` / `reason` / `kind` enums follow semantic versioning. Adding new optional fields or new enum values is a minor change; renaming or removing fields is a major change.
+
 ## Development
 
 ### Building the Package
