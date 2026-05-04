@@ -1,3 +1,4 @@
+import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 import { setTimeout } from 'timers/promises'
 
 import { abortable, linkSignals } from '@ydbjs/abortable'
@@ -9,6 +10,14 @@ import { ClientError, Status } from 'nice-grpc'
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
 import { type RetryStrategy, backoff, fixed } from './strategy.js'
+
+let retryRunCh = tracingChannel<{ idempotent: boolean }, { idempotent: boolean }>(
+	'tracing:ydb:retry.run'
+)
+let retryAttemptCh = tracingChannel<
+	{ attempt: number; idempotent: boolean },
+	{ attempt: number; idempotent: boolean }
+>('tracing:ydb:retry.attempt')
 
 export * from './config.js'
 export * from './context.js'
@@ -25,8 +34,18 @@ export async function retry<R>(
 	cfg: RetryConfig,
 	fn: (signal: AbortSignal) => R | Promise<R>
 ): Promise<R> {
+	let idempotent = cfg.idempotent ?? false
+	return retryRunCh.tracePromise(() => runLoop(cfg, fn), { idempotent })
+}
+
+async function runLoop<R>(
+	cfg: RetryConfig,
+	fn: (signal: AbortSignal) => R | Promise<R>
+): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
+	let idempotent = cfg.idempotent ?? false
 	let ctx: RetryContext = { attempt: 0, error: null }
+	let started = performance.now()
 
 	let budget: number
 	while (
@@ -38,13 +57,19 @@ export async function retry<R>(
 
 		let start = Date.now()
 		let signal = linkedSignal.signal
+		let attemptNumber = ctx.attempt + 1
 
 		try {
 			signal.throwIfAborted()
-			dbg.log('attempt %d: calling retry function', ctx.attempt + 1)
+
+			dbg.log('attempt %d: calling retry function', attemptNumber)
 			// oxlint-disable-next-line no-await-in-loop
-			let result = await abortable(signal, Promise.resolve(fn(signal)))
-			dbg.log('attempt %d: success', ctx.attempt + 1)
+			let result = await retryAttemptCh.tracePromise(
+				() => abortable(signal, Promise.resolve(fn(signal))),
+				{ attempt: attemptNumber, idempotent }
+			)
+
+			dbg.log('attempt %d: success', attemptNumber)
 			return result
 		} catch (error) {
 			ctx.error = error
@@ -64,7 +89,7 @@ export async function retry<R>(
 			if (typeof config.retry === 'boolean') {
 				willRetry = config.retry
 			} else {
-				willRetry = config.retry?.(ctx.error, cfg.idempotent ?? false) ?? false
+				willRetry = config.retry?.(ctx.error, idempotent) ?? false
 			}
 
 			if (!willRetry || ctx.attempt >= budget) {
@@ -98,6 +123,13 @@ export async function retry<R>(
 	}
 
 	dbg.log('retry failed after %d attempts, last error: %O', ctx.attempt, ctx.error)
+
+	dc('ydb:retry.exhausted').publish({
+		attempts: ctx.attempt,
+		totalDuration: performance.now() - started,
+		lastError: ctx.error,
+	})
+
 	throw ctx.error
 }
 
