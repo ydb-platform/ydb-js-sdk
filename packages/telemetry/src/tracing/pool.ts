@@ -18,11 +18,11 @@ type ConnectionRemovedMsg = { nodeId: bigint; address: string; location: string;
  * spans under the currently active subscriber span.
  */
 export function subscribePoolTracing(setup: TracingSetup): () => void {
-	let { enter, finishOk, base } = setup
+	let { enterLeaf, finishOk, base } = setup
 
 	let unsubAdded = safeSubscribe('ydb:pool.connection.added', (msg) => {
 		let m = msg as ConnectionAddedMsg
-		enter(m, 'ydb.pool.connection.added', {
+		enterLeaf(m, 'ydb.pool.connection.added', {
 			kind: SpanKind.INTERNAL,
 			attributes: {
 				...base,
@@ -36,7 +36,7 @@ export function subscribePoolTracing(setup: TracingSetup): () => void {
 
 	let unsubPessimized = safeSubscribe('ydb:pool.connection.pessimized', (msg) => {
 		let m = msg as ConnectionPessimizedMsg
-		enter(m, 'ydb.pool.connection.pessimized', {
+		enterLeaf(m, 'ydb.pool.connection.pessimized', {
 			kind: SpanKind.INTERNAL,
 			attributes: {
 				...base,
@@ -50,7 +50,7 @@ export function subscribePoolTracing(setup: TracingSetup): () => void {
 
 	let unsubUnpessimized = safeSubscribe('ydb:pool.connection.unpessimized', (msg) => {
 		let m = msg as ConnectionUnpessimizedMsg
-		enter(m, 'ydb.pool.connection.unpessimized', {
+		enterLeaf(m, 'ydb.pool.connection.unpessimized', {
 			kind: SpanKind.INTERNAL,
 			attributes: {
 				...base,
@@ -65,7 +65,7 @@ export function subscribePoolTracing(setup: TracingSetup): () => void {
 
 	let unsubRetired = safeSubscribe('ydb:pool.connection.retired', (msg) => {
 		let m = msg as ConnectionRetiredMsg
-		enter(m, 'ydb.pool.connection.retired', {
+		enterLeaf(m, 'ydb.pool.connection.retired', {
 			kind: SpanKind.INTERNAL,
 			attributes: {
 				...base,
@@ -80,7 +80,7 @@ export function subscribePoolTracing(setup: TracingSetup): () => void {
 
 	let unsubRemoved = safeSubscribe('ydb:pool.connection.removed', (msg) => {
 		let m = msg as ConnectionRemovedMsg
-		enter(m, 'ydb.pool.connection.removed', {
+		enterLeaf(m, 'ydb.pool.connection.removed', {
 			kind: SpanKind.INTERNAL,
 			attributes: {
 				...base,

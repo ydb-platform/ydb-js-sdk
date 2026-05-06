@@ -30,12 +30,12 @@ export function subscribeQueryTracing(
 	setup: TracingSetup,
 	options: QueryTracingOptions = {}
 ): () => void {
-	let { enter, finishOk, finishError, noop, base } = setup
+	let { enter, enterLeaf, finishOk, finishError, noop, base } = setup
 	let captureQueryText = options.captureQueryText ?? false
 
 	let unsubExecute = safeTracingSubscribe<ExecuteCtx>('tracing:ydb:query.execute', {
 		start(ctx) {
-			enter(ctx, 'ydb.ExecuteQuery', {
+			enterLeaf(ctx, 'ydb.ExecuteQuery', {
 				kind: SpanKind.CLIENT,
 				attributes: {
 					...base,
@@ -55,6 +55,8 @@ export function subscribeQueryTracing(
 		error: finishError,
 	})
 
+	// Transaction IS a scope: ExecuteQuery, Commit, Rollback fired inside its channel body
+	// become its children because Transaction pushes itself onto spanStorage.
 	let unsubTransaction = safeTracingSubscribe<TransactionCtx>('tracing:ydb:query.transaction', {
 		start(ctx) {
 			enter(ctx, 'ydb.Transaction', {
@@ -75,7 +77,7 @@ export function subscribeQueryTracing(
 
 	let unsubCommit = safeTracingSubscribe<CommitCtx>('tracing:ydb:query.commit', {
 		start(ctx) {
-			enter(ctx, 'ydb.Commit', {
+			enterLeaf(ctx, 'ydb.Commit', {
 				kind: SpanKind.CLIENT,
 				attributes: {
 					...base,
@@ -93,7 +95,7 @@ export function subscribeQueryTracing(
 
 	let unsubRollback = safeTracingSubscribe<RollbackCtx>('tracing:ydb:query.rollback', {
 		start(ctx) {
-			enter(ctx, 'ydb.Rollback', {
+			enterLeaf(ctx, 'ydb.Rollback', {
 				kind: SpanKind.CLIENT,
 				attributes: {
 					...base,

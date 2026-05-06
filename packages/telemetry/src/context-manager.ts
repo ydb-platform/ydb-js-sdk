@@ -19,13 +19,20 @@ export function getActiveSubscriberSpan(): Span | undefined {
 /** Helpers closed over a specific tracer and base attributes, used by tracing channel subscribers. */
 export type TracingSetup = {
 	enter(ctx: object, name: string, options: StartSpanOptions): void
+	enterLeaf(ctx: object, name: string, options: StartSpanOptions): void
+	leaveScope(ctx: object): void
 	finishOk(ctx: object): void
 	finishError(ctx: object & { error?: unknown }): void
 	noop(): void
 	base: Record<string, string | number | boolean>
 }
 
-type SpanState = { span: Span; parentSpan: Span | undefined }
+type SpanState = {
+	span: Span
+	parentSpan: Span | undefined
+	isScope: boolean
+	scopeActive: boolean
+}
 
 /**
  * Builds a TracingSetup bound to the given tracer and base attributes.
@@ -51,8 +58,21 @@ export function createTracingSetup(
 		enter(ctx, name, options) {
 			let parentSpan = spanStorage.getStore()
 			let span = startChild(name, options)
-			stateMap.set(ctx, { span, parentSpan })
+			stateMap.set(ctx, { span, parentSpan, isScope: true, scopeActive: true })
 			spanStorage.enterWith(span)
+		},
+
+		enterLeaf(ctx, name, options) {
+			let span = startChild(name, options)
+			stateMap.set(ctx, { span, parentSpan: undefined, isScope: false, scopeActive: false })
+		},
+
+		leaveScope(ctx) {
+			let state = stateMap.get(ctx)
+			if (state && state.isScope && state.scopeActive) {
+				spanStorage.enterWith(state.parentSpan)
+				state.scopeActive = false
+			}
 		},
 
 		finishOk(ctx) {
@@ -60,7 +80,9 @@ export function createTracingSetup(
 			if (state) {
 				state.span.end()
 				stateMap.delete(ctx)
-				spanStorage.enterWith(state.parentSpan)
+				if (state.isScope && state.scopeActive) {
+					spanStorage.enterWith(state.parentSpan)
+				}
 			}
 		},
 
@@ -75,7 +97,9 @@ export function createTracingSetup(
 				state.span.setStatus({ code: 2 })
 				state.span.end()
 				stateMap.delete(ctx)
-				spanStorage.enterWith(state.parentSpan)
+				if (state.isScope && state.scopeActive) {
+					spanStorage.enterWith(state.parentSpan)
+				}
 			}
 		},
 

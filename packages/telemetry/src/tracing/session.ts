@@ -12,7 +12,7 @@ type SessionCreateCtx = {
 }
 
 export function subscribeSessionTracing(setup: TracingSetup): () => void {
-	let { enter, finishOk, finishError, noop, base } = setup
+	let { enter, enterLeaf, leaveScope, finishOk, finishError, noop, base } = setup
 
 	let unsubAcquire = safeTracingSubscribe<SessionAcquireCtx>('tracing:ydb:session.acquire', {
 		start(ctx) {
@@ -25,7 +25,7 @@ export function subscribeSessionTracing(setup: TracingSetup): () => void {
 				},
 			})
 		},
-		end: noop,
+		end: leaveScope,
 		asyncStart: noop,
 		asyncEnd: finishOk,
 		error: finishError,
@@ -33,7 +33,7 @@ export function subscribeSessionTracing(setup: TracingSetup): () => void {
 
 	let unsubCreate = safeTracingSubscribe<SessionCreateCtx>('tracing:ydb:session.create', {
 		start(ctx) {
-			enter(ctx, 'ydb.CreateSession', {
+			enterLeaf(ctx, 'ydb.CreateSession', {
 				kind: SpanKind.CLIENT,
 				attributes: {
 					...base,

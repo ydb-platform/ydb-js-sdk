@@ -10,11 +10,11 @@ type DriverInitCtx = {
 }
 
 export function subscribeDriverTracing(setup: TracingSetup): () => void {
-	let { enter, finishOk, finishError, noop, base } = setup
+	let { enterLeaf, finishOk, finishError, noop, base } = setup
 
 	let unsubDriverInit = safeTracingSubscribe<DriverInitCtx>('tracing:ydb:driver.init', {
 		start(ctx) {
-			enter(ctx, 'ydb.DriverInit', {
+			enterLeaf(ctx, 'ydb.DriverInit', {
 				kind: SpanKind.INTERNAL,
 				attributes: {
 					...base,

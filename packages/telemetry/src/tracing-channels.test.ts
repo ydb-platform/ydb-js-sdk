@@ -59,9 +59,15 @@ test('creates spans for CreateSession and ExecuteQuery', async () => {
 		{ liveSessions: 1, maxSize: 10, creating: 0 }
 	)
 
-	let spanNames = exporter.getFinishedSpans().map((s) => s.name)
+	let spans = exporter.getFinishedSpans()
+	let spanNames = spans.map((s) => s.name)
 	expect(spanNames).toContain(SPAN_NAMES.CreateSession)
 	expect(spanNames).toContain(SPAN_NAMES.ExecuteQuery)
+
+	// ExecuteQuery must NOT be a child of CreateSession — they are siblings.
+	let createSpan = spans.find((s) => s.name === SPAN_NAMES.CreateSession)!
+	let executeSpan = spans.find((s) => s.name === SPAN_NAMES.ExecuteQuery)!
+	expect(executeSpan.parentSpanContext?.spanId).not.toBe(createSpan.spanContext().spanId)
 })
 
 test('ExecuteQuery span has db.query.text attribute', async () => {
