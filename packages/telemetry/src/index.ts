@@ -41,8 +41,14 @@ export {
 } from './tracing.js'
 export { getActiveSubscriberSpan } from './context-manager.js'
 
-/** Call to remove all subscriptions created by a single register() call. */
-export type Disposer = () => void
+export type Disposer = (() => void) & Disposable & AsyncDisposable
+
+function asDisposer(fn: () => void): Disposer {
+	let d = fn as Disposer
+	d[Symbol.dispose] = d
+	d[Symbol.asyncDispose] = async () => d()
+	return d
+}
 
 export type RegisterOptions = {
 	/** @default true */
@@ -66,7 +72,7 @@ export type RegisterOptions = {
 }
 
 export function installContextManager(): Disposer {
-	return () => {}
+	return asDisposer(() => {})
 }
 
 export function installTracing(options: RegisterOptions = {}): Disposer[] {
@@ -89,28 +95,30 @@ export function installTracing(options: RegisterOptions = {}): Disposer[] {
 	let setup = createTracingSetup(tracer, base)
 
 	return [
-		subscribeDriverTracing(setup),
-		subscribeDiscoveryTracing(setup),
-		subscribeSessionTracing(setup),
-		subscribeQueryTracing(setup, { captureQueryText: options.captureQueryText ?? false }),
-		subscribeRetryTracing(setup),
-		subscribeAuthTracing(setup),
-		subscribePoolTracing(setup),
+		asDisposer(subscribeDriverTracing(setup)),
+		asDisposer(subscribeDiscoveryTracing(setup)),
+		asDisposer(subscribeSessionTracing(setup)),
+		asDisposer(
+			subscribeQueryTracing(setup, { captureQueryText: options.captureQueryText ?? false })
+		),
+		asDisposer(subscribeRetryTracing(setup)),
+		asDisposer(subscribeAuthTracing(setup)),
+		asDisposer(subscribePoolTracing(setup)),
 	]
 }
 
 export function installMetrics(_options: RegisterOptions = {}): Disposer[] {
 	return [
-		setupAuthMetrics(),
-		setupPoolMetrics(),
-		setupSessionMetrics(),
-		setupQueryMetrics(),
-		setupRetryMetrics(),
+		asDisposer(setupAuthMetrics()),
+		asDisposer(setupPoolMetrics()),
+		asDisposer(setupSessionMetrics()),
+		asDisposer(setupQueryMetrics()),
+		asDisposer(setupRetryMetrics()),
 	]
 }
 
 export function installLogs(_options: RegisterOptions = {}): Disposer[] {
-	return [setupLifecycleLogs()]
+	return [asDisposer(setupLifecycleLogs())]
 }
 
 /**
@@ -136,7 +144,9 @@ export function register(options: RegisterOptions = {}): Disposer {
 		disposers.push(...installLogs(options))
 	}
 
-	return () => {
+	let dispose = asDisposer(() => {
 		for (let d of disposers) d()
-	}
+	})
+
+	return dispose
 }
