@@ -45,16 +45,19 @@ beforeEach(() => {
 })
 
 test('creates spans for CreateSession and ExecuteQuery', async () => {
-	await sessionCreateCh.tracePromise(async () => {
-		await executeCh.tracePromise(async () => {}, {
-			text: 'SELECT 1 AS id',
-			sessionId: 'sess-1',
-			nodeId: 1n,
-			idempotent: true,
-			isolation: 'serializableReadWrite',
-			stage: 'standalone',
-		})
-	}, { liveSessions: 1, maxSize: 10, creating: 0 })
+	await sessionCreateCh.tracePromise(
+		async () => {
+			await executeCh.tracePromise(async () => {}, {
+				text: 'SELECT 1 AS id',
+				sessionId: 'sess-1',
+				nodeId: 1n,
+				idempotent: true,
+				isolation: 'serializableReadWrite',
+				stage: 'standalone',
+			})
+		},
+		{ liveSessions: 1, maxSize: 10, creating: 0 }
+	)
 
 	let spanNames = exporter.getFinishedSpans().map((s) => s.name)
 	expect(spanNames).toContain(SPAN_NAMES.CreateSession)
@@ -78,16 +81,19 @@ test('ExecuteQuery span has db.query.text attribute', async () => {
 })
 
 test('creates Transaction span around ExecuteQuery', async () => {
-	await transactionCh.tracePromise(async () => {
-		await executeCh.tracePromise(async () => {}, {
-			text: 'SELECT 1 AS id',
-			sessionId: 'sess-3',
-			nodeId: 3n,
-			idempotent: true,
-			isolation: 'serializableReadWrite',
-			stage: 'tx',
-		})
-	}, { isolation: 'serializableReadWrite', idempotent: true })
+	await transactionCh.tracePromise(
+		async () => {
+			await executeCh.tracePromise(async () => {}, {
+				text: 'SELECT 1 AS id',
+				sessionId: 'sess-3',
+				nodeId: 3n,
+				idempotent: true,
+				isolation: 'serializableReadWrite',
+				stage: 'tx',
+			})
+		},
+		{ isolation: 'serializableReadWrite', idempotent: true }
+	)
 
 	let spanNames = exporter.getFinishedSpans().map((s) => s.name)
 	expect(spanNames).toContain(SPAN_NAMES.Transaction)
@@ -95,16 +101,19 @@ test('creates Transaction span around ExecuteQuery', async () => {
 })
 
 test('Transaction span has isolation attribute', async () => {
-	await transactionCh.tracePromise(async () => {
-		await executeCh.tracePromise(async () => {}, {
-			text: 'SELECT 1 AS id',
-			sessionId: 'sess-4',
-			nodeId: 4n,
-			idempotent: false,
-			isolation: 'serializableReadWrite',
-			stage: 'tx',
-		})
-	}, { isolation: 'serializableReadWrite', idempotent: false })
+	await transactionCh.tracePromise(
+		async () => {
+			await executeCh.tracePromise(async () => {}, {
+				text: 'SELECT 1 AS id',
+				sessionId: 'sess-4',
+				nodeId: 4n,
+				idempotent: false,
+				isolation: 'serializableReadWrite',
+				stage: 'tx',
+			})
+		},
+		{ isolation: 'serializableReadWrite', idempotent: false }
+	)
 
 	let txSpan = exporter.getFinishedSpans().find((s) => s.name === SPAN_NAMES.Transaction)
 	expect(txSpan).toBeDefined()
@@ -114,16 +123,19 @@ test('Transaction span has isolation attribute', async () => {
 test('ExecuteQuery rejection sets error status on span', async () => {
 	let err = new Error('query failed')
 	await expect(
-		executeCh.tracePromise(async () => {
-			throw err
-		}, {
-			text: 'SELECT * FROM bad',
-			sessionId: 'sess-5',
-			nodeId: 5n,
-			idempotent: false,
-			isolation: 'serializableReadWrite',
-			stage: 'standalone',
-		})
+		executeCh.tracePromise(
+			async () => {
+				throw err
+			},
+			{
+				text: 'SELECT * FROM bad',
+				sessionId: 'sess-5',
+				nodeId: 5n,
+				idempotent: false,
+				isolation: 'serializableReadWrite',
+				stage: 'standalone',
+			}
+		)
 	).rejects.toThrow('query failed')
 
 	let errorSpan = exporter.getFinishedSpans().find((s) => s.name === SPAN_NAMES.ExecuteQuery)
