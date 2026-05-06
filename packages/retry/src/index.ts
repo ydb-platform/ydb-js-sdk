@@ -15,8 +15,8 @@ let retryRunCh = tracingChannel<{ idempotent: boolean }, { idempotent: boolean }
 	'tracing:ydb:retry.run'
 )
 let retryAttemptCh = tracingChannel<
-	{ attempt: number; idempotent: boolean },
-	{ attempt: number; idempotent: boolean }
+	{ attempt: number; idempotent: boolean; backoffMs: number },
+	{ attempt: number; idempotent: boolean; backoffMs: number }
 >('tracing:ydb:retry.attempt')
 
 export * from './config.js'
@@ -46,6 +46,7 @@ async function runLoop<R>(
 	let idempotent = cfg.idempotent ?? false
 	let ctx: RetryContext = { attempt: 0, error: null }
 	let started = performance.now()
+	let lastBackoffMs = 0
 
 	let budget: number
 	while (
@@ -66,7 +67,7 @@ async function runLoop<R>(
 			// oxlint-disable-next-line no-await-in-loop
 			let result = await retryAttemptCh.tracePromise(
 				() => abortable(signal, Promise.resolve(fn(signal))),
-				{ attempt: attemptNumber, idempotent }
+				{ attempt: attemptNumber, idempotent, backoffMs: lastBackoffMs }
 			)
 
 			dbg.log('attempt %d: success', attemptNumber)
@@ -107,12 +108,14 @@ async function runLoop<R>(
 			let remaining = Math.max(delay - (Date.now() - start), 0)
 			if (!remaining) {
 				dbg.log('attempt %d: no delay before next retry', ctx.attempt)
+				lastBackoffMs = 0
 				continue
 			}
 
 			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
 			// oxlint-disable no-await-in-loop
 			await setTimeout(remaining, void 0, { signal })
+			lastBackoffMs = remaining
 
 			if (config.onRetry) {
 				config.onRetry(ctx)

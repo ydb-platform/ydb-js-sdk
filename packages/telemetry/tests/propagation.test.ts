@@ -161,6 +161,40 @@ test('ydb.CreateSession is nested under ydb.Try under ydb.RunWithRetry', async (
 	expect(createSpan!.parentSpanContext?.spanId).toBe(trySpan!.spanContext().spanId)
 })
 
+test('multiple ydb.Try attempts are siblings under ydb.RunWithRetry, not nested', async () => {
+	exporter.reset()
+
+	let retryRunCh = tracingChannel<{ idempotent: boolean }>('tracing:ydb:retry.run')
+	let retryAttemptCh = tracingChannel<{ attempt: number; idempotent: boolean }>(
+		'tracing:ydb:retry.attempt'
+	)
+
+	let runCtx = { idempotent: true }
+
+	await retryRunCh.tracePromise(async () => {
+		await retryAttemptCh.tracePromise(async () => {}, { attempt: 1, idempotent: true })
+		await retryAttemptCh.tracePromise(async () => {}, { attempt: 2, idempotent: true })
+	}, runCtx)
+
+	let spans = exporter.getFinishedSpans()
+	let runSpan = spans.find((s) => s.name === 'ydb.RunWithRetry')
+	let trySpans = spans.filter((s) => s.name === 'ydb.Try')
+
+	expect(runSpan).toBeDefined()
+	expect(trySpans).toHaveLength(2)
+
+	// Both attempts must be direct children of RunWithRetry.
+	for (let trySpan of trySpans) {
+		expect(trySpan.parentSpanContext?.spanId).toBe(runSpan!.spanContext().spanId)
+	}
+
+	// No Try must be a child of another Try.
+	let tryIds = new Set(trySpans.map((s) => s.spanContext().spanId))
+	for (let trySpan of trySpans) {
+		expect(tryIds.has(trySpan.parentSpanContext?.spanId ?? '')).toBe(false)
+	}
+})
+
 test('ydb.CreateSession is a child of ydb.AcquireSession when pool grows', async () => {
 	exporter.reset()
 

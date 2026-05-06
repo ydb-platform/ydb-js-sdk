@@ -3,10 +3,10 @@ import { SpanKind } from '../tracing.js'
 import type { TracingSetup } from '../context-manager.js'
 
 type RetryRunCtx = { idempotent: boolean; error?: unknown }
-type RetryAttemptCtx = { attempt: number; idempotent: boolean; error?: unknown }
+type RetryAttemptCtx = { attempt: number; idempotent: boolean; backoffMs: number; error?: unknown }
 
 export function subscribeRetryTracing(setup: TracingSetup): () => void {
-	let { enter, finishOk, finishError, noop, base } = setup
+	let { enter, leaveScope, finishOk, finishError, noop, base } = setup
 
 	let unsubRetryRun = safeTracingSubscribe<RetryRunCtx>('tracing:ydb:retry.run', {
 		start(ctx) {
@@ -34,10 +34,11 @@ export function subscribeRetryTracing(setup: TracingSetup): () => void {
 					'db.operation.name': 'Try',
 					'ydb.retry.attempt': ctx.attempt,
 					'ydb.idempotent': ctx.idempotent,
+					'ydb.retry.backoff_ms': ctx.backoffMs,
 				},
 			})
 		},
-		end: noop,
+		end: leaveScope,
 		asyncStart: noop,
 		asyncEnd: finishOk,
 		error: finishError,

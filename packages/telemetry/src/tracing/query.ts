@@ -18,6 +18,7 @@ type TransactionCtx = {
 	error?: unknown
 }
 
+type TxBeginCtx = { sessionId: string; nodeId: bigint; isolation: string; error?: unknown }
 type CommitCtx = { sessionId: string; transactionId: string; error?: unknown }
 type RollbackCtx = { sessionId: string; transactionId: string; error?: unknown }
 
@@ -32,6 +33,25 @@ export function subscribeQueryTracing(
 ): () => void {
 	let { enter, enterLeaf, finishOk, finishError, noop, base } = setup
 	let captureQueryText = options.captureQueryText ?? false
+
+	let unsubBegin = safeTracingSubscribe<TxBeginCtx>('tracing:ydb:query.begin', {
+		start(ctx) {
+			enterLeaf(ctx, 'ydb.Begin', {
+				kind: SpanKind.CLIENT,
+				attributes: {
+					...base,
+					'db.operation.name': 'BeginTransaction',
+					'db.ydb.session_id': ctx.sessionId,
+					'db.ydb.node_id': Number(ctx.nodeId),
+					'ydb.isolation': ctx.isolation,
+				},
+			})
+		},
+		end: noop,
+		asyncStart: noop,
+		asyncEnd: finishOk,
+		error: finishError,
+	})
 
 	let unsubExecute = safeTracingSubscribe<ExecuteCtx>('tracing:ydb:query.execute', {
 		start(ctx) {
@@ -55,8 +75,6 @@ export function subscribeQueryTracing(
 		error: finishError,
 	})
 
-	// Transaction IS a scope: ExecuteQuery, Commit, Rollback fired inside its channel body
-	// become its children because Transaction pushes itself onto spanStorage.
 	let unsubTransaction = safeTracingSubscribe<TransactionCtx>('tracing:ydb:query.transaction', {
 		start(ctx) {
 			enter(ctx, 'ydb.Transaction', {
@@ -112,6 +130,7 @@ export function subscribeQueryTracing(
 	})
 
 	return () => {
+		unsubBegin()
 		unsubExecute()
 		unsubTransaction()
 		unsubCommit()

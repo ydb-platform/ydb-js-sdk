@@ -13,6 +13,7 @@ export let SPAN_NAMES = {
 	Discovery: 'ydb.Discovery',
 	AcquireSession: 'ydb.AcquireSession',
 	CreateSession: 'ydb.CreateSession',
+	Begin: 'ydb.Begin',
 	ExecuteQuery: 'ydb.ExecuteQuery',
 	Commit: 'ydb.Commit',
 	Rollback: 'ydb.Rollback',
