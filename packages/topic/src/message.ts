@@ -35,6 +35,15 @@ export class TopicMessage {
 		this.offset = options.offset ?? 0n
 		this.payload = options.payload
 		this.uncompressedSize = options.uncompressedSize ?? 0n
+		if (options.createdAt !== undefined) {
+			this.createdAt = options.createdAt
+		}
+		if (options.writtenAt !== undefined) {
+			this.writtenAt = options.writtenAt
+		}
+		if (options.metadataItems !== undefined) {
+			this.metadataItems = options.metadataItems
+		}
 	}
 
 	get alive(): boolean {
