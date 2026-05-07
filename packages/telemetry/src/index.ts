@@ -107,12 +107,19 @@ export function installTracing(options: RegisterOptions = {}): Disposer[] {
 	]
 }
 
-export function installMetrics(_options: RegisterOptions = {}): Disposer[] {
+export function installMetrics(options: RegisterOptions = {}): Disposer[] {
+	let base: Record<string, string | number | boolean> = {}
+	if (options.endpoint) {
+		let { database } = parseEndpoint(options.endpoint)
+		base['endpoint'] = options.endpoint
+		if (database !== undefined) base['database'] = database
+	}
+
 	return [
 		asDisposer(setupAuthMetrics()),
 		asDisposer(setupPoolMetrics()),
 		asDisposer(setupSessionMetrics()),
-		asDisposer(setupQueryMetrics()),
+		asDisposer(setupQueryMetrics(base)),
 		asDisposer(setupRetryMetrics()),
 	]
 }
