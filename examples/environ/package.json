@@ -12,8 +12,8 @@
 	},
 	"dependencies": {
 		"@ydbjs/api": "^6.0.0",
-		"@ydbjs/auth": "^6.2.1",
-		"@ydbjs/core": "^6.1.1"
+		"@ydbjs/auth": "^6.3.0",
+		"@ydbjs/core": "^6.2.0"
 	},
 	"engines": {
 		"node": ">=20.19.0",

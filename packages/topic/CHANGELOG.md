@@ -1,5 +1,15 @@
 # @ydbjs/topic
 
+## 6.1.3
+
+### Patch Changes
+
+- [#603](https://github.com/ydb-platform/ydb-js-sdk/pull/603) [`8d40d0d`](https://github.com/ydb-platform/ydb-js-sdk/commit/8d40d0d1bb5908e011adba7372cdf64639fc8234) Thanks [@copilot-swe-agent](https://github.com/apps/copilot-swe-agent)! - Preserve `createdAt`, `writtenAt`, and `metadataItems` on `TopicMessage` when constructed from options. Previously the constructor dropped these fields, so messages produced by readers always exposed them as `undefined`.
+
+- Updated dependencies [[`efa7adf`](https://github.com/ydb-platform/ydb-js-sdk/commit/efa7adf9e1346388a4358f3e1bf8a8ac5c85419b), [`fa32650`](https://github.com/ydb-platform/ydb-js-sdk/commit/fa32650b5393052e5802126f114355b9d3720448), [`b8b5ef5`](https://github.com/ydb-platform/ydb-js-sdk/commit/b8b5ef56b600cec4261680a5b211f4c2dd81259f)]:
+  - @ydbjs/core@6.2.0
+  - @ydbjs/retry@6.3.0
+
 ## 6.1.2
 
 ### Patch Changes
