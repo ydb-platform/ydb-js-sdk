@@ -32,6 +32,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm run build
       - run: npm run attw
+      - run: npm run check:surface --workspace=@ydbjs/drizzle-adapter
 
   test:
     name: Test

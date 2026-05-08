@@ -32,6 +32,17 @@ cd examples/query
 npm install && npm start
 ```
 
+### 📁 [drizzle-adapter/](./drizzle-adapter/)
+
+EN: Compact TypeScript CLI example for the Drizzle ORM adapter: schema, migrations, CRUD, relations, joins, raw helpers, and transactions.
+
+RU: Компактный TypeScript CLI-пример Drizzle ORM адаптера: схема, миграции, CRUD, relations, joins, raw helpers и транзакции.
+
+```bash
+cd examples/drizzle-adapter
+npm install && npm start
+```
+
 ### 📁 [sls/](./sls/)
 
 EN: Serverless considerations (HTTP/2, driver lifecycle inside handler).
@@ -137,6 +148,8 @@ export YDB_CONNECTION_STRING="grpc://localhost:2136/local"
 ```bash
 cd examples/api && npm start
 cd examples/query && npm run dev
+cd examples/drizzle-adapter && npm start
+cd examples/drizzle-adapter-lab && npm start
 cd examples/sls && npm start
 cd examples/tls && npm start
 cd examples/topic && npm start

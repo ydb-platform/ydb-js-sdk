@@ -304,8 +304,12 @@ test('claim() releases on dispose so the next caller succeeds', async () => {
 	}
 
 	// previous claim disposed — a fresh claim must succeed
-	let again = session.claim()
-	again[Symbol.dispose]()
+	let again: Disposable | undefined
+	expect(() => {
+		again = session.claim()
+	}).not.toThrow()
+	expect(typeof again?.[Symbol.dispose]).toBe('function')
+	again?.[Symbol.dispose]()
 	session.close()
 })
 
@@ -315,10 +319,14 @@ test('claim() dispose is idempotent', async () => {
 
 	let held = session.claim()
 	held[Symbol.dispose]()
-	held[Symbol.dispose]() // second dispose is a no-op
+	expect(() => held[Symbol.dispose]()).not.toThrow()
 
 	// the slot must still be free
-	let again = session.claim()
-	again[Symbol.dispose]()
+	let again: Disposable | undefined
+	expect(() => {
+		again = session.claim()
+	}).not.toThrow()
+	expect(typeof again?.[Symbol.dispose]).toBe('function')
+	again?.[Symbol.dispose]()
 	session.close()
 })
