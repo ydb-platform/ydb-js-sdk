@@ -93,6 +93,22 @@ test('publishes tracing:ydb:retry.attempt once per attempt with monotonic number
 	expect(trace.error).toHaveLength(2)
 })
 
+test('tracing:ydb:retry.attempt includes backoffMs of the sleep before the attempt', async () => {
+	using trace = collectTrace('tracing:ydb:retry.attempt')
+
+	let calls = 0
+	await retry({ retry: true, budget: 3, strategy: 30, idempotent: true }, async () => {
+		calls++
+		if (calls < 2) throw new Error('again')
+		return 'ok'
+	})
+
+	expect(trace.start).toHaveLength(2)
+	expect(trace.start[0]).toMatchObject({ attempt: 1, idempotent: true, backoffMs: 0 })
+	expect(trace.start[1]).toMatchObject({ attempt: 2, idempotent: true })
+	expect((trace.start[1] as any).backoffMs).toBeGreaterThan(0)
+})
+
 // ── retry.exhausted ──────────────────────────────────────────────────────────
 
 test('publishes ydb:retry.exhausted with attempts, duration and lastError when budget runs out', async () => {

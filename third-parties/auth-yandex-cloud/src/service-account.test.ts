@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { ServiceAccountCredentialsProvider, type ServiceAccountKey } from './service-account.js'
@@ -138,7 +140,7 @@ test('fromFile reads and parses JSON file', () => {
 
 	let provider = ServiceAccountCredentialsProvider.fromFile('/path/to/key.json')
 	expect(provider).toBeDefined()
-	expect(fs.readFileSync).toHaveBeenCalledWith('/path/to/key.json', 'utf8')
+	expect(fs.readFileSync).toHaveBeenCalledWith(path.resolve('/path/to/key.json'), 'utf8')
 })
 
 test('fromEnv reads from environment variable', () => {
@@ -150,7 +152,7 @@ test('fromEnv reads from environment variable', () => {
 
 	let provider = ServiceAccountCredentialsProvider.fromEnv()
 	expect(provider).toBeDefined()
-	expect(fs.readFileSync).toHaveBeenCalledWith('/env/path/key.json', 'utf8')
+	expect(fs.readFileSync).toHaveBeenCalledWith(path.resolve('/env/path/key.json'), 'utf8')
 
 	if (originalEnv) {
 		process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS = originalEnv
