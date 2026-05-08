@@ -124,7 +124,7 @@ export function installMetrics(options: RegisterOptions = {}): Disposer[] {
 		asDisposer(setupPoolMetrics()),
 		asDisposer(setupSessionMetrics(sessionBase)),
 		asDisposer(setupQueryMetrics(base)),
-		asDisposer(setupRetryMetrics()),
+		asDisposer(setupRetryMetrics(base)),
 	]
 }
 
