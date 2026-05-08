@@ -115,10 +115,14 @@ export function installMetrics(options: RegisterOptions = {}): Disposer[] {
 		if (database !== undefined) base['database'] = database
 	}
 
+	let sessionBase: Record<string, string | number | boolean> = {
+		'ydb.query.session.pool.name': base['database'] ?? base['endpoint'] ?? '',
+	}
+
 	return [
 		asDisposer(setupAuthMetrics()),
 		asDisposer(setupPoolMetrics()),
-		asDisposer(setupSessionMetrics()),
+		asDisposer(setupSessionMetrics(sessionBase)),
 		asDisposer(setupQueryMetrics(base)),
 		asDisposer(setupRetryMetrics()),
 	]

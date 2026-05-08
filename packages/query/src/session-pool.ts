@@ -40,8 +40,8 @@ export let sessionAcquireCh = tracingChannel<
 >('tracing:ydb:session.acquire')
 
 let sessionCreateCh = tracingChannel<
-	{ liveSessions: number; maxSize: number; creating: number },
-	{ liveSessions: number; maxSize: number; creating: number }
+	{ liveSessions: number; maxSize: number; minSize: number; creating: number },
+	{ liveSessions: number; maxSize: number; minSize: number; creating: number }
 >('tracing:ydb:session.create')
 
 let dbg = loggers.query.extend('pool2')
@@ -63,12 +63,14 @@ export class SessionPoolFullError extends Error {
 export type SessionPoolOptions = {
 	/** Hard cap on simultaneously-live sessions (idle + busy + creating). */
 	maxSize?: number
+	minSize?: number
 	/** Multiplier over maxSize for the wait queue. Default 8. */
 	waitQueueFactor?: number
 }
 
 let DEFAULTS = {
 	maxSize: 50,
+	minSize: 0,
 	waitQueueFactor: 8,
 } satisfies Required<SessionPoolOptions>
 
@@ -131,6 +133,7 @@ export class SessionLease implements Disposable {
 export class SessionPool implements AsyncDisposable {
 	#driver: Driver
 	#maxSize: number
+	#minSize: number
 	#maxWaiters: number
 
 	#all = new Set<Session>()
@@ -148,6 +151,7 @@ export class SessionPool implements AsyncDisposable {
 	constructor(driver: Driver, options: SessionPoolOptions = {}) {
 		this.#driver = driver
 		this.#maxSize = options.maxSize ?? DEFAULTS.maxSize
+		this.#minSize = options.minSize ?? DEFAULTS.minSize
 		this.#maxWaiters = this.#maxSize * (options.waitQueueFactor ?? DEFAULTS.waitQueueFactor)
 	}
 
@@ -163,6 +167,7 @@ export class SessionPool implements AsyncDisposable {
 			creating: this.#creates.size,
 			waiting: this.#waiters.length,
 			maxSize: this.#maxSize,
+			minSize: this.#minSize,
 		}
 	}
 
@@ -271,6 +276,7 @@ export class SessionPool implements AsyncDisposable {
 		let createCtx = {
 			liveSessions: this.#all.size,
 			maxSize: this.#maxSize,
+			minSize: this.#minSize,
 			creating: this.#creates.size,
 		}
 		let promise = sessionCreateCh.tracePromise(
@@ -364,19 +370,24 @@ export class SessionPool implements AsyncDisposable {
 			return Promise.reject(new SessionPoolFullError(this.#maxWaiters))
 		}
 
-		let { promise, resolve, reject } = Promise.withResolvers<Session>()
+		let ctx = { kind: 'query' as const }
 
-		let onAbort = () => {
-			let idx = this.#waiters.findIndex((w) => w.resolve === resolve)
-			if (idx !== -1) this.#waiters.splice(idx, 1)
-			reject(signal!.reason ?? new Error('aborted'))
+		let enqueueWaiter = (): Promise<Session> => {
+			let { promise, resolve, reject } = Promise.withResolvers<Session>()
+
+			let onAbort = () => {
+				let idx = this.#waiters.findIndex((w) => w.resolve === resolve)
+				if (idx !== -1) this.#waiters.splice(idx, 1)
+				reject(signal!.reason ?? new Error('aborted'))
+			}
+
+			let detach = signal ? () => signal.removeEventListener('abort', onAbort) : () => {}
+			if (signal) signal.addEventListener('abort', onAbort, { once: true })
+
+			this.#waiters.push({ resolve, reject, detach })
+			return promise
 		}
 
-		let detach = signal ? () => signal.removeEventListener('abort', onAbort) : () => {}
-
-		if (signal) signal.addEventListener('abort', onAbort, { once: true })
-
-		this.#waiters.push({ resolve, reject, detach })
-		return promise
+		return sessionAcquireCh.tracePromise(enqueueWaiter, ctx)
 	}
 }
