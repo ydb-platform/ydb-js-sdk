@@ -1,0 +1,10 @@
+/.turbo
+
+/src
+/tests
+/coverage
+
+/*.yaml
+/*.json
+*.tsbuildinfo
+vitest.config.ts

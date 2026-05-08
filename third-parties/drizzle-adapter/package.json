@@ -1,0 +1,68 @@
+{
+	"name": "@ydbjs/drizzle-adapter",
+	"version": "0.0.0",
+	"description": "YDB adapter for Drizzle ORM.",
+	"keywords": [
+		"database",
+		"drizzle",
+		"drizzle-orm",
+		"ydb",
+		"yql"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk/tree/main/third-parties/drizzle-adapter#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "third-parties/drizzle-adapter"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc",
+		"test": "vitest --run",
+		"test:unit": "vitest --run --project uni",
+		"test:live": "vitest --run --project int",
+		"attw": "attw --pack --profile esm-only",
+		"check:surface": "node scripts/check-package-surface.mjs"
+	},
+	"dependencies": {
+		"@ydbjs/api": "^6.0.6",
+		"@ydbjs/core": "^6.1.1",
+		"@ydbjs/query": "^6.1.0",
+		"@ydbjs/value": "^6.0.7"
+	},
+	"peerDependencies": {
+		"drizzle-orm": "^0.45.2"
+	},
+	"devDependencies": {
+		"drizzle-orm": "^0.45.2"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}

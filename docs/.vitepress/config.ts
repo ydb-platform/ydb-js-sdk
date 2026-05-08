@@ -18,6 +18,7 @@ export default defineConfig({
 				nav: [
 					{ text: 'Getting Started', link: '/guide/core' },
 					{ text: 'Query', link: '/guide/query/' },
+					{ text: 'Drizzle', link: '/guide/drizzle-adapter/' },
 					{ text: 'Topic', link: '/guide/topic/' },
 					{ text: 'Coordination', link: '/guide/coordination/' },
 					{ text: 'Advanced', link: '/advanced/' },
@@ -95,6 +96,86 @@ export default defineConfig({
 									{
 										text: 'Syntax & pool',
 										link: '/guide/query/#examples-syntax-pool',
+									},
+								],
+							},
+						],
+					},
+					{
+						text: 'Drizzle',
+						items: [
+							{ text: 'Overview', link: '/guide/drizzle-adapter/' },
+							{
+								text: 'Options & API',
+								link: '/guide/drizzle-adapter/options',
+							},
+							{
+								text: 'Getting Started',
+								link: '/guide/drizzle-adapter/getting-started',
+							},
+							{
+								text: 'Examples',
+								link: '/guide/drizzle-adapter/examples',
+							},
+							{ text: 'Schema', link: '/guide/drizzle-adapter/schema' },
+							{
+								text: 'Database API',
+								link: '/guide/drizzle-adapter/database-api',
+							},
+							{
+								text: 'Query Builders',
+								link: '/guide/drizzle-adapter/query-builders',
+							},
+							{
+								text: 'Migrations and DDL',
+								link: '/guide/drizzle-adapter/migrations-ddl',
+							},
+							{
+								text: 'YQL Helpers',
+								link: '/guide/drizzle-adapter/yql-helpers',
+							},
+							{
+								text: 'Driver, Session, Dialect',
+								link: '/guide/drizzle-adapter/internals',
+							},
+							{
+								text: 'Public API',
+								link: '/guide/drizzle-adapter/api-index',
+							},
+							{
+								text: 'Examples',
+								items: [
+									{
+										text: 'Runnable examples',
+										link: '/guide/drizzle-adapter/examples',
+									},
+									{
+										text: 'Schema with YDB options',
+										link: '/guide/drizzle-adapter/#examples-schema',
+									},
+									{
+										text: 'CRUD',
+										link: '/guide/drizzle-adapter/#examples-crud',
+									},
+									{
+										text: 'Relations',
+										link: '/guide/drizzle-adapter/#examples-relations',
+									},
+									{
+										text: 'Transactions',
+										link: '/guide/drizzle-adapter/#examples-transactions',
+									},
+									{
+										text: 'Migrations',
+										link: '/guide/drizzle-adapter/#examples-migrations',
+									},
+									{
+										text: 'YQL helpers',
+										link: '/guide/drizzle-adapter/#examples-yql-helpers',
+									},
+									{
+										text: 'Vector search',
+										link: '/guide/drizzle-adapter/#examples-vector-search',
 									},
 								],
 							},
@@ -229,6 +310,7 @@ export default defineConfig({
 				nav: [
 					{ text: 'Начало работы', link: '/ru/guide/core' },
 					{ text: 'Query', link: '/ru/guide/query/' },
+					{ text: 'Drizzle', link: '/ru/guide/drizzle-adapter/' },
 					{ text: 'Topic', link: '/ru/guide/topic/' },
 					{ text: 'Coordination', link: '/ru/guide/coordination/' },
 					{ text: 'Расширенные темы', link: '/ru/advanced/' },
@@ -312,6 +394,89 @@ export default defineConfig({
 									{
 										text: 'Syntax и pool',
 										link: '/ru/guide/query/#examples-syntax-pool',
+									},
+								],
+							},
+						],
+					},
+					{
+						text: 'Drizzle',
+						items: [
+							{ text: 'Обзор', link: '/ru/guide/drizzle-adapter/' },
+							{
+								text: 'Опции и API',
+								link: '/ru/guide/drizzle-adapter/options',
+							},
+							{
+								text: 'Быстрый старт',
+								link: '/ru/guide/drizzle-adapter/getting-started',
+							},
+							{
+								text: 'Примеры',
+								link: '/ru/guide/drizzle-adapter/examples',
+							},
+							{
+								text: 'Схема данных',
+								link: '/ru/guide/drizzle-adapter/schema',
+							},
+							{
+								text: 'Database API',
+								link: '/ru/guide/drizzle-adapter/database-api',
+							},
+							{
+								text: 'Построители запросов',
+								link: '/ru/guide/drizzle-adapter/query-builders',
+							},
+							{
+								text: 'Миграции и DDL',
+								link: '/ru/guide/drizzle-adapter/migrations-ddl',
+							},
+							{
+								text: 'YQL Helpers',
+								link: '/ru/guide/drizzle-adapter/yql-helpers',
+							},
+							{
+								text: 'Driver, Session, Dialect',
+								link: '/ru/guide/drizzle-adapter/internals',
+							},
+							{
+								text: 'Публичный API',
+								link: '/ru/guide/drizzle-adapter/api-index',
+							},
+							{
+								text: 'Примеры',
+								items: [
+									{
+										text: 'Runnable-примеры',
+										link: '/ru/guide/drizzle-adapter/examples',
+									},
+									{
+										text: 'Схема с YDB options',
+										link: '/ru/guide/drizzle-adapter/#examples-schema',
+									},
+									{
+										text: 'CRUD',
+										link: '/ru/guide/drizzle-adapter/#examples-crud',
+									},
+									{
+										text: 'Relations',
+										link: '/ru/guide/drizzle-adapter/#examples-relations',
+									},
+									{
+										text: 'Транзакции',
+										link: '/ru/guide/drizzle-adapter/#examples-transactions',
+									},
+									{
+										text: 'Миграции',
+										link: '/ru/guide/drizzle-adapter/#examples-migrations',
+									},
+									{
+										text: 'YQL helpers',
+										link: '/ru/guide/drizzle-adapter/#examples-yql-helpers',
+									},
+									{
+										text: 'Vector search',
+										link: '/ru/guide/drizzle-adapter/#examples-vector-search',
 									},
 								],
 							},
