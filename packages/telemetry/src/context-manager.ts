@@ -1,7 +1,53 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
+import {
+	type Context,
+	type ContextManager,
+	ROOT_CONTEXT,
+	context as otelContext,
+} from '@opentelemetry/api'
+
 import { recordErrorAttributes } from './attributes.js'
 import type { Span, StartSpanOptions, Tracer } from './tracing.js'
+
+/**
+ * ALS holding the active OTel Context. Backed by AlsContextManager so that
+ * tracingChannel.tracePromise's runStores() propagates the context through the
+ * entire async chain of the user callback (e.g. transaction body), making
+ * context.active() return the right span for any nested OTel instrumentation.
+ */
+let contextStorage = new AsyncLocalStorage<Context>()
+
+class AlsContextManager implements ContextManager {
+	active(): Context {
+		return contextStorage.getStore() ?? ROOT_CONTEXT
+	}
+
+	with<A extends unknown[], F extends (...args: A) => ReturnType<F>>(
+		ctx: Context,
+		fn: F,
+		thisArg?: ThisParameterType<F>,
+		...args: A
+	): ReturnType<F> {
+		return contextStorage.run(ctx, () => fn.apply(thisArg, args)) as ReturnType<F>
+	}
+
+	bind<T>(_ctx: Context, target: T): T {
+		return target
+	}
+
+	enable(): this {
+		return this
+	}
+
+	disable(): this {
+		return this
+	}
+}
+
+export function createAlsContextManager(): ContextManager {
+	return new AlsContextManager()
+}
 
 /**
  * Tracks the currently active subscriber span across async continuations.
@@ -30,6 +76,7 @@ export type TracingSetup = {
 type SpanState = {
 	span: Span
 	parentSpan: Span | undefined
+	parentOtelContext: Context
 	isScope: boolean
 	scopeActive: boolean
 }
@@ -57,20 +104,36 @@ export function createTracingSetup(
 
 		enter(ctx, name, options) {
 			let parentSpan = spanStorage.getStore()
+			let parentOtelContext = otelContext.active()
 			let span = startChild(name, options)
-			stateMap.set(ctx, { span, parentSpan, isScope: true, scopeActive: true })
+			let activeOtelContext = span.runInContext(() => otelContext.active())
+			stateMap.set(ctx, {
+				span,
+				parentSpan,
+				parentOtelContext,
+				isScope: true,
+				scopeActive: true,
+			})
 			spanStorage.enterWith(span)
+			contextStorage.enterWith(activeOtelContext)
 		},
 
 		enterLeaf(ctx, name, options) {
 			let span = startChild(name, options)
-			stateMap.set(ctx, { span, parentSpan: undefined, isScope: false, scopeActive: false })
+			stateMap.set(ctx, {
+				span,
+				parentSpan: undefined,
+				parentOtelContext: otelContext.active(),
+				isScope: false,
+				scopeActive: false,
+			})
 		},
 
 		leaveScope(ctx) {
 			let state = stateMap.get(ctx)
 			if (state && state.isScope && state.scopeActive) {
 				spanStorage.enterWith(state.parentSpan)
+				contextStorage.enterWith(state.parentOtelContext)
 				state.scopeActive = false
 			}
 		},
@@ -82,6 +145,7 @@ export function createTracingSetup(
 				stateMap.delete(ctx)
 				if (state.isScope && state.scopeActive) {
 					spanStorage.enterWith(state.parentSpan)
+					contextStorage.enterWith(state.parentOtelContext)
 				}
 			}
 		},
@@ -99,6 +163,7 @@ export function createTracingSetup(
 				stateMap.delete(ctx)
 				if (state.isScope && state.scopeActive) {
 					spanStorage.enterWith(state.parentSpan)
+					contextStorage.enterWith(state.parentOtelContext)
 				}
 			}
 		},

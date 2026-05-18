@@ -1,6 +1,12 @@
+import { context as otelContext } from '@opentelemetry/api'
+
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 import { parseEndpoint } from './attributes.js'
-import { createTracingSetup, getActiveSubscriberSpan } from './context-manager.js'
+import {
+	createAlsContextManager,
+	createTracingSetup,
+	getActiveSubscriberSpan,
+} from './context-manager.js'
 import type { Tracer } from './tracing.js'
 import { subscribeDiscoveryTracing } from './tracing/discovery.js'
 import { subscribeDriverTracing } from './tracing/driver.js'
@@ -47,12 +53,6 @@ function asDisposer(fn: () => void): Disposer {
 	return d
 }
 
-/**
- * Minimal structural subset of @ydbjs/core DriverHooks used for gRPC call enrichment.
- * Pass `register(...).hooks` as the `hooks` option to the Driver constructor to
- * enrich active spans with per-call gRPC metadata (node id, datacenter, peer address,
- * gRPC status code).
- */
 export type YdbDriverHooks = {
 	onCall?(event: {
 		method: string
@@ -91,7 +91,12 @@ export type RegisterOptions = {
 }
 
 export function installContextManager(): Disposer {
-	return asDisposer(() => {})
+	let installed = otelContext.setGlobalContextManager(createAlsContextManager())
+	return asDisposer(() => {
+		if (installed) {
+			otelContext.disable()
+		}
+	})
 }
 
 export function installTracing(options: RegisterOptions = {}): Disposer[] {
@@ -151,22 +156,6 @@ export function installLogs(_options: RegisterOptions = {}): Disposer[] {
 	return [asDisposer(setupLifecycleLogs())]
 }
 
-/**
- * Subscribes to all @ydbjs diagnostics channels and returns a TelemetryResult —
- * a disposer that tears down exactly this registration, plus a `hooks` object to
- * pass to the Driver constructor for per-call gRPC span enrichment.
- *
- * Call once at application startup after the OTel SDK is initialised:
- *
- * ```ts
- * const telemetry = register({ captureQueryText: true })
- * const driver = new Driver(endpoint, { hooks: telemetry.hooks })
- * // later:
- * telemetry() // or: using telemetry
- * ```
- *
- * For zero-config setup prefer: `node --import @ydbjs/telemetry/register`
- */
 export function register(options: RegisterOptions = {}): TelemetryResult {
 	let disposers: Disposer[] = []
 

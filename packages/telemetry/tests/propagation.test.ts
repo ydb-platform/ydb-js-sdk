@@ -16,22 +16,26 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { context as otelContext, trace } from '@opentelemetry/api'
 
-import { installTracing } from '../src/index.ts'
+import { installContextManager, installTracing } from '../src/index.ts'
 import { getActiveSubscriberSpan } from '../src/context-manager.ts'
 
 let exporter = new InMemorySpanExporter()
 let provider = new NodeTracerProvider({
 	spanProcessors: [new SimpleSpanProcessor(exporter)],
 })
-provider.register()
 
 let unsubscribe: () => void
 
 beforeAll(() => {
+	otelContext.disable()
+	let contextDisposer = installContextManager()
+	provider.register()
 	let disposers = installTracing()
 	unsubscribe = () => {
 		for (let d of disposers) d()
+		contextDisposer()
 	}
 })
 
@@ -83,6 +87,27 @@ test('ydb.ExecuteQuery is a child of ydb.Transaction when nested via ALS', async
 
 	// ExecuteQuery is a leaf span parented to Transaction via startChild reading spanStorage.
 	expect(execSpan!.parentSpanContext?.spanId).toBe(txSpan!.spanContext().spanId)
+})
+
+test('context.active() inside transaction body contains the ydb.Transaction span', async () => {
+	exporter.reset()
+
+	let txCh = tracingChannel<{ isolation: string; idempotent: boolean }>(
+		'tracing:ydb:query.transaction'
+	)
+
+	let activeSpanIdInsideBody: string | undefined
+
+	await txCh.tracePromise(
+		async () => {
+			activeSpanIdInsideBody = trace.getActiveSpan()?.spanContext().spanId
+		},
+		{ isolation: 'serializableReadWrite', idempotent: false }
+	)
+
+	let txSpan = exporter.getFinishedSpans().find((s) => s.name === 'ydb.Transaction')
+	expect(txSpan).toBeDefined()
+	expect(activeSpanIdInsideBody).toBe(txSpan!.spanContext().spanId)
 })
 
 test('ydb.ExecuteQuery (standalone) is NOT a child of ydb.CreateSession', async () => {
