@@ -41,12 +41,14 @@
 	},
 	"dependencies": {
 		"@opentelemetry/api": "^1.9.0",
+		"@opentelemetry/api-logs": "^0.215.0",
 		"@opentelemetry/core": "^2.0.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
 		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
+		"@opentelemetry/sdk-logs": "^0.215.0",
 		"@opentelemetry/sdk-trace-base": "^2.0.0",
 		"@opentelemetry/sdk-trace-node": "^2.0.0"
 	},
