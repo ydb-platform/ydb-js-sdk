@@ -3,16 +3,15 @@ import { expect, test } from 'vitest'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+
 import {
 	DB_SYSTEM,
 	SPAN_NAMES,
 	getBaseAttributes,
 	recordErrorAttributes,
 } from '../src/attributes.ts'
-import { createSpan } from '../src/span.ts'
 import { createOpenTelemetryTracer } from '../src/open-telemetry-tracer.ts'
-
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 
 // ── OTel provider ────────────────────────────────────────────────────────────
@@ -94,35 +93,6 @@ test('getBaseAttributes accepts options object with peer and node', () => {
 	expect(attrs['db.namespace']).toBe('/prod')
 	expect(attrs['ydb.node.id']).toBe(1)
 	expect(attrs['ydb.node.dc']).toBe('dc1')
-})
-
-// ── createSpan ───────────────────────────────────────────────────────────────
-
-test('createSpan returns result of fn when fn resolves', async () => {
-	let base = getBaseAttributes('localhost', 2136)
-	let result = await createSpan('test.op', base, async () => 42)
-	expect(result).toBe(42)
-})
-
-test('createSpan rethrows when fn rejects', async () => {
-	let base = getBaseAttributes('localhost', 2136)
-	let err = new Error('expected failure')
-	await expect(
-		createSpan('test.op', base, async () => {
-			throw err
-		})
-	).rejects.toThrow('expected failure')
-})
-
-test('createSpan passes span to fn', async () => {
-	let base = getBaseAttributes('localhost', 2136)
-	let receivedSpan = null as unknown
-	await createSpan('test.op', base, async (span) => {
-		receivedSpan = span
-		return undefined
-	})
-	expect(receivedSpan).not.toBeNull()
-	expect(typeof (receivedSpan as { end: unknown }).end).toBe('function')
 })
 
 // ── createOpenTelemetryTracer ────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
 import { parseEndpoint } from './attributes.js'
-import { createTracingSetup } from './context-manager.js'
+import { createTracingSetup, getActiveSubscriberSpan } from './context-manager.js'
 import type { Tracer } from './tracing.js'
 import { subscribeDiscoveryTracing } from './tracing/discovery.js'
 import { subscribeDriverTracing } from './tracing/driver.js'
@@ -17,9 +17,6 @@ import { setupRetryMetrics } from './metrics/retry.js'
 import { setupLifecycleLogs } from './logs/lifecycle.js'
 
 export { createOpenTelemetryTracer } from './open-telemetry-tracer.js'
-export { createSpan } from './span.js'
-export { subscribe, type SubscribeOptions } from './subscribe.js'
-export { withTracing } from './with-tracing.js'
 export {
 	DB_SYSTEM,
 	SPAN_NAMES,
@@ -49,6 +46,28 @@ function asDisposer(fn: () => void): Disposer {
 	d[Symbol.asyncDispose] = async () => d()
 	return d
 }
+
+/**
+ * Minimal structural subset of @ydbjs/core DriverHooks used for gRPC call enrichment.
+ * Pass `register(...).hooks` as the `hooks` option to the Driver constructor to
+ * enrich active spans with per-call gRPC metadata (node id, datacenter, peer address,
+ * gRPC status code).
+ */
+export type YdbDriverHooks = {
+	onCall?(event: {
+		method: string
+		endpoint: {
+			readonly nodeId: bigint
+			/** 'host:port' */
+			readonly address: string
+			readonly location: string
+		}
+		preferred: boolean
+		pool: { activeCount: number; pessimizedCount: number }
+	}): void | ((complete: { grpcStatusCode: number; duration: number }) => void)
+}
+
+export type TelemetryResult = Disposer & { hooks: YdbDriverHooks }
 
 export type RegisterOptions = {
 	/** @default true */
@@ -133,13 +152,22 @@ export function installLogs(_options: RegisterOptions = {}): Disposer[] {
 }
 
 /**
- * Subscribes to all @ydbjs diagnostics channels and returns a Disposer that
- * tears down exactly this registration. Each call is independent.
+ * Subscribes to all @ydbjs diagnostics channels and returns a TelemetryResult —
+ * a disposer that tears down exactly this registration, plus a `hooks` object to
+ * pass to the Driver constructor for per-call gRPC span enrichment.
  *
- * Call once at application startup after the OTel SDK is initialised.
+ * Call once at application startup after the OTel SDK is initialised:
+ *
+ * ```ts
+ * const telemetry = register({ captureQueryText: true })
+ * const driver = new Driver(endpoint, { hooks: telemetry.hooks })
+ * // later:
+ * telemetry() // or: using telemetry
+ * ```
+ *
  * For zero-config setup prefer: `node --import @ydbjs/telemetry/register`
  */
-export function register(options: RegisterOptions = {}): Disposer {
+export function register(options: RegisterOptions = {}): TelemetryResult {
 	let disposers: Disposer[] = []
 
 	if (options.contextManager !== false) {
@@ -155,9 +183,38 @@ export function register(options: RegisterOptions = {}): Disposer {
 		disposers.push(...installLogs(options))
 	}
 
-	let dispose = asDisposer(() => {
+	let fn = () => {
 		for (let d of disposers) d()
-	})
+	}
+
+	let hooks: YdbDriverHooks = {
+		onCall(event) {
+			let span = getActiveSubscriberSpan()
+			if (!span) return
+
+			let addr = event.endpoint.address
+			let colonIdx = addr.lastIndexOf(':')
+			let peerAddress = colonIdx > -1 ? addr.slice(0, colonIdx) : addr
+			let peerPort = colonIdx > -1 ? parseInt(addr.slice(colonIdx + 1), 10) : undefined
+
+			span.setAttributes({
+				'ydb.node.id': Number(event.endpoint.nodeId),
+				'ydb.node.dc': event.endpoint.location,
+				'network.peer.address': peerAddress,
+				...(peerPort !== undefined &&
+					!isNaN(peerPort) && { 'network.peer.port': peerPort }),
+			})
+
+			return (complete) => {
+				span.setAttribute('rpc.grpc.status_code', complete.grpcStatusCode)
+			}
+		},
+	}
+
+	let dispose = fn as TelemetryResult
+	dispose[Symbol.dispose] = fn
+	dispose[Symbol.asyncDispose] = async () => fn()
+	dispose.hooks = hooks
 
 	return dispose
 }

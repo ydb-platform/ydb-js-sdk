@@ -4,7 +4,7 @@ import { afterAll, beforeEach, expect, test } from 'vitest'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 
-import { SPAN_NAMES, createOpenTelemetryTracer, subscribe } from './index.ts'
+import { SPAN_NAMES, createOpenTelemetryTracer, installTracing } from './index.ts'
 
 type SessionCreateCtx = { liveSessions: number; maxSize: number; creating: number }
 
@@ -30,14 +30,14 @@ let sessionCreateCh = tracingChannel<SessionCreateCtx>('tracing:ydb:session.crea
 let executeCh = tracingChannel<ExecuteCtx>('tracing:ydb:query.execute')
 let transactionCh = tracingChannel<TransactionCtx>('tracing:ydb:query.transaction')
 
-let unsub = subscribe({
+let disposers = installTracing({
 	tracer: createOpenTelemetryTracer(),
 	endpoint: 'grpc://127.0.0.1:2136/local',
 	captureQueryText: true,
 })
 
 afterAll(() => {
-	unsub()
+	for (let d of disposers) d()
 })
 
 beforeEach(() => {
@@ -64,7 +64,6 @@ test('creates spans for CreateSession and ExecuteQuery', async () => {
 	expect(spanNames).toContain(SPAN_NAMES.CreateSession)
 	expect(spanNames).toContain(SPAN_NAMES.ExecuteQuery)
 
-	// ExecuteQuery must NOT be a child of CreateSession — they are siblings.
 	let createSpan = spans.find((s) => s.name === SPAN_NAMES.CreateSession)!
 	let executeSpan = spans.find((s) => s.name === SPAN_NAMES.ExecuteQuery)!
 	expect(executeSpan.parentSpanContext?.spanId).not.toBe(createSpan.spanContext().spanId)
@@ -148,10 +147,4 @@ test('ExecuteQuery rejection sets error status on span', async () => {
 	expect(errorSpan).toBeDefined()
 	expect(errorSpan!.status?.code).toBe(2)
 	expect(errorSpan!.attributes['error.type']).toBeDefined()
-})
-
-test('subscribe returns working unsubscribe function', () => {
-	let unsubLocal = subscribe(createOpenTelemetryTracer())
-	expect(typeof unsubLocal).toBe('function')
-	unsubLocal()
 })

@@ -5,7 +5,7 @@ import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-tr
 
 import { retry } from '../../retry/src/index.ts'
 
-import { subscribe } from '../src/subscribe.ts'
+import { installTracing } from '../src/index.ts'
 
 let exporter = new InMemorySpanExporter()
 let provider = new NodeTracerProvider({
@@ -16,7 +16,10 @@ provider.register()
 let unsubscribe: () => void
 
 beforeAll(() => {
-	unsubscribe = subscribe()
+	let disposers = installTracing()
+	unsubscribe = () => {
+		for (let d of disposers) d()
+	}
 })
 
 afterAll(() => {

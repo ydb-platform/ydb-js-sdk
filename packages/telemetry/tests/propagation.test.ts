@@ -17,7 +17,7 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { subscribe } from '../src/subscribe.ts'
+import { installTracing } from '../src/index.ts'
 import { getActiveSubscriberSpan } from '../src/context-manager.ts'
 
 let exporter = new InMemorySpanExporter()
@@ -29,7 +29,10 @@ provider.register()
 let unsubscribe: () => void
 
 beforeAll(() => {
-	unsubscribe = subscribe()
+	let disposers = installTracing()
+	unsubscribe = () => {
+		for (let d of disposers) d()
+	}
 })
 
 afterAll(() => {
