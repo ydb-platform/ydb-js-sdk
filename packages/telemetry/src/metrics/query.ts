@@ -9,15 +9,8 @@ type OpCtx = {
 	_metricsStart?: number
 }
 
-/**
- * Sets up metrics for YDB query operations:
- * - ydb.client.operation.duration: histogram (s), tags: database, endpoint, operation.name
- * - ydb.client.operation.failed: counter ({operation}), tags: database, endpoint, operation.name, status_code
- *
- * Note: CreateSession is also tracked by db.client.connection.create_time in session.ts.
- * Both metrics intentionally record it — operation.duration for unified operation latency view,
- * connection.create_time as a dedicated connection establishment metric per OTel semconv.
- */
+// Sets up metrics for YDB query operations
+
 function queryOperationLabels(
 	base: Record<string, string | number | boolean>
 ): Record<string, string | number | boolean> {
@@ -39,7 +32,8 @@ export function setupQueryMetrics(
 		unit: 's',
 		advice: {
 			explicitBucketBoundaries: [
-				0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+				0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5,
+				3, 5, 10,
 			],
 		},
 	})

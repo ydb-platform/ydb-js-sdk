@@ -39,7 +39,9 @@ export function setupRetryMetrics(
 			'Total duration of a retry() call in seconds, including all attempts and backoff delays',
 		unit: 's',
 		advice: {
-			explicitBucketBoundaries: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+			explicitBucketBoundaries: [
+				0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 5, 10, 30,
+			],
 		},
 	})
 
