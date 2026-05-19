@@ -1,10 +1,10 @@
 ---
 '@ydbjs/query': minor
 '@ydbjs/retry': minor
-'@ydbjs/core': patch
+'@ydbjs/core': minor
 ---
 
-OpenTelemetry metrics pipeline, semantic-convention cleanup, and a `DeleteSession` span.
+OpenTelemetry metrics pipeline, semantic-convention cleanup, a `DeleteSession` span, and W3C trace context propagation in `@ydbjs/core`.
 
 `@ydbjs/telemetry`:
 
@@ -23,6 +23,7 @@ OpenTelemetry metrics pipeline, semantic-convention cleanup, and a `DeleteSessio
 - Two observable instruments are also emitted, fed by an internal per-`DriverIdentity` state registry that subscribes to existing lifecycle events:
   - `ydb.driver.connection.count` (`ObservableUpDownCounter`, tagged with `ydb.connection.state` ∈ `{live, pessimized}`)
   - `ydb.query.session.count` (`ObservableUpDownCounter`, total only — state breakdown is a follow-up that needs `session.acquired/released` events from `@ydbjs/query`)
+- W3C trace context propagation: `register()` installs a gRPC client middleware (via `@ydbjs/core`'s new `addClientMiddleware`) that calls `propagation.inject(context.active(), metadata, …)` on every outgoing YDB RPC. Always on while the instrumentation is enabled — without an OTel SDK the global propagator is a no-op. Must be called before `new Driver(...)` for the middleware to apply.
 
 `@ydbjs/query`:
 
@@ -39,3 +40,10 @@ OpenTelemetry metrics pipeline, semantic-convention cleanup, and a `DeleteSessio
 `@ydbjs/core`:
 
 - `ydb:driver.connection.unpessimized` payload field is `duration` (ms).
+- New `addClientMiddleware(mw)` API — appends a `ClientMiddleware` to a
+  process-global registry that `Driver` composes into its gRPC client chain
+  at construction time. Returns a `Disposable` for cleanup. Used by
+  `@ydbjs/telemetry` to install W3C trace context propagation without
+  pulling OTel packages into `@ydbjs/core`. Drivers constructed before the
+  registration do not pick up the new middleware — call before
+  `new Driver(...)`.

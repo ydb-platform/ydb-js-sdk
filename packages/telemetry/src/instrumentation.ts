@@ -1,8 +1,10 @@
 import { InstrumentationBase, type InstrumentationConfig } from '@opentelemetry/instrumentation'
+import { addClientMiddleware } from '@ydbjs/core'
 
 import pkg from '../package.json' with { type: 'json' }
 
 import { YdbMetricsPipeline } from './metrics.js'
+import { propagator } from './propagation.js'
 import { YdbTracesPipeline } from './traces.js'
 
 export type YdbInstrumentationConfig = InstrumentationConfig & {
@@ -25,6 +27,7 @@ export type YdbInstrumentationConfig = InstrumentationConfig & {
 export class YdbInstrumentation extends InstrumentationBase<YdbInstrumentationConfig> {
 	#traces: YdbTracesPipeline | undefined
 	#metrics: YdbMetricsPipeline | undefined
+	#propagatorHandle: Disposable | undefined
 
 	constructor(config: YdbInstrumentationConfig = {}) {
 		// Defer `enable()` until our private fields are constructed —
@@ -50,6 +53,8 @@ export class YdbInstrumentation extends InstrumentationBase<YdbInstrumentationCo
 
 		this.#metrics = new YdbMetricsPipeline(this.meter)
 		this.#metrics.enable()
+
+		this.#propagatorHandle = addClientMiddleware(propagator)
 	}
 
 	override disable(): void {
@@ -58,5 +63,7 @@ export class YdbInstrumentation extends InstrumentationBase<YdbInstrumentationCo
 		this.#traces = undefined
 		this.#metrics?.disable()
 		this.#metrics = undefined
+		this.#propagatorHandle?.[Symbol.dispose]()
+		this.#propagatorHandle = undefined
 	}
 }

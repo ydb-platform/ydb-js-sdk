@@ -1,12 +1,13 @@
-export * from './driver.js'
 export type { DriverIdentity } from './driver-identity.js'
+export * from './driver.js'
 export type {
+	CallCompleteEvent,
+	CallStartEvent,
+	DiscoveryErrorEvent,
+	DiscoveryEvent,
 	DriverHooks,
 	EndpointInfo,
-	CallStartEvent,
-	CallCompleteEvent,
 	PessimizeEvent,
 	UnpessimizeEvent,
-	DiscoveryEvent,
-	DiscoveryErrorEvent,
 } from './hooks.js'
+export { addClientMiddleware } from './middleware.js'

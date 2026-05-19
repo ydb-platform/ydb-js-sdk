@@ -20,6 +20,10 @@ OpenTelemetry instrumentation for the YDB JavaScript SDK. Subscribes to
 - Standard `enable()` / `disable()` lifecycle via `InstrumentationBase`.
   Compatible with `registerInstrumentations()` from
   `@opentelemetry/instrumentation`.
+- W3C trace context propagation — `register()` installs a gRPC client
+  middleware that carries `traceparent` / `tracestate` (and any other
+  propagator registered via `propagation.setGlobalPropagator`) into
+  outgoing YDB calls. See [Propagation to YDB](#propagation-to-ydb) below.
 
 ## Installation
 
@@ -300,13 +304,13 @@ out-of-the-box distribution is usable without configuration. The OTel SDK
 default (designed for milliseconds: `[0, 5, 10, 25, …, 10000]`) buckets all
 sub-second YDB ops into the first slot, which is why we override.
 
-| Histogram                            | Boundaries (seconds)                                                                                               | Why                                                                                                          |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `db.client.operation.duration`       | `0.0005, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60` | Dense middle (1ms–1s) covers warm-cache reads + typical Execute; tail extends to overload-backoff territory. |
-| `ydb.query.session.create.duration`  | `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`                                                          | CreateSession + first AttachStream message — typically tens of ms, capped well below operation timeouts.     |
-| `ydb.query.session.acquire.duration` | `0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5`                                                                 | Warm-pool acquires are sub-millisecond; high tail only signals pool starvation.                              |
-| `ydb.auth.token.fetch.duration`      | `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30`                                                                    | IAM/JWT round-trip; 30s tail matches typical request timeouts.                                               |
-| `ydb.retry.duration`                 | `0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300`                                                                      | End-to-end loop including backoffs — overload-induced retry sequences can stretch to minutes.                |
+| Histogram                            | Boundaries (seconds)                                                                                               | Why                                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db.client.operation.duration`       | `0.0005, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60` | Dense middle (1ms–1s) covers warm-cache reads + typical Execute; tail extends to overload-backoff territory.                                                                                                               |
+| `ydb.query.session.create.duration`  | `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`                                                          | CreateSession + first AttachStream message — typically tens of ms, capped well below operation timeouts.                                                                                                                   |
+| `ydb.query.session.acquire.duration` | `0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30`                                                    | Warm-pool acquires are sub-millisecond. When the pool has capacity but no idle session, an acquire wraps a full `session.create`, so the upper tail must cover create's tail (10s) plus a 30s slot for genuine starvation. |
+| `ydb.auth.token.fetch.duration`      | `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30`                                                                    | IAM/JWT round-trip; 30s tail matches typical request timeouts.                                                                                                                                                             |
+| `ydb.retry.duration`                 | `0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300`                                                                      | End-to-end loop including backoffs — overload-induced retry sequences can stretch to minutes.                                                                                                                              |
 
 Override per-histogram in your OTel SDK config with a `View`:
 
@@ -358,12 +362,70 @@ Parent-child relationships between nested spans (e.g.
 channel body, so `disable()` cleanly tears down the binding without orphaning
 state.
 
+## Propagation to YDB
+
+`register()` installs a gRPC client middleware into `@ydbjs/core` (via
+`addClientMiddleware` — a small public hook exported from `@ydbjs/core`).
+On every outgoing RPC it calls
+`propagation.inject(context.active(), metadata, …)`, serialising the active
+OTel context into gRPC metadata using whichever propagator is globally
+registered. With no SDK registered the global propagator is a no-op.
+
+**Order of operations matters.** Drivers compose the middleware chain
+**once** at construction time, so `register()` must run **before**
+`new Driver(...)`. Matches OTel's `NodeSDK.start()` pattern.
+
+```ts
+sdk.start()                 // 1. OTel SDK
+register({ /* … */ })       // 2. @ydbjs/telemetry
+let driver = new Driver(…)  // 3. YDB driver — picks up the middleware
+```
+
+Default propagator is W3C `traceparent` / `tracestate`. Override with any
+other format by setting it before `register()`:
+
+```ts
+import { propagation } from '@opentelemetry/api'
+import { W3CTraceContextPropagator } from '@opentelemetry/core'
+
+// NodeSDK registers the W3C propagator by default; only set this manually
+// if you want a different format (e.g. B3, AWS X-Amzn).
+propagation.setGlobalPropagator(new W3CTraceContextPropagator())
+```
+
+**For propagation to actually carry your trace id, the YDB call must run
+inside an active OTel context.** The typical pattern: wrap the call in your
+own span.
+
+```ts
+import { trace } from '@opentelemetry/api'
+
+let tracer = trace.getTracer('my-app')
+
+await tracer.startActiveSpan('checkout', async (span) => {
+  try {
+    let rows = await sql`SELECT * FROM orders WHERE id = ${orderId}`
+    // Inside `startActiveSpan` callback, `context.active()` carries the new
+    // span — the propagator middleware emits a matching `traceparent`.
+  } finally {
+    span.end()
+  }
+})
+```
+
+> **Note.** `@ydbjs/telemetry`'s own internal spans (`ydb.Query.ExecuteQuery`,
+> `ydb.AcquireSession`, …) are created via the global `TracerProvider` but
+> are **not** activated in OTel's `ContextManager` — they live in a private
+> `AsyncLocalStorage` used only for parent-child linkage between sibling
+> SDK spans. So a `SELECT` issued **without** a user-created outer span will
+> still produce a `ydb.Query.ExecuteQuery` span locally, but the
+> `traceparent` sent to YDB will carry no trace id. Wrap YDB calls in your
+> own span (or in any other OTel-instrumented work) to get end-to-end
+> propagation.
+
 ## Non-goals (this version)
 
 - Structured logs are out of scope. Producers already emit driver / auth /
   session lifecycle events on dc; a separate logs subscriber will land later.
-- Cross-process trace context propagation. The instrumentation operates
-  inside the SDK boundary; trace context for outgoing gRPC calls is handled
-  by the user's OTel SDK setup.
 - See the "Deferred" subsection of [Metrics](#metrics) for instruments that
   need new producer events.
