@@ -55,8 +55,8 @@ async function collect(): Promise<ResourceMetrics> {
 
 function findInstrument(rm: ResourceMetrics, name: string) {
 	for (let scope of rm.scopeMetrics) {
-		let m = scope.metrics.find((m) => m.descriptor.name === name)
-		if (m) return m
+		let found = scope.metrics.find((inst) => inst.descriptor.name === name)
+		if (found) return found
 	}
 	throw new Error(`no instrument named ${name}`)
 }
