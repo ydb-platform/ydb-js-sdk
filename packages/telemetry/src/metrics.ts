@@ -147,8 +147,14 @@ export class YdbMetricsPipeline {
 				description: 'Time to acquire a session lease from the pool.',
 				unit: 's',
 				advice: {
-					// Warm pool ≈ 0; high tail only when starved.
-					explicitBucketBoundaries: [0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+					// Warm pool resolves in microseconds — keep sub-ms granularity at
+					// the low end. When the pool has capacity but no idle session,
+					// acquire encapsulates a full `session.create`, so the upper
+					// boundaries must cover create's tail (10s) and then some — 30s
+					// is reserved for genuine pool starvation under waiter timeout.
+					explicitBucketBoundaries: [
+						0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 10, 30,
+					],
 				},
 			}
 		)

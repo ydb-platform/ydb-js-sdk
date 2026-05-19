@@ -1,6 +1,6 @@
-import * as tls from 'node:tls'
 import * as assert from 'node:assert/strict'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+import * as tls from 'node:tls'
 
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
@@ -29,6 +29,7 @@ import {
 } from 'nice-grpc'
 
 import pkg from '../package.json' with { type: 'json' }
+
 import { BalancedChannel } from './channel.js'
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
@@ -41,7 +42,7 @@ import {
 	DriverResponseError,
 } from './errors.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
-import { debug } from './middleware.js'
+import { debug, getRegisteredClientMiddlewares } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
 
@@ -418,10 +419,19 @@ export class Driver implements Disposable {
 			return call.next(call.request, Object.assign(options, { metadata }))
 		}
 
-		return composeClientMiddleware(
-			composeClientMiddleware(debug, stamp),
-			this.#credentialsProvider.middleware
-		)
+		// Order: debug (logging) → stamp (SDK / db / app headers) → any
+		// externally-registered middleware (e.g. @ydbjs/telemetry's W3C
+		// propagator) → auth (x-ydb-auth-ticket). Auth runs last so a token
+		// refresh that fires from inside another middleware still wins the
+		// final header set.
+		//
+		// The registry snapshot is taken at construction time — call
+		// `addClientMiddleware()` BEFORE `new Driver(...)` for it to apply.
+		let chain = composeClientMiddleware(debug, stamp)
+		for (let mw of getRegisteredClientMiddlewares()) {
+			chain = composeClientMiddleware(chain, mw)
+		}
+		return composeClientMiddleware(chain, this.#credentialsProvider.middleware)
 	}
 
 	#startDiscoveryLoop(): void {

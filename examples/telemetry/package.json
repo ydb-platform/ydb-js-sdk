@@ -1,0 +1,27 @@
+{
+	"name": "@ydbjs/examples-telemetry",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"publishConfig": {
+		"access": "restricted"
+	},
+	"scripts": {
+		"start": "node index.js"
+	},
+	"dependencies": {
+		"@opentelemetry/api": "^1.9.1",
+		"@opentelemetry/exporter-metrics-otlp-http": "^0.218.0",
+		"@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+		"@opentelemetry/sdk-metrics": "^2.7.1",
+		"@opentelemetry/sdk-node": "^0.218.0",
+		"@ydbjs/core": "^6.1.1",
+		"@ydbjs/query": "^6.1.0",
+		"@ydbjs/telemetry": "^6.0.0"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}
