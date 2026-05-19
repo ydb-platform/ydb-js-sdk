@@ -87,6 +87,17 @@ cd examples/fsm
 npm install && npm start
 ```
 
+### 📁 [telemetry/](./telemetry/)
+
+EN: OpenTelemetry tracing with `@ydbjs/telemetry` — spans exported via OTLP/HTTP to a collector (Jaeger, Tempo).
+
+RU: OpenTelemetry трейсинг с `@ydbjs/telemetry` — спаны экспортируются по OTLP/HTTP в коллектор (Jaeger, Tempo).
+
+```bash
+cd examples/telemetry
+npm install && npm start
+```
+
 ### 📁 [service-account/](./service-account/)
 
 EN: Yandex Cloud Service Account authentication with authorized key JSON file.
@@ -142,6 +153,7 @@ cd examples/tls && npm start
 cd examples/topic && npm start
 cd examples/coordination && npm start
 cd examples/fsm && npm start
+cd examples/telemetry && npm start
 cd examples/service-account && npm start
 ```
 
