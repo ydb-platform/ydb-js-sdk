@@ -28,6 +28,7 @@ import {
 	METRIC_YDB_AUTH_TOKEN_EXPIRATIONS,
 	METRIC_YDB_AUTH_TOKEN_FETCH_DURATION,
 	METRIC_YDB_AUTH_TOKEN_FETCH_FAILURES,
+	METRIC_YDB_AUTH_TOKEN_REFRESHES,
 	METRIC_YDB_DRIVER_CONNECTION_COUNT,
 	METRIC_YDB_DRIVER_CONNECTION_PESSIMIZATIONS,
 	METRIC_YDB_QUERY_SESSION_ACQUIRE_DURATION,
@@ -74,6 +75,7 @@ export class YdbMetricsPipeline {
 	#sessionClosed!: Counter
 	#sessionAcquireFailures!: Counter
 	#authTokenFetchFailures!: Counter
+	#authTokenRefreshes!: Counter
 	#authTokenExpirations!: Counter
 	#retryAttempts!: Counter
 
@@ -167,6 +169,12 @@ export class YdbMetricsPipeline {
 				unit: '{failure}',
 			}
 		)
+		this.#authTokenRefreshes = this.#meter.createCounter(METRIC_YDB_AUTH_TOKEN_REFRESHES, {
+			description:
+				'Successful token refreshes. Direct rate signal; complements ' +
+				'ydb.auth.token.fetch.duration which records both successes and failures.',
+			unit: '{refresh}',
+		})
 		this.#authTokenExpirations = this.#meter.createCounter(METRIC_YDB_AUTH_TOKEN_EXPIRATIONS, {
 			description: 'Incidents where a stale (past hard expiry buffer) token was served.',
 			unit: '{expiration}',
@@ -509,6 +517,14 @@ export class YdbMetricsPipeline {
 		this.#subs.push(
 			this.#subPlain<{ provider: string }>('ydb:auth.token.expired', (msg) =>
 				this.#authTokenExpirations.add(1, {
+					...BASE_ATTRIBUTES,
+					[ATTR_YDB_AUTH_PROVIDER]: msg.provider,
+				})
+			)
+		)
+		this.#subs.push(
+			this.#subPlain<{ provider: string }>('ydb:auth.token.refreshed', (msg) =>
+				this.#authTokenRefreshes.add(1, {
 					...BASE_ATTRIBUTES,
 					[ATTR_YDB_AUTH_PROVIDER]: msg.provider,
 				})

@@ -18,6 +18,7 @@ export let METRIC_YDB_DRIVER_CONNECTION_COUNT = 'ydb.driver.connection.count'
 
 export let METRIC_YDB_AUTH_TOKEN_FETCH_DURATION = 'ydb.auth.token.fetch.duration'
 export let METRIC_YDB_AUTH_TOKEN_FETCH_FAILURES = 'ydb.auth.token.fetch.failures'
+export let METRIC_YDB_AUTH_TOKEN_REFRESHES = 'ydb.auth.token.refreshes'
 export let METRIC_YDB_AUTH_TOKEN_EXPIRATIONS = 'ydb.auth.token.expirations'
 
 export let METRIC_YDB_RETRY_ATTEMPTS = 'ydb.retry.attempts'
