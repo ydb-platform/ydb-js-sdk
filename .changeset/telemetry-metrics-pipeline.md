@@ -39,4 +39,4 @@ OpenTelemetry metrics pipeline, semantic-convention cleanup, and a `DeleteSessio
 
 `@ydbjs/core`:
 
-- Bug fix: `ConnectionPool.unpessimize` previously published the `ydb:driver.connection.unpessimized` event with a `pessimizedDuration` field, while every documented subscriber (including `@ydbjs/telemetry`) reads `duration`. Renamed to `duration` so the event is no longer silently dropped.
+- `ydb:driver.connection.unpessimized` payload field is `duration` (ms).
