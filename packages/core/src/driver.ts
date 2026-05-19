@@ -31,6 +31,7 @@ import {
 import pkg from '../package.json' with { type: 'json' }
 import { BalancedChannel } from './channel.js'
 import { type Connection, GrpcConnection } from './conn.js'
+import type { DriverIdentity } from './driver-identity.js'
 import {
 	DriverCSDatabaseError,
 	DriverCSProtocolError,
@@ -44,9 +45,7 @@ import { debug } from './middleware.js'
 import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
 
-let discoveryCh = tracingChannel<{ database: string }, { database: string }>(
-	'tracing:ydb:discovery'
-)
+let discoveryCh = tracingChannel<{ driver: DriverIdentity }>('tracing:ydb:driver.discovery')
 
 export type { DriverHooks, EndpointInfo }
 
@@ -99,9 +98,11 @@ function databaseFromUrl(url: URL): string {
 	if (url.pathname && url.pathname !== '/') {
 		return url.pathname
 	}
+
 	if (url.searchParams.has('database')) {
 		return url.searchParams.get('database') || ''
 	}
+
 	return ''
 }
 
@@ -172,6 +173,12 @@ export class Driver implements Disposable {
 	#readyAt: number | undefined
 	#closed = false
 
+	// Referentially stable per driver instance — subscribers (telemetry
+	// registries, metric callbacks) key per-driver state by this reference.
+	// A new object per `get identity()` would shatter those keys and split
+	// every observable metric into one-shot series.
+	#identity!: DriverIdentity
+
 	constructor(connectionString: string, userOptions: Readonly<DriverOptions> = defaultOptions) {
 		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, userOptions)
 
@@ -184,6 +191,8 @@ export class Driver implements Disposable {
 		this.cs = this.#parseConnectionString(connectionString)
 		this.options = this.#mergeOptions(userOptions)
 		this.#assertDiscoveryTimings()
+
+		this.#identity = this.#buildIdentity()
 
 		let channelCredentials = this.#createChannelCredentials()
 
@@ -205,6 +214,7 @@ export class Driver implements Disposable {
 
 		this.#pool = new ConnectionPool({
 			hooks: this.options.hooks,
+			identity: this.identity,
 			channelOptions: this.options.channelOptions,
 			channelCredentials: channelCredentials,
 			idleTimeout: this.options['ydb.sdk.connection_idle_timeout_ms']!,
@@ -246,6 +256,18 @@ export class Driver implements Disposable {
 		return ''
 	}
 
+	/**
+	 * Stable identity stamped onto every `diagnostics_channel` payload so
+	 * subscribers can attribute events to a specific Driver instance without
+	 * any AsyncLocalStorage cooperation from the publisher.
+	 *
+	 * Returns the same frozen object for the lifetime of the driver —
+	 * subscribers may use it as a Map key for per-driver state.
+	 */
+	get identity(): DriverIdentity {
+		return this.#identity
+	}
+
 	async ready(signal?: AbortSignal): Promise<void> {
 		dbg.log('waiting for driver to become ready')
 
@@ -269,23 +291,24 @@ export class Driver implements Disposable {
 		if (this.#closed) return
 		this.#closed = true
 
-		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
-		dbg.log('closing driver (uptime %d ms)', uptime)
+		clearInterval(this.#rediscoverTimer)
 
 		// Cancel any in-flight discovery so its callbacks bail out instead of
 		// publishing `ydb:driver.ready` / `ydb:driver.failed` after this point.
 		this.#shutdown.abort(new Error('driver closed'))
+
 		// Unblock anyone waiting on ready() — markReady/markFailed are now
 		// guarded by #closed and won't settle the latch.
 		this.#ready.reject(new Error('driver closed'))
 
-		if (this.#rediscoverTimer) {
-			clearInterval(this.#rediscoverTimer)
-		}
 		this.#pool.close()
 		this.#connection.close()
 
-		dc('ydb:driver.closed').publish({ database: this.database, uptime })
+		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
+
+		dc('ydb:driver.closed').publish({ driver: this.identity, uptime })
+
+		dbg.log('closing driver (uptime %d ms)', uptime)
 	}
 
 	/**
@@ -329,6 +352,17 @@ export class Driver implements Disposable {
 		return Promise.resolve(this.close())
 	}
 
+	#buildIdentity(): DriverIdentity {
+		// Drop `port` when the connection string has none rather than inventing
+		// a default — leaks fewer wrong values into telemetry.
+		let port = this.cs.port ? parseInt(this.cs.port, 10) : undefined
+		return Object.freeze({
+			database: this.database,
+			address: this.cs.hostname,
+			...(port !== undefined && { port }),
+		})
+	}
+
 	#parseConnectionString(cs: string): URL {
 		if (!cs) {
 			throw new Error('Invalid connection string. Must be a non-empty string')
@@ -370,6 +404,7 @@ export class Driver implements Disposable {
 			let secureContext = tls.createSecureContext(this.options.secureOptions)
 			return credentials.createFromSecureContext(secureContext)
 		}
+
 		return this.isSecure ? credentials.createSsl() : credentials.createInsecure()
 	}
 
@@ -419,25 +454,30 @@ export class Driver implements Disposable {
 		// Discovery resolved after close() — drop the event so subscribers don't
 		// see `ready` after `closed`. ready() already rejected via shutdown signal.
 		if (this.#closed) return
-		this.#readyAt = performance.now()
-		let duration = this.#readyAt - this.#initAt
-		dbg.log('driver ready in %d ms', duration)
+
 		this.#ready.resolve()
-		dc('ydb:driver.ready').publish({ database: this.database, duration })
+
+		let duration = performance.now() - this.#initAt
+		dc('ydb:driver.ready').publish({ driver: this.identity, duration })
+
+		dbg.log('driver ready in %d ms', duration)
 	}
 
 	#markFailed(error: unknown): void {
 		// Same reason as #markReady — don't publish failure after `closed`.
 		if (this.#closed) return
-		let duration = performance.now() - this.#initAt
-		dbg.log('driver init failed after %d ms: %O', duration, error)
+
 		this.#ready.reject(error)
-		dc('ydb:driver.failed').publish({ database: this.database, duration, error })
+
+		let duration = performance.now() - this.#initAt
+		dc('ydb:driver.failed').publish({ driver: this.identity, duration, error })
+
+		dbg.log('driver init failed after %d ms: %O', duration, error)
 	}
 
 	async #discovery(signal: AbortSignal): Promise<void> {
 		await discoveryCh.tracePromise(() => this.#runDiscoveryRound(signal), {
-			database: this.database,
+			driver: this.identity,
 		})
 	}
 
@@ -462,22 +502,6 @@ export class Driver implements Disposable {
 		let { added, removed } = this.#pool.sync(result.endpoints)
 		let duration = performance.now() - started
 
-		dbg.log(
-			'discovered %d endpoints (+%d / -%d) in %d ms',
-			result.endpoints.length,
-			added.length,
-			removed.length,
-			duration
-		)
-
-		dc('ydb:discovery.completed').publish({
-			database: this.database,
-			addedCount: added.length,
-			removedCount: removed.length,
-			totalCount: result.endpoints.length,
-			duration,
-		})
-
 		this.#safeHook('onDiscovery', () =>
 			this.options.hooks?.onDiscovery?.({
 				added,
@@ -491,6 +515,22 @@ export class Driver implements Disposable {
 					})
 				),
 			})
+		)
+
+		dc('ydb:driver.discovery.completed').publish({
+			driver: this.identity,
+			addedCount: added.length,
+			totalCount: result.endpoints.length,
+			removedCount: removed.length,
+			duration,
+		})
+
+		dbg.log(
+			'discovered %d endpoints (+%d / -%d) in %d ms',
+			result.endpoints.length,
+			added.length,
+			removed.length,
+			duration
 		)
 	}
 

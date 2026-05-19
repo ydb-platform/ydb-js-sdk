@@ -198,15 +198,31 @@ Every code path that uses `retry()` — driver discovery, query execution, trans
 
 ### Channels
 
-| Channel                     | Type    | Payload                                                                             |
-| --------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `tracing:ydb:retry.run`     | tracing | `{ idempotent: boolean }` — whole retry loop                                        |
-| `tracing:ydb:retry.attempt` | tracing | `{ attempt: number, idempotent: boolean }` — a single attempt (including the first) |
-| `ydb:retry.exhausted`       | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — see below       |
+| Channel                       | Type    | Payload                                                                                                                  |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `tracing:ydb:retry.run`       | tracing | `{ idempotent: boolean, outcome?: RetryOutcome }` — whole retry loop. `outcome` is set on the ctx before resolve / throw. |
+| `tracing:ydb:retry.attempt`   | tracing | `{ attempt: number, idempotent: boolean }` — a single attempt (including the first)                                      |
+| `ydb:retry.attempt.completed` | publish | `{ attempt: number, idempotent: boolean, outcome: RetryOutcome }` — emitted once per attempt with its outcome            |
+| `ydb:retry.exhausted`         | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — ms. See below.                                       |
+
+```ts
+type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
+```
 
 `retry.attempt` is published once per attempt starting from `attempt: 1`. Because `tracingChannel.tracePromise` wraps every attempt, `tracing:ydb:retry.attempt.error` fires for **every** failed attempt — both the ones that will be retried and the final one that exits the loop. The final attempt's failure additionally surfaces on `tracing:ydb:retry.run.error`.
 
+`ydb:retry.attempt.completed` is the metrics-friendly companion: it fires exactly once per attempt regardless of success or failure, with an `outcome` tag suited for a `Counter`. Use it instead of subscribing to both `attempt.asyncEnd` and `attempt.error` when all you want is a count.
+
 `ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the loop exits via `AbortError` or `TimeoutError`: those are rethrown immediately as caller-driven cancellations. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
+
+For end-to-end retry duration with outcome dimensions, read `outcome` off the `retry.run` ctx on `asyncEnd` / `error`:
+
+```ts
+tracingChannel('tracing:ydb:retry.run').subscribe({
+  asyncEnd(ctx) { histogram.record(elapsed, { outcome: ctx.outcome }) },
+  error(ctx)    { histogram.record(elapsed, { outcome: ctx.outcome }) },
+})
+```
 
 ### Subscribing
 

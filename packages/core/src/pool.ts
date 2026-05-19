@@ -6,6 +6,7 @@ import { loggers } from '@ydbjs/debug'
 import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
 
 import { type Connection, GrpcConnection } from './conn.js'
+import type { DriverIdentity } from './driver-identity.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
 
 /**
@@ -39,6 +40,8 @@ export interface ConnectionPoolOptions {
 	idleTimeout: number
 	idleInterval: number
 	pessimizationTimeout: number
+	/** Stamped onto every `ydb:driver.connection.*` event so multi-driver subscribers can attribute. */
+	identity: DriverIdentity
 }
 
 export class ConnectionPool implements Disposable {
@@ -133,29 +136,7 @@ export class ConnectionPool implements Disposable {
 			this.#connections.splice(index, 1)
 		}
 
-		// Don't double-pessimize — refresh the timestamp if already pessimized
-		let wasPessimized = this.#pessimized.has(conn)
-		let until = Date.now() + this.options.pessimizationTimeout
-		this.#pessimized.set(conn, until)
-
-		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
-
-		// Only fire on the active→pessimized transition. Re-pessimize of an
-		// already-pessimized connection is a timeout refresh, not a state
-		// change — subscribers reconstructing pool state from delta events
-		// must not see it as a fresh transition.
-		if (!wasPessimized) {
-			dc('ydb:pool.connection.pessimized').publish({
-				nodeId: conn.endpoint.nodeId,
-				address: conn.endpoint.address,
-				location: conn.endpoint.location,
-				until,
-			})
-
-			this.#safeHook('onPessimize', () => {
-				this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
-			})
-		}
+		this.#pessimizeConnection(conn)
 	}
 
 	/**
@@ -212,18 +193,19 @@ export class ConnectionPool implements Disposable {
 
 		this.#connections.push(conn)
 
+		dc('ydb:driver.connection.added').publish({
+			driver: this.options.identity,
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+		})
+
 		dbg.log(
 			'added connection to node %d address %s (pool size: %d)',
 			conn.endpoint.nodeId,
 			conn.endpoint.address,
 			this.#connections.length
 		)
-
-		dc('ydb:pool.connection.added').publish({
-			nodeId: conn.endpoint.nodeId,
-			address: conn.endpoint.address,
-			location: conn.endpoint.location,
-		})
 	}
 
 	/**
@@ -399,22 +381,23 @@ export class ConnectionPool implements Disposable {
 				this.#pessimized.delete(conn)
 				this.#connections.push(conn)
 
+				this.#safeHook('onUnpessimize', () => {
+					this.options.hooks?.onUnpessimize?.({ endpoint: conn.endpoint })
+				})
+
+				dc('ydb:driver.connection.unpessimized').publish({
+					driver: this.options.identity,
+					nodeId: conn.endpoint.nodeId,
+					address: conn.endpoint.address,
+					location: conn.endpoint.location,
+					duration: this.options.pessimizationTimeout - (until - now),
+				})
+
 				dbg.log(
 					'un-pessimized node %d address %s',
 					conn.endpoint.nodeId,
 					conn.endpoint.address
 				)
-
-				dc('ydb:pool.connection.unpessimized').publish({
-					nodeId: conn.endpoint.nodeId,
-					address: conn.endpoint.address,
-					location: conn.endpoint.location,
-					pessimizedDuration: this.options.pessimizationTimeout - (until - now),
-				})
-
-				this.#safeHook('onUnpessimize', () => {
-					this.options.hooks?.onUnpessimize?.({ endpoint: conn.endpoint })
-				})
 			}
 		}
 	}
@@ -503,6 +486,36 @@ export class ConnectionPool implements Disposable {
 		}
 	}
 
+	#pessimizeConnection(conn: Connection): void {
+		let now = Date.now()
+		let until = now + this.options.pessimizationTimeout
+
+		let pessimized = this.#pessimized.has(conn)
+		this.#pessimized.set(conn, until)
+
+		// Only fire on the active→pessimized transition. Re-pessimize of an
+		// already-pessimized connection is a timeout refresh, not a state
+		// change — subscribers reconstructing pool state from delta events
+		// must not see it as a fresh transition.
+		if (!pessimized) {
+			return
+		}
+
+		this.#safeHook('onPessimize', () => {
+			this.options.hooks?.onPessimize?.({ endpoint: conn.endpoint })
+		})
+
+		dc('ydb:driver.connection.pessimized').publish({
+			driver: this.options.identity,
+			nodeId: conn.endpoint.nodeId,
+			address: conn.endpoint.address,
+			location: conn.endpoint.location,
+			until: until,
+		})
+
+		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)
+	}
+
 	/**
 	 * Move a connection to the retired set. The gRPC channel stays open so
 	 * in-flight streams can drain; the idle sweep closes it later. Caller
@@ -518,7 +531,8 @@ export class ConnectionPool implements Disposable {
 			reason
 		)
 
-		dc('ydb:pool.connection.retired').publish({
+		dc('ydb:driver.connection.retired').publish({
+			driver: this.options.identity,
 			nodeId: conn.endpoint.nodeId,
 			address: conn.endpoint.address,
 			location: conn.endpoint.location,
@@ -540,7 +554,8 @@ export class ConnectionPool implements Disposable {
 			reason
 		)
 
-		dc('ydb:pool.connection.removed').publish({
+		dc('ydb:driver.connection.removed').publish({
+			driver: this.options.identity,
 			nodeId: conn.endpoint.nodeId,
 			address: conn.endpoint.address,
 			location: conn.endpoint.location,

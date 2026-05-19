@@ -4,7 +4,7 @@ import { tracingChannel } from 'node:diagnostics_channel'
 import { linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
-import type { Driver } from '@ydbjs/core'
+import type { Driver, DriverIdentity } from '@ydbjs/core'
 import { CommitError, YDBError } from '@ydbjs/error'
 import {
 	type RetryConfig,
@@ -21,20 +21,29 @@ import { UnsafeString, identifier, unsafe, yql } from './yql.js'
 import { SessionPool, type SessionPoolOptions, sessionAcquireCh } from './session-pool.js'
 
 type TransactionContext = {
+	driver: DriverIdentity
 	isolation: string
 	idempotent: boolean
 }
 
-let transactionCh = tracingChannel<TransactionContext, TransactionContext>(
-	'tracing:ydb:query.transaction'
-)
+type TxControlContext = {
+	driver: DriverIdentity
+	sessionId: string
+	nodeId: bigint
+	txId: string
+}
 
-type TxBeginContext = { sessionId: string; nodeId: bigint; isolation: string }
-type TxControlContext = { sessionId: string; nodeId: bigint; txId: string }
+type TxBeginContext = {
+	driver: DriverIdentity
+	nodeId: bigint
+	sessionId: string
+	isolation: string
+}
 
-let txBeginCh = tracingChannel<TxBeginContext, TxBeginContext>('tracing:ydb:query.begin')
-let txCommitCh = tracingChannel<TxControlContext, TxControlContext>('tracing:ydb:query.commit')
-let txRollbackCh = tracingChannel<TxControlContext, TxControlContext>('tracing:ydb:query.rollback')
+let txBeginCh = tracingChannel<TxBeginContext>('tracing:ydb:query.begin')
+let txCommitCh = tracingChannel<TxControlContext>('tracing:ydb:query.commit')
+let txRollbackCh = tracingChannel<TxControlContext>('tracing:ydb:query.rollback')
+let transactionCh = tracingChannel<TransactionContext>('tracing:ydb:query.transaction')
 
 let dbg = loggers.query
 
@@ -207,7 +216,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 
 		let acquireSession = (signal: AbortSignal) =>
 			sessionAcquireCh.tracePromise(() => sessionPool.acquire(signal), {
-				kind: 'transaction',
+				driver: driver.identity,
 			})
 
 		let runAttempt = async (retrySignal: AbortSignal) => {
@@ -244,7 +253,12 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 						},
 						{ signal }
 					),
-				{ sessionId: session.id, nodeId: session.nodeId, isolation: options.isolation! }
+				{
+					driver: driver.identity,
+					nodeId: session.nodeId,
+					sessionId: session.id,
+					isolation: options.isolation!,
+				}
 			)
 			if (beginTransactionResult.status !== StatusIds_StatusCode.SUCCESS) {
 				dbg.log('failed to begin transaction, status: %d', beginTransactionResult.status)
@@ -302,6 +316,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 							{ signal }
 						),
 					{
+						driver: driver.identity,
 						sessionId: session.id,
 						nodeId: session.nodeId,
 						txId,
@@ -349,6 +364,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 								txId: rollbackTxId,
 							}),
 						{
+							driver: driver.identity,
 							sessionId: session.id,
 							nodeId: session.nodeId,
 							txId: rollbackTxId,
@@ -399,6 +415,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		}
 
 		return transactionCh.tracePromise(() => retry(retryConfig, runAttempt), {
+			driver: driver.identity,
 			isolation: options.isolation!,
 			idempotent,
 		})

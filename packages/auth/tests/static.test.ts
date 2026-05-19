@@ -1,3 +1,5 @@
+import { channel as dc } from 'node:diagnostics_channel'
+
 import { beforeEach, expect, inject, test, vi } from 'vitest'
 import { StaticCredentialsProvider } from '../src/static.js'
 
@@ -12,6 +14,28 @@ import { StaticCredentialsProvider } from '../src/static.js'
 // Expiry thresholds from static.ts
 const SOFT_EXPIRY_THRESHOLD_SECONDS = 120
 const HARD_EXPIRY_THRESHOLD_SECONDS = 30
+
+/**
+ * Direct refresh observation. JWT byte-equality is unreliable as a proxy
+ * — server stamps `iat` with 1s granularity and two refreshes inside one
+ * wall-clock second produce byte-identical tokens. Counting refresh events
+ * is the source of truth.
+ */
+function countRefreshes(): { count: number } & Disposable {
+	let state = { count: 0 }
+	let onRefresh = () => {
+		state.count++
+	}
+	dc('ydb:auth.token.refreshed').subscribe(onRefresh)
+	return {
+		get count() {
+			return state.count
+		},
+		[Symbol.dispose]() {
+			dc('ydb:auth.token.refreshed').unsubscribe(onRefresh)
+		},
+	}
+}
 
 beforeEach(() => {
 	vi.useRealTimers()
@@ -79,85 +103,84 @@ test('returns cached token when fresh (outside soft expiry threshold)', async ()
 	expect(token2).toBe(token1)
 })
 
-test('starts background refresh when approaching soft expiry threshold', async () => {
+test('returns cached token and fires a background refresh in the soft expiry zone', async () => {
 	let endpoint = inject('credentialsEndpoint')
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
 	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
+	using refreshes = countRefreshes()
 
-	// Get initial token
 	let token1 = await provider.getToken()
-	expect(token1).toBeDefined()
+	let baseline = refreshes.count // initial login completed
 
-	// Move time to soft expiry threshold (120 seconds before expiry)
+	// Move time into the soft expiry zone (120 seconds before expiry)
 	vi.useFakeTimers()
 	let timeToSoftExpiry = (12 * 60 * 60 - SOFT_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToSoftExpiry))
 
-	// Should return cached token but start background refresh
+	// Soft zone: cached value returns immediately (byte-equal — no new token
+	// fetched yet), and a background refresh is kicked off asynchronously.
 	let token2 = await provider.getToken()
-	expect(token2).toBeDefined()
-	expect(token2).toBe(token1) // Still cached token
+	expect(token2).toBe(token1)
 
+	// Wait for the fire-and-forget background refresh to land.
 	vi.useRealTimers()
 	await new Promise((resolve) => setTimeout(resolve, 100))
 
-	let token3 = await provider.getToken()
-	expect(token3).toBeDefined()
-	expect(token3).not.toBe(token1) // Background refresh should have updated the token
+	expect(refreshes.count - baseline).toBeGreaterThanOrEqual(1)
 })
 
-test('forces synchronous refresh when approaching hard expiry threshold', async () => {
+test('blocks getToken on a fresh network refresh past the hard expiry threshold', async () => {
 	let endpoint = inject('credentialsEndpoint')
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
 	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
+	using refreshes = countRefreshes()
 
-	// Get initial token
-	let token1 = await provider.getToken()
-	expect(token1).toBeDefined()
+	await provider.getToken()
+	let baseline = refreshes.count // initial login completed
 
-	// Move time to hard expiry threshold (30 seconds before expiry)
+	// Move time to the hard expiry threshold (30 seconds before expiry).
 	vi.useFakeTimers()
 	let timeToHardExpiry = (12 * 60 * 60 - HARD_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToHardExpiry))
 
-	// Should force synchronous refresh
-	let token2 = await provider.getToken()
-	expect(token2).toBeDefined()
-	expect(token2).not.toBe(token1)
+	// Synchronous refresh: getToken must NOT return until the network refresh
+	// has succeeded, so by the time it resolves the counter must have ticked.
+	await provider.getToken()
+	expect(refreshes.count - baseline).toBeGreaterThanOrEqual(1)
 })
 
-test('transitions from background to synchronous refresh', async () => {
+test('escalates from background to synchronous refresh across soft → hard zones', async () => {
 	let endpoint = inject('credentialsEndpoint')
 	let username = inject('credentialsUsername')
 	let password = inject('credentialsPassword')
 
 	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
+	using refreshes = countRefreshes()
 
-	// Get initial token
-	let token1 = await provider.getToken()
-	expect(token1).toBeDefined()
+	await provider.getToken()
+	let baseline = refreshes.count // initial login completed
 
 	vi.useFakeTimers()
 
-	// Move to soft expiry threshold (background refresh)
+	// Soft zone: getToken returns the cached value immediately. A background
+	// refresh fires off but is not awaited by the caller — racing the assert
+	// here would be flaky; we only check the cumulative state at the end.
 	let timeToSoftExpiry = (12 * 60 * 60 - SOFT_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToSoftExpiry))
+	await provider.getToken()
 
-	let token2 = await provider.getToken()
-	expect(token2).toBeDefined()
-	expect(token2).toBe(token1)
-
-	// Move to hard expiry threshold (synchronous refresh)
+	// Hard zone: getToken blocks. The synchronous path here MUST produce a
+	// refresh — that's the contract under test. The earlier background may
+	// have landed too, so the delta is at least 1.
 	let timeToHardExpiry = (12 * 60 * 60 - HARD_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToHardExpiry))
+	await provider.getToken()
 
-	let token3 = await provider.getToken()
-	expect(token3).toBeDefined()
-	expect(token3).not.toBe(token1)
+	expect(refreshes.count - baseline).toBeGreaterThanOrEqual(1)
 })
 
 test('handles concurrent requests without duplicate authentication', async () => {

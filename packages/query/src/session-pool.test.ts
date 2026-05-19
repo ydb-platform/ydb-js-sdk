@@ -275,7 +275,7 @@ test('Session.open aborts the attach stream when the caller signal fires mid-wai
 	// SUCCESS message was already received before we aborted — in that
 	// race we simply verify that either resolution cleans up.
 	await opening.then(
-		(session) => session.close(),
+		(session) => session.close('pool_close'),
 		() => {}
 	)
 	expect(srv.attachCalls).toHaveLength(1)
@@ -290,7 +290,7 @@ test('claim() throws SessionBusyError on a second concurrent caller', async () =
 		expect(() => session.claim()).toThrow(SessionBusyError)
 	} finally {
 		first[Symbol.dispose]()
-		session.close()
+		session.close('pool_close')
 	}
 })
 
@@ -306,7 +306,7 @@ test('claim() releases on dispose so the next caller succeeds', async () => {
 	// previous claim disposed — a fresh claim must succeed
 	let again = session.claim()
 	again[Symbol.dispose]()
-	session.close()
+	session.close('pool_close')
 })
 
 test('claim() dispose is idempotent', async () => {
@@ -320,5 +320,96 @@ test('claim() dispose is idempotent', async () => {
 	// the slot must still be free
 	let again = session.claim()
 	again[Symbol.dispose]()
-	session.close()
+	session.close('pool_close')
+})
+
+// ── warm-up to minSize ─────────────────────────────────────────────────────
+
+test('warms the pool up to minSize on construction', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 3 })
+
+	await until(() => pool!.stats.total === 3, 1000)
+
+	expect(pool.stats.total).toBe(3)
+	expect(pool.stats.idle).toBe(3)
+	expect(pool.stats.busy).toBe(0)
+	expect(srv.createCount).toBe(3)
+})
+
+test('does not warm any sessions when minSize defaults to 0', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 5 })
+
+	// Give the event loop a chance — if warm-up were misfiring, creates
+	// would have started by now.
+	await new Promise((r) => setTimeout(r, 50))
+
+	expect(pool.stats.total).toBe(0)
+	expect(pool.stats.creating).toBe(0)
+	expect(srv.createCount).toBe(0)
+})
+
+test('throws RangeError when minSize exceeds maxSize', async () => {
+	srv = await startQueryServer()
+
+	expect(() => new SessionPool(srv!.driver, { maxSize: 2, minSize: 5 })).toThrow(RangeError)
+})
+
+test('refills to minSize after a session is evicted by the server', async () => {
+	srv = await startQueryServer()
+	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 2 })
+
+	await until(() => pool!.stats.total === 2, 1000)
+	let createsBeforeEviction = srv.createCount
+	let killed = srv.attachCalls[0]
+
+	// Server tears down the attach stream → Session.#runMonitor flips it
+	// broken → pool eviction listener removes from #all → refill kicks in.
+	srv.breakSession(killed)
+
+	await until(() => srv!.createCount > createsBeforeEviction, 2000)
+	await until(() => pool!.stats.total === 2, 2000)
+
+	expect(pool.stats.total).toBe(2)
+	expect(srv.createCount).toBe(createsBeforeEviction + 1)
+})
+
+test('hands a warming session to a waiter when warm-up holds all capacity', async () => {
+	srv = await startQueryServer()
+	let release = srv.holdCreateSession()
+
+	pool = new SessionPool(srv.driver, { maxSize: 2, minSize: 2 })
+
+	// Both create slots are taken by held warm-ups; acquire() must queue
+	// rather than spawn a third create.
+	let acquired = pool.acquire()
+	await until(() => pool!.stats.waiting === 1, 500)
+
+	release()
+
+	let lease = await acquired
+	expect(lease).toBeInstanceOf(SessionLease)
+	expect(pool.stats.waiting).toBe(0)
+	// Two creates total — the waiter received a warm-up session via
+	// #growAndPark's handoff path, no extra grow was issued.
+	expect(srv.createCount).toBe(2)
+})
+
+test('pool.close() during warm-up settles without hanging', async () => {
+	srv = await startQueryServer()
+	srv.holdCreateSession() // hold indefinitely; never released
+
+	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 5 })
+
+	// All five warm-up creates are blocked on the server. close() must
+	// abort them through the linked close signal and resolve quickly.
+	await Promise.race([
+		pool.close(),
+		new Promise((_, reject) =>
+			setTimeout(() => reject(new Error('pool.close() hung during warm-up')), 2000)
+		),
+	])
+
+	expect(pool.closed).toBe(true)
 })

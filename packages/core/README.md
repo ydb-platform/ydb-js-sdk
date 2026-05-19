@@ -78,39 +78,60 @@ Two primitives are used:
 - **`channel.publish`** — point-in-time state changes (gauges, counters, structured logs).
 - **`tracingChannel.tracePromise`** — bracketed operations with duration and possible error (spans, latency histograms).
 
+### Conventions
+
+All payloads share the same identity envelope, so multi-driver consumers can disambiguate:
+
+```ts
+type DriverIdentity = {
+  address: string         // host:port the driver was constructed with
+  port: number | undefined
+  database: string        // YDB database path
+  registeredAt: number    // Date.now() at Driver construction
+}
+```
+
+Time values follow Node.js conventions:
+
+- **Durations** are in **milliseconds** (`performance.now()` deltas).
+- **Timestamps** are in **epoch milliseconds** (`Date.now()`).
+- Subscribers that target OTel attributes / instruments (whose canonical unit is seconds) divide by 1000 at the mapping layer — `@ydbjs/telemetry` does this for you.
+
 ### Channels
 
 #### Driver lifecycle
 
-| Channel             | Type    | Payload                                                  |
-| ------------------- | ------- | -------------------------------------------------------- |
-| `ydb:driver.ready`  | publish | `{ database: string, duration: number }`                 |
-| `ydb:driver.failed` | publish | `{ database: string, duration: number, error: unknown }` |
-| `ydb:driver.closed` | publish | `{ database: string, uptime: number }`                   |
+| Channel             | Type    | Payload                                                              |
+| ------------------- | ------- | -------------------------------------------------------------------- |
+| `ydb:driver.ready`  | publish | `{ driver: DriverIdentity, duration: number }` (ms since `init`)     |
+| `ydb:driver.failed` | publish | `{ driver: DriverIdentity, duration: number, error: unknown }` (ms)  |
+| `ydb:driver.closed` | publish | `{ driver: DriverIdentity, uptime: number }` (ms since `ready`)      |
 
 #### Discovery
 
-| Channel                   | Type    | Payload                                                                                                |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| `tracing:ydb:discovery`   | tracing | `{ database: string }`                                                                                 |
-| `ydb:discovery.completed` | publish | `{ database: string, addedCount: number, removedCount: number, totalCount: number, duration: number }` |
+| Channel                          | Type    | Payload                                                                                                          |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:driver.discovery`   | tracing | `{ driver: DriverIdentity }`                                                                                     |
+| `ydb:driver.discovery.completed` | publish | `{ driver: DriverIdentity, addedCount: number, removedCount: number, totalCount: number, duration: number }` (ms)|
 
 #### Connection pool
 
-| Channel                            | Type    | Payload                                                                                               |
-| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
-| `ydb:pool.connection.added`        | publish | `{ nodeId: bigint, address: string, location: string }`                                               |
-| `ydb:pool.connection.pessimized`   | publish | `{ nodeId: bigint, address: string, location: string, until: number }`                                |
-| `ydb:pool.connection.unpessimized` | publish | `{ nodeId: bigint, address: string, location: string, pessimizedDuration: number }`                   |
-| `ydb:pool.connection.retired`      | publish | `{ nodeId: bigint, address: string, location: string, reason: 'stale_active' \| 'stale_pessimized' }` |
-| `ydb:pool.connection.removed`      | publish | `{ nodeId: bigint, address: string, location: string, reason: 'replaced' \| 'idle' \| 'pool_close' }` |
+All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, address: string, location: string }` plus the extra field listed below.
 
-The pool exposes two distinct lifecycle events for connections:
+| Channel                              | Type    | Extra fields                                                            |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------- |
+| `ydb:driver.connection.added`        | publish | (none)                                                                  |
+| `ydb:driver.connection.pessimized`   | publish | `until: number` — epoch ms when the pessimization window ends           |
+| `ydb:driver.connection.unpessimized` | publish | `duration: number` — ms the connection actually stayed pessimized       |
+| `ydb:driver.connection.retired`      | publish | `reason: 'stale_active' \| 'stale_pessimized'`                          |
+| `ydb:driver.connection.removed`      | publish | `reason: 'replaced' \| 'idle' \| 'pool_close'`                          |
+
+The pool exposes two distinct teardown events for connections:
 
 - `retired` — the connection was removed from active routing (e.g. its endpoint disappeared from discovery), but its gRPC channel is left open so in-flight streams can drain.
 - `removed` — the gRPC channel was physically closed. The `reason` field distinguishes whether it was a replacement, an idle teardown, or a pool shutdown.
 
-A gauge of "alive channels" can be reconstructed from the delta between `pool.connection.added` and `pool.connection.removed`. A gauge of "routable connections" should also subtract `retired`.
+A gauge of "alive channels" can be reconstructed from the delta between `connection.added` and `connection.removed`. A gauge of "routable connections" should also subtract `retired`. `@ydbjs/telemetry` does this with an in-memory `Map<DriverIdentity, ConnectionState>`.
 
 ### Subscribing
 
@@ -121,9 +142,9 @@ channel('ydb:driver.ready').subscribe((msg) => {
   console.log('driver ready', msg)
 })
 
-tracingChannel('tracing:ydb:discovery').subscribe({
+tracingChannel('tracing:ydb:driver.discovery').subscribe({
   start(ctx) {
-    // ctx.database === '/local'
+    // ctx.driver.database === '/local'
   },
   asyncEnd(ctx) {
     // discovery round succeeded
@@ -143,7 +164,7 @@ tracingChannel('tracing:ydb:discovery').subscribe({
 ```ts
 channel('ydb:driver.ready').subscribe((msg) => {
   try {
-    metrics.driverReady.add(1, { database: msg.database })
+    metrics.driverReady.add(1, { database: msg.driver.database })
   } catch (err) {
     // Never let a metrics failure escape — log it locally and move on.
     console.error('telemetry subscriber failed', err)

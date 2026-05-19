@@ -13,6 +13,7 @@ export default defineConfig({
 					},
 					include: ['packages/*/src/**/*.test.ts', 'third-parties/*/src/**/*.test.ts'],
 					environment: 'node',
+					execArgv: ['--expose-gc'],
 					benchmark: {
 						include: [
 							'packages/*/src/**/*.bench.ts',
@@ -29,6 +30,7 @@ export default defineConfig({
 					},
 					include: ['packages/*/tests/**/*.test.ts'],
 					environment: 'node',
+					execArgv: ['--expose-gc'],
 					globalSetup: './vitest.setup.ydb.ts',
 					benchmark: {
 						include: ['packages/*/tests/**/*.bench.ts'],

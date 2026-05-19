@@ -225,6 +225,68 @@ Main categories: `api`, `auth`, `grpc`, `driver`, `query`, `topic`, `tx`, `retry
 
 ---
 
+## Diagnostics Channels
+
+**Module:** `node:diagnostics_channel` — the SDK publishes structured events
+that `@ydbjs/telemetry` and future metrics/logs subscribers consume.
+
+### Channel naming
+
+```
+ydb:<subsystem>.<concept>[.<sub>].<action>
+tracing:ydb:<subsystem>.<concept>[.<sub>].<operation>
+```
+
+- **`<subsystem>`** — the package or logical owner of the event:
+  `driver`, `query`, `auth`. Add new ones (e.g. `topic`) as packages publish channels.
+- **`<concept>`** — the noun the event is about: `connection`, `session`,
+  `transaction`, `token`, `discovery`, etc.
+- **`<action>`** — verb / state in past tense for plain events
+  (`added`, `removed`, `closed`, `completed`) or operation name for tracing
+  (`acquire`, `create`, `execute`).
+- **`pool`** appears only when the event is about the pool *itself*
+  (`opened`, `closed`, `stats`), not about its contents. Events about
+  contents drop the `pool` segment because the pool is the implicit owner.
+
+**Examples (correct):**
+
+```
+ydb:driver.connection.added           // ConnectionPool added a connection
+ydb:query.session.created             // SessionPool created a session
+ydb:query.session.pool.opened         // SessionPool itself was opened
+tracing:ydb:driver.discovery          // discovery operation tracing
+tracing:ydb:query.session.acquire     // session acquisition tracing
+```
+
+**Examples (wrong):**
+
+```
+ydb:pool.connection.added             // ❌ which pool? core/ConnectionPool, query/SessionPool, ...
+ydb:session.created                   // ❌ whose session?
+tracing:ydb:discovery                 // ❌ missing subsystem prefix
+```
+
+### Exception: `retry`
+
+`@ydbjs/retry` keeps the `ydb:` / `tracing:ydb:` vendor prefix but omits
+the subsystem segment:
+
+```
+tracing:ydb:retry.run
+tracing:ydb:retry.attempt
+ydb:retry.exhausted
+```
+
+### Payload rules
+
+- Every db-scoped channel carries `driver: DriverIdentity`. No ALS for identity.
+- `DriverIdentity` is opaque; reference is stable for the driver's lifetime — safe as a `Map`/`WeakMap` key.
+- Per-event channels carry only event data. Config snapshots go on `*.pool.opened`, fired once.
+- Durations/timestamps in payloads are ms. OTel-second conversion happens in the telemetry subscriber, not in producers.
+- Don't mutate the publisher's `ctx`. Key per-call state by `ctx` reference in a private `WeakMap<object, T>`.
+
+---
+
 ## Development Workflow
 
 ### Essential Commands

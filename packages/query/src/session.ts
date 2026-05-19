@@ -10,19 +10,57 @@
  * before the error propagates to the caller. No leaks.
  */
 
+import { tracingChannel } from 'node:diagnostics_channel'
+
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
-import type { Driver } from '@ydbjs/core'
+import type { Driver, DriverIdentity } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
+
+/**
+ * Why a session left the server. Carried on
+ * `tracing:ydb:query.session.delete` and `ydb:query.session.closed`.
+ *
+ * Only three real causes exist; `stream_closed` and `stream_error` split the
+ * post-attach death by whether the server closed cleanly or the stream
+ * errored, which subscribers care about for alerting.
+ *
+ *   - 'pool_close'    — pool is tearing down; we tell the server.
+ *   - 'attach_failed' — initial AttachStream rejected; session never lived.
+ *   - 'stream_closed' — attach stream ended cleanly (server-side timeout / drain).
+ *   - 'stream_error' — attach stream errored mid-flight.
+ *
+ * No `user_close` — users do not manage sessions. No `evicted` /
+ * `release_dead` — those were pool-side observations of stream death, the
+ * underlying `stream_*` reason now propagates through.
+ */
+export type SessionCloseReason =
+	| 'pool_close'
+	| 'attach_failed'
+	| 'stream_closed'
+	| 'stream_error'
+
+type SessionDeleteCtx = {
+	driver: DriverIdentity
+	sessionId: string
+	nodeId: bigint
+	reason: SessionCloseReason
+	/** ms */
+	uptime: number
+}
+
+export let sessionDeleteCh = tracingChannel<SessionDeleteCtx, SessionDeleteCtx>(
+	'tracing:ydb:query.session.delete'
+)
 
 let dbg = loggers.query.extend('session')
 
 export class SessionAbortedError extends Error {
 	readonly sessionId: string
-	readonly reason: 'stream-closed' | 'stream-error' | 'deleted' | 'pool-closed'
+	readonly reason: SessionCloseReason
 
-	constructor(sessionId: string, reason: SessionAbortedError['reason']) {
+	constructor(sessionId: string, reason: SessionCloseReason) {
 		super(`session ${sessionId} aborted: ${reason}`)
 		this.name = 'SessionAbortedError'
 		this.sessionId = sessionId
@@ -51,12 +89,14 @@ export class SessionBusyError extends Error {
 export class Session {
 	readonly id: string
 	readonly nodeId: bigint
+	readonly createdAt: number = Date.now()
 	lastUsedAt: number = Date.now()
 
 	#driver: Driver
 	#life = new AbortController()
 	#attach = new AbortController()
 	#closing = false
+	#closeReason: SessionCloseReason | undefined
 	// In-flight RPCs on this session. YDB sessions are single-threaded, so
 	// this counter must never exceed 1. `claim()` throws SessionBusyError on
 	// the second concurrent caller.
@@ -75,6 +115,17 @@ export class Session {
 
 	get alive(): boolean {
 		return !this.#life.signal.aborted
+	}
+
+	/**
+	 * The reason this session was closed, set by `#markBroken` (stream monitor
+	 * or pool tear-down). Stays `undefined` while the session is alive.
+	 * Pool subscribers read it from the eviction listener so the published
+	 * `session.closed` event reflects the underlying cause, not the pool's
+	 * view of it.
+	 */
+	get closeReason(): SessionCloseReason | undefined {
+		return this.#closeReason
 	}
 
 	/**
@@ -118,7 +169,7 @@ export class Session {
 		} catch (err) {
 			dbg.log('attach failed for %s, firing DeleteSession in background', session.id)
 			session.#attach.abort() // defensive: ensure stream is torn down
-			session.#deleteOnServer() // fire-and-forget
+			session.#deleteOnServer('attach_failed') // fire-and-forget
 			throw err
 		}
 	}
@@ -166,48 +217,57 @@ export class Session {
 	 * underlying gRPC call — no dangling stream.
 	 */
 	async #runMonitor(stream: AsyncIterable<SessionState>): Promise<void> {
-		let reason: SessionAbortedError['reason'] = 'stream-closed'
+		let reason: SessionCloseReason = 'stream_closed'
 		try {
 			for await (let msg of stream) {
 				if (msg.status !== StatusIds_StatusCode.SUCCESS) {
-					reason = 'stream-error'
+					reason = 'stream_error'
 					break
 				}
 			}
 		} catch {
-			reason = 'stream-error'
+			reason = 'stream_error'
 		} finally {
 			this.#markBroken(reason)
 		}
 	}
 
-	#markBroken(reason: SessionAbortedError['reason']): void {
+	#markBroken(reason: SessionCloseReason): void {
 		if (this.#life.signal.aborted) return
+		this.#closeReason = reason
 		this.#life.abort(new SessionAbortedError(this.id, reason))
 		this.#attach.abort()
 		dbg.log('session %s marked broken (%s)', this.id, reason)
 	}
 
-	/** Fire-and-forget DeleteSession. Server TTL is the ultimate backstop. */
-	#deleteOnServer(): void {
+	// Fire-and-forget RPC, traced for subscribers. Server TTL cleans up if
+	// the call is lost.
+	#deleteOnServer(reason: SessionCloseReason): void {
 		let client = this.#driver.createClient(QueryServiceDefinition, this.nodeId)
-		client.deleteSession({ sessionId: this.id }).catch((err) => {
-			dbg.log('deleteSession for %s failed: %O', this.id, err)
-		})
+		let ctx: SessionDeleteCtx = {
+			driver: this.#driver.identity,
+			sessionId: this.id,
+			nodeId: this.nodeId,
+			reason,
+			uptime: Date.now() - this.createdAt,
+		}
+		sessionDeleteCh
+			.tracePromise(() => client.deleteSession({ sessionId: this.id }), ctx)
+			.catch((err) => {
+				dbg.log('deleteSession for %s failed: %O', this.id, err)
+			})
 	}
 
 	/**
 	 * Synchronous shutdown: flip state, fire DeleteSession in the
-	 * background. Callers never wait on the RPC.
+	 * background. Callers never wait on the RPC. Reason is required —
+	 * the pool always knows why it's tearing a session down, and there's
+	 * no sensible default in the absence of `user_close`.
 	 */
-	close(): void {
+	close(reason: SessionCloseReason): void {
 		if (this.#closing) return
 		this.#closing = true
-		if (this.alive) this.#deleteOnServer()
-		this.#markBroken('deleted')
-	}
-
-	[Symbol.dispose](): void {
-		this.close()
+		if (this.alive) this.#deleteOnServer(reason)
+		this.#markBroken(reason)
 	}
 }

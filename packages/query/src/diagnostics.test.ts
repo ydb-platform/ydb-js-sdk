@@ -125,11 +125,11 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-test('publishes ydb:session.created with sessionId and nodeId after pool.acquire()', async () => {
+test('publishes ydb:query.session.created with sessionId and nodeId after pool.acquire()', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	using created = collect('ydb:session.created')
+	using created = collect('ydb:query.session.created')
 
 	let lease = await pool.acquire()
 	lease[Symbol.dispose]()
@@ -141,7 +141,7 @@ test('publishes ydb:session.created with sessionId and nodeId after pool.acquire
 	})
 })
 
-test('publishes ydb:session.closed with reason=evicted when the server kills the attach stream', async () => {
+test('publishes ydb:query.session.closed with reason=stream_closed when the server kills the attach stream', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
@@ -149,7 +149,7 @@ test('publishes ydb:session.closed with reason=evicted when the server kills the
 	let sessionId = lease.id
 	lease[Symbol.dispose]()
 
-	using closed = collect('ydb:session.closed')
+	using closed = collect('ydb:query.session.closed')
 
 	srv.breakSession(sessionId)
 	// Give the attach-stream abort time to propagate.
@@ -158,11 +158,11 @@ test('publishes ydb:session.closed with reason=evicted when the server kills the
 	expect(closed.payloads).toHaveLength(1)
 	expect(closed.payloads[0]).toMatchObject({
 		sessionId,
-		reason: 'evicted',
+		reason: 'stream_closed',
 	})
 })
 
-test('publishes ydb:session.closed with reason=pool_close once per session on pool.close()', async () => {
+test('publishes ydb:query.session.closed with reason=pool_close once per session on pool.close()', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 2 })
 
@@ -172,7 +172,7 @@ test('publishes ydb:session.closed with reason=pool_close once per session on po
 	a[Symbol.dispose]()
 	b[Symbol.dispose]()
 
-	using closed = collect('ydb:session.closed')
+	using closed = collect('ydb:query.session.closed')
 
 	await pool.close()
 	pool = undefined
@@ -190,19 +190,19 @@ test('publishes ydb:session.closed with reason=pool_close once per session on po
 	}
 })
 
-test('release of a checked-out session after pool.close() fires ydb:session.closed exactly once', async () => {
+test('release of a checked-out session after pool.close() fires ydb:query.session.closed exactly once', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	// Hold the session — do not release it before close().
 	let lease = await pool.acquire()
 
-	using closed = collect('ydb:session.closed')
+	using closed = collect('ydb:query.session.closed')
 
 	// Race: pool.close() flips this.closed and awaits in-flight creates.
 	// While that promise pends, drop the lease so release() takes the
 	// closed-pool branch, which calls session.close() and would re-fire
-	// `evicted` through the eviction listener if it were still attached.
+	// the stream_* reason through the eviction listener if it were still attached.
 	let closing = pool.close()
 	lease[Symbol.dispose]()
 	await closing
@@ -212,25 +212,78 @@ test('release of a checked-out session after pool.close() fires ydb:session.clos
 	expect(closed.payloads[0]).toMatchObject({ reason: 'pool_close' })
 })
 
-test('traces tracing:ydb:session.create with liveSessions/maxSize/creating context', async () => {
+test('traces tracing:ydb:query.session.create with driver identity', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
-	using trace = collectTrace('tracing:ydb:session.create')
+	using trace = collectTrace('tracing:ydb:query.session.create')
 
 	let lease = await pool.acquire()
 	lease[Symbol.dispose]()
 
 	expect(trace.start.length).toBeGreaterThanOrEqual(1)
 	expect(trace.asyncEnd.length).toBeGreaterThanOrEqual(1)
-	expect(trace.start[0]).toMatchObject({
-		liveSessions: 0,
-		maxSize: 1,
-		creating: 0,
+	expect(trace.start[0]).toMatchObject({ driver: { database: '/local' } })
+})
+
+test('publishes ydb:query.session.pool.opened once with config snapshot', async () => {
+	srv = await startServer()
+
+	using opened = collect('ydb:query.session.pool.opened')
+
+	pool = new SessionPool(srv.driver, { maxSize: 7, minSize: 2 })
+
+	expect(opened.payloads).toHaveLength(1)
+	expect(opened.payloads[0]).toMatchObject({
+		driver: { database: '/local' },
+		maxSize: 7,
+		minSize: 2,
 	})
 })
 
-test('traces tracing:ydb:session.acquire with kind=query', async () => {
+test('traces tracing:ydb:query.session.delete with reason=pool_close on pool.close()', async () => {
+	srv = await startServer()
+	let p = new SessionPool(srv.driver, { maxSize: 1 })
+
+	let lease = await p.acquire()
+	let sessionId = lease.id
+	lease[Symbol.dispose]()
+
+	using trace = collectTrace('tracing:ydb:query.session.delete')
+
+	await p.close()
+
+	// pool.close() does not await the per-session DeleteSession RPC — its
+	// promise resolves on a later microtask. Wait until the asyncEnd hook
+	// fires so the test exercises the full tracingChannel lifecycle, not
+	// just the start hook.
+	for (let i = 0; i < 50 && trace.asyncEnd.length === 0; i++) {
+		await new Promise((r) => setImmediate(r))
+	}
+
+	expect(trace.start.length).toBe(1)
+	expect(trace.asyncEnd.length).toBe(1)
+	expect(trace.start[0]).toMatchObject({
+		driver: { database: '/local' },
+		sessionId,
+		reason: 'pool_close',
+	})
+	expect((trace.start[0] as { uptime: number }).uptime).toBeGreaterThanOrEqual(0)
+})
+
+test('publishes ydb:query.session.pool.closed on close', async () => {
+	srv = await startServer()
+	let p = new SessionPool(srv.driver, { maxSize: 1 })
+
+	using closed = collect('ydb:query.session.pool.closed')
+
+	await p.close()
+
+	expect(closed.payloads).toHaveLength(1)
+	expect(closed.payloads[0]).toMatchObject({ driver: { database: '/local' } })
+})
+
+test('traces tracing:ydb:query.session.acquire with driver identity', async () => {
 	srv = await startServer()
 	pool = new SessionPool(srv.driver, { maxSize: 1 })
 
@@ -238,17 +291,15 @@ test('traces tracing:ydb:session.acquire with kind=query', async () => {
 	let warm = await pool.acquire()
 	warm[Symbol.dispose]()
 
-	using trace = collectTrace('tracing:ydb:session.acquire')
+	using trace = collectTrace('tracing:ydb:query.session.acquire')
 
-	// Drive the channel through the public sessionAcquireCh export by
-	// importing it via the same pool surface.
 	let { sessionAcquireCh } = await import('./session-pool.ts')
 	let lease = await sessionAcquireCh.tracePromise(() => pool!.acquire(), {
-		kind: 'query',
+		driver: srv.driver.identity,
 	})
 	lease[Symbol.dispose]()
 
 	expect(trace.start.length).toBeGreaterThanOrEqual(1)
 	expect(trace.asyncEnd.length).toBeGreaterThanOrEqual(1)
-	expect(trace.start[0]).toMatchObject({ kind: 'query' })
+	expect(trace.start[0]).toMatchObject({ driver: { database: '/local' } })
 })

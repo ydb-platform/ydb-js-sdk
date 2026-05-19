@@ -13,7 +13,7 @@ import {
 	TransactionControlSchema,
 } from '@ydbjs/api/query'
 import { type TypedValue, TypedValueSchema } from '@ydbjs/api/value'
-import type { Driver } from '@ydbjs/core'
+import type { Driver, DriverIdentity } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import {
@@ -31,22 +31,13 @@ import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'
 import { type SessionPool, sessionAcquireCh } from './session-pool.js'
 
-/**
- * Where this query was issued from. Lets subscribers split latency by
- * shape:
- *   - 'standalone' — single-shot `sql\`...\`` outside any transaction.
- *   - 'tx'         — inside a `sql.begin()` / `sql.transaction()` body.
- *   - 'do'         — reserved for the future `sql.do(...)` runner.
- */
-type QueryStage = 'standalone' | 'tx' | 'do'
-
 type QueryExecuteContext = {
+	driver: DriverIdentity
 	text: string
 	sessionId: string
 	nodeId: bigint
 	idempotent: boolean
 	isolation: string
-	stage: QueryStage
 }
 
 let executeQueryCh = tracingChannel<QueryExecuteContext, QueryExecuteContext>(
@@ -190,8 +181,6 @@ export class Query<T extends any[] = unknown[]>
 
 		await this.#driver.ready(linkedSignal.signal)
 
-		let stage: QueryStage = txSession ? 'tx' : 'standalone'
-
 		let runAttempt = async (retrySignal: AbortSignal) => {
 			// Transaction-owned session stays pinned; out-of-transaction
 			// attempts always get a fresh lease — no cross-attempt reuse.
@@ -199,7 +188,7 @@ export class Query<T extends any[] = unknown[]>
 				? undefined
 				: await sessionAcquireCh.tracePromise(
 						() => this.#sessionPool.acquire(retrySignal),
-						{ kind: 'query' }
+						{ driver: this.#driver.identity }
 					)
 			let session = txSession ?? sessionLease!.session
 			let attemptSessionId = session.id
@@ -260,12 +249,12 @@ export class Query<T extends any[] = unknown[]>
 			}
 
 			let executeCtx: QueryExecuteContext = {
+				driver: this.#driver.identity,
 				text: this.text,
 				sessionId: attemptSessionId,
 				nodeId: attemptNodeId,
 				idempotent: this.#idempotent,
 				isolation: this.#isolation,
-				stage,
 			}
 
 			return await executeQueryCh.tracePromise(async () => {
@@ -359,9 +348,7 @@ export class Query<T extends any[] = unknown[]>
 		// `transactionId` after a server-side abort cannot recover the
 		// transaction. Skip the retry wrapper entirely; the tx retries the
 		// whole body if it needs to.
-		this.#promise = (
-			txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt)
-		)
+		this.#promise = (txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt))
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)

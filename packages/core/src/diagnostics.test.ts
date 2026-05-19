@@ -30,6 +30,7 @@ function makePool(opts: { pessimizationTimeout?: number } = {}) {
 		idleTimeout: 0,
 		idleInterval: 0,
 		pessimizationTimeout: opts.pessimizationTimeout ?? 60_000,
+		identity: { database: '/local', address: '127.0.0.1' },
 	})
 }
 
@@ -51,9 +52,9 @@ function collect(name: string): { payloads: unknown[] } & Disposable {
 
 // ── added / removed via discovery ────────────────────────────────────────────
 
-test('publishes ydb:pool.connection.added when sync introduces a new endpoint', () => {
+test('publishes ydb:driver.connection.added when sync introduces a new endpoint', () => {
 	using pool = makePool()
-	using added = collect('ydb:pool.connection.added')
+	using added = collect('ydb:driver.connection.added')
 
 	pool.sync([makeProtoEndpoint(1)])
 
@@ -65,12 +66,12 @@ test('publishes ydb:pool.connection.added when sync introduces a new endpoint', 
 	})
 })
 
-test('publishes ydb:pool.connection.retired when an active endpoint disappears from discovery', () => {
+test('publishes ydb:driver.connection.retired when an active endpoint disappears from discovery', () => {
 	using pool = makePool()
 	pool.sync([makeProtoEndpoint(1)])
 
-	using retired = collect('ydb:pool.connection.retired')
-	using removed = collect('ydb:pool.connection.removed')
+	using retired = collect('ydb:driver.connection.retired')
+	using removed = collect('ydb:driver.connection.removed')
 
 	pool.sync([]) // node 1 is no longer in discovery
 
@@ -85,13 +86,13 @@ test('publishes ydb:pool.connection.retired when an active endpoint disappears f
 	})
 })
 
-test('publishes ydb:pool.connection.retired when a pessimized endpoint disappears from discovery', () => {
+test('publishes ydb:driver.connection.retired when a pessimized endpoint disappears from discovery', () => {
 	using pool = makePool()
 	pool.sync([makeProtoEndpoint(3)])
 	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
 	pool.pessimize(conn!)
 
-	using retired = collect('ydb:pool.connection.retired')
+	using retired = collect('ydb:driver.connection.retired')
 
 	pool.sync([])
 
@@ -104,13 +105,13 @@ test('publishes ydb:pool.connection.retired when a pessimized endpoint disappear
 
 // ── pessimize / unpessimize ──────────────────────────────────────────────────
 
-test('publishes ydb:pool.connection.pessimized with deadline when pessimize() is called', () => {
+test('publishes ydb:driver.connection.pessimized with deadline when pessimize() is called', () => {
 	let before = Date.now()
 	using pool = makePool({ pessimizationTimeout: 60_000 })
 	pool.sync([makeProtoEndpoint(2)])
 	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
 
-	using pessimized = collect('ydb:pool.connection.pessimized')
+	using pessimized = collect('ydb:driver.connection.pessimized')
 
 	pool.pessimize(conn!)
 
@@ -124,12 +125,12 @@ test('publishes ydb:pool.connection.pessimized with deadline when pessimize() is
 	expect(p.until).toBeGreaterThanOrEqual(before + 60_000)
 })
 
-test('does not re-publish ydb:pool.connection.pessimized when pessimize() refreshes an already-pessimized conn', () => {
+test('does not re-publish ydb:driver.connection.pessimized when pessimize() refreshes an already-pessimized conn', () => {
 	using pool = makePool({ pessimizationTimeout: 60_000 })
 	pool.sync([makeProtoEndpoint(20)])
 	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
 
-	using pessimized = collect('ydb:pool.connection.pessimized')
+	using pessimized = collect('ydb:driver.connection.pessimized')
 
 	pool.pessimize(conn!) // active → pessimized: fires
 	pool.pessimize(conn!) // already pessimized: timeout refresh, must not fire
@@ -138,7 +139,7 @@ test('does not re-publish ydb:pool.connection.pessimized when pessimize() refres
 	expect(pessimized.payloads).toHaveLength(1)
 })
 
-test('publishes ydb:pool.connection.unpessimized after the pessimization timeout elapses', async () => {
+test('publishes ydb:driver.connection.unpessimized after the pessimization timeout elapses', async () => {
 	// 1ms timeout + a small wait so `until < Date.now()` holds inside
 	// #refreshPessimized when acquire() runs.
 	using pool = makePool({ pessimizationTimeout: 1 })
@@ -148,7 +149,7 @@ test('publishes ydb:pool.connection.unpessimized after the pessimization timeout
 
 	await new Promise((r) => setTimeout(r, 5))
 
-	using unpessimized = collect('ydb:pool.connection.unpessimized')
+	using unpessimized = collect('ydb:driver.connection.unpessimized')
 
 	pool.acquire() // calls #refreshPessimized() — restores node 4
 
@@ -162,11 +163,11 @@ test('publishes ydb:pool.connection.unpessimized after the pessimization timeout
 
 // ── removed (physical close) by reason ───────────────────────────────────────
 
-test('publishes ydb:pool.connection.removed with reason=replaced on add() of an existing nodeId', () => {
+test('publishes ydb:driver.connection.removed with reason=replaced on add() of an existing nodeId', () => {
 	using pool = makePool()
 	pool.sync([makeProtoEndpoint(5)])
 
-	using removed = collect('ydb:pool.connection.removed')
+	using removed = collect('ydb:driver.connection.removed')
 
 	pool.add(makeProtoEndpoint(5)) // re-add — old channel must be replaced
 
@@ -177,11 +178,11 @@ test('publishes ydb:pool.connection.removed with reason=replaced on add() of an 
 	})
 })
 
-test('publishes ydb:pool.connection.removed with reason=pool_close on close()', () => {
+test('publishes ydb:driver.connection.removed with reason=pool_close on close()', () => {
 	let pool = makePool()
 	pool.sync([makeProtoEndpoint(6), makeProtoEndpoint(7)])
 
-	using removed = collect('ydb:pool.connection.removed')
+	using removed = collect('ydb:driver.connection.removed')
 
 	pool.close()
 
@@ -285,7 +286,7 @@ test('publishes ydb:driver.ready with duration after successful initial discover
 
 	expect(ready.payloads).toHaveLength(1)
 	let p = ready.payloads[0] as any
-	expect(p.database).toBe('/local')
+	expect(p.driver.database).toBe('/local')
 	expect(typeof p.duration).toBe('number')
 	expect(p.duration).toBeGreaterThanOrEqual(0)
 })
@@ -299,7 +300,7 @@ test('publishes ydb:driver.ready synchronously when discovery is disabled', () =
 
 	expect(driver.database).toBe('/local')
 	expect(ready.payloads).toHaveLength(1)
-	expect(ready.payloads[0]).toMatchObject({ database: '/local' })
+	expect(ready.payloads[0]).toMatchObject({ driver: { database: '/local' } })
 })
 
 test('publishes ydb:driver.failed with error and duration when initial discovery fails', async () => {
@@ -318,7 +319,7 @@ test('publishes ydb:driver.failed with error and duration when initial discovery
 
 	expect(failed.payloads.length).toBeGreaterThanOrEqual(1)
 	let p = failed.payloads[0] as any
-	expect(p.database).toBe('/local')
+	expect(p.driver.database).toBe('/local')
 	expect(typeof p.duration).toBe('number')
 	expect(p.error).toBeDefined()
 })
@@ -336,14 +337,14 @@ test('publishes ydb:driver.closed with uptime on close()', async () => {
 
 	expect(closed.payloads).toHaveLength(1)
 	let p = closed.payloads[0] as any
-	expect(p.database).toBe('/local')
+	expect(p.driver.database).toBe('/local')
 	expect(typeof p.uptime).toBe('number')
 	expect(p.uptime).toBeGreaterThanOrEqual(0)
 })
 
-test('publishes ydb:discovery.completed with added/removed/total counts', async () => {
+test('publishes ydb:driver.discovery.completed with added/removed/total counts', async () => {
 	await using server = await startDiscoveryServer()
-	using completed = collect('ydb:discovery.completed')
+	using completed = collect('ydb:driver.discovery.completed')
 
 	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
@@ -353,7 +354,7 @@ test('publishes ydb:discovery.completed with added/removed/total counts', async 
 	expect(completed.payloads.length).toBeGreaterThanOrEqual(1)
 	let p = completed.payloads[0] as any
 	expect(p).toMatchObject({
-		database: '/local',
+		driver: { database: '/local' },
 		addedCount: 1,
 		removedCount: 0,
 		totalCount: 1,
@@ -361,9 +362,9 @@ test('publishes ydb:discovery.completed with added/removed/total counts', async 
 	expect(typeof p.duration).toBe('number')
 })
 
-test('traces tracing:ydb:discovery start and asyncEnd around a successful round', async () => {
+test('traces tracing:ydb:driver.discovery start and asyncEnd around a successful round', async () => {
 	await using server = await startDiscoveryServer()
-	using trace = collectTrace('tracing:ydb:discovery')
+	using trace = collectTrace('tracing:ydb:driver.discovery')
 
 	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
@@ -373,7 +374,7 @@ test('traces tracing:ydb:discovery start and asyncEnd around a successful round'
 	expect(trace.start.length).toBeGreaterThanOrEqual(1)
 	expect(trace.asyncEnd.length).toBeGreaterThanOrEqual(1)
 	expect(trace.error).toHaveLength(0)
-	expect(trace.start[0]?.ctx).toMatchObject({ database: '/local' })
+	expect(trace.start[0]?.ctx).toMatchObject({ driver: { database: '/local' } })
 })
 
 test('close() during in-flight initial discovery suppresses ydb:driver.ready / .failed', async () => {
@@ -440,9 +441,9 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 	await server.shutdown()
 })
 
-test('traces tracing:ydb:discovery error when listEndpoints fails', async () => {
+test('traces tracing:ydb:driver.discovery error when listEndpoints fails', async () => {
 	await using server = await startDiscoveryServer({ fail: true })
-	using trace = collectTrace('tracing:ydb:discovery')
+	using trace = collectTrace('tracing:ydb:driver.discovery')
 
 	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 200,
