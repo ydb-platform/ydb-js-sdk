@@ -20,6 +20,8 @@ export let ATTR_YDB_DISCOVERY_TOTAL_COUNT = 'ydb.discovery.total_count'
 export let ATTR_YDB_DISCOVERY_DURATION = 'ydb.discovery.duration'
 
 export let ATTR_YDB_RETRY_ATTEMPT = 'ydb.retry.attempt'
+/** seconds — wait observed before this attempt started; `0` for attempt 1. */
+export let ATTR_YDB_RETRY_BACKOFF = 'ydb.retry.backoff'
 export let ATTR_YDB_RETRY_ATTEMPTS_TOTAL = 'ydb.retry.attempts_total'
 /** seconds */
 export let ATTR_YDB_RETRY_TOTAL_DURATION = 'ydb.retry.total_duration'

@@ -22,6 +22,7 @@ import {
 	ATTR_YDB_NODE_ID,
 	ATTR_YDB_RETRY_ATTEMPT,
 	ATTR_YDB_RETRY_ATTEMPTS_TOTAL,
+	ATTR_YDB_RETRY_BACKOFF,
 	ATTR_YDB_RETRY_TOTAL_DURATION,
 	ATTR_YDB_SESSION_CLOSE_REASON,
 	ATTR_YDB_SESSION_ID,
@@ -87,9 +88,11 @@ export function buildTracingChannels(opts: ChannelTableOptions): TracingChannelE
 			channel: 'tracing:ydb:retry.attempt',
 			span: 'ydb.Try',
 			kind: SpanKind.INTERNAL,
-			attrs: (ctx: { attempt: number; idempotent: boolean }) => ({
+			attrs: (ctx: { attempt: number; idempotent: boolean; backoffMs: number }) => ({
 				[ATTR_YDB_RETRY_ATTEMPT]: ctx.attempt,
 				[ATTR_YDB_IDEMPOTENT]: ctx.idempotent,
+				// ms on the dc bus, seconds on OTel.
+				[ATTR_YDB_RETRY_BACKOFF]: ctx.backoffMs / 1000,
 			}),
 		},
 		{

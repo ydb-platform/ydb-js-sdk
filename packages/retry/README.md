@@ -198,12 +198,12 @@ Every code path that uses `retry()` — driver discovery, query execution, trans
 
 ### Channels
 
-| Channel                       | Type    | Payload                                                                                                                  |
-| ----------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `tracing:ydb:retry.run`       | tracing | `{ idempotent: boolean, outcome?: RetryOutcome }` — whole retry loop. `outcome` is set on the ctx before resolve / throw. |
-| `tracing:ydb:retry.attempt`   | tracing | `{ attempt: number, idempotent: boolean }` — a single attempt (including the first)                                      |
-| `ydb:retry.attempt.completed` | publish | `{ attempt: number, idempotent: boolean, outcome: RetryOutcome }` — emitted once per attempt with its outcome            |
-| `ydb:retry.exhausted`         | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — ms. See below.                                       |
+| Channel                       | Type    | Payload                                                                                                                                                                                         |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:retry.run`       | tracing | `{ idempotent: boolean, outcome?: RetryOutcome }` — whole retry loop. `outcome` is set on the ctx before resolve / throw.                                                                       |
+| `tracing:ydb:retry.attempt`   | tracing | `{ attempt: number, idempotent: boolean, backoffMs: number }` — a single attempt (including the first); `backoffMs` is the wait actually observed before this attempt (`0` for `attempt === 1`) |
+| `ydb:retry.attempt.completed` | publish | `{ attempt: number, idempotent: boolean, outcome: RetryOutcome }` — emitted once per attempt with its outcome                                                                                   |
+| `ydb:retry.exhausted`         | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — ms. See below.                                                                                                              |
 
 ```ts
 type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
@@ -219,8 +219,12 @@ For end-to-end retry duration with outcome dimensions, read `outcome` off the `r
 
 ```ts
 tracingChannel('tracing:ydb:retry.run').subscribe({
-  asyncEnd(ctx) { histogram.record(elapsed, { outcome: ctx.outcome }) },
-  error(ctx)    { histogram.record(elapsed, { outcome: ctx.outcome }) },
+  asyncEnd(ctx) {
+    histogram.record(elapsed, { outcome: ctx.outcome })
+  },
+  error(ctx) {
+    histogram.record(elapsed, { outcome: ctx.outcome })
+  },
 })
 ```
 

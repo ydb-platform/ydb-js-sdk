@@ -23,7 +23,12 @@ import { type RetryStrategy, backoff, fixed } from './strategy.js'
 export type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
 
 type RetryRunCtx = { idempotent: boolean; outcome?: RetryOutcome }
-type RetryAttemptCtx = { attempt: number; idempotent: boolean }
+/**
+ * `backoffMs` is the actual wait observed before this attempt started,
+ * accounting for time already spent on the previous failed attempt.
+ * Always `0` for `attempt === 1` (no preceding wait).
+ */
+type RetryAttemptCtx = { attempt: number; idempotent: boolean; backoffMs: number }
 
 let retryRunCh = tracingChannel<RetryRunCtx, RetryRunCtx>('tracing:ydb:retry.run')
 let retryAttemptCh = tracingChannel<RetryAttemptCtx, RetryAttemptCtx>('tracing:ydb:retry.attempt')
@@ -61,6 +66,10 @@ async function runLoop<R>(
 	let started = performance.now()
 
 	let budget: number
+	// Backoff waited before the NEXT attempt — surfaced on the
+	// retry.attempt ctx so the consumer can stamp `ydb.retry.backoff` on
+	// the corresponding span. `0` for the first attempt.
+	let pendingBackoffMs = 0
 	while (
 		ctx.attempt <
 		(budget = typeof config.budget === 'number' ? config.budget : config.budget!(ctx, config))
@@ -79,7 +88,7 @@ async function runLoop<R>(
 			// oxlint-disable-next-line no-await-in-loop
 			let result = await retryAttemptCh.tracePromise(
 				() => abortable(signal, Promise.resolve(fn(signal))),
-				{ attempt: attemptNumber, idempotent }
+				{ attempt: attemptNumber, idempotent, backoffMs: pendingBackoffMs }
 			)
 
 			dbg.log('attempt %d: success', attemptNumber)
@@ -149,6 +158,7 @@ async function runLoop<R>(
 			}
 
 			let remaining = Math.max(delay - (Date.now() - start), 0)
+			pendingBackoffMs = remaining
 			if (!remaining) {
 				dbg.log('attempt %d: no delay before next retry', ctx.attempt)
 				continue
