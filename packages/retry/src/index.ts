@@ -11,13 +11,22 @@ import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
 import { type RetryStrategy, backoff, fixed } from './strategy.js'
 
-let retryRunCh = tracingChannel<{ idempotent: boolean }, { idempotent: boolean }>(
-	'tracing:ydb:retry.run'
-)
-let retryAttemptCh = tracingChannel<
-	{ attempt: number; idempotent: boolean },
-	{ attempt: number; idempotent: boolean }
->('tracing:ydb:retry.attempt')
+/**
+ * Per-attempt outcome:
+ *   - `success`       — resolved
+ *   - `retried`       — retryable failure, budget remains
+ *   - `non_retryable` — policy refuses to retry
+ *   - `exhausted`     — retryable failure with no budget left
+ *
+ * Same type tags whole-run outcomes, except `retried` (a run terminates).
+ */
+export type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
+
+type RetryRunCtx = { idempotent: boolean; outcome?: RetryOutcome }
+type RetryAttemptCtx = { attempt: number; idempotent: boolean }
+
+let retryRunCh = tracingChannel<RetryRunCtx, RetryRunCtx>('tracing:ydb:retry.run')
+let retryAttemptCh = tracingChannel<RetryAttemptCtx, RetryAttemptCtx>('tracing:ydb:retry.attempt')
 
 export * from './config.js'
 export * from './context.js'
@@ -35,12 +44,16 @@ export async function retry<R>(
 	fn: (signal: AbortSignal) => R | Promise<R>
 ): Promise<R> {
 	let idempotent = cfg.idempotent ?? false
-	return retryRunCh.tracePromise(() => runLoop(cfg, fn), { idempotent })
+	// runLoop mutates `runCtx.outcome` before settling so the asyncEnd
+	// subscriber reads the final outcome off the same ctx object.
+	let runCtx: RetryRunCtx = { idempotent }
+	return retryRunCh.tracePromise(() => runLoop(cfg, fn, runCtx), runCtx)
 }
 
 async function runLoop<R>(
 	cfg: RetryConfig,
-	fn: (signal: AbortSignal) => R | Promise<R>
+	fn: (signal: AbortSignal) => R | Promise<R>,
+	runCtx: RetryRunCtx
 ): Promise<R> {
 	let config = Object.assign({}, defaultRetryConfig, cfg)
 	let idempotent = cfg.idempotent ?? false
@@ -70,6 +83,12 @@ async function runLoop<R>(
 			)
 
 			dbg.log('attempt %d: success', attemptNumber)
+			dc('ydb:retry.attempt.completed').publish({
+				attempt: attemptNumber,
+				idempotent,
+				outcome: 'success' satisfies RetryOutcome,
+			})
+			runCtx.outcome = 'success'
 			return result
 		} catch (error) {
 			ctx.error = error
@@ -77,11 +96,23 @@ async function runLoop<R>(
 
 			if (error instanceof Error && error.name === 'AbortError') {
 				dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
+				dc('ydb:retry.attempt.completed').publish({
+					attempt: attemptNumber,
+					idempotent,
+					outcome: 'non_retryable' satisfies RetryOutcome,
+				})
+				runCtx.outcome = 'non_retryable'
 				throw error
 			}
 
 			if (error instanceof Error && error.name === 'TimeoutError') {
 				dbg.log('attempt %d: timeout error, not retryable', ctx.attempt)
+				dc('ydb:retry.attempt.completed').publish({
+					attempt: attemptNumber,
+					idempotent,
+					outcome: 'non_retryable' satisfies RetryOutcome,
+				})
+				runCtx.outcome = 'non_retryable'
 				throw error
 			}
 
@@ -94,8 +125,21 @@ async function runLoop<R>(
 
 			if (!willRetry || ctx.attempt >= budget) {
 				dbg.log('attempt %d: not retrying, error: %O', ctx.attempt, error)
+				let outcome: RetryOutcome = !willRetry ? 'non_retryable' : 'exhausted'
+				dc('ydb:retry.attempt.completed').publish({
+					attempt: attemptNumber,
+					idempotent,
+					outcome,
+				})
+				runCtx.outcome = outcome
 				break
 			}
+
+			dc('ydb:retry.attempt.completed').publish({
+				attempt: attemptNumber,
+				idempotent,
+				outcome: 'retried' satisfies RetryOutcome,
+			})
 
 			let delay: number
 			if (typeof config.strategy === 'number') {

@@ -177,30 +177,40 @@ Security note: identifier() only quotes the name and escapes backticks. Do not p
 
 `@ydbjs/query` publishes events on [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) so external subscribers (`@ydbjs/telemetry`, OpenTelemetry, custom loggers) can build traces, metrics, and logs without coupling the SDK to a specific telemetry stack.
 
+Every payload starts with a `driver: DriverIdentity` field (defined in `@ydbjs/core`) so multi-driver consumers can attribute events. Durations are in **milliseconds** (Node.js convention — `performance.now()` / `Date.now()`).
+
 ### Channels
 
 #### Query execution
 
-| Channel                         | Type    | Payload                                                                                        |
-| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
-| `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation, stage }` — one `ExecuteQuery` RPC           |
-| `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop |
-| `tracing:ydb:query.begin`       | tracing | `{ sessionId, nodeId, isolation }` — one `BeginTransaction` RPC                                |
-| `tracing:ydb:query.commit`      | tracing | `{ sessionId, nodeId, txId }` — one `CommitTransaction` RPC                                    |
-| `tracing:ydb:query.rollback`    | tracing | `{ sessionId, nodeId, txId }` — one `RollbackTransaction` RPC (fire-and-forget)                |
-
-`stage` is `'standalone'` for single-shot queries, `'tx'` for queries inside a transaction body, and `'do'` reserved for the future `sql.do(...)` runner.
+| Channel                         | Type    | Extra fields beyond `{ driver }`                                                                |
+| ------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation }` — one `ExecuteQuery` RPC                   |
+| `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop  |
+| `tracing:ydb:query.begin`       | tracing | `{ sessionId, nodeId, isolation }` — one `BeginTransaction` RPC                                 |
+| `tracing:ydb:query.commit`      | tracing | `{ sessionId, nodeId, txId }` — one `CommitTransaction` RPC                                     |
+| `tracing:ydb:query.rollback`    | tracing | `{ sessionId, nodeId, txId }` — one `RollbackTransaction` RPC (fire-and-forget)                 |
 
 #### Session pool
 
-| Channel                       | Type    | Payload                                                            |
-| ----------------------------- | ------- | ------------------------------------------------------------------ |
-| `tracing:ydb:session.acquire` | tracing | `{ kind: 'query' \| 'transaction' }`                               |
-| `tracing:ydb:session.create`  | tracing | `{ liveSessions, maxSize, creating }` — only when the pool grows   |
-| `ydb:session.created`         | publish | `{ sessionId, nodeId }`                                            |
-| `ydb:session.closed`          | publish | `{ sessionId, nodeId, reason: 'evicted' \| 'pool_close', uptime }` |
+| Channel                              | Type    | Extra fields beyond `{ driver }`                                                                                  |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:query.session.acquire`  | tracing | _(none)_ — wraps each session-lease acquisition                                                                   |
+| `tracing:ydb:query.session.create`   | tracing | _(none)_ — wraps `CreateSession` RPC + first `AttachStream` message                                               |
+| `tracing:ydb:query.session.delete`   | tracing | `{ sessionId, nodeId, reason, uptime }` — wraps the background `DeleteSession` RPC                                |
+| `ydb:query.session.pool.opened`      | publish | `{ maxSize, minSize, maxWaiters }` — once per pool, config snapshot                                               |
+| `ydb:query.session.pool.closed`      | publish | _(none)_                                                                                                          |
+| `ydb:query.session.created`          | publish | `{ sessionId, nodeId }`                                                                                           |
+| `ydb:query.session.closed`           | publish | `{ sessionId, nodeId, reason, uptime }` (ms) — see reasons below                                                  |
+| `ydb:query.session.acquired`         | publish | `{ sessionId, nodeId }` — lease handed to a caller                                                                |
+| `ydb:query.session.released`         | publish | `{ sessionId, nodeId }` — caller dropped the lease (paired with `acquired`)                                       |
+| `ydb:query.session.acquire.failed`   | publish | `{ error }` — `acquire()` rejected (pool full, timeout, pool closed)                                              |
+| `ydb:query.session.waiter.enqueued`  | publish | _(none)_ — a caller started waiting because the pool is saturated                                                 |
+| `ydb:query.session.waiter.dequeued`  | publish | _(none)_ — waiter resolved, rejected, or was aborted                                                              |
 
-`session.closed` fires **once** per session lifecycle. `reason` distinguishes server-side teardown (`evicted` — attach stream died, e.g. session expired or was dropped by the server) from explicit pool shutdown (`pool_close` — emitted for every session still tracked by the pool when `pool.close()` runs).
+`reason` (`SessionCloseReason`) is one of: `'pool_close'` (pool tear-down), `'attach_failed'` (initial AttachStream rejected — session never lived), `'stream_closed'` (attach stream ended cleanly, e.g. server-side TTL), `'stream_error'` (attach stream errored mid-flight). Sessions are pool-owned; there is no user-driven close. Carried both on the plain `session.closed` event and inside the `session.delete` tracing ctx.
+
+`pool.opened.minSize` is reported even though the JS pool does not eagerly warm sessions today — the option exists for parity with other YDB SDKs and for future warm-up logic.
 
 ### Retry hierarchy
 
@@ -210,7 +220,7 @@ Retry-loop spans (`tracing:ydb:retry.run`, `tracing:ydb:retry.attempt`, `ydb:ret
 ydb.query.transaction
 └─ ydb.retry.run
    ├─ ydb.retry.attempt #1
-   │  ├─ ydb.session.acquire
+   │  ├─ ydb.query.session.acquire
    │  ├─ ydb.query.begin
    │  ├─ ydb.query.execute   (SELECT ...)
    │  └─ ydb.query.commit            ← or ydb.query.rollback on body throw
@@ -218,7 +228,7 @@ ydb.query.transaction
       ...
 ```
 
-`query.begin` / `query.commit` / `query.rollback` each wrap exactly one server RPC. Use them for "begin/commit/rollback latency" and "rollback rate" metrics; `query.execute` is reserved for `ExecuteQuery` only. Rollback is fire-and-forget — its `start` always fires, but `asyncEnd` may land after the surrounding `query.transaction.error`.
+`query.begin` / `query.commit` / `query.rollback` each wrap exactly one server RPC. Use them for "begin/commit/rollback latency" and "rollback rate" metrics; `query.execute` is reserved for `ExecuteQuery` only. Rollback is fire-and-forget — its `start` always fires, but `asyncEnd` may land after the surrounding `query.transaction.error`. The same fire-and-forget pattern applies to `query.session.delete` (sent in the background when a session leaves the pool).
 
 ### Subscribing
 
@@ -230,12 +240,12 @@ tracingChannel('tracing:ydb:query.execute').subscribe({
     span.start({
       name: 'ydb.query.execute',
       attributes: {
-        'db.system': 'ydb',
-        'db.statement': ctx.text,
-        'db.ydb.session_id': ctx.sessionId,
-        'db.ydb.node_id': String(ctx.nodeId),
-        'db.ydb.isolation': ctx.isolation,
-        'db.ydb.stage': ctx.stage,
+        'db.system.name': 'ydb',
+        'db.namespace': ctx.driver.database,
+        'db.query.text': ctx.text,
+        'ydb.session.id': ctx.sessionId,
+        'ydb.node.id': Number(ctx.nodeId),
+        'ydb.isolation': ctx.isolation,
       },
     })
   },
@@ -248,8 +258,9 @@ tracingChannel('tracing:ydb:query.execute').subscribe({
   },
 })
 
-channel('ydb:session.closed').subscribe((msg) => {
-  metrics.sessionLifetime.record(msg.uptime, { reason: msg.reason })
+channel('ydb:query.session.closed').subscribe((msg) => {
+  // msg.uptime is in ms; convert to seconds when feeding OTel histograms.
+  metrics.sessionLifetime.record(msg.uptime / 1000, { reason: msg.reason })
 })
 ```
 
@@ -259,7 +270,7 @@ channel('ydb:session.closed').subscribe((msg) => {
 
 ### Stability
 
-Channel names, payload field names, and the `stage` / `reason` / `kind` enums follow semantic versioning. Adding new optional fields or new enum values is a minor change; renaming or removing fields is a major change.
+Channel names, payload field names, and the `reason` (`SessionCloseReason`) enum follow semantic versioning. Adding new optional fields or new enum values is a minor change; renaming or removing fields is a major change.
 
 ## Development
 

@@ -5,10 +5,10 @@
  *   - Single source of truth: #all (Set). Idle is a derived LIFO stack.
  *   - Idle is LIFO for cache warmth (server-side plan cache).
  *   - Busy has no explicit marker — it's "in #all but not in #available".
- *   - No background sweeper. Dead sessions are evicted lazily on acquire.
+ *   - No background sweeper. Dead sessions are dropped lazily on acquire.
  *   - Waiters have a hard cap (maxSize * 8) — caller gets fast failure
  *     under thundering-herd rather than unbounded queue growth.
- *   - An evicted session opens a slot; we proactively refill for waiters.
+ *   - A dropped session opens a slot; we proactively refill for waiters.
  *   - close() is atomic w.r.t. in-flight creates: we own their abort
  *     controllers, cancel them on close, and allSettle before returning.
  *
@@ -24,25 +24,20 @@
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { linkSignals } from '@ydbjs/abortable'
-import type { Driver } from '@ydbjs/core'
+import type { Driver, DriverIdentity } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
-import { Session } from './session.js'
+import { Session, type SessionCloseReason } from './session.js'
 
-/** Reasons a session left the pool. See `ydb:session.closed`. */
-type SessionClosedReason = 'evicted' | 'pool_close'
+type SessionAcquireCtx = { driver: DriverIdentity }
+type SessionCreateCtx = { driver: DriverIdentity }
 
-/** Call-site classifier for `tracing:ydb:session.acquire`. */
-type SessionAcquireKind = 'query' | 'transaction'
+let sessionCreateCh = tracingChannel<SessionCreateCtx, SessionCreateCtx>(
+	'tracing:ydb:query.session.create'
+)
 
-export let sessionAcquireCh = tracingChannel<
-	{ kind: SessionAcquireKind },
-	{ kind: SessionAcquireKind }
->('tracing:ydb:session.acquire')
-
-let sessionCreateCh = tracingChannel<
-	{ liveSessions: number; maxSize: number; creating: number },
-	{ liveSessions: number; maxSize: number; creating: number }
->('tracing:ydb:session.create')
+export let sessionAcquireCh = tracingChannel<SessionAcquireCtx, SessionAcquireCtx>(
+	'tracing:ydb:query.session.acquire'
+)
 
 let dbg = loggers.query.extend('pool2')
 
@@ -63,12 +58,19 @@ export class SessionPoolFullError extends Error {
 export type SessionPoolOptions = {
 	/** Hard cap on simultaneously-live sessions (idle + busy + creating). */
 	maxSize?: number
+	/**
+	 * Soft floor reported as `ydb.query.session.min` for dashboard parity
+	 * with other YDB SDKs. The JS pool does not eagerly warm sessions up to
+	 * this number. Default 0.
+	 */
+	minSize?: number
 	/** Multiplier over maxSize for the wait queue. Default 8. */
 	waitQueueFactor?: number
 }
 
 let DEFAULTS = {
 	maxSize: 50,
+	minSize: 0,
 	waitQueueFactor: 8,
 } satisfies Required<SessionPoolOptions>
 
@@ -131,6 +133,7 @@ export class SessionLease implements Disposable {
 export class SessionPool implements AsyncDisposable {
 	#driver: Driver
 	#maxSize: number
+	#minSize: number
 	#maxWaiters: number
 
 	#all = new Set<Session>()
@@ -139,16 +142,31 @@ export class SessionPool implements AsyncDisposable {
 	#creates = new Set<Promise<unknown>>()
 	#close = new AbortController()
 
-	// Per-session metadata used by `ydb:session.closed`. Held weakly so a
-	// session removed from #all without going through #publishClosed (defence
-	// in depth) doesn't keep its createdAt entry alive.
-	#createdAt = new WeakMap<Session, number>()
 	#evictionHandlers = new WeakMap<Session, () => void>()
 
 	constructor(driver: Driver, options: SessionPoolOptions = {}) {
 		this.#driver = driver
 		this.#maxSize = options.maxSize ?? DEFAULTS.maxSize
+		this.#minSize = options.minSize ?? DEFAULTS.minSize
 		this.#maxWaiters = this.#maxSize * (options.waitQueueFactor ?? DEFAULTS.waitQueueFactor)
+
+		if (this.#minSize > this.#maxSize) {
+			throw new RangeError(
+				`minSize (${this.#minSize}) cannot exceed maxSize (${this.#maxSize})`
+			)
+		}
+
+		// Single config snapshot for this pool. Metrics subscribers anchor
+		// their per-pool ObservableGauges here; per-session events deliberately
+		// do not repeat config.
+		dc('ydb:query.session.pool.opened').publish({
+			driver: this.#driver.identity,
+			maxSize: this.#maxSize,
+			minSize: this.#minSize,
+			maxWaiters: this.#maxWaiters,
+		})
+
+		this.#refillToMinSize()
 	}
 
 	get closed(): boolean {
@@ -163,20 +181,53 @@ export class SessionPool implements AsyncDisposable {
 			creating: this.#creates.size,
 			waiting: this.#waiters.length,
 			maxSize: this.#maxSize,
+			minSize: this.#minSize,
 		}
 	}
 
 	async acquire(signal?: AbortSignal): Promise<SessionLease> {
-		let session = await this.#acquireSession(signal)
-		return new SessionLease(this, session)
+		try {
+			let session = await this.#acquireSession(signal)
+
+			dc('ydb:query.session.acquired').publish({
+				driver: this.#driver.identity,
+				nodeId: session.nodeId,
+				sessionId: session.id,
+			})
+
+			return new SessionLease(this, session)
+		} catch (error) {
+			// Caller cancellation isn't a pool-side failure — the request was
+			// withdrawn before we could serve it. Skip the failed event so the
+			// `acquire.failures` counter stays a pool-health signal rather than
+			// a count of upstream-cancelled requests. Pool-internal aborts
+			// (pool.close, full queue, timeout we picked) still publish.
+			if (!signal?.aborted) {
+				dc('ydb:query.session.acquire.failed').publish({
+					driver: this.#driver.identity,
+					error,
+				})
+			}
+
+			throw error
+		}
 	}
 
 	release(session: Session): void {
+		// Pairs with `ydb:query.session.acquired`: exactly one release per
+		// lease, whatever path the session takes afterwards.
+		dc('ydb:query.session.released').publish({
+			driver: this.#driver.identity,
+			nodeId: session.nodeId,
+			sessionId: session.id,
+		})
+
 		// Session died while someone was using it. The eviction listener
-		// already popped it from #all and published `closed{evicted}`; just
-		// fire DeleteSession in the background.
+		// already popped it from #all and published `closed{stream_*}`. The
+		// server has either killed the session itself (stream_closed) or the
+		// stream errored — either way the server-side TTL reaps it, so no
+		// extra DeleteSession RPC is required from us.
 		if (!session.alive || !this.#all.has(session)) {
-			session.close()
 			return
 		}
 
@@ -185,11 +236,13 @@ export class SessionPool implements AsyncDisposable {
 			// sessions get a `pool_close` event so subscribers see one event
 			// per session lifecycle regardless of timing. Detach the eviction
 			// listener first — session.close() aborts the signal, which would
-			// otherwise re-fire `closed{evicted}` for the same session.
+			// otherwise re-fire `closed{stream_*}` for the same session.
 			this.#detachEviction(session)
 			this.#publishClosed(session, 'pool_close')
 			this.#all.delete(session)
-			session.close()
+
+			session.close('pool_close')
+
 			return
 		}
 
@@ -199,6 +252,11 @@ export class SessionPool implements AsyncDisposable {
 		let waiter = this.#waiters.shift()
 		if (waiter) {
 			waiter.detach()
+
+			dc('ydb:query.session.waiter.dequeued').publish({
+				driver: this.#driver.identity,
+			})
+
 			waiter.resolve(session)
 			return
 		}
@@ -214,6 +272,11 @@ export class SessionPool implements AsyncDisposable {
 		let waiters = this.#waiters.splice(0)
 		for (let w of waiters) {
 			w.detach()
+
+			dc('ydb:query.session.waiter.dequeued').publish({
+				driver: this.#driver.identity,
+			})
+
 			w.reject(new SessionPoolClosedError())
 		}
 
@@ -227,12 +290,14 @@ export class SessionPool implements AsyncDisposable {
 		this.#available.length = 0
 		// close() is sync + fire-and-forget — no need to await each RPC.
 		// Detach the eviction listener BEFORE close() so we don't double-fire
-		// `closed{evicted}` for sessions that the pool itself is tearing down.
+		// `closed{stream_*}` for sessions that the pool itself is tearing down.
 		for (let s of sessions) {
 			this.#detachEviction(s)
 			this.#publishClosed(s, 'pool_close')
-			s.close()
+			s.close('pool_close')
 		}
+		// Pairs with `pool.opened`; tells subscribers to drop per-pool state.
+		dc('ydb:query.session.pool.closed').publish({ driver: this.#driver.identity })
 		dbg.log('pool closed (%d sessions)', sessions.length)
 	}
 
@@ -268,11 +333,7 @@ export class SessionPool implements AsyncDisposable {
 		// many concurrent creates fan out.
 		using linked = linkSignals(signal, this.#close.signal)
 
-		let createCtx = {
-			liveSessions: this.#all.size,
-			maxSize: this.#maxSize,
-			creating: this.#creates.size,
-		}
+		let createCtx: SessionCreateCtx = { driver: this.#driver.identity }
 		let promise = sessionCreateCh.tracePromise(
 			() => Session.open(this.#driver, linked.signal),
 			createCtx
@@ -284,14 +345,14 @@ export class SessionPool implements AsyncDisposable {
 
 			// The pool closed while we were creating. Dispose it, don't leak.
 			if (this.closed) {
-				session.close()
+				session.close('pool_close')
 				throw new SessionPoolClosedError()
 			}
 
 			this.#all.add(session)
-			this.#createdAt.set(session, Date.now())
 			this.#bindEviction(session)
-			dc('ydb:session.created').publish({
+			dc('ydb:query.session.created').publish({
+				driver: this.#driver.identity,
 				sessionId: session.id,
 				nodeId: session.nodeId,
 			})
@@ -307,9 +368,18 @@ export class SessionPool implements AsyncDisposable {
 			this.#all.delete(session)
 			let idx = this.#available.indexOf(session)
 			if (idx !== -1) this.#available.splice(idx, 1)
-			dbg.log('evicted session %s', session.id)
-			this.#publishClosed(session, 'evicted')
+			// Session.#markBroken set closeReason before aborting the signal;
+			// fall back to stream_closed only as a defensive default if a
+			// future code path aborts the signal without going through
+			// markBroken (today nothing does).
+			let reason = session.closeReason ?? 'stream_closed'
+			dbg.log('session %s left the pool (%s)', session.id, reason)
+			this.#publishClosed(session, reason)
+			// Order matters: waiters first (the freed capacity belongs to
+			// whoever was already queued), then top up to minSize if the
+			// slot is still empty.
 			this.#pumpWaitersAfterEviction()
+			this.#refillToMinSize()
 		}
 		this.#evictionHandlers.set(session, handler)
 		session.signal.addEventListener('abort', handler, { once: true })
@@ -319,7 +389,7 @@ export class SessionPool implements AsyncDisposable {
 	 * Detach the eviction listener bound by #bindEviction. Used by close()
 	 * to avoid a double `closed` event when the pool itself tears down a
 	 * session (which abort() would otherwise reflect back through the
-	 * eviction listener).
+	 * eviction listener with reason=stream_*).
 	 */
 	#detachEviction(session: Session): void {
 		let handler = this.#evictionHandlers.get(session)
@@ -328,15 +398,13 @@ export class SessionPool implements AsyncDisposable {
 		session.signal.removeEventListener('abort', handler)
 	}
 
-	#publishClosed(session: Session, reason: SessionClosedReason): void {
-		let createdAt = this.#createdAt.get(session)
-		let uptime = createdAt ? Date.now() - createdAt : 0
-		this.#createdAt.delete(session)
-		dc('ydb:session.closed').publish({
+	#publishClosed(session: Session, reason: SessionCloseReason): void {
+		dc('ydb:query.session.closed').publish({
+			driver: this.#driver.identity,
 			sessionId: session.id,
 			nodeId: session.nodeId,
 			reason,
-			uptime,
+			uptime: Date.now() - session.createdAt,
 		})
 	}
 
@@ -353,10 +421,59 @@ export class SessionPool implements AsyncDisposable {
 
 		let waiter = this.#waiters.shift()!
 		waiter.detach()
+		dc('ydb:query.session.waiter.dequeued').publish({ driver: this.#driver.identity })
 		this.#grow().then(
 			(s) => waiter.resolve(s),
 			(e) => waiter.reject(e instanceof Error ? e : new Error(String(e)))
 		)
+	}
+
+	/**
+	 * Brings (live + in-flight creates) up to minSize. Called from the
+	 * constructor and after every eviction. Idempotent: computes the deficit
+	 * each time, so over-calling is harmless. Each grow runs concurrently
+	 * via a detached `#growAndPark`; the outer call returns immediately.
+	 */
+	#refillToMinSize(): void {
+		if (this.closed) return
+		let deficit = this.#minSize - (this.#all.size + this.#creates.size)
+		for (let i = 0; i < deficit; i++) {
+			void this.#growAndPark()
+		}
+	}
+
+	/**
+	 * Grow once, then park the result: hand to a queued waiter if any,
+	 * otherwise drop into `#available` for the next acquire().
+	 *
+	 * Errors are swallowed by design — warm-up is best-effort. A failed
+	 * background create does not crash the app; the next acquire() or the
+	 * next eviction-triggered refill will try again. `SessionPoolClosedError`
+	 * is expected on shutdown (the linked close signal aborts pending
+	 * creates).
+	 */
+	async #growAndPark(): Promise<void> {
+		let session: Session
+		try {
+			session = await this.#grow()
+		} catch (err) {
+			dbg.log('warm-up grow failed: %O', err)
+			return
+		}
+
+		if (this.closed) return // #grow already disposed it under this.closed
+
+		let waiter = this.#waiters.shift()
+		if (waiter) {
+			waiter.detach()
+			dc('ydb:query.session.waiter.dequeued').publish({
+				driver: this.#driver.identity,
+			})
+			waiter.resolve(session)
+			return
+		}
+
+		this.#available.push(session)
 	}
 
 	#enqueue(signal?: AbortSignal): Promise<Session> {
@@ -365,10 +482,14 @@ export class SessionPool implements AsyncDisposable {
 		}
 
 		let { promise, resolve, reject } = Promise.withResolvers<Session>()
+		let driver = this.#driver.identity
 
 		let onAbort = () => {
 			let idx = this.#waiters.findIndex((w) => w.resolve === resolve)
-			if (idx !== -1) this.#waiters.splice(idx, 1)
+			if (idx !== -1) {
+				this.#waiters.splice(idx, 1)
+				dc('ydb:query.session.waiter.dequeued').publish({ driver })
+			}
 			reject(signal!.reason ?? new Error('aborted'))
 		}
 
@@ -377,6 +498,7 @@ export class SessionPool implements AsyncDisposable {
 		if (signal) signal.addEventListener('abort', onAbort, { once: true })
 
 		this.#waiters.push({ resolve, reject, detach })
+		dc('ydb:query.session.waiter.enqueued').publish({ driver })
 		return promise
 	}
 }

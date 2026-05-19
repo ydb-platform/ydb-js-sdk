@@ -120,3 +120,87 @@ test('skips ydb:retry.exhausted when the call succeeds', async () => {
 
 	expect(exhausted.payloads).toHaveLength(0)
 })
+
+// ── retry.attempt.completed ──────────────────────────────────────────────────
+
+test('emits attempt.completed with outcome=success on first-try success', async () => {
+	using completed = collect('ydb:retry.attempt.completed')
+
+	await retry({ idempotent: true }, async () => 'ok')
+
+	expect(completed.payloads).toHaveLength(1)
+	expect(completed.payloads[0]).toMatchObject({
+		attempt: 1,
+		idempotent: true,
+		outcome: 'success',
+	})
+})
+
+test('emits attempt.completed sequence: retried, retried, success', async () => {
+	using completed = collect('ydb:retry.attempt.completed')
+
+	let calls = 0
+	await retry({ retry: true, budget: 5, strategy: 0, idempotent: false }, async () => {
+		calls++
+		if (calls < 3) throw new Error('again')
+		return 'ok'
+	})
+
+	expect(completed.payloads).toHaveLength(3)
+	expect(completed.payloads.map((p: any) => p.outcome)).toEqual([
+		'retried',
+		'retried',
+		'success',
+	])
+})
+
+test('emits attempt.completed with outcome=exhausted when budget runs out', async () => {
+	using completed = collect('ydb:retry.attempt.completed')
+
+	await expect(
+		retry({ retry: true, budget: 2, strategy: 0, idempotent: true }, () => {
+			throw new Error('fail')
+		})
+	).rejects.toThrow('fail')
+
+	expect(completed.payloads).toHaveLength(2)
+	expect(completed.payloads.map((p: any) => p.outcome)).toEqual(['retried', 'exhausted'])
+})
+
+test('emits attempt.completed with outcome=non_retryable on first non-retryable error', async () => {
+	using completed = collect('ydb:retry.attempt.completed')
+
+	await expect(
+		retry({ retry: false, budget: 5, idempotent: true }, () => {
+			throw new Error('nope')
+		})
+	).rejects.toThrow('nope')
+
+	expect(completed.payloads).toHaveLength(1)
+	expect(completed.payloads[0]).toMatchObject({
+		attempt: 1,
+		outcome: 'non_retryable',
+	})
+})
+
+test('tracing:ydb:retry.run.asyncEnd carries outcome=success when the call resolves', async () => {
+	using trace = collectTrace('tracing:ydb:retry.run')
+
+	await retry({ idempotent: true }, async () => 'ok')
+
+	expect(trace.asyncEnd).toHaveLength(1)
+	expect(trace.asyncEnd[0]).toMatchObject({ outcome: 'success' })
+})
+
+test('tracing:ydb:retry.run.error carries outcome=exhausted when budget runs out', async () => {
+	using trace = collectTrace('tracing:ydb:retry.run')
+
+	await expect(
+		retry({ retry: true, budget: 1, strategy: 0, idempotent: false }, () => {
+			throw new Error('fail')
+		})
+	).rejects.toThrow('fail')
+
+	expect(trace.error).toHaveLength(1)
+	expect(trace.error[0]).toMatchObject({ outcome: 'exhausted' })
+})
