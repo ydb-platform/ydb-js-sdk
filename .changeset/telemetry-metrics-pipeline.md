@@ -29,7 +29,7 @@ OpenTelemetry metrics pipeline, semantic-convention cleanup, and a `DeleteSessio
 
 - `SessionPool` accepts a new `minSize?: number` option (default `0`) — reported as `ydb.query.session.min` once that observable is wired up. No eager session pre-warm is performed today; the option exists for parity with other YDB SDKs and for future warm-up logic.
 - `ydb:query.session.pool.opened` payload now includes `minSize`.
-- `Session.close()` accepts a `SessionCloseReason` (`pool_close` | `evicted` | `release_dead` | `attach_failed` | `user_close`). The `DeleteSession` RPC is now published via `tracingChannel('tracing:ydb:query.session.delete')` so subscribers see a span around each background delete, with the reason on the context.
+- `Session.close()` accepts a `SessionCloseReason` (`pool_close` | `attach_failed` | `stream_closed` | `stream_error`). The `DeleteSession` RPC is now published via `tracingChannel('tracing:ydb:query.session.delete')` so subscribers see a span around each background delete, with the reason on the context.
 - Session uptime is tracked on the `Session` itself (`readonly createdAt`) instead of in a parallel `WeakMap` inside the pool.
 
 `@ydbjs/retry`:
