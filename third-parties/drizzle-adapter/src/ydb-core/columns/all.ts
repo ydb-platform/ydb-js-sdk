@@ -1,0 +1,70 @@
+import {
+	bigint,
+	binary,
+	boolean,
+	bytes,
+	customType,
+	date,
+	date32,
+	datetime,
+	datetime64,
+	decimal,
+	double,
+	dyNumber,
+	float,
+	int16,
+	int8,
+	interval,
+	interval64,
+	json,
+	jsonDocument,
+	timestamp,
+	timestamp64,
+	uint16,
+	uint32,
+	uint64,
+	uint8,
+	uuid,
+	yson,
+} from './types.js'
+import { integer } from './integer.js'
+import { text } from './text.js'
+
+export const ydbColumnBuilders = {
+	bigint,
+	binary,
+	boolean,
+	bytes,
+	customType,
+	date,
+	date32,
+	datetime,
+	datetime64,
+	decimal,
+	double,
+	dyNumber,
+	float,
+	int8,
+	int16,
+	integer,
+	interval,
+	interval64,
+	json,
+	jsonDocument,
+	text,
+	timestamp,
+	timestamp64,
+	int: integer,
+	uint8,
+	uint16,
+	uint32,
+	uint64,
+	uuid,
+	yson,
+}
+
+export function getYdbColumnBuilders() {
+	return ydbColumnBuilders
+}
+
+export type YdbColumnBuilders = typeof ydbColumnBuilders
