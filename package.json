@@ -27,6 +27,7 @@
 		"prepare": "git config core.hooksPath scripts/hooks"
 	},
 	"devDependencies": {
+		"@arethetypeswrong/cli": "0.18.2",
 		"@types/node": "^25.6.0",
 		"@vitest/coverage-v8": "^4.1.5",
 		"@vitest/ui": "^4.1.5",
