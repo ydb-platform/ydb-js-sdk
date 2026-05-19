@@ -131,8 +131,8 @@ export interface YdbDriverOptions {
 
 export class YdbDriver implements YdbTransactionalExecutor {
 	readonly driver: Driver
-	readonly client: QueryClient
 	#ownsDriver: boolean
+	#client: QueryClient | undefined
 
 	constructor(connectionString: string)
 	constructor(options: YdbDriverOptions)
@@ -153,8 +153,17 @@ export class YdbDriver implements YdbTransactionalExecutor {
 			this.driver = new Driver(arg.connectionString)
 			this.#ownsDriver = true
 		}
+	}
 
-		this.client = createQueryClient(this.driver)
+	// Lazy: avoid constructing SessionPool until the first query/transaction.
+	// Setter exists so callers (and tests) can swap in a pre-built QueryClient.
+	get client(): QueryClient {
+		this.#client ??= createQueryClient(this.driver)
+		return this.#client
+	}
+
+	set client(value: QueryClient) {
+		this.#client = value
 	}
 
 	async ready(signal?: AbortSignal): Promise<void> {
