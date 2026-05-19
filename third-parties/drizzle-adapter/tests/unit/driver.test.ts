@@ -111,6 +111,28 @@ test('transaction', async () => {
 	assert.equal(typeof beginCalls[2]?.[0], 'function')
 })
 
+test('rejects multi-result-set responses', async () => {
+	let borrowedDriver = Object.create(Driver.prototype) as Driver
+	let driver = new YdbDriver(borrowedDriver)
+
+	;(driver as any).client = ((_text: string) => {
+		let q: any = {
+			parameter() {
+				return q
+			},
+			async values() {
+				return [[1], [2]]
+			},
+			then(onfulfilled: any, onrejected: any) {
+				return Promise.resolve([[1], [2]]).then(onfulfilled, onrejected)
+			},
+		}
+		return q
+	}) as any
+
+	await assert.rejects(driver.execute('select 1; select 2', [], 'execute'), /2 result sets/)
+})
+
 test('fromCallback', async () => {
 	let calls: Array<{ sql: string; params: unknown[]; method: string; options: unknown }> = []
 	let executor = YdbDriver.fromCallback(async (query, params, method, options) => {

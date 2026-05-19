@@ -56,7 +56,17 @@ function getRows<T = unknown>(result: unknown): T[] {
 		return []
 	}
 
-	const [rows] = result
+	if (result.length > 1) {
+		// Drizzle generates one statement per call, so multi-result-set responses
+		// only happen when the caller (or a raw SQL fragment) packs several
+		// statements into one query. Silently dropping the tail hides real bugs.
+		throw new Error(
+			`YDB query returned ${result.length} result sets, but the Drizzle adapter expects exactly one. ` +
+				'Split the query so each call runs a single statement, or use the @ydbjs/query API directly for multi-result-set responses.'
+		)
+	}
+
+	let [rows] = result
 	return Array.isArray(rows) ? (rows as T[]) : []
 }
 
