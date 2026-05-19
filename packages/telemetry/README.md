@@ -72,6 +72,137 @@ To drop other spans (e.g. `ydb.Try`, `ydb.Transaction`) or skip orphan
 root traces, configure your OpenTelemetry SDK's sampler — it applies
 uniformly across every instrumentation, not just this one.
 
+## Customising emitted telemetry
+
+`@ydbjs/telemetry` is an `InstrumentationBase` subclass, so it integrates
+with the standard OTel pipeline. The two options above are the only knobs
+specific to this package; everything else is configured at the SDK level
+and applies uniformly across all instrumentations.
+
+| Knob                                                           | Controlled by                         | Example use case                                |
+| -------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| Span sampling rate / drop specific spans                       | OTel `Sampler`                        | Sample 1% of traces, or drop `ydb.Try`          |
+| Histogram bucket layout, metric tag pruning, rename            | OTel `View`                           | Switch `ydb.retry.duration` to explicit buckets |
+| `service.name`, `deployment.environment`, custom resource tags | OTel `Resource`                       | Attribute traces to the right service           |
+| Choose / configure exporter                                    | OTel `SpanProcessor` + `MetricReader` | OTLP, Jaeger, Prometheus, console               |
+| Periodic export interval                                       | `PeriodicExportingMetricReader`       | Trade freshness vs. ingestion cost              |
+| Disable instrumentation at runtime                             | `instrumentation.disable()`           | Pause telemetry in tests                        |
+
+### Drop noisy spans with a sampler
+
+`ydb.Try` and `ydb.Transaction` are wrapper spans — useful for retry
+debugging but noise on a high-RPS service. A small custom sampler
+combined with `ParentBasedSampler` keeps the rest of the tree intact:
+
+```ts
+import {
+  ParentBasedSampler,
+  type Sampler,
+  SamplingDecision,
+  TraceIdRatioBasedSampler,
+} from '@opentelemetry/sdk-trace-base'
+
+let DROPPED = new Set(['ydb.Try', 'ydb.Transaction'])
+
+let dropWrappers: Sampler = {
+  shouldSample(_ctx, _traceId, name) {
+    return DROPPED.has(name)
+      ? { decision: SamplingDecision.NOT_RECORD }
+      : { decision: SamplingDecision.RECORD_AND_SAMPLED }
+  },
+  toString: () => 'DropWrapperSpans',
+}
+
+new NodeSDK({
+  sampler: new ParentBasedSampler({ root: dropWrappers }),
+  // ...
+})
+```
+
+### Customise histogram buckets via View
+
+```ts
+import { ExplicitBucketHistogramAggregation, View } from '@opentelemetry/sdk-metrics'
+
+new NodeSDK({
+  views: [
+    new View({
+      instrumentName: 'ydb.retry.duration',
+      aggregation: new ExplicitBucketHistogramAggregation([0.01, 0.05, 0.1, 0.5, 1, 5, 30]),
+    }),
+    // Drop the `ydb.idempotent` tag from retry counters if you don't need it
+    new View({ instrumentName: 'ydb.retry.attempts', attributeKeys: ['ydb.retry.outcome'] }),
+  ],
+})
+```
+
+### Identify the service in exported telemetry
+
+```ts
+import { resourceFromAttributes } from '@opentelemetry/resources'
+import {
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+} from '@opentelemetry/semantic-conventions/incubating'
+
+new NodeSDK({
+  resource: resourceFromAttributes({
+    [ATTR_SERVICE_NAME]: 'orders-api',
+    [ATTR_SERVICE_VERSION]: process.env.GIT_SHA,
+    [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: 'production',
+  }),
+})
+```
+
+Identity attributes the SDK emits per request (`db.namespace`,
+`server.address`, `server.port`) come from the YDB driver and are
+orthogonal to resource attributes.
+
+### Wire an OTLP exporter (traces + metrics)
+
+```ts
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
+import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+
+new NodeSDK({
+  traceExporter: new OTLPTraceExporter({ url: 'http://collector:4318/v1/traces' }),
+  metricReader: new PeriodicExportingMetricReader({
+    exporter: new OTLPMetricExporter({ url: 'http://collector:4318/v1/metrics' }),
+    exportIntervalMillis: 10_000,
+  }),
+})
+```
+
+### Graceful shutdown
+
+```ts
+let instrumentation = register({ captureQueryText: false, emitAcquireSessionSpan: false })
+
+async function shutdown() {
+  instrumentation.disable() // 1. stop publishing into the OTel SDK
+  await sdk.shutdown() // 2. flush exporters
+}
+process.on('SIGTERM', shutdown)
+```
+
+### What you cannot configure here
+
+The following are part of the package's semconv contract — change them via
+a PR, not configuration:
+
+- Which `node:diagnostics_channel` topics the pipeline subscribes to.
+- Span names (`ydb.ExecuteQuery`, `ydb.Try`, …) and the `db.operation.name` mapping.
+- Metric instrument names (`db.client.operation.duration`, `ydb.retry.attempts`, …).
+- Attribute key names (`ydb.session.id`, `ydb.retry.outcome`, …).
+- Synchronous-handler error policy: thrown exceptions inside our subscribers are swallowed and logged via OTel's `DiagLogger`, never re-thrown into the SDK call site.
+
+If you want a custom subscriber alongside ours — e.g. a structured-log sink —
+subscribe to `node:diagnostics_channel` directly. The producer's channel
+surface is documented in each package's README (`@ydbjs/core`,
+`@ydbjs/query`, `@ydbjs/retry`, `@ydbjs/auth`).
+
 ## Spans
 
 `db.operation.name` is service-prefixed (`Query.ExecuteQuery`,
