@@ -18,6 +18,7 @@ import {
 
 import type { DriverIdentity } from '@ydbjs/core'
 
+import { LEAF_OPERATIONS } from './operations.js'
 import { ConnectionPoolRegistry } from './state/connection-pool.js'
 import { SessionPoolRegistry } from './state/session-pool.js'
 import {
@@ -60,16 +61,6 @@ function identityAttrs(driver: DriverIdentity | undefined): MetricAttributes {
 function baseFor(driver: DriverIdentity | undefined): MetricAttributes {
 	return { ...BASE_ATTRIBUTES, ...identityAttrs(driver) }
 }
-
-const LEAF_OPERATION_CHANNELS: ReadonlyArray<{ channel: string; operation: string }> = [
-	{ channel: 'tracing:ydb:driver.discovery', operation: 'Discovery.ListEndpoints' },
-	{ channel: 'tracing:ydb:query.begin', operation: 'Query.BeginTransaction' },
-	{ channel: 'tracing:ydb:query.execute', operation: 'Query.ExecuteQuery' },
-	{ channel: 'tracing:ydb:query.commit', operation: 'Query.CommitTransaction' },
-	{ channel: 'tracing:ydb:query.rollback', operation: 'Query.RollbackTransaction' },
-	{ channel: 'tracing:ydb:query.session.create', operation: 'Query.CreateSession' },
-	{ channel: 'tracing:ydb:query.session.delete', operation: 'Query.DeleteSession' },
-]
 
 type DurationCtx = { driver?: DriverIdentity }
 
@@ -139,7 +130,8 @@ export class YdbMetricsPipeline {
 		this.#sessionCreateDuration = this.#meter.createHistogram(
 			METRIC_YDB_QUERY_SESSION_CREATE_DURATION,
 			{
-				description: 'Time to create a query session (CreateSession + AttachStream first message).',
+				description:
+					'Time to create a query session (CreateSession + AttachStream first message).',
 				unit: 's',
 			}
 		)
@@ -205,10 +197,13 @@ export class YdbMetricsPipeline {
 				unit: '{connection}',
 			}
 		)
-		this.#sessionCount = this.#meter.createObservableUpDownCounter(METRIC_YDB_QUERY_SESSION_COUNT, {
-			description: 'Current count of live query sessions in the pool, by state.',
-			unit: '{session}',
-		})
+		this.#sessionCount = this.#meter.createObservableUpDownCounter(
+			METRIC_YDB_QUERY_SESSION_COUNT,
+			{
+				description: 'Current count of live query sessions in the pool, by state.',
+				unit: '{session}',
+			}
+		)
 		this.#sessionAcquirePending = this.#meter.createObservableUpDownCounter(
 			METRIC_YDB_QUERY_SESSION_ACQUIRE_PENDING,
 			{
@@ -346,7 +341,7 @@ export class YdbMetricsPipeline {
 	}
 
 	#subscribeLeafDurations(): void {
-		for (let { channel, operation } of LEAF_OPERATION_CHANNELS) {
+		for (let { channel, operation } of LEAF_OPERATIONS) {
 			this.#subs.push(
 				this.#subDuration(channel, this.#dbClientOperationDuration, (ctx) => ({
 					...baseFor(ctx.driver),
@@ -388,7 +383,9 @@ export class YdbMetricsPipeline {
 				this.#authTokenFetchDuration,
 				(ctx: DurationCtx & { provider?: string }) => ({
 					...baseFor(ctx.driver),
-					...(ctx.provider !== undefined ? { [ATTR_YDB_AUTH_PROVIDER]: ctx.provider } : {}),
+					...(ctx.provider !== undefined
+						? { [ATTR_YDB_AUTH_PROVIDER]: ctx.provider }
+						: {}),
 				})
 			)
 		)
@@ -399,7 +396,9 @@ export class YdbMetricsPipeline {
 				this.#retryDuration,
 				(ctx: DurationCtx & { idempotent?: boolean; outcome?: string }) => ({
 					...BASE_ATTRIBUTES,
-					...(ctx.idempotent !== undefined ? { [ATTR_YDB_IDEMPOTENT]: ctx.idempotent } : {}),
+					...(ctx.idempotent !== undefined
+						? { [ATTR_YDB_IDEMPOTENT]: ctx.idempotent }
+						: {}),
 					...(ctx.outcome !== undefined ? { [ATTR_YDB_RETRY_OUTCOME]: ctx.outcome } : {}),
 				})
 			)
@@ -413,14 +412,18 @@ export class YdbMetricsPipeline {
 			)
 		)
 		this.#subs.push(
-			this.#subPlain<{ driver: DriverIdentity }>('ydb:driver.connection.pessimized', (msg) => {
-				this.#connectionState.connectionPessimized(msg.driver)
-				this.#connectionPessimizations.add(1, baseFor(msg.driver))
-			})
+			this.#subPlain<{ driver: DriverIdentity }>(
+				'ydb:driver.connection.pessimized',
+				(msg) => {
+					this.#connectionState.connectionPessimized(msg.driver)
+					this.#connectionPessimizations.add(1, baseFor(msg.driver))
+				}
+			)
 		)
 		this.#subs.push(
-			this.#subPlain<{ driver: DriverIdentity }>('ydb:driver.connection.unpessimized', (msg) =>
-				this.#connectionState.connectionUnpessimized(msg.driver)
+			this.#subPlain<{ driver: DriverIdentity }>(
+				'ydb:driver.connection.unpessimized',
+				(msg) => this.#connectionState.connectionUnpessimized(msg.driver)
 			)
 		)
 		this.#subs.push(
@@ -507,12 +510,14 @@ export class YdbMetricsPipeline {
 
 	#subscribeAuthEvents(): void {
 		this.#subs.push(
-			this.#subPlain<{ provider: string; error: unknown }>('ydb:auth.provider.failed', (msg) =>
-				this.#authTokenFetchFailures.add(1, {
-					...BASE_ATTRIBUTES,
-					[ATTR_YDB_AUTH_PROVIDER]: msg.provider,
-					...recordErrorAttributes(msg.error),
-				})
+			this.#subPlain<{ provider: string; error: unknown }>(
+				'ydb:auth.provider.failed',
+				(msg) =>
+					this.#authTokenFetchFailures.add(1, {
+						...BASE_ATTRIBUTES,
+						[ATTR_YDB_AUTH_PROVIDER]: msg.provider,
+						...recordErrorAttributes(msg.error),
+					})
 			)
 		)
 		this.#subs.push(

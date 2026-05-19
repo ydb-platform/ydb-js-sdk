@@ -510,7 +510,7 @@ export class ConnectionPool implements Disposable {
 			nodeId: conn.endpoint.nodeId,
 			address: conn.endpoint.address,
 			location: conn.endpoint.location,
-			until: until,
+			until,
 		})
 
 		dbg.log('pessimized node %d address %s', conn.endpoint.nodeId, conn.endpoint.address)

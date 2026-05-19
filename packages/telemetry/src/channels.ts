@@ -5,6 +5,7 @@ import {
 	ATTR_NETWORK_PEER_ADDRESS,
 } from '@opentelemetry/semantic-conventions'
 
+import { leafOperation } from './operations.js'
 import {
 	ATTR_YDB_AUTH_PROVIDER,
 	ATTR_YDB_DISCOVERY_ADDED_COUNT,
@@ -53,21 +54,27 @@ export type ChannelTableOptions = {
 	emitAcquireSessionSpan: boolean
 }
 
-/**
- * `db.operation.name` is service-qualified (`Query.ExecuteQuery`) so the
- * Table service can later coexist with Query without ambiguity — both
- * expose `BeginTransaction` etc.
- */
+// Build a CLIENT-leaf row. `channel` and `span` come from the canonical
+// `LEAF_OPERATIONS` table, and `ATTR_DB_OPERATION_NAME` is prefilled from
+// the same entry, so adding a new operation only requires editing
+// `operations.ts`. `extra` contributes the per-row payload attributes.
+function leafRow<T>(channel: string, extra?: (ctx: T) => Attributes): TracingChannelEntry {
+	let op = leafOperation(channel)
+	let attrs = (ctx: T): Attributes => ({
+		[ATTR_DB_OPERATION_NAME]: op.operation,
+		...(extra?.(ctx) ?? {}),
+	})
+	return {
+		channel: op.channel,
+		span: op.span,
+		kind: SpanKind.CLIENT,
+		attrs: attrs as (ctx: never) => Attributes,
+	}
+}
+
 export function buildTracingChannels(opts: ChannelTableOptions): TracingChannelEntry[] {
 	let table: TracingChannelEntry[] = [
-		{
-			channel: 'tracing:ydb:driver.discovery',
-			span: 'ydb.Discovery',
-			kind: SpanKind.CLIENT,
-			attrs: () => ({
-				[ATTR_DB_OPERATION_NAME]: 'Discovery.ListEndpoints',
-			}),
-		},
+		leafRow('tracing:ydb:driver.discovery'),
 		{
 			channel: 'tracing:ydb:retry.run',
 			span: 'ydb.RunWithRetry',
@@ -94,80 +101,57 @@ export function buildTracingChannels(opts: ChannelTableOptions): TracingChannelE
 				[ATTR_YDB_IDEMPOTENT]: ctx.idempotent,
 			}),
 		},
-		{
-			channel: 'tracing:ydb:query.begin',
-			span: 'ydb.Begin',
-			kind: SpanKind.CLIENT,
-			attrs: (ctx: { sessionId: string; nodeId: bigint; isolation: string }) => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.BeginTransaction',
+		leafRow(
+			'tracing:ydb:query.begin',
+			(ctx: { sessionId: string; nodeId: bigint; isolation: string }) => ({
 				[ATTR_YDB_SESSION_ID]: ctx.sessionId,
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_ISOLATION]: ctx.isolation,
-			}),
-		},
-		{
-			channel: 'tracing:ydb:query.execute',
-			span: 'ydb.ExecuteQuery',
-			kind: SpanKind.CLIENT,
-			attrs: (ctx: {
+			})
+		),
+		leafRow(
+			'tracing:ydb:query.execute',
+			(ctx: {
 				text: string
 				sessionId: string
 				nodeId: bigint
 				idempotent: boolean
 				isolation: string
 			}) => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.ExecuteQuery',
-				[ATTR_DB_QUERY_TEXT]: opts.captureQueryText ? ctx.text : undefined,
 				[ATTR_YDB_SESSION_ID]: ctx.sessionId,
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_IDEMPOTENT]: ctx.idempotent,
 				[ATTR_YDB_ISOLATION]: ctx.isolation,
-			}),
-		},
-		{
-			channel: 'tracing:ydb:query.commit',
-			span: 'ydb.Commit',
-			kind: SpanKind.CLIENT,
-			attrs: (ctx: { sessionId: string; nodeId: bigint; txId: string }) => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.CommitTransaction',
+				...(opts.captureQueryText ? { [ATTR_DB_QUERY_TEXT]: ctx.text } : {}),
+			})
+		),
+		leafRow(
+			'tracing:ydb:query.commit',
+			(ctx: { sessionId: string; nodeId: bigint; txId: string }) => ({
 				[ATTR_YDB_SESSION_ID]: ctx.sessionId,
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_TRANSACTION_ID]: ctx.txId,
-			}),
-		},
-		{
-			channel: 'tracing:ydb:query.rollback',
-			span: 'ydb.Rollback',
-			kind: SpanKind.CLIENT,
-			attrs: (ctx: { sessionId: string; nodeId: bigint; txId: string }) => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.RollbackTransaction',
+			})
+		),
+		leafRow(
+			'tracing:ydb:query.rollback',
+			(ctx: { sessionId: string; nodeId: bigint; txId: string }) => ({
 				[ATTR_YDB_SESSION_ID]: ctx.sessionId,
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_TRANSACTION_ID]: ctx.txId,
-			}),
-		},
-		{
-			channel: 'tracing:ydb:query.session.create',
-			span: 'ydb.CreateSession',
-			kind: SpanKind.CLIENT,
-			attrs: () => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.CreateSession',
-			}),
-		},
-		{
-			channel: 'tracing:ydb:query.session.delete',
-			span: 'ydb.DeleteSession',
-			kind: SpanKind.CLIENT,
-			attrs: (ctx: { sessionId: string; nodeId: bigint; reason: string; uptime: number }) => ({
-				[ATTR_DB_OPERATION_NAME]: 'Query.DeleteSession',
+			})
+		),
+		leafRow('tracing:ydb:query.session.create'),
+		leafRow(
+			'tracing:ydb:query.session.delete',
+			(ctx: { sessionId: string; nodeId: bigint; reason: string; uptime: number }) => ({
 				[ATTR_YDB_SESSION_ID]: ctx.sessionId,
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_SESSION_CLOSE_REASON]: ctx.reason,
-				// Durations on the dc bus are in ms (Node convention); OTel
-				// expects seconds. All `/ 1000` below sit at that boundary.
+				// `uptime` arrives in ms (dc-bus convention); OTel expects seconds.
 				[ATTR_YDB_SESSION_UPTIME]: ctx.uptime / 1000,
-			}),
-		},
+			})
+		),
 		{
 			channel: 'tracing:ydb:auth.token.fetch',
 			span: 'ydb.TokenFetch',

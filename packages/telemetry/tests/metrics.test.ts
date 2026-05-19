@@ -98,6 +98,26 @@ test('records db.client.operation.duration on tracing:ydb:query.execute', async 
 	expect(point.value.sum).toBeGreaterThanOrEqual(0)
 })
 
+test('records db.client.operation.duration on tracing:ydb:query.session.delete', async () => {
+	let del = tracingChannel('tracing:ydb:query.session.delete')
+	await del.tracePromise(async () => {}, {
+		driver: driverIdentity,
+		sessionId: 's1',
+		nodeId: 1n,
+		reason: 'pool_close',
+		uptime: 1000,
+	})
+
+	let rm = await collect()
+	let point = findPoint<HistogramData>(rm, 'db.client.operation.duration', {
+		'db.operation.name': 'Query.DeleteSession',
+		'db.namespace': '/local',
+		'server.address': '127.0.0.1',
+		'db.system.name': 'ydb',
+	})
+	expect(point.value.count).toBe(1)
+})
+
 test('tags db.client.operation.duration with error.type when the channel fires error', async () => {
 	let exec = tracingChannel('tracing:ydb:query.execute')
 	await expect(
