@@ -87,7 +87,7 @@ test('writes and reads messages from a topic', async () => {
 	}
 })
 
-// oxlint-disable-next-line eslint-plugin-jest(expect-expect)
+// oxlint-disable-next-line expect-expect
 test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	const BATCH_SIZE = 1024
 	const MESSAGE_SIZE = 16 * 1024
