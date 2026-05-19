@@ -100,6 +100,13 @@ side. On error, every span additionally carries `db.response.status_code`
 (when the server returned a YDB status) and `error.type` ∈
 {`ydb_error`, `transport_error`, `<Error.name>`, `unknown`}.
 
+`ydb.TokenFetch` is only emitted when a credential provider actually goes to
+the network for a token — every provider (`static`, `metadata`,
+`yc-service-account`) short-circuits cache hits **before** wrapping the
+fetch in `tracingChannel.tracePromise`, so a warm cache never produces a
+span. Opportunistic background refreshes do produce one (they perform real
+IO), as a root span if no caller-side trace is active.
+
 ### Span events (point-in-time)
 
 When a connection-pool event fires while a tracing channel span is active
@@ -133,6 +140,7 @@ payload includes a driver — most channels do).
 | `ydb.query.session.acquire.failures`   | Counter   | `{failure}`    | `error.type`                                                                         | `ydb:query.session.acquire.failed` (caller-aborted acquires are not published, so they do not count as failures)                                                                                                                                                                                                            |
 | `ydb.auth.token.fetch.duration`        | Histogram | `s`            | `ydb.auth.provider`, `error.type`?                                                   | `tracing:ydb:auth.token.fetch.asyncEnd` / `.error`                                                                                                                                                                                                                                                                          |
 | `ydb.auth.token.fetch.failures`        | Counter   | `{failure}`    | `ydb.auth.provider`, `error.type`                                                    | `ydb:auth.provider.failed`                                                                                                                                                                                                                                                                                                  |
+| `ydb.auth.token.refreshes`             | Counter   | `{refresh}`    | `ydb.auth.provider`                                                                  | `ydb:auth.token.refreshed` — successful refreshes only; direct rate signal complementing the `fetch.duration` histogram                                                                                                                                                                                                     |
 | `ydb.auth.token.expirations`           | Counter   | `{expiration}` | `ydb.auth.provider`                                                                  | `ydb:auth.token.expired`                                                                                                                                                                                                                                                                                                    |
 | `ydb.retry.attempts`                   | Counter   | `{attempt}`    | `ydb.idempotent`, `ydb.retry.outcome` ∈ {success, retried, exhausted, non_retryable} | `ydb:retry.attempt.completed`                                                                                                                                                                                                                                                                                               |
 | `ydb.retry.duration`                   | Histogram | `s`            | `ydb.idempotent`, `ydb.retry.outcome`                                                | `tracing:ydb:retry.run.asyncEnd` / `.error` (end-to-end, including backoffs)                                                                                                                                                                                                                                                |

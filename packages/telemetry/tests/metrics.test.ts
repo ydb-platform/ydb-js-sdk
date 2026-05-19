@@ -240,6 +240,31 @@ test('counts ydb.auth.token.expirations with provider tag', async () => {
 	expect(point.value).toBe(1)
 })
 
+test('counts ydb.auth.token.refreshes with provider tag', async () => {
+	channel('ydb:auth.token.refreshed').publish({
+		provider: 'yc-service-account',
+		expiresAt: Date.now() + 3_600_000,
+	})
+	channel('ydb:auth.token.refreshed').publish({
+		provider: 'yc-service-account',
+		expiresAt: Date.now() + 3_600_000,
+	})
+	channel('ydb:auth.token.refreshed').publish({
+		provider: 'static',
+		expiresAt: Date.now() + 60_000,
+	})
+
+	let rm = await collect()
+	let yc = findPoint<number>(rm, 'ydb.auth.token.refreshes', {
+		'ydb.auth.provider': 'yc-service-account',
+	})
+	let stat = findPoint<number>(rm, 'ydb.auth.token.refreshes', {
+		'ydb.auth.provider': 'static',
+	})
+	expect(yc.value).toBe(2)
+	expect(stat.value).toBe(1)
+})
+
 // --- observable gauge ------------------------------------------------------
 
 test('observes ydb.driver.connection.count split by ydb.connection.state', async () => {
