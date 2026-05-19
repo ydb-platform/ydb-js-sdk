@@ -122,7 +122,10 @@ export function buildTracingChannels(opts: ChannelTableOptions): TracingChannelE
 				[ATTR_YDB_NODE_ID]: Number(ctx.nodeId),
 				[ATTR_YDB_IDEMPOTENT]: ctx.idempotent,
 				[ATTR_YDB_ISOLATION]: ctx.isolation,
-				...(opts.captureQueryText ? { [ATTR_DB_QUERY_TEXT]: ctx.text } : {}),
+				// Undefined attribute values are dropped by the OTel SDK; this is
+				// the hot path so we avoid the extra `{}` literal that a
+				// conditional spread would allocate every call.
+				[ATTR_DB_QUERY_TEXT]: opts.captureQueryText ? ctx.text : undefined,
 			})
 		),
 		leafRow(
