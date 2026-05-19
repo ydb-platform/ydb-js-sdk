@@ -9,12 +9,7 @@ import type {
 	ObservableGauge,
 	ObservableUpDownCounter,
 } from '@opentelemetry/api'
-import {
-	ATTR_DB_NAMESPACE,
-	ATTR_DB_OPERATION_NAME,
-	ATTR_SERVER_ADDRESS,
-	ATTR_SERVER_PORT,
-} from '@opentelemetry/semantic-conventions'
+import { ATTR_DB_OPERATION_NAME } from '@opentelemetry/semantic-conventions'
 
 import type { DriverIdentity } from '@ydbjs/core'
 
@@ -45,18 +40,9 @@ import {
 	METRIC_YDB_QUERY_SESSION_MIN,
 	METRIC_YDB_RETRY_ATTEMPTS,
 	METRIC_YDB_RETRY_DURATION,
+	identityAttrs,
 	recordErrorAttributes,
 } from './semconv/index.js'
-
-function identityAttrs(driver: DriverIdentity | undefined): MetricAttributes {
-	if (!driver) return {}
-	let attrs: MetricAttributes = {
-		[ATTR_DB_NAMESPACE]: driver.database,
-		[ATTR_SERVER_ADDRESS]: driver.address,
-	}
-	if (driver.port !== undefined) attrs[ATTR_SERVER_PORT] = driver.port
-	return attrs
-}
 
 function baseFor(driver: DriverIdentity | undefined): MetricAttributes {
 	return { ...BASE_ATTRIBUTES, ...identityAttrs(driver) }

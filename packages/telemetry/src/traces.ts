@@ -8,11 +8,6 @@ import {
 	context,
 	trace,
 } from '@opentelemetry/api'
-import {
-	ATTR_DB_NAMESPACE,
-	ATTR_SERVER_ADDRESS,
-	ATTR_SERVER_PORT,
-} from '@opentelemetry/semantic-conventions'
 
 import type { DriverIdentity } from '@ydbjs/core'
 
@@ -23,7 +18,12 @@ import {
 	buildTracingChannels,
 } from './channels.js'
 import { getActiveSubscriberSpan, spanStorage } from './context.js'
-import { BASE_ATTRIBUTES, recordErrorAttributes } from './semconv/index.js'
+import {
+	BASE_ATTRIBUTES,
+	coerceError,
+	identityAttrs,
+	recordErrorAttributes,
+} from './semconv/index.js'
 
 export type YdbTracesPipelineOptions = {
 	captureQueryText: boolean
@@ -63,7 +63,9 @@ export class YdbTracesPipeline {
 	}
 
 	#subscribeTracing(entry: TracingChannelEntry): Disposable {
-		let ch = tracingChannel<object, Span>(entry.channel)
+		// StoreType=Span | undefined matches spanStorage; ContextType=object is
+		// the payload shape (each row's lambda narrows it).
+		let ch = tracingChannel<Span | undefined, object>(entry.channel)
 
 		// Skip `end` (it fires on callback return — too early for async fns,
 		// which would close the span before the awaited work runs) and
@@ -71,33 +73,38 @@ export class YdbTracesPipeline {
 		// `error` as well, but `#finish` is a no-op the second time because
 		// the WeakMap entry is already gone.
 		//
-		// The cast is load-bearing: `bindStore` may return `undefined` when
-		// `#safeCreateSpan` swallows a span-creation error, and children fall
-		// back to `context.active()` instead of seeing a poisoned parent.
-		ch.start.bindStore(spanStorage, (ctx) => this.#safeCreateSpan(entry, ctx) as Span)
+		// When `#safeCreateSpan` swallows a span-creation error, bindStore
+		// stores `undefined`; children fall back to `context.active()` via
+		// `getActiveSubscriberSpan`. No cast needed — the ALS type allows it.
+		ch.start.bindStore(spanStorage, (ctx) => this.#safeCreateSpan(entry, ctx))
 
-		let handlers = {
-			asyncEnd: (ctx: object) => {
+		// @types/node declares the start/end/asyncStart fields as required even
+		// though `subscribe` accepts a partial set at runtime — we only need
+		// `asyncEnd` and `error`, so we type the literal as Partial and open
+		// it to the full shape at the boundary.
+		type Subs = Parameters<typeof ch.subscribe>[0]
+		let handlers: Partial<Subs> = {
+			asyncEnd: (ctx) => {
 				try {
 					this.#finish(ctx, undefined)
 				} catch (err) {
 					this.#diag.error(`telemetry asyncEnd in ${entry.channel}`, err as Error)
 				}
 			},
-			error: (ctx: object) => {
+			error: (ctx) => {
 				try {
-					this.#finish(ctx, (ctx as { error?: unknown }).error)
+					this.#finish(ctx, ctx.error)
 				} catch (err) {
 					this.#diag.error(`telemetry error in ${entry.channel}`, err as Error)
 				}
 			},
 		}
 
-		ch.subscribe(handlers as unknown as Parameters<typeof ch.subscribe>[0])
+		ch.subscribe(handlers as Subs)
 
 		return {
 			[Symbol.dispose]() {
-				ch.unsubscribe(handlers as unknown as Parameters<typeof ch.unsubscribe>[0])
+				ch.unsubscribe(handlers as Subs)
 				ch.start.unbindStore(spanStorage)
 			},
 		}
@@ -136,22 +143,14 @@ export class YdbTracesPipeline {
 		}
 	}
 
-	#createSpan(entry: TracingChannelEntry, ctx: object): Span | undefined {
+	#createSpan(entry: TracingChannelEntry, ctx: object): Span {
 		// Identity rides in the payload, not in ALS — that's what makes
 		// multi-driver attribution work without producers having to wrap their
 		// own entry points in any subscriber context.
 		let identity = (ctx as { driver?: DriverIdentity }).driver
-		let driverAttrs = identity
-			? {
-					[ATTR_SERVER_ADDRESS]: identity.address,
-					...(identity.port !== undefined && { [ATTR_SERVER_PORT]: identity.port }),
-					[ATTR_DB_NAMESPACE]: identity.database,
-				}
-			: {}
-
 		let attrs = {
 			...BASE_ATTRIBUTES,
-			...driverAttrs,
+			...identityAttrs(identity),
 			...(entry.attrs ? entry.attrs(ctx as never) : {}),
 		}
 
@@ -172,17 +171,8 @@ export class YdbTracesPipeline {
 		let state = this.#stateMap.get(ctx)
 		if (!state) return
 		if (error !== undefined) {
-			let errAttrs = recordErrorAttributes(error)
-			state.span.setAttributes(errAttrs)
-			// Don't stringify arbitrary thrown values — a custom toString could
-			// dump secrets (tokens, credentials) into the recorded exception.
-			let recorded =
-				error instanceof Error
-					? error
-					: typeof error === 'string'
-						? new Error(error)
-						: new Error('non-Error throw')
-			state.span.recordException(recorded)
+			state.span.setAttributes(recordErrorAttributes(error))
+			state.span.recordException(coerceError(error))
 			state.span.setStatus({ code: SpanStatusCode.ERROR })
 		}
 		state.span.end()
