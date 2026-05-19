@@ -101,3 +101,7 @@ stream_closed, stream_error}`)
   See `packages/telemetry/README.md` for the full attribute and metric
   catalogue, plus recipes for Sampler / View / Resource / OTLP exporter
   wiring.
+
+  Acknowledgements: thanks to @hedgehogushka for the initial spike in
+  [#601](https://github.com/ydb-platform/ydb-js-sdk/pull/601), which
+  mapped out the problem space and informed the final design.
