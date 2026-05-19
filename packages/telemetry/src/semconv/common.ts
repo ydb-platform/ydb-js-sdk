@@ -1,11 +1,15 @@
 import type { Attributes } from '@opentelemetry/api'
 import {
+	ATTR_DB_NAMESPACE,
 	ATTR_DB_RESPONSE_STATUS_CODE,
 	ATTR_DB_SYSTEM_NAME,
 	ATTR_ERROR_TYPE,
+	ATTR_SERVER_ADDRESS,
+	ATTR_SERVER_PORT,
 } from '@opentelemetry/semantic-conventions'
 
 import type { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import type { DriverIdentity } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 import { ClientError } from 'nice-grpc'
 
@@ -20,6 +24,34 @@ export let BASE_ATTRIBUTES: BaseAttributes = { [ATTR_DB_SYSTEM_NAME]: 'ydb' }
 // introduce snake_case variants of the same concept.
 export let ATTR_YDB_NODE_ID = 'ydb.node.id'
 export let ATTR_YDB_NODE_DC = 'ydb.node.dc'
+
+/**
+ * Per-driver identity attributes (`db.namespace`, `server.address`,
+ * `server.port`). Returns an empty object when no identity is present so
+ * callers can spread the result unconditionally. Used by both the traces
+ * and the metrics pipeline.
+ */
+export function identityAttrs(driver: DriverIdentity | undefined): Attributes {
+	if (!driver) return {}
+	let attrs: Attributes = {
+		[ATTR_DB_NAMESPACE]: driver.database,
+		[ATTR_SERVER_ADDRESS]: driver.address,
+	}
+	if (driver.port !== undefined) attrs[ATTR_SERVER_PORT] = driver.port
+	return attrs
+}
+
+/**
+ * Coerce an arbitrary thrown value into an `Error` suitable for
+ * `span.recordException`. We do NOT stringify the value via its own
+ * `toString` because a custom implementation could leak secrets (tokens,
+ * credentials) into the recorded exception.
+ */
+export function coerceError(value: unknown): Error {
+	if (value instanceof Error) return value
+	if (typeof value === 'string') return new Error(value)
+	return new Error('non-Error throw')
+}
 
 /**
  * Error categories mirror ydb-dotnet:

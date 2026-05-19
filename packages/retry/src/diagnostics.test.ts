@@ -93,7 +93,7 @@ test('publishes tracing:ydb:retry.attempt once per attempt with monotonic number
 	expect(trace.error).toHaveLength(2)
 })
 
-test('tracing:ydb:retry.attempt ctx carries backoffMs (0 for first, >0 after a delayed retry)', async () => {
+test('publishes tracing:ydb:retry.attempt with backoffMs (0 for first, >0 after a delayed retry)', async () => {
 	using trace = collectTrace('tracing:ydb:retry.attempt')
 
 	let calls = 0
