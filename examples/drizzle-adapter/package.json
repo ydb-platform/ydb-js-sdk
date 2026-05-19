@@ -7,8 +7,12 @@
 		"access": "restricted"
 	},
 	"scripts": {
+		"build:adapter": "npm run build --workspace=@ydbjs/drizzle-adapter",
+		"prestart": "npm run build:adapter",
 		"start": "tsx index.ts",
+		"predev": "npm run build:adapter",
 		"dev": "DEBUG=ydbjs:* tsx index.ts",
+		"precheck": "npm run build:adapter",
 		"check": "tsc --noEmit",
 		"test": "npm run check"
 	},
