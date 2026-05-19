@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/telemetry",
-	"version": "0.1.0",
+	"version": "6.0.0",
 	"description": "OpenTelemetry tracing for YDB JavaScript SDK. Subscribes to ydbjs diagnostics channels and emits OTel spans.",
 	"keywords": [
 		"opentelemetry",

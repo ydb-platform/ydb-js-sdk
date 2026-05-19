@@ -1,5 +1,4 @@
 ---
-'@ydbjs/telemetry': minor
 '@ydbjs/query': minor
 '@ydbjs/retry': minor
 '@ydbjs/core': patch
