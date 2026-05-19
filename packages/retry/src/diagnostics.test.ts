@@ -93,6 +93,29 @@ test('publishes tracing:ydb:retry.attempt once per attempt with monotonic number
 	expect(trace.error).toHaveLength(2)
 })
 
+test('tracing:ydb:retry.attempt ctx carries backoffMs (0 for first, >0 after a delayed retry)', async () => {
+	using trace = collectTrace('tracing:ydb:retry.attempt')
+
+	let calls = 0
+	await retry(
+		// strategy: 25ms — first failure waits ~25ms before the second attempt
+		{ retry: true, budget: 5, strategy: 25, idempotent: false },
+		async () => {
+			calls++
+			if (calls < 2) throw new Error('again')
+			return 'ok'
+		}
+	)
+
+	expect(trace.start).toHaveLength(2)
+	let [first, second] = trace.start as Array<{ attempt: number; backoffMs: number }>
+	expect(first.attempt).toBe(1)
+	expect(first.backoffMs).toBe(0)
+	expect(second.attempt).toBe(2)
+	expect(second.backoffMs).toBeGreaterThan(0)
+	expect(second.backoffMs).toBeLessThanOrEqual(25)
+})
+
 // ── retry.exhausted ──────────────────────────────────────────────────────────
 
 test('publishes ydb:retry.exhausted with attempts, duration and lastError when budget runs out', async () => {
@@ -147,11 +170,7 @@ test('emits attempt.completed sequence: retried, retried, success', async () => 
 	})
 
 	expect(completed.payloads).toHaveLength(3)
-	expect(completed.payloads.map((p: any) => p.outcome)).toEqual([
-		'retried',
-		'retried',
-		'success',
-	])
+	expect(completed.payloads.map((p: any) => p.outcome)).toEqual(['retried', 'retried', 'success'])
 })
 
 test('emits attempt.completed with outcome=exhausted when budget runs out', async () => {
