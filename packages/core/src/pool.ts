@@ -497,7 +497,7 @@ export class ConnectionPool implements Disposable {
 		// already-pessimized connection is a timeout refresh, not a state
 		// change — subscribers reconstructing pool state from delta events
 		// must not see it as a fresh transition.
-		if (!pessimized) {
+		if (pessimized) {
 			return
 		}
 
