@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
 import { YdbDriver, drizzle } from '../../src/index.ts'
 import { createLiveContext } from './helpers/context.ts'

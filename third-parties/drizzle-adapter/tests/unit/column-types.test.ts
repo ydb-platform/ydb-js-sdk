@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import {
 	bigint,
 	boolean,
@@ -315,9 +315,11 @@ test('select decoders', async () => {
 	} as any
 	let mockSession = new YdbSession(mockClient, dialect)
 
-	let [row] = (await new YdbSelectBuilder(mockSession).from(typesTable).execute()) as Array<
+	let rows = (await new YdbSelectBuilder(mockSession).from(typesTable).execute()) as Array<
 		Record<string, unknown>
 	>
+	assert.equal(rows.length, 1)
+	let row = rows[0]!
 
 	assert.equal(row['id'], 1)
 	assert.ok(row['bytesValue'] instanceof Uint8Array)

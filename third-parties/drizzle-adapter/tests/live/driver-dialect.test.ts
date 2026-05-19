@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm/relations'
 import { eq, sql as yql } from 'drizzle-orm'
 import { WithSubquery } from 'drizzle-orm/subquery'
@@ -94,7 +94,7 @@ test('dialect helper queries execute on live YDB', async (t) => {
 			tableConfig: (tablesConfig.tables as any).users,
 			queryConfig: {
 				columns: { id: true, name: true },
-				where: (fields, operators) => operators.eq(fields['id'], userId),
+				where: (fields, operators) => operators.eq(fields['id']!, userId),
 				limit: 1,
 			},
 			tableAlias: 'users_live',

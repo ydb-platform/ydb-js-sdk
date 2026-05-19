@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { createLiveContext } from './helpers/context.ts'
 import { posts, postsTableName, users, usersTableName } from './helpers/schema.ts'
 

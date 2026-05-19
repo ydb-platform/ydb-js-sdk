@@ -1,7 +1,6 @@
 /**
  * YDB Drizzle Adapter Example
  *
- * A compact TypeScript CLI example that follows the same style as the other SDK examples.
  * For an interactive showcase, see examples/drizzle-adapter-lab.
  */
 

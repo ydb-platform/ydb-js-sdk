@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
 import { YdbDialect } from '../../src/ydb/dialect.ts'
 import { YdbTransaction } from '../../src/ydb-core/transaction.ts'

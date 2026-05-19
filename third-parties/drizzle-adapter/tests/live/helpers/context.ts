@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { type TestContext, afterAll, beforeAll } from 'vitest'
 import { eq, sql as yql } from 'drizzle-orm'
 import { YdbDriver, type YdbDrizzleDatabase, drizzle } from '../../../src/index.ts'
@@ -200,7 +200,6 @@ export function createLiveContext(): LiveTestContext {
 		requireLiveYdb(t: TestContext): boolean {
 			if (liveDbUnavailableReason) {
 				t.skip(`YDB unavailable: ${liveDbUnavailableReason}`)
-				return false
 			}
 
 			return true

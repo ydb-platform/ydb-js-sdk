@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { DrizzleQueryError, TransactionRollbackError } from 'drizzle-orm/errors'
 import { sql as yql } from 'drizzle-orm'
@@ -437,7 +437,7 @@ test('prepareQuery passes ordered rows and mapColumnValue to customResultMapper'
 })
 
 test('session helpers', async () => {
-	let calls: Array<{ method: string; arrayMode?: boolean; query: string }> = []
+	let calls: Array<{ method: string; arrayMode: boolean | undefined; query: string }> = []
 	let rowsQuery = yql`select ${7} as ${yql.identifier('id')}, ${'Applejack'} as ${yql.identifier('name')}`
 	let countQuery = yql`select count(*) as ${yql.identifier('count')} from ${yql.identifier('users')}`
 	let session = new YdbSession(

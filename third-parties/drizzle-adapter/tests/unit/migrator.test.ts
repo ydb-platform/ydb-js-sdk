@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { type YdbExecutor, drizzle, migrate } from '../../src/index.ts'
 
@@ -14,7 +14,8 @@ function parseHistoryUpsert(query: string): [string, number, string] {
 		throw new Error(`Cannot parse migration bookkeeping query: ${query}`)
 	}
 
-	return [match[1], Number(match[2]), match[3]]
+	let [, hash, folderMillis, name] = match
+	return [hash!, Number(folderMillis!), name!]
 }
 
 function createMigratorExecutor(

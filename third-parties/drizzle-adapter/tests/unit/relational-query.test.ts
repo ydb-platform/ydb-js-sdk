@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import {
 	createTableRelationsHelpers,
 	extractTablesRelationalConfig,
@@ -102,7 +102,7 @@ function createChunkedRelationalSession(
 					if (built.sql.includes('from `posts` `users_posts`')) {
 						return buildObjectRows(
 							built.sql,
-							built.params.map((userId) => [
+							built.params.map((userId: unknown) => [
 								Number(userId) * 10,
 								`Post ${String(userId)}`,
 								userId,

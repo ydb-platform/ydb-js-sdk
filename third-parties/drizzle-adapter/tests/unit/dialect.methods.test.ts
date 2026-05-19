@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { aliasedTable } from 'drizzle-orm/alias'
 import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm/relations'
 import { eq, sql as yql } from 'drizzle-orm'
@@ -272,8 +272,8 @@ test('buildRelationalQueryWithoutPK builds flat schema-aware queries', () => {
 		tableConfig: (tablesConfig.tables as any).users,
 		queryConfig: {
 			columns: { id: true, name: true },
-			where: (fields, operators) => operators.eq(fields['id'], 7),
-			orderBy: (fields, operators) => operators.desc(fields['id']),
+			where: (fields, operators) => operators.eq(fields['id']!, 7),
+			orderBy: (fields, operators) => operators.desc(fields['id']!),
 			limit: 1,
 			offset: 2,
 		},

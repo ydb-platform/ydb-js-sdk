@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { and, eq, sql as yql } from 'drizzle-orm'
 import {
 	buildCreateTableSql,

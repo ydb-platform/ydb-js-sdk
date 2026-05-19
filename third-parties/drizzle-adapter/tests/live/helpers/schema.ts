@@ -21,6 +21,12 @@ import {
 import { loadTestEnv } from '../../helpers/load-env.ts'
 import { inject } from 'vitest'
 
+declare module 'vitest' {
+	export interface ProvidedContext {
+		connectionString: string
+	}
+}
+
 loadTestEnv()
 
 function getSafeTableName(envName: string, fallback: string): string {

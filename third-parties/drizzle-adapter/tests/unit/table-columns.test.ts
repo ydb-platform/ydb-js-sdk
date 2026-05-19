@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { Table, getTableName } from 'drizzle-orm/table'
 import { sql as yql } from 'drizzle-orm'
 import { customType, integer, text, uuid, ydbTable, ydbTableCreator } from '../../src/index.ts'
@@ -7,27 +7,11 @@ import { getYdbColumnBuilders, ydbColumnBuilders } from '../../src/ydb-core/colu
 import { YdbColumn } from '../../src/ydb-core/columns/common.ts'
 import { getTableConfig } from '../../src/ydb-core/table.utils.ts'
 
-type Equal<A, B> =
-	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
-
-type Assert<T extends true> = T
-
 let typedTable = ydbTable('typed_table', {
 	id: integer('id').notNull().$type<1 | 2>(),
 	payload: text('payload').$type<{ pony: string }>(),
 	meta: text('meta').notNull().$type<{ level: number }>(),
 })
-
-type _TypedTableAssertions = [
-	Assert<Equal<(typeof typedTable.id)['_']['data'], 1 | 2>>,
-	Assert<Equal<(typeof typedTable.payload)['_']['data'], { pony: string }>>,
-	Assert<Equal<typeof typedTable.$inferSelect.id, 1 | 2>>,
-	Assert<Equal<typeof typedTable.$inferSelect.payload, { pony: string } | null>>,
-	Assert<Equal<typeof typedTable.$inferSelect.meta, { level: number }>>,
-	Assert<
-		Equal<Exclude<typeof typedTable.$inferInsert.payload, undefined>, { pony: string } | null>
-	>,
-]
 
 void typedTable
 

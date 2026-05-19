@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { eq } from 'drizzle-orm'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
 import { createLiveContext } from './helpers/context.ts'

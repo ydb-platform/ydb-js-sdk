@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { relations } from 'drizzle-orm'
 import { drizzle, integer, text, ydbTable } from '../../src/index.ts'
 

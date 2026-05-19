@@ -1,8 +1,8 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { relations } from 'drizzle-orm'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
-import { drizzle, integer, text, ydbTable } from '../../src/index.ts'
+import { type YdbExecuteOptions, drizzle, integer, text, ydbTable } from '../../src/index.ts'
 
 let users = ydbTable('users', {
 	id: integer('id').notNull(),
@@ -36,11 +36,7 @@ test('transaction commit', async () => {
 		let aliases = Array.from(query.matchAll(/ as `([^`]+)`/g), (match) => match[1]!)
 		return [Object.fromEntries(aliases.map((alias, index) => [alias, values[index]]))]
 	}
-	let executeInStore = async (
-		query: string,
-		_params: unknown[],
-		options?: { arrayMode?: boolean }
-	) => {
+	let executeInStore = async (query: string, _params: unknown[], options?: YdbExecuteOptions) => {
 		if (query.startsWith('select')) {
 			return {
 				rows: options?.arrayMode

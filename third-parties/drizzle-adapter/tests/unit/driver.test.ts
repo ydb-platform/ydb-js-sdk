@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { Driver } from '@ydbjs/core'
 import { YdbDriver } from '../../src/index.ts'
 import { createMockQueryFunction } from '../helpers/mock-driver.ts'

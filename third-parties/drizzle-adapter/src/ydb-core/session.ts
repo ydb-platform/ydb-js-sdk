@@ -206,7 +206,7 @@ export class YdbSession {
 
 	prepareQuery<T extends YdbPreparedQueryConfig = YdbPreparedQueryConfig>(
 		query: YdbQuerySource,
-		fields: SelectedFieldsOrdered | undefined,
+		fields?: SelectedFieldsOrdered,
 		_name?: string,
 		isResponseInArrayMode = false,
 		customResultMapper?: (

@@ -19,7 +19,7 @@ export let posts = ydbTable('posts', {
 
 export function createMockSession() {
 	let prepareCalls: Array<{
-		name?: string
+		name: string | undefined
 		isResponseInArrayMode: boolean
 		query: { sql: string; params: unknown[]; typings?: unknown[] }
 		fields: unknown

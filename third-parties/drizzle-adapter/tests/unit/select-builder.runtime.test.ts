@@ -1,5 +1,5 @@
 import { test } from 'vitest'
-import assert from 'node:assert/strict'
+import * as assert from 'node:assert/strict'
 import { desc, eq } from 'drizzle-orm'
 import { YdbSelectBuilder } from '../../src/ydb-core/query-builders/index.ts'
 import { dialect, posts, users } from '../helpers/unit-basic.ts'
