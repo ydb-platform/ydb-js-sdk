@@ -293,6 +293,32 @@ telemetry at process start (the standard pattern) to avoid the gap.
 | `ydb.query.session.max`             | ObservableGauge         | `{session}`    | _(identity only)_                                      | `ydb:query.session.pool.opened` snapshot                                                                      |
 | `ydb.query.session.min`             | ObservableGauge         | `{session}`    | _(identity only)_                                      | `ydb:query.session.pool.opened` snapshot                                                                      |
 
+### Histogram bucket defaults
+
+Every histogram is registered with `advice.explicitBucketBoundaries` so the
+out-of-the-box distribution is usable without configuration. The OTel SDK
+default (designed for milliseconds: `[0, 5, 10, 25, …, 10000]`) buckets all
+sub-second YDB ops into the first slot, which is why we override.
+
+| Histogram                            | Boundaries (seconds)                                                                                               | Why                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `db.client.operation.duration`       | `0.0005, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60` | Dense middle (1ms–1s) covers warm-cache reads + typical Execute; tail extends to overload-backoff territory. |
+| `ydb.query.session.create.duration`  | `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`                                                          | CreateSession + first AttachStream message — typically tens of ms, capped well below operation timeouts.     |
+| `ydb.query.session.acquire.duration` | `0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5`                                                                 | Warm-pool acquires are sub-millisecond; high tail only signals pool starvation.                              |
+| `ydb.auth.token.fetch.duration`      | `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30`                                                                    | IAM/JWT round-trip; 30s tail matches typical request timeouts.                                               |
+| `ydb.retry.duration`                 | `0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300`                                                                      | End-to-end loop including backoffs — overload-induced retry sequences can stretch to minutes.                |
+
+Override per-histogram in your OTel SDK config with a `View`:
+
+```ts
+new View({
+  instrumentName: 'db.client.operation.duration',
+  aggregation: new ExplicitBucketHistogramAggregation([
+    /* your boundaries */
+  ]),
+})
+```
+
 ### Cardinality budget
 
 All tag values are bounded and safe to ingest at high request rates:

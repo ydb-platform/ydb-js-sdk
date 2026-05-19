@@ -108,11 +108,24 @@ export class YdbMetricsPipeline {
 	}
 
 	#registerInstruments(): void {
+		// Suggested bucket boundaries (seconds). Users can override via OTel
+		// Views — these are just defaults so the out-of-the-box histograms are
+		// usable. Without them the SDK falls back to its global ms-oriented
+		// default ([0, 5, 10, 25, ..., 10000]) which silently buckets every YDB
+		// op into the first slot.
 		this.#dbClientOperationDuration = this.#meter.createHistogram(
 			METRIC_DB_CLIENT_OPERATION_DURATION,
 			{
 				description: 'Duration of each client-side YDB operation attempt.',
 				unit: 's',
+				advice: {
+					// Dense middle (1ms–1s) where the bulk of YDB ops live, tail
+					// out to 60s for overload-backoff + slow queries.
+					explicitBucketBoundaries: [
+						0.0005, 0.001, 0.0025, 0.005, 0.0075, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25,
+						0.5, 0.75, 1, 2.5, 5, 7.5, 10, 30, 60,
+					],
+				},
 			}
 		)
 		this.#sessionCreateDuration = this.#meter.createHistogram(
@@ -121,6 +134,11 @@ export class YdbMetricsPipeline {
 				description:
 					'Time to create a query session (CreateSession + AttachStream first message).',
 				unit: 's',
+				advice: {
+					explicitBucketBoundaries: [
+						0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+					],
+				},
 			}
 		)
 		this.#sessionAcquireDuration = this.#meter.createHistogram(
@@ -128,6 +146,10 @@ export class YdbMetricsPipeline {
 			{
 				description: 'Time to acquire a session lease from the pool.',
 				unit: 's',
+				advice: {
+					// Warm pool ≈ 0; high tail only when starved.
+					explicitBucketBoundaries: [0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+				},
 			}
 		)
 		this.#authTokenFetchDuration = this.#meter.createHistogram(
@@ -135,11 +157,18 @@ export class YdbMetricsPipeline {
 			{
 				description: 'Duration of a token fetch / refresh.',
 				unit: 's',
+				advice: {
+					explicitBucketBoundaries: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+				},
 			}
 		)
 		this.#retryDuration = this.#meter.createHistogram(METRIC_YDB_RETRY_DURATION, {
 			description: 'End-to-end duration of a retry loop including backoffs.',
 			unit: 's',
+			advice: {
+				// Long tail — overload backoff can push a loop into minutes.
+				explicitBucketBoundaries: [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300],
+			},
 		})
 
 		this.#connectionPessimizations = this.#meter.createCounter(
