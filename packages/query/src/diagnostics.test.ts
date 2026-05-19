@@ -258,6 +258,7 @@ test('traces tracing:ydb:query.session.delete with reason=pool_close on pool.clo
 	// fires so the test exercises the full tracingChannel lifecycle, not
 	// just the start hook.
 	for (let i = 0; i < 50 && trace.asyncEnd.length === 0; i++) {
+		// oxlint-disable-next-line no-await-in-loop -- polling, sequential by design
 		await new Promise((r) => setImmediate(r))
 	}
 

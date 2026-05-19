@@ -303,9 +303,11 @@ test('claim() releases on dispose so the next caller succeeds', async () => {
 		// scope holds the slot
 	}
 
-	// previous claim disposed — a fresh claim must succeed
-	let again = session.claim()
-	again[Symbol.dispose]()
+	// previous claim disposed — a fresh claim must succeed (would throw SessionBusyError otherwise)
+	expect(() => {
+		let again = session.claim()
+		again[Symbol.dispose]()
+	}).not.toThrow()
 	session.close('pool_close')
 })
 
@@ -315,11 +317,13 @@ test('claim() dispose is idempotent', async () => {
 
 	let held = session.claim()
 	held[Symbol.dispose]()
-	held[Symbol.dispose]() // second dispose is a no-op
+	expect(() => held[Symbol.dispose]()).not.toThrow() // second dispose is a no-op
 
 	// the slot must still be free
-	let again = session.claim()
-	again[Symbol.dispose]()
+	expect(() => {
+		let again = session.claim()
+		again[Symbol.dispose]()
+	}).not.toThrow()
 	session.close('pool_close')
 })
 
