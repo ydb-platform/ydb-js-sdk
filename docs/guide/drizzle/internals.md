@@ -35,7 +35,7 @@ const driver = new YdbDriver(sdkDriver)
 - `await driver.ready(signal?)`: Ensures the driver is connected and ready.
 - `await driver.execute(yql, params, method, options?)`: Low-level YQL execution.
 - `await driver.transaction(callback, config?)`: Low-level transactional execution.
-- `await driver.close()`: Releases driver resources.
+- `driver.close()`: Releases driver resources. Synchronous; returns `void`.
 
 ## YdbSession
 

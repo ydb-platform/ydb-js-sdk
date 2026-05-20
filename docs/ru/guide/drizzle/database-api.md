@@ -7,7 +7,7 @@ description: Создание клиента, выполнение YQL и тра
 
 Объект базы данных, возвращаемый `createDrizzle()`, является основным интерфейсом взаимодействия. Он объединяет возможности построителей запросов Drizzle с функциональностью YDB.
 
-Runnable-приложение, которое покрывает большинство методов этой страницы, находится в разделе [Примеры Drizzle Adapter](/ru/guide/drizzle-adapter/examples).
+Runnable-приложение, которое покрывает большинство методов этой страницы, находится в разделе [Примеры Drizzle Adapter](/ru/guide/drizzle/examples).
 
 ## Инициализация
 
@@ -43,12 +43,12 @@ const db = createDrizzle({
 При использовании `connectionString` адаптер владеет базовым драйвером. Используйте `$client` для управления его состоянием:
 
 - `await db.$client.ready()`: позволяет убедиться, что драйвер инициализирован и база доступна.
-- `await db.$client.close()`: закрывает пул сессий и освобождает ресурсы драйвера. **Обязательно вызывайте этот метод при завершении работы приложения.**
+- `db.$client.close()`: закрывает пул сессий и освобождает ресурсы драйвера. Синхронный; возвращает `void`. **Обязательно вызывайте этот метод при завершении работы приложения.**
 
 ```ts
 await db.$client.ready()
 // ... логика приложения ...
-await db.$client.close()
+db.$client.close()
 ```
 
 ## Выполнение запросов
@@ -70,8 +70,8 @@ import { sql } from 'drizzle-orm'
 await db.execute(sql`DELETE FROM users WHERE id = ${1}`)
 
 const rows = await db.all(sql`SELECT * FROM users`)
-const user = await db.get(sql`SELECT * FROM users LIMIT 1`)
-const ids = await db.values<[number]>(sql`SELECT id FROM users`)
+const first = await db.get(sql`SELECT * FROM users LIMIT 1`)
+const values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
 
 const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
 ```
@@ -168,8 +168,3 @@ const user = await db.query.users.findFirst({
 - `limit`, `offset`: пагинация.
 - `with`: вложенная загрузка связей.
 - `extras`: дополнительные SQL-выражения.
-
-## Служебные свойства
-
-- `$client`: базовый исполнитель. Используется для вызова `ready()` и `close()`.
-- `_`: внутренние метаданные Drizzle/адаптера. Не используйте это поле как стабильный API приложения.

@@ -6,7 +6,7 @@ title: Drizzle Adapter — YQL Helpers
 
 The adapter includes specialized tools for building advanced analytical queries and scripts directly in YQL.
 
-The runnable lab in [Drizzle Adapter Examples](/guide/drizzle-adapter/examples) includes live and preview-only scenarios for these helpers.
+The runnable lab in [Drizzle Adapter Examples](/guide/drizzle/examples) includes live and preview-only scenarios for these helpers.
 
 ## SELECT Sources
 
@@ -15,8 +15,8 @@ The runnable lab in [Drizzle Adapter Examples](/guide/drizzle-adapter/examples) 
 Use a YQL variable (like `List<Struct>`) as a table source in `FROM`.
 
 ```ts
+import { asTable } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { asTable } from '@ydbjs/drizzle-adapter'
 
 await db
   .select({ id: sql`t.id`, name: sql`t.name` })
@@ -29,8 +29,8 @@ await db
 Create a temporary data source from an array of objects (SQL `VALUES` equivalent).
 
 ```ts
+import { valuesTable } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { valuesTable } from '@ydbjs/drizzle-adapter'
 
 const v = valuesTable([{ id: 1, name: 'Alice' }], {
   alias: 'v',
@@ -53,7 +53,8 @@ Use these helpers inside `.groupBy()` for advanced aggregation.
 - `grouping(column)`: Detects if a row is a sub-total for the column.
 
 ```ts
-import { rollup } from '@ydbjs/drizzle-adapter'
+import { rollup } from '@ydbjs/drizzle-adapter/sql'
+import { sql } from 'drizzle-orm'
 
 await db
   .select({ city: sales.city, total: sql`sum(amount)` })
@@ -80,8 +81,8 @@ Distance and similarity functions for AI-driven search, typically used in `order
 | `knnInnerProductSimilarity(v1, v2)` | Inner product similarity. |
 
 ```ts
+import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { knnCosineDistance } from '@ydbjs/drizzle-adapter'
 
 const nearest = await db
   .select()
@@ -96,8 +97,8 @@ const nearest = await db
 The `yqlScript` helper allows combining multiple commands, pragmas, and parameters into a single atomic execution block.
 
 ```ts
+import { declareParam, pragma, yqlScript } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { declareParam, pragma, yqlScript } from '@ydbjs/drizzle-adapter'
 
 await db.execute(
   yqlScript(

@@ -12,7 +12,7 @@ Root runtime names:
 
 - `createDrizzle(input, config?)` and `drizzle(input, config?)` create the database object.
 - `YdbDriver` is the default executor backed by `@ydbjs/core` and `@ydbjs/query`.
-- Error classes: `YdbUniqueConstraintViolationError`, `YdbAuthenticationError`, `YdbCancelledQueryError`, `YdbTimeoutQueryError`, `YdbUnavailableQueryError`, `YdbOverloadedQueryError`, and `YdbRetryableQueryError`.
+- Error classes: `YdbQueryExecutionError` (base class for all query errors), `YdbUniqueConstraintViolationError`, `YdbAuthenticationError`, `YdbCancelledQueryError`, `YdbTimeoutQueryError`, `YdbUnavailableQueryError`, `YdbOverloadedQueryError`, and `YdbRetryableQueryError`.
 - Type exports cover `YdbDrizzleDatabase`, `YdbDrizzleOptions`, `YdbExecutor`, `YdbTransactionalExecutor`, and transaction configuration.
 
 Implementation classes such as the dialect, session, transaction, and concrete builders are intentionally not root runtime exports. The stable runtime surface is the database object returned by `createDrizzle()`.

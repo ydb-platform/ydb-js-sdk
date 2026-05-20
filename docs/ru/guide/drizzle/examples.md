@@ -1,13 +1,12 @@
 ---
-title: Drizzle Adapter — Examples
+title: Drizzle Adapter — Примеры
 ---
 
-# Examples
+# Примеры
 
-The repository contains two runnable examples:
+В репозитории есть runnable-пример:
 
-- `examples/drizzle-adapter`: compact TypeScript CLI example in the same style as other SDK examples.
-- `examples/drizzle-adapter-lab`: interactive advanced TypeScript lab with UI, generated YQL, results, and recent query traces.
+- `examples/drizzle-adapter`: компактный TypeScript CLI-пример в стиле остальных SDK examples.
 
 ```bash
 cd examples/drizzle-adapter
@@ -15,32 +14,14 @@ npm install
 npm start
 ```
 
-```bash
-cd examples/drizzle-adapter-lab
-npm install
-npm run db:up
-npm start
-```
+## Общая подготовка
 
-Open `http://localhost:3000` for the lab.
-
-## Shared Setup
-
-Most snippets below assume this database object and schema shape.
+Большинство примеров ниже предполагают такой объект `db` и схему.
 
 ```ts
+import { createDrizzle, many, one, relations } from '@ydbjs/drizzle-adapter'
+import { index, integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 import { asc, desc, eq, sql } from 'drizzle-orm'
-import {
-  createDrizzle,
-  index,
-  integer,
-  many,
-  one,
-  relations,
-  text,
-  timestamp,
-  ydbTable,
-} from '@ydbjs/drizzle-adapter'
 
 export const users = ydbTable('example_users', {
   id: integer('id').primaryKey(),
@@ -124,7 +105,7 @@ export const db = createDrizzle({
 })
 ```
 
-## CRUD And Returning
+## CRUD и returning
 
 ```ts
 const now = new Date()
@@ -186,7 +167,7 @@ await db
   .execute()
 ```
 
-## Batch Mutations
+## Batch-мутации
 
 ```ts
 await db
@@ -198,7 +179,7 @@ await db
 await db.batchDelete(tasks).where(eq(tasks.status, 'done')).execute()
 ```
 
-## Prepared Reads
+## Prepared reads
 
 ```ts
 const preparedUser = db
@@ -212,7 +193,7 @@ const rows = await preparedUser.all()
 const values = await preparedUser.values()
 ```
 
-You can also pass builders into database execution helpers.
+Построители также можно передавать в методы выполнения на `db`.
 
 ```ts
 const firstTask = await db.get(
@@ -220,7 +201,7 @@ const firstTask = await db.get(
 )
 ```
 
-## Raw Execution
+## Raw execution
 
 ```ts
 const allRows = await db.all(sql`SELECT id, email FROM ${users} ORDER BY id`)
@@ -248,7 +229,7 @@ const result = await db.query.projects.findMany({
 })
 ```
 
-## Joins, CTEs, And Set Operators
+## Joins, CTE и set operators
 
 ```ts
 const joinedRows = await db
@@ -289,7 +270,7 @@ const ownerAndAssignee = await projectOwners.intersect(taskAssignees).execute()
 const ownersWithoutTasks = await projectOwners.except(taskAssignees).execute()
 ```
 
-## Distinct, Grouping, And Windows
+## Distinct, grouping и windows
 
 ```ts
 const statuses = await db
@@ -322,10 +303,10 @@ const totals = await db
   .execute()
 ```
 
-## Inline Sources
+## Inline sources
 
 ```ts
-import { asTable, values, valuesTable } from '@ydbjs/drizzle-adapter'
+import { asTable, values, valuesTable } from '@ydbjs/drizzle-adapter/sql'
 
 const lanes = await db
   .select({ lane: sql<string>`lanes.lane`, weight: sql<number>`lanes.weight` })
@@ -363,7 +344,7 @@ const asTablePreview = db
   .toSQL()
 ```
 
-## Insert From Select
+## Insert from select
 
 ```ts
 await db
@@ -387,7 +368,7 @@ await db
   .execute()
 ```
 
-## Transactions
+## Транзакции
 
 ```ts
 await db.transaction(
@@ -437,9 +418,10 @@ await db.transaction(async (tx) => {
 })
 ```
 
-## DDL Builders And Migrations
+## DDL builders и миграции
 
 ```ts
+import { index, integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 import {
   buildAddColumnsSql,
   buildAddIndexSql,
@@ -449,7 +431,7 @@ import {
   buildMigrationSql,
   buildRenameTableSql,
   migrate,
-} from '@ydbjs/drizzle-adapter'
+} from '@ydbjs/drizzle-adapter/migrator'
 
 await migrate(db, {
   migrationsTable: '__example_migrations',
@@ -482,7 +464,7 @@ const addColumnsSql = buildAddColumnsSql(tasksExpanded, [tasksExpanded.stage])
 const addIndexSql = buildAddIndexSql(tasks, tasksStatusIndex)
 ```
 
-## YQL Scripts
+## YQL scripts
 
 ```ts
 import {
@@ -492,7 +474,8 @@ import {
   intoResult,
   pragma,
   yqlScript,
-} from '@ydbjs/drizzle-adapter'
+} from '@ydbjs/drizzle-adapter/sql'
+import { sql } from 'drizzle-orm'
 
 await db.execute(
   yqlScript(

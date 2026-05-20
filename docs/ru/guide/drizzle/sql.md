@@ -6,7 +6,7 @@ title: Drizzle Adapter — YQL-хелперы
 
 Адаптер включает специализированные инструменты для построения сложных аналитических запросов и выполнения скриптов напрямую в YQL.
 
-В runnable-приложении из раздела [Примеры Drizzle Adapter](/ru/guide/drizzle-adapter/examples) есть live и preview-only сценарии для этих хелперов.
+В runnable-приложении из раздела [Примеры Drizzle Adapter](/ru/guide/drizzle/examples) есть live и preview-only сценарии для этих хелперов.
 
 ## Источники данных для SELECT
 
@@ -15,8 +15,8 @@ title: Drizzle Adapter — YQL-хелперы
 Использование переменной YQL (например, `List<Struct>`) как источника таблицы в `FROM`.
 
 ```ts
+import { asTable } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { asTable } from '@ydbjs/drizzle-adapter'
 
 await db
   .select({ id: sql`t.id`, name: sql`t.name` })
@@ -29,8 +29,8 @@ await db
 Создание временного источника данных из массива объектов (аналог `VALUES` в SQL).
 
 ```ts
+import { valuesTable } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { valuesTable } from '@ydbjs/drizzle-adapter'
 
 const v = valuesTable([{ id: 1, name: 'Alice' }], {
   alias: 'v',
@@ -53,7 +53,8 @@ await db
 - `grouping(column)`: позволяет определить, является ли строка итоговой.
 
 ```ts
-import { rollup } from '@ydbjs/drizzle-adapter'
+import { rollup } from '@ydbjs/drizzle-adapter/sql'
+import { sql } from 'drizzle-orm'
 
 await db
   .select({ city: sales.city, total: sql`sum(amount)` })
@@ -80,8 +81,8 @@ await db
 | `knnInnerProductSimilarity(v1, v2)` | Скалярное произведение (близость). |
 
 ```ts
+import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { knnCosineDistance } from '@ydbjs/drizzle-adapter'
 
 const nearest = await db
   .select()
@@ -96,8 +97,8 @@ const nearest = await db
 Хелпер `yqlScript` позволяет объединять несколько команд, прагм и параметров в один атомарный блок выполнения.
 
 ```ts
+import { declareParam, pragma, yqlScript } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
-import { declareParam, pragma, yqlScript } from '@ydbjs/drizzle-adapter'
 
 await db.execute(
   yqlScript(
