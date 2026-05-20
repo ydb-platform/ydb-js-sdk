@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict'
 import { type TestContext, afterAll, beforeAll } from 'vitest'
 import { eq, sql as yql } from 'drizzle-orm'
-import { YdbDriver, type YdbDrizzleDatabase, drizzle } from '../../../src/index.ts'
+import { YdbDriver, type YdbDrizzleDatabase, drizzle } from '../../src/index.ts'
 import {
 	keepData,
 	liveSchema,

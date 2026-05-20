@@ -30,11 +30,11 @@ import {
 	uuid,
 	ydbTable,
 	yson,
-} from '../../src/index.ts'
-import { YdbDialect } from '../../src/ydb/dialect.ts'
-import { YdbInsertBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { YdbSelectBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { YdbSession } from '../../src/ydb-core/session.ts'
+} from '../../index.ts'
+import { YdbDialect } from '../../ydb/dialect.ts'
+import { YdbInsertBuilder } from '../../ydb-core/query-builders/index.ts'
+import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
+import { YdbSession } from '../../ydb-core/session.ts'
 import {
 	Bool,
 	Date as YdbDate,

@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { sql as yql } from 'drizzle-orm'
-import { YdbDialect } from '../../src/ydb/dialect.ts'
+import { YdbDialect } from '../ydb/dialect.ts'
 
 test('instantiates YdbDialect with default options', () => {
 	let dialect = new YdbDialect({ casing: 'snake_case' })

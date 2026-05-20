@@ -16,10 +16,10 @@ import {
 	integer,
 	text,
 	ydbTable,
-} from '../../src/index.ts'
-import { YdbDialect } from '../../src/ydb/dialect.ts'
-import { YdbSession } from '../../src/ydb-core/session.ts'
-import { orderSelectedFields } from '../../src/ydb-core/result-mapping.ts'
+} from '../index.ts'
+import { YdbDialect } from '../ydb/dialect.ts'
+import { YdbSession } from '../ydb-core/session.ts'
+import { orderSelectedFields } from '../ydb-core/result-mapping.ts'
 
 let dialect = new YdbDialect()
 let users = ydbTable('users', {

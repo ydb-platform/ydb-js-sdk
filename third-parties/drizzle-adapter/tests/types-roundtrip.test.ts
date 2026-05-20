@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
 import { createLiveContext } from './helpers/context.ts'
 import { typesTable, typesTableName } from './helpers/schema.ts'
-import { orderSelectedFields } from '../../src/ydb-core/result-mapping.ts'
+import { orderSelectedFields } from '../src/ydb-core/result-mapping.ts'
 
 let live = createLiveContext()
 

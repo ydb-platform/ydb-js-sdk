@@ -2,7 +2,7 @@ import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { relations } from 'drizzle-orm'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
-import { type YdbExecuteOptions, drizzle, integer, text, ydbTable } from '../../src/index.ts'
+import { type YdbExecuteOptions, drizzle, integer, text, ydbTable } from '../index.ts'
 
 let users = ydbTable('users', {
 	id: integer('id').notNull(),

@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
-import { integer, text, ydbTable } from '../../src/index.ts'
+import { integer, text, ydbTable } from '../../index.ts'
 import {
 	YdbBatchDeleteBuilder,
 	YdbBatchUpdateBuilder,
@@ -10,8 +10,8 @@ import {
 	YdbReplaceBuilder,
 	YdbUpdateBuilder,
 	YdbUpsertBuilder,
-} from '../../src/ydb-core/query-builders/index.ts'
-import { dialect, session, users } from '../helpers/unit-basic.ts'
+} from '../../ydb-core/query-builders/index.ts'
+import { dialect, session, users } from '../../../tests/helpers/unit-basic.ts'
 
 function toQuery(builder: { getSQL(): any }) {
 	return dialect.sqlToQuery(builder.getSQL())

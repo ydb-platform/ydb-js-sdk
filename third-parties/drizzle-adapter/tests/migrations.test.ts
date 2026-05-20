@@ -13,7 +13,7 @@ import {
 	migrate,
 	text,
 	ydbTable,
-} from '../../src/index.ts'
+} from '../src/index.ts'
 import { createLiveContext } from './helpers/context.ts'
 
 let live = createLiveContext()

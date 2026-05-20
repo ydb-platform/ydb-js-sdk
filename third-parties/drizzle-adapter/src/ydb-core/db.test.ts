@@ -1,9 +1,9 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
-import { drizzle, integer, primaryKey, text, ydbTable } from '../../src/index.ts'
-import { YdbDeleteBuilder, YdbInsertBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { dialect, session, users } from '../helpers/unit-basic.ts'
+import { drizzle, integer, primaryKey, text, ydbTable } from '../index.ts'
+import { YdbDeleteBuilder, YdbInsertBuilder } from '../ydb-core/query-builders/index.ts'
+import { dialect, session, users } from '../../tests/helpers/unit-basic.ts'
 
 test('builds CTE-backed select queries via $with/with', () => {
 	let db = drizzle({

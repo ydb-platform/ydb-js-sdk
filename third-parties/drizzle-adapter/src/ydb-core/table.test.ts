@@ -2,10 +2,10 @@ import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { Table, getTableName } from 'drizzle-orm/table'
 import { sql as yql } from 'drizzle-orm'
-import { customType, integer, text, uuid, ydbTable, ydbTableCreator } from '../../src/index.ts'
-import { getYdbColumnBuilders, ydbColumnBuilders } from '../../src/ydb-core/columns/all.ts'
-import { YdbColumn } from '../../src/ydb-core/columns/common.ts'
-import { getTableConfig } from '../../src/ydb-core/table.utils.ts'
+import { customType, integer, text, uuid, ydbTable, ydbTableCreator } from '../index.ts'
+import { getYdbColumnBuilders, ydbColumnBuilders } from '../ydb-core/columns/all.ts'
+import { YdbColumn } from '../ydb-core/columns/common.ts'
+import { getTableConfig } from '../ydb-core/table.utils.ts'
 
 let typedTable = ydbTable('typed_table', {
 	id: integer('id').notNull().$type<1 | 2>(),

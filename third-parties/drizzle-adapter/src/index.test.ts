@@ -1,34 +1,25 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
-import * as publicApi from '../../src/index.ts'
+import * as publicApi from './index.ts'
 import { createMany, createOne, relations } from 'drizzle-orm'
-import * as queryBuilders from '../../src/ydb-core/query-builders/index.ts'
-import { YdbCountBuilder } from '../../src/ydb-core/query-builders/count.ts'
-import {
-	YdbBatchDeleteBuilder,
-	YdbDeleteBuilder,
-} from '../../src/ydb-core/query-builders/delete.ts'
+import * as queryBuilders from './ydb-core/query-builders/index.ts'
+import { YdbCountBuilder } from './ydb-core/query-builders/count.ts'
+import { YdbBatchDeleteBuilder, YdbDeleteBuilder } from './ydb-core/query-builders/delete.ts'
 import {
 	YdbInsertBuilder,
 	YdbReplaceBuilder,
 	YdbUpsertBuilder,
-} from '../../src/ydb-core/query-builders/insert.ts'
-import { YdbQueryBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import {
-	YdbRelationalQuery,
-	YdbRelationalQueryBuilder,
-} from '../../src/ydb-core/query-builders/query.ts'
+} from './ydb-core/query-builders/insert.ts'
+import { YdbQueryBuilder } from './ydb-core/query-builders/index.ts'
+import { YdbRelationalQuery, YdbRelationalQueryBuilder } from './ydb-core/query-builders/query.ts'
 import {
 	YdbSelectBuilder,
 	except,
 	intersect,
 	union,
 	unionAll,
-} from '../../src/ydb-core/query-builders/select.ts'
-import {
-	YdbBatchUpdateBuilder,
-	YdbUpdateBuilder,
-} from '../../src/ydb-core/query-builders/update.ts'
+} from './ydb-core/query-builders/select.ts'
+import { YdbBatchUpdateBuilder, YdbUpdateBuilder } from './ydb-core/query-builders/update.ts'
 import {
 	YdbAuthenticationError,
 	YdbCancelledQueryError,
@@ -38,8 +29,8 @@ import {
 	YdbTimeoutQueryError,
 	YdbUnavailableQueryError,
 	YdbUniqueConstraintViolationError,
-} from '../../src/index.ts'
-import { ydbTable } from '../../src/index.ts'
+} from './index.ts'
+import { ydbTable } from './index.ts'
 import {
 	buildAddChangefeedSql,
 	buildAddColumnFamilySql,
@@ -74,12 +65,12 @@ import {
 	buildRenameTableSql,
 	buildRevokeSql,
 	buildShowCreateSql,
-} from '../../src/index.ts'
-import { migrate } from '../../src/index.ts'
-import { customType } from '../../src/index.ts'
-import { integer } from '../../src/index.ts'
-import { text } from '../../src/index.ts'
-import { index, indexView, uniqueIndex, vectorIndex, vectorIndexView } from '../../src/index.ts'
+} from './index.ts'
+import { migrate } from './index.ts'
+import { customType } from './index.ts'
+import { integer } from './index.ts'
+import { text } from './index.ts'
+import { index, indexView, uniqueIndex, vectorIndex, vectorIndexView } from './index.ts'
 import {
 	bigint,
 	binary,
@@ -107,18 +98,12 @@ import {
 	uint8,
 	uuid,
 	yson,
-} from '../../src/index.ts'
-import { primaryKey } from '../../src/index.ts'
-import {
-	columnFamily,
-	partitionByHash,
-	rawTableOption,
-	tableOptions,
-	ttl,
-} from '../../src/index.ts'
-import { unique } from '../../src/index.ts'
-import { createDrizzle, drizzle } from '../../src/index.ts'
-import { YdbDriver } from '../../src/index.ts'
+} from './index.ts'
+import { primaryKey } from './index.ts'
+import { columnFamily, partitionByHash, rawTableOption, tableOptions, ttl } from './index.ts'
+import { unique } from './index.ts'
+import { createDrizzle, drizzle } from './index.ts'
+import { YdbDriver } from './index.ts'
 import {
 	asTable,
 	cube,
@@ -144,7 +129,7 @@ import {
 	values,
 	valuesTable,
 	windowDefinition,
-} from '../../src/index.ts'
+} from './index.ts'
 import {
 	commit,
 	declareParam,
@@ -155,7 +140,7 @@ import {
 	kMeansTreeSearchTopSize,
 	pragma,
 	yqlScript,
-} from '../../src/index.ts'
+} from './index.ts'
 
 let expectedRootRuntimeExports = [
 	'YdbAuthenticationError',

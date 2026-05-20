@@ -11,7 +11,7 @@ import {
 	ttl,
 	uint32,
 	ydbTable,
-} from '../../src/index.ts'
+} from '../src/index.ts'
 import { createLiveContext } from './helpers/context.ts'
 import { ignoreUnsupportedYqlFeature } from './helpers/errors.ts'
 import { posts, users } from './helpers/schema.ts'

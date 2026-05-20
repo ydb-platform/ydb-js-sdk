@@ -32,9 +32,9 @@ import {
 	vectorIndexView,
 	windowDefinition,
 	yqlScript,
-} from '../../src/index.ts'
-import { YdbSelectBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { dialect, posts, session, users } from '../helpers/unit-basic.ts'
+} from '../../index.ts'
+import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
+import { dialect, posts, session, users } from '../../../tests/helpers/unit-basic.ts'
 
 function toQuery(builder: { getSQL(): any }) {
 	return dialect.sqlToQuery(builder.getSQL())

@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { type YdbExecutor, drizzle, migrate } from '../../src/index.ts'
+import { type YdbExecutor, drizzle, migrate } from '../index.ts'
 
 function normalizeSql(query: string): string {
 	return query.replace(/\s+/gu, ' ').trim()
@@ -167,7 +167,9 @@ test('inline migrate bootstraps bookkeeping and skips already applied migrations
 test('folder migrate reads drizzle migration journal format', async () => {
 	let { executor, calls, appliedRows } = createMigratorExecutor()
 	let db = drizzle(executor)
-	let migrationsFolder = fileURLToPath(new URL('../fixtures/migrations/basic', import.meta.url))
+	let migrationsFolder = fileURLToPath(
+		new URL('../../tests/fixtures/migrations/basic', import.meta.url)
+	)
 
 	await migrate(db, {
 		migrationsFolder,

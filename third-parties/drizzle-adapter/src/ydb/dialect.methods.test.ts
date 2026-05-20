@@ -4,11 +4,11 @@ import { aliasedTable } from 'drizzle-orm/alias'
 import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm/relations'
 import { eq, sql as yql } from 'drizzle-orm'
 import { WithSubquery } from 'drizzle-orm/subquery'
-import { date, datetime, decimal, json, text, timestamp, uuid, ydbTable } from '../../src/index.ts'
-import { YdbDialect } from '../../src/ydb/dialect.ts'
-import { YdbSelectBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { orderSelectedFields } from '../../src/ydb-core/result-mapping.ts'
-import { posts, session, users } from '../helpers/unit-basic.ts'
+import { date, datetime, decimal, json, text, timestamp, uuid, ydbTable } from '../index.ts'
+import { YdbDialect } from '../ydb/dialect.ts'
+import { YdbSelectBuilder } from '../ydb-core/query-builders/index.ts'
+import { orderSelectedFields } from '../ydb-core/result-mapping.ts'
+import { posts, session, users } from '../../tests/helpers/unit-basic.ts'
 
 let dialect = new YdbDialect()
 

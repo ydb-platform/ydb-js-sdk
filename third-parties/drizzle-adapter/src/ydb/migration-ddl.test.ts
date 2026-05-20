@@ -52,7 +52,7 @@ import {
 	unique,
 	vectorIndex,
 	ydbTable,
-} from '../../src/index.ts'
+} from '../index.ts'
 
 test('generates create table with inline indexes and unique constraints', () => {
 	let users = ydbTable(

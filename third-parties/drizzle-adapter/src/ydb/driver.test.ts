@@ -1,8 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { Driver } from '@ydbjs/core'
-import { YdbDriver } from '../../src/index.ts'
-import { createMockQueryFunction } from '../helpers/mock-driver.ts'
+import { YdbDriver } from '../index.ts'
+import { createMockQueryFunction } from '../../tests/helpers/mock-driver.ts'
 
 test('wraps a borrowed Driver without owning it', async () => {
 	let readyCalls = 0

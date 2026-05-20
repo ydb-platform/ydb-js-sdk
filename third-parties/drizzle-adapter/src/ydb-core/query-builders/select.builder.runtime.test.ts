@@ -1,8 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { desc, eq } from 'drizzle-orm'
-import { YdbSelectBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { dialect, posts, users } from '../helpers/unit-basic.ts'
+import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
+import { dialect, posts, users } from '../../../tests/helpers/unit-basic.ts'
 
 test('select builder maps joins and advanced queries', async () => {
 	let executedSql: string[] = []

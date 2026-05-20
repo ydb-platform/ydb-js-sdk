@@ -5,8 +5,8 @@ import {
 	extractTablesRelationalConfig,
 	relations,
 } from 'drizzle-orm/relations'
-import { YdbRelationalQueryBuilder } from '../../src/ydb-core/query-builders/index.ts'
-import { dialect, posts, users } from '../helpers/unit-basic.ts'
+import { YdbRelationalQueryBuilder } from '../../ydb-core/query-builders/index.ts'
+import { dialect, posts, users } from '../../../tests/helpers/unit-basic.ts'
 
 function buildObjectRows(sqlText: string, rowValues: unknown[][]): Array<Record<string, unknown>> {
 	let aliases = Array.from(sqlText.matchAll(/ as `([^`]+)`/g), (match) => match[1]!)
