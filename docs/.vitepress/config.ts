@@ -202,10 +202,6 @@ export default defineConfig({
 								text: 'Getting Started',
 								link: '/guide/drizzle/getting-started',
 							},
-							{
-								text: 'Examples',
-								link: '/guide/drizzle/examples',
-							},
 							{ text: 'Schema', link: '/guide/drizzle/schema' },
 							{
 								text: 'Database API',
@@ -499,10 +495,6 @@ export default defineConfig({
 							{
 								text: 'Быстрый старт',
 								link: '/ru/guide/drizzle/getting-started',
-							},
-							{
-								text: 'Примеры',
-								link: '/ru/guide/drizzle/examples',
 							},
 							{
 								text: 'Схема данных',
