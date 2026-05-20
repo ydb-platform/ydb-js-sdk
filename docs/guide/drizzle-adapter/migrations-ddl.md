@@ -96,7 +96,7 @@ npm run test:live --workspace=@ydbjs/drizzle-adapter
 
 If a migration is interrupted (e.g., process crash), the history record might get stuck in `running` status.
 
-- `mode: 'error'` (Default): Fails if a stuck migration is detected.
+- `mode: 'fail'` (Default): Fails if a stuck migration is detected.
 - `mode: 'retry'`: Resets and retries the migration if it has been stuck for longer than `staleRunningAfterMs`.
 
 ```ts

@@ -7,7 +7,7 @@ description: Установка, настройка подключения и б
 
 ## Требования
 
-- **Node.js**: версия 20 или новее.
+- **Node.js**: версия 20.19 или новее.
 - **Drizzle ORM**: должен быть установлен параллельно с адаптером.
 - **YDB**: доступная база данных (локальная через Docker или облачная в Yandex Cloud).
 
@@ -80,7 +80,7 @@ const db = createDrizzle(async (sql, params, method, options) => {
 В YDB таблицы описываются с помощью `ydbTable`. **Важно:** каждая таблица YDB обязана иметь первичный ключ (Primary Key).
 
 ```ts
-import { integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter'
+import { integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
