@@ -54,6 +54,9 @@ const driver = new YdbDriver(sdkDriver)
 Объект, возвращаемый методом `.prepare()`, позволяет выполнять один и тот же запрос с разными параметрами без повторного парсинга YQL.
 
 ```ts
+import { sql } from 'drizzle-orm'
+
+// `session` берётся из вызова YdbDriver (например, внутри `db.transaction`).
 const prepared = session.prepareQuery(
   sql`SELECT * FROM users WHERE id = ${sql.placeholder('id')}`,
   undefined,
@@ -78,6 +81,10 @@ await prepared.execute({ id: 1 })
 Преобразует шаблон `sql` Drizzle в YQL с плейсхолдерами для параметров.
 
 ```ts
-const { sql, params } = dialect.sqlToQuery(sql`SELECT * FROM users WHERE id = ${1}`)
-// Результат -> sql: "SELECT * FROM users WHERE id = $p0", params: [1]
+import { sql } from 'drizzle-orm'
+
+const dialect = new YdbDialect()
+const { sql: query, params } = dialect.sqlToQuery(sql`SELECT * FROM users WHERE id = ${1}`)
+// query  -> "SELECT * FROM users WHERE id = $p0"
+// params -> [1]
 ```
