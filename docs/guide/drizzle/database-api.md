@@ -6,7 +6,7 @@ title: Drizzle Adapter — Database API
 
 The database object returned by `createDrizzle()` is the main runtime surface. It combines Drizzle-compatible query builders with YDB-specific helpers.
 
-For a runnable app that exercises most methods on this page, see [Drizzle Adapter Examples](/guide/drizzle-adapter/examples).
+For a runnable app that exercises most methods on this page, see [Drizzle Adapter Examples](/guide/drizzle/examples).
 
 ## Initialization
 
@@ -42,12 +42,12 @@ const db = createDrizzle({
 When a `connectionString` is used, the adapter owns the underlying driver. Use `$client` to manage its lifecycle:
 
 - `await db.$client.ready()`: ensures the driver is initialized and the database is accessible.
-- `await db.$client.close()`: closes the session pool and releases driver resources. **Always call this when the application shuts down.**
+- `db.$client.close()`: closes the session pool and releases driver resources. Synchronous; returns `void`. **Always call this when the application shuts down.**
 
 ```ts
 await db.$client.ready()
 // ... application logic ...
-await db.$client.close()
+db.$client.close()
 ```
 
 ## Execution Methods

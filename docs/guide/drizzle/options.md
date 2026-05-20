@@ -88,7 +88,9 @@ SELECT:
 
 Mutations:
 
-- Insert-like builders: `.values()`, `.select()`, `.onDuplicateKeyUpdate()`, `.returning()`.
+- INSERT (`db.insert`): `.values()`, `.select()`, `.onDuplicateKeyUpdate()`, `.returning()`.
+- UPSERT (`db.upsert`): `.values()`, `.select()`, `.returning()` (no `.onDuplicateKeyUpdate()` — UPSERT already handles conflicts).
+- REPLACE (`db.replace`): `.values()`, `.select()` (no `.returning()` — REPLACE does not return rows).
 - Update builders: `.set()`, `.where()`, `.on()`, `.returning()`.
 - Delete builders: `.where()`, `.using()`, `.on()`, `.returning()`.
 - Batch builders: `batchUpdate` and `batchDelete` support `.where()` but reject `returning()` and `on()`.

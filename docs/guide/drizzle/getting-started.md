@@ -79,7 +79,7 @@ const db = createDrizzle(async (sql, params, method, options) => {
 YDB tables must have a primary key. Use `ydbTable()` and YDB column builders exported by the adapter.
 
 ```ts
-import { integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter'
+import { integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
@@ -171,7 +171,7 @@ db.$client.close?.()
 
 ## Runnable Examples
 
-The SDK repository includes a compact TypeScript CLI example and a larger interactive TypeScript lab.
+The SDK repository includes a compact TypeScript CLI example.
 
 ```bash
 cd examples/drizzle-adapter
@@ -179,11 +179,4 @@ npm install
 npm start
 ```
 
-```bash
-cd examples/drizzle-adapter-lab
-npm install
-npm run db:up
-npm start
-```
-
-See [Drizzle Adapter Examples](/guide/drizzle-adapter/examples) for the matching code snippets.
+See [Drizzle Adapter Examples](/guide/drizzle/examples) for the matching code snippets.

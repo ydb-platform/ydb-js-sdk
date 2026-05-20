@@ -6,7 +6,7 @@ title: Drizzle Adapter — Миграции и DDL
 
 Адаптер предоставляет надежный мигратор и набор DDL-построителей для программного управления схемой YDB.
 
-Runnable-приложение из раздела [Примеры Drizzle Adapter](/ru/guide/drizzle-adapter/examples) показывает `migrate()` и live/preview-only DDL builders.
+Runnable-приложение из раздела [Примеры Drizzle Adapter](/ru/guide/drizzle/examples) показывает `migrate()` и live/preview-only DDL builders.
 
 ## Мигратор (`migrate`)
 
@@ -15,7 +15,7 @@ Runnable-приложение из раздела [Примеры Drizzle Adapte
 ### Основное использование
 
 ```ts
-import { migrate } from '@ydbjs/drizzle-adapter'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 await migrate(db, {
   migrationsFolder: './drizzle', // Путь к файлам, сгенерированным drizzle-kit
@@ -57,7 +57,8 @@ await migrate(db, {
 Запускайте миграции отдельным шагом деплоя до старта новых инстансов приложения. Оставляйте `migrationLock` включенным, чтобы параллельные jobs, retry и blue/green deploy не применили одну миграцию дважды.
 
 ```ts
-import { createDrizzle, migrate } from '@ydbjs/drizzle-adapter'
+import { createDrizzle } from '@ydbjs/drizzle-adapter'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 const db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,

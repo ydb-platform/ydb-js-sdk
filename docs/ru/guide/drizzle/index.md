@@ -9,22 +9,22 @@ Drizzle-совместимый API для YDB: DSL описания схемы, 
 
 Это высокоуровневый обзор адаптера YDB для Drizzle. Для получения подробной информации перейдите в соответствующие разделы:
 
-- [Опции и API](/ru/guide/drizzle-adapter/options)
-- [Database API](/ru/guide/drizzle-adapter/database-api)
-- [Схема данных](/ru/guide/drizzle-adapter/schema)
-- [Построители запросов](/ru/guide/drizzle-adapter/query-builders)
-- [Миграции и DDL](/ru/guide/drizzle-adapter/migrations-ddl)
-- [YQL-хелперы](/ru/guide/drizzle-adapter/yql-helpers)
-- [Driver, Session, Dialect](/ru/guide/drizzle-adapter/internals)
-- [Публичный API](/ru/guide/drizzle-adapter/api-index)
-- [Примеры](/ru/guide/drizzle-adapter/examples)
+- [Опции и API](/ru/guide/drizzle/options)
+- [Database API](/ru/guide/drizzle/database-api)
+- [Схема данных](/ru/guide/drizzle/schema)
+- [Построители запросов](/ru/guide/drizzle/query-builders)
+- [Миграции и DDL](/ru/guide/drizzle/migrator)
+- [YQL-хелперы](/ru/guide/drizzle/sql)
+- [Driver, Session, Dialect](/ru/guide/drizzle/internals)
+- [Публичный API](/ru/guide/drizzle/api-index)
+- [Примеры](/ru/guide/drizzle/examples)
 
 ## Быстрый старт
 
 ```ts
-import { eq } from 'drizzle-orm'
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+import { eq } from 'drizzle-orm'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
@@ -52,7 +52,7 @@ const selected = await db
 
 ## Примеры {#examples}
 
-Более крупное runnable-приложение с CRUD, relations, joins, CTE, raw execution, транзакциями, scripts и DDL builders находится в разделе [Примеры](/ru/guide/drizzle-adapter/examples).
+Более крупное runnable-приложение с CRUD, relations, joins, CTE, raw execution, транзакциями, scripts и DDL builders находится в разделе [Примеры](/ru/guide/drizzle/examples).
 
 ### Схема с опциями YDB {#examples-schema}
 
@@ -67,7 +67,7 @@ import {
   timestamp,
   ttl,
   ydbTable,
-} from '@ydbjs/drizzle-adapter'
+} from '@ydbjs/drizzle-adapter/schema'
 
 export const events = ydbTable(
   'events',
@@ -144,8 +144,8 @@ await migrate(db, {
 ### YQL-хелперы {#examples-yql-helpers}
 
 ```ts
-import { sql } from 'drizzle-orm'
 import { asTable, valuesTable } from '@ydbjs/drizzle-adapter/sql'
+import { sql } from 'drizzle-orm'
 
 await db
   .select({ id: sql`r.id`, name: sql`r.name` })
@@ -165,9 +165,9 @@ await db
 ### Векторный поиск {#examples-vector-search}
 
 ```ts
-import { sql } from 'drizzle-orm'
-import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
 import { vectorIndexView } from '@ydbjs/drizzle-adapter/schema'
+import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
+import { sql } from 'drizzle-orm'
 
 const nearest = await db
   .select()

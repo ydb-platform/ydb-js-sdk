@@ -6,7 +6,7 @@ title: Drizzle Adapter — Query Builders
 
 The YDB Drizzle adapter extends the standard Drizzle syntax to support YDB-specific features and YQL-native operators.
 
-For end-to-end examples that combine these builders, see [Drizzle Adapter Examples](/guide/drizzle-adapter/examples).
+For end-to-end examples that combine these builders, see [Drizzle Adapter Examples](/guide/drizzle/examples).
 
 ## SELECT Builder
 

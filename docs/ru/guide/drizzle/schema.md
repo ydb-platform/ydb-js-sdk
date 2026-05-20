@@ -11,7 +11,7 @@ title: Drizzle Adapter — Схема данных
 Для создания таблицы используйте функцию `ydbTable`. В YDB наличие **первичного ключа (Primary Key) обязательно**.
 
 ```ts
-import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter'
+import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
@@ -26,6 +26,8 @@ export const users = ydbTable('users', {
 3. **Extra Config** (`callback`, опционально): Функция для настройки индексов, ограничений и специфичных опций YDB.
 
 ```ts
+import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+
 export const memberships = ydbTable(
   'memberships',
   {
@@ -41,7 +43,7 @@ export const memberships = ydbTable(
 Используйте `ydbTableCreator` для добавления глобального префикса или трансформации имен всех таблиц.
 
 ```ts
-import { ydbTableCreator } from '@ydbjs/drizzle-adapter'
+import { ydbTableCreator } from '@ydbjs/drizzle-adapter/schema'
 
 const appTable = ydbTableCreator((name) => `myapp/${name}`)
 
@@ -102,7 +104,7 @@ export const users = appTable('users', {
 - `json<T>()` и `jsonDocument<T>()` возвращают типизированные JSON-значения. Generic нужен для фиксации ожидаемой формы.
 
 ```ts
-import { bigint, bytes, json, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter'
+import { bigint, bytes, json, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 type Profile = { timezone: string; flags: string[] }
 
@@ -137,6 +139,8 @@ id: integer('id').primaryKey()
 ### Составной ключ (Уровень таблицы)
 
 ```ts
+import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+
 export const details = ydbTable(
   'details',
   {
@@ -152,7 +156,7 @@ export const details = ydbTable(
 Вторичные индексы в YDB хранятся как отдельные внутренние таблицы.
 
 ```ts
-import { index, uniqueIndex } from '@ydbjs/drizzle-adapter'
+import { index, uniqueIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable(
   'users',
@@ -176,7 +180,7 @@ export const users = ydbTable(
 YDB поддерживает специализированные индексы для векторного поиска (AI/ML).
 
 ```ts
-import { vectorIndex } from '@ydbjs/drizzle-adapter'
+import { bytes, integer, vectorIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const embeddings = ydbTable(
   'embeddings',
@@ -201,7 +205,7 @@ export const embeddings = ydbTable(
 ### Физические параметры
 
 ```ts
-import { tableOptions } from '@ydbjs/drizzle-adapter'
+import { tableOptions } from '@ydbjs/drizzle-adapter/schema'
 
 tableOptions({
   AUTO_PARTITIONING_BY_LOAD: 'ENABLED',
@@ -214,7 +218,7 @@ tableOptions({
 Автоматическое удаление устаревших данных.
 
 ```ts
-import { ttl } from '@ydbjs/drizzle-adapter'
+import { ttl } from '@ydbjs/drizzle-adapter/schema'
 
 ttl(table.createdAt, 'P30D') // Удалить через 30 дней
 ttl(table.expireAt, '3600', { unit: 'SECONDS' })
@@ -223,7 +227,7 @@ ttl(table.expireAt, '3600', { unit: 'SECONDS' })
 ### Партиционирование
 
 ```ts
-import { partitionByHash } from '@ydbjs/drizzle-adapter'
+import { partitionByHash } from '@ydbjs/drizzle-adapter/schema'
 
 partitionByHash(table.tenantId)
 ```
@@ -231,7 +235,7 @@ partitionByHash(table.tenantId)
 ### Семейства колонок
 
 ```ts
-import { columnFamily } from '@ydbjs/drizzle-adapter'
+import { columnFamily } from '@ydbjs/drizzle-adapter/schema'
 
 columnFamily('cold_data', {
   data: 'rot',

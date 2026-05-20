@@ -88,7 +88,9 @@ SELECT:
 
 Мутации:
 
-- Insert-построители: `.values()`, `.select()`, `.onDuplicateKeyUpdate()`, `.returning()`.
+- INSERT (`db.insert`): `.values()`, `.select()`, `.onDuplicateKeyUpdate()`, `.returning()`.
+- UPSERT (`db.upsert`): `.values()`, `.select()`, `.returning()` (без `.onDuplicateKeyUpdate()` — UPSERT уже разрешает конфликты).
+- REPLACE (`db.replace`): `.values()`, `.select()` (без `.returning()` — REPLACE не возвращает строки).
 - Update-построители: `.set()`, `.where()`, `.on()`, `.returning()`.
 - Delete-построители: `.where()`, `.using()`, `.on()`, `.returning()`.
 - Batch-построители: `batchUpdate` и `batchDelete` поддерживают `.where()`, но не принимают `returning()` и `on()`.

@@ -6,7 +6,7 @@ title: Drizzle Adapter — Migrations and DDL
 
 The adapter provides a robust migrator and a set of DDL builders to manage your YDB schema programmatically.
 
-The runnable lab in [Drizzle Adapter Examples](/guide/drizzle-adapter/examples) shows `migrate()` plus live and preview-only DDL builders.
+The runnable lab in [Drizzle Adapter Examples](/guide/drizzle/examples) shows `migrate()` plus live and preview-only DDL builders.
 
 ## Migrator (`migrate`)
 
@@ -15,7 +15,7 @@ The `migrate` function applies schema changes while ensuring consistency through
 ### Basic Usage
 
 ```ts
-import { migrate } from '@ydbjs/drizzle-adapter'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 await migrate(db, {
   migrationsFolder: './drizzle', // Path to drizzle-kit generated files
@@ -57,7 +57,8 @@ await migrate(db, {
 Run migrations as one deployment step before rolling out application instances. Keep `migrationLock` enabled so parallel deploy jobs, retries, and blue/green releases do not apply the same migration twice.
 
 ```ts
-import { createDrizzle, migrate } from '@ydbjs/drizzle-adapter'
+import { createDrizzle } from '@ydbjs/drizzle-adapter'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 const db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
@@ -96,7 +97,7 @@ npm run test:live --workspace=@ydbjs/drizzle-adapter
 
 If a migration is interrupted (e.g., process crash), the history record might get stuck in `running` status.
 
-- `mode: 'fail'` (Default): Fails if a stuck migration is detected.
+- `mode: 'fail'` (default): Fails if a stuck migration is detected.
 - `mode: 'retry'`: Resets and retries the migration if it has been stuck for longer than `staleRunningAfterMs`.
 
 ```ts

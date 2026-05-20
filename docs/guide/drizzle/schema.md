@@ -11,7 +11,7 @@ The YDB Drizzle adapter provides a specialized DSL for describing YDB tables, su
 Use `ydbTable` to define your tables. In YDB, a **Primary Key is mandatory**.
 
 ```ts
-import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter'
+import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
@@ -26,6 +26,8 @@ export const users = ydbTable('users', {
 3. **Extra Config** (`callback`, optional): Function to define indexes, constraints, and YDB-specific options.
 
 ```ts
+import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+
 export const memberships = ydbTable(
   'memberships',
   {
@@ -41,7 +43,7 @@ export const memberships = ydbTable(
 Use `ydbTableCreator` to apply a global prefix or transformation to all table names.
 
 ```ts
-import { ydbTableCreator } from '@ydbjs/drizzle-adapter'
+import { ydbTableCreator } from '@ydbjs/drizzle-adapter/schema'
 
 const appTable = ydbTableCreator((name) => `myapp/${name}`)
 
@@ -102,7 +104,7 @@ The adapter exports builders for all YDB primitive and composite types.
 - `json<T>()` and `jsonDocument<T>()` return typed JSON values. Use the generic to document the expected shape.
 
 ```ts
-import { bigint, bytes, json, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter'
+import { bigint, bytes, json, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 type Profile = { timezone: string; flags: string[] }
 
@@ -137,6 +139,8 @@ id: integer('id').primaryKey()
 ### Composite (Table-level)
 
 ```ts
+import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+
 export const details = ydbTable(
   'details',
   {
@@ -152,7 +156,7 @@ export const details = ydbTable(
 Secondary indexes in YDB are stored as separate internal tables.
 
 ```ts
-import { index, uniqueIndex } from '@ydbjs/drizzle-adapter'
+import { index, uniqueIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable(
   'users',
@@ -176,7 +180,7 @@ export const users = ydbTable(
 YDB supports specialized indexes for AI-driven vector search.
 
 ```ts
-import { vectorIndex } from '@ydbjs/drizzle-adapter'
+import { bytes, integer, vectorIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const embeddings = ydbTable(
   'embeddings',
@@ -201,7 +205,7 @@ export const embeddings = ydbTable(
 ### Physical Parameters
 
 ```ts
-import { tableOptions } from '@ydbjs/drizzle-adapter'
+import { tableOptions } from '@ydbjs/drizzle-adapter/schema'
 
 tableOptions({
   AUTO_PARTITIONING_BY_LOAD: 'ENABLED',
@@ -214,7 +218,7 @@ tableOptions({
 Automatic data expiration.
 
 ```ts
-import { ttl } from '@ydbjs/drizzle-adapter'
+import { ttl } from '@ydbjs/drizzle-adapter/schema'
 
 ttl(table.createdAt, 'P30D') // Delete after 30 days
 ttl(table.expireAt, '3600', { unit: 'SECONDS' })
@@ -223,7 +227,7 @@ ttl(table.expireAt, '3600', { unit: 'SECONDS' })
 ### Partitioning
 
 ```ts
-import { partitionByHash } from '@ydbjs/drizzle-adapter'
+import { partitionByHash } from '@ydbjs/drizzle-adapter/schema'
 
 partitionByHash(table.tenantId)
 ```
@@ -231,7 +235,7 @@ partitionByHash(table.tenantId)
 ### Column Families
 
 ```ts
-import { columnFamily } from '@ydbjs/drizzle-adapter'
+import { columnFamily } from '@ydbjs/drizzle-adapter/schema'
 
 columnFamily('cold_data', {
   data: 'rot',
