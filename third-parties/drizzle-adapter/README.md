@@ -1,26 +1,69 @@
 # @ydbjs/drizzle-adapter
 
-YDB adapter for Drizzle ORM. The package provides typed schema declarations, YDB-aware query builders, direct YQL execution helpers, DDL helpers, and a migration runner with history and optional locking.
+The `@ydbjs/drizzle-adapter` package wires [Drizzle ORM](https://orm.drizzle.team/) to YDB. It ships typed schema declarations with YDB-native column types, query builders that emit valid YQL, a relational `db.query.*` API, a migration runner with history and optional distributed locking, and ergonomic wrappers around YDB built-in functions and UDFs (Digest hashes, `CurrentUtc*`, `Knn::*`, set operators, pragmas, scripts).
 
-## Install
+## Features
+
+- YDB column helpers with primary keys, unique constraints, secondary and vector indexes, table options, TTL, and column families
+- SELECT builders with joins, CTEs, set operators, `WITHOUT`, `FLATTEN`, `SAMPLE`, `TABLESAMPLE`, `MATCH_RECOGNIZE`, windows, and YDB optimizer hints
+- Mutation builders for `insert`, `upsert`, `replace`, `update`, `batchUpdate`, `delete`, `batchDelete`
+- `db.query.*` relational queries through Drizzle relation metadata
+- Direct YQL via `db.execute(sql\`...\`)`and`db.values(...)`
+- `migrate()` with bookkeeping table, optional lock table, and recovery strategy
+- Typed YQL helpers: `numericHash` / `xxHash` / `crc32c` / `crc64`, `currentUtc*`, `random` / `randomNumber` / `randomUuid` with required per-row cache keys, `unwrap`, `maxOf` / `minOf`, `knnCosineDistance` and the rest of the `Knn::*` family
+- YDB-typed errors (`YdbUniqueConstraintViolationError`, `YdbAuthenticationError`, etc.) wrapping Drizzle's `DrizzleQueryError`
+- Full TypeScript support, ESM-only
+
+## Installation
 
 ```sh
 npm install @ydbjs/drizzle-adapter drizzle-orm
 ```
 
-Requires Node.js 20.19 or newer.
+Requires Node.js 20.19+ and `drizzle-orm@^0.45.2`.
 
-## Quick Start
+## How It Works
+
+- **Subpath entries**: the package exposes four entries instead of one mega-barrel:
+
+  | Subpath                           | What it owns                                                                                                                       |
+  | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+  | `@ydbjs/drizzle-adapter`          | `createDrizzle`, `drizzle`, `YdbDriver`, error classes, `relations`/`many`/`one` re-exported from drizzle-orm                      |
+  | `@ydbjs/drizzle-adapter/schema`   | `ydbTable`, column types, `primaryKey`, `unique`, indexes, table options                                                           |
+  | `@ydbjs/drizzle-adapter/sql`      | YQL expression helpers (hash UDFs, `currentUtc*`, `random*`, `unwrap`, `maxOf`/`minOf`, `Knn::*`, set operators, pragmas, scripts) |
+  | `@ydbjs/drizzle-adapter/migrator` | `migrate()` plus `build*Sql` DDL builders and migration types                                                                      |
+
+- **Driver ownership**: `createDrizzle({ connectionString })` owns the driver and closes it with `db.$client.close?.()`. Pass `{ driver }` to share an existing `YdbDriver` with other YDB clients.
+- **Query execution**: all builders go through `YdbSession`, which uses the same driver/pool as `@ydbjs/query` under the hood.
+- **Migrations**: `migrate()` records every applied migration in a YDB table; with `migrationLock` enabled, parallel deploy jobs coordinate through a lock table instead of racing.
+
+## Usage
+
+### Quick Start
 
 ```ts
 import { eq } from 'drizzle-orm'
-import { createDrizzle, integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter'
+import { createDrizzle } from '@ydbjs/drizzle-adapter'
+import {
+  integer,
+  primaryKey,
+  text,
+  timestamp,
+  uint64,
+  ydbTable,
+} from '@ydbjs/drizzle-adapter/schema'
+import { currentUtcTimestamp, numericHash } from '@ydbjs/drizzle-adapter/sql'
 
-export let users = ydbTable('users', {
-  id: integer('id').primaryKey(),
-  email: text('email').notNull(),
-  createdAt: timestamp('created_at').notNull(),
-})
+let users = ydbTable(
+  'users',
+  {
+    hash: uint64('hash').notNull(),
+    id: integer('id').notNull(),
+    email: text('email').notNull(),
+    createdAt: timestamp('created_at').notNull(),
+  },
+  (t) => [primaryKey(t.hash, t.id)]
+)
 
 let db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
@@ -30,18 +73,10 @@ let db = createDrizzle({
 await db
   .insert(users)
   .values({
+    hash: numericHash(1),
     id: 1,
     email: 'ada@example.com',
-    createdAt: new Date(),
-  })
-  .execute()
-
-await db
-  .upsert(users)
-  .values({
-    id: 1,
-    email: 'ada@new.example.com',
-    createdAt: new Date(),
+    createdAt: currentUtcTimestamp(),
   })
   .execute()
 
@@ -52,40 +87,140 @@ let row = await db
   .prepare()
   .get()
 
-db.$client.close?.()
+await db.$client.close?.()
 ```
 
-## Main Capabilities
+The leading `hash` column is YDB's recommended way to spread writes across tablets. `numericHash(id)` emits `Unwrap(Digest::NumericHash(CAST(id AS Uint64)))` so the cluster computes the shard prefix at insert time; `xxHash(value)` does the same for string keys.
 
-- Schema declarations with YDB column helpers, primary keys, unique constraints, secondary and vector indexes, table options, TTL, and column families.
-- SELECT builders with joins, CTEs, set operators, `WITHOUT`, `FLATTEN`, `SAMPLE`, `TABLESAMPLE`, `MATCH_RECOGNIZE`, window helpers, and YDB optimizer hints.
-- Mutation helpers for `insert`, `upsert`, `replace`, `update`, `batchUpdate`, `delete`, and `batchDelete`.
-- `db.query.*` relations API using Drizzle relation metadata.
-- `YdbDriver`, prepared queries, raw YQL helpers, and transaction support through the database object.
-- DDL helpers and `migrate()` with migration history, lock table, and recovery options.
-- Typed YDB query errors for unique constraints, authentication, cancellation, timeouts, unavailable/overloaded services, and retryable failures.
-
-## Type Mapping Notes
-
-Most scalar YDB values map directly to JavaScript primitives:
-
-| YDB family                                            | JavaScript / TypeScript value |
-| ----------------------------------------------------- | ----------------------------- |
-| `Bool`                                                | `boolean`                     |
-| `Int8`..`Int32`, `Uint8`..`Uint32`, `Float`, `Double` | `number`                      |
-| `Int64`, `Uint64`                                     | `bigint`                      |
-| `Utf8`, `Uuid`                                        | `string`                      |
-| `String`, `Yson`                                      | `Uint8Array`                  |
-| `Date`, `Datetime`, `Timestamp` and 64-bit variants   | `Date`                        |
-| `Json`, `JsonDocument`                                | typed JSON value              |
-
-Use `bytes()` for binary YDB `String`; use `text()` for human-readable UTF-8 text.
-
-## Migrations In CI/CD
-
-Run migrations as a single deployment step before application instances start serving traffic. Enable the YDB lock table so parallel deploy jobs do not apply the same migration concurrently.
+### Schema and Composite Primary Keys
 
 ```ts
+import { integer, primaryKey, text, uint64, ydbTable } from '@ydbjs/drizzle-adapter/schema'
+import { xxHash } from '@ydbjs/drizzle-adapter/sql'
+
+let articles = ydbTable(
+  'articles',
+  {
+    hash: uint64('hash').notNull(),
+    slug: text('slug').notNull(),
+    title: text('title').notNull(),
+  },
+  (t) => [primaryKey(t.hash, t.slug)]
+)
+
+await db.insert(articles).values({
+  hash: xxHash('intro'),
+  slug: 'intro',
+  title: 'Hello, YDB',
+})
+```
+
+### Transactions
+
+```ts
+await db.transaction(
+  async (tx) => {
+    await tx
+      .insert(users)
+      .values({
+        /* ... */
+      })
+      .execute()
+    await tx
+      .update(users)
+      .set({
+        /* ... */
+      })
+      .where(/* ... */)
+      .execute()
+  },
+  { isolationLevel: 'serializableReadWrite' }
+)
+```
+
+Transactions are not nestable through the adapter — open one boundary at the top of the unit of work and pass `tx` down. Supported isolations are `serializableReadWrite` and `snapshotReadOnly` (`snapshotReadOnly` is read-only by definition; the adapter rejects mutations under it).
+
+#### When to use `idempotent: true`
+
+`idempotent: true` opts the transaction into the `@ydbjs/retry` policy: on a retryable YDB failure the **entire callback re-runs from scratch**, not just the failed statement. Set it only when re-running the whole callback is safe.
+
+```ts
+// Safe — only YDB mutations inside the callback
+await db.transaction(
+  async (tx) => {
+    await tx
+      .insert(events)
+      .values({
+        /* ... */
+      })
+      .execute()
+  },
+  { isolationLevel: 'serializableReadWrite', idempotent: true }
+)
+```
+
+```ts
+// UNSAFE — the Stripe charge will fire twice on retry
+await db.transaction(
+  async (tx) => {
+    await stripe.charges.create({
+      /* ... */
+    }) // external side effect!
+    await tx
+      .insert(payments)
+      .values({
+        /* ... */
+      })
+      .execute()
+  },
+  { idempotent: true } // ← don't do this
+)
+```
+
+When in doubt, leave `idempotent` unset and handle the retryable error in your own code.
+
+### YQL Helpers
+
+```ts
+import { sql } from 'drizzle-orm'
+import {
+  currentUtcTimestamp,
+  knnCosineDistance,
+  maxOf,
+  numericHash,
+  randomUuid,
+  xxHash,
+} from '@ydbjs/drizzle-adapter/sql'
+import { vectorIndexView } from '@ydbjs/drizzle-adapter/schema'
+
+await db
+  .insert(events)
+  .values({
+    hash: numericHash(eventId),
+    id: eventId,
+    traceId: randomUuid(events.id),
+    createdAt: currentUtcTimestamp(),
+  })
+  .execute()
+
+let similar = await db
+  .select({
+    id: docs.id,
+    distance: knnCosineDistance(docs.embedding, sql`$target`),
+  })
+  .from(docs)
+  .view(vectorIndexView(docs, 'docs_emb_idx'))
+  .orderBy(sql`distance ASC`)
+  .limit(10)
+```
+
+`random*` helpers require at least one cache key — without it YDB returns the same value for every row. Pass any column reference or expression that varies per row.
+
+### Migrations
+
+```ts
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
+
 await migrate(db, {
   migrationsFolder: './drizzle',
   migrationLock: {
@@ -100,46 +235,25 @@ await migrate(db, {
 })
 ```
 
-In CI, run the live test project against a real YDB service:
+`migrate()` also accepts an inline `migrations: [...]` array (no folder) for programmatic schemas. DDL builders such as `buildCreateTableSql`, `buildAlterTableSql`, and `buildAddIndexSql` are exported from the same entry for tooling that needs to render statements without running them.
 
-```sh
-npm run build -- --filter=@ydbjs/drizzle-adapter
-npm run attw -- --filter=@ydbjs/drizzle-adapter
-npm run test:live --workspace=@ydbjs/drizzle-adapter
-```
+## Type Mapping
 
-## Limitations
+| YDB family                                            | JavaScript / TypeScript value |
+| ----------------------------------------------------- | ----------------------------- |
+| `Bool`                                                | `boolean`                     |
+| `Int8`..`Int32`, `Uint8`..`Uint32`, `Float`, `Double` | `number`                      |
+| `Int64`, `Uint64`                                     | `bigint`                      |
+| `Utf8`, `Uuid`                                        | `string`                      |
+| `String`, `Yson`                                      | `Uint8Array`                  |
+| `Date`, `Datetime`, `Timestamp` and 64-bit variants   | `Date`                        |
+| `Json`, `JsonDocument`                                | typed JSON value              |
 
-- The package follows the SDK runtime baseline: ESM-only, Node.js 20.19+, and no CommonJS build.
-- YDB transactions are not nestable through the adapter. Use one `db.transaction()` boundary and pass `tx` down.
-- Supported isolation options are YDB `serializableReadWrite` and `snapshotReadOnly`.
-- `references()` metadata is for Drizzle relations. YDB does not enforce native foreign keys.
-- Unique indexes must be created with `CREATE TABLE`; adding a unique index to an existing table is rejected by the DDL builder.
-- `replace()` is a full-row replacement by primary key. Prefer `upsert()` or `update()` for partial changes.
-- Query builders and DDL helpers escape identifiers and bind values. Raw surfaces such as `sql.raw()`, inline migration `sql`, `rawTableOption()`, view query text, ACL raw permissions, and transfer `using` text intentionally trust caller-provided YQL.
-
-## Development Checks
-
-From the SDK repository root:
-
-```sh
-npm run build -- --filter=@ydbjs/drizzle-adapter
-npm run attw -- --filter=@ydbjs/drizzle-adapter
-npm run check:surface --workspace=@ydbjs/drizzle-adapter
-npm run test --workspace=@ydbjs/drizzle-adapter -- --project uni
-```
-
-Integration tests require the SDK YDB test setup:
-
-```sh
-npm run test:live --workspace=@ydbjs/drizzle-adapter
-```
-
-The root CI workflow runs the SDK test suite on pull requests with a Docker YDB service, so the adapter integration project is exercised together with the rest of the SDK.
+Use `bytes()` for binary `String`, `text()` for `Utf8`.
 
 ## Error Handling
 
-Execution failures are wrapped in Drizzle query errors with YDB-specific subclasses when the status can be classified:
+Failures are wrapped in Drizzle's `DrizzleQueryError` with YDB-specific subclasses when the status maps cleanly:
 
 - `YdbUniqueConstraintViolationError`
 - `YdbAuthenticationError`
@@ -149,14 +263,36 @@ Execution failures are wrapped in Drizzle query errors with YDB-specific subclas
 - `YdbOverloadedQueryError`
 - `YdbRetryableQueryError`
 
-Mapped errors expose non-enumerable `kind`, `retryable`, `statusCode`, and original YDB diagnostic fields such as `code`, `status`, and `issues` when present.
+Mapped errors carry non-enumerable `kind`, `retryable`, `statusCode`, and the original YDB diagnostic fields (`code`, `status`, `issues`) when present.
 
-## Release Gates
+## Limitations
 
-Before a release PR is accepted, the SDK CI workflow must pass:
+- ESM-only; Node.js 20.19+; no CommonJS build
+- Transactions are not nestable through the adapter — use one boundary per unit of work
+- `references()` is metadata for Drizzle relations; YDB does not enforce foreign keys
+- Unique indexes must be created with `CREATE TABLE`; adding one to an existing table is rejected by the DDL builder
+- `replace()` is a full-row replacement by primary key — use `upsert()` or `update()` for partial changes
+- `sql.raw()`, inline migration `sql`, `rawTableOption()`, view query text, ACL raw permissions, and transfer `using` text intentionally trust caller-provided YQL
 
-- root build and type packaging checks: `npm run build` and `npm run attw`;
-- adapter package surface smoke test: `npm run check:surface --workspace=@ydbjs/drizzle-adapter`;
-- adapter unit and live tests through the root test suite, including Docker-backed YDB integration tests.
+## Development
 
-The repository release workflow stays shared with the SDK and is not customized by the adapter package.
+```sh
+npm run build --workspace=@ydbjs/drizzle-adapter
+npm run test:unit --workspace=@ydbjs/drizzle-adapter
+npm run test:int --workspace=@ydbjs/drizzle-adapter   # requires Docker for ydbplatform/local-ydb
+npm run attw --workspace=@ydbjs/drizzle-adapter
+npm run check:surface --workspace=@ydbjs/drizzle-adapter
+```
+
+The root CI workflow runs the same suite against a Docker-backed YDB on every pull request.
+
+## License
+
+This project is licensed under the [Apache 2.0 License](../../LICENSE).
+
+## Links
+
+- [YDB Documentation](https://ydb.tech)
+- [Drizzle ORM](https://orm.drizzle.team/)
+- [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
+- [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)
