@@ -17,14 +17,14 @@ function toQuery(builder: { getSQL(): any }) {
 	return dialect.sqlToQuery(builder.getSQL())
 }
 
-test('delete sql', () => {
+test('generates delete sql', () => {
 	let query = toQuery(new YdbDeleteBuilder(users, session).where(eq(users.id, 7)))
 
 	assert.equal(query.sql, 'delete from `users` where `users`.`id` = $p0')
 	assert.deepEqual(query.params, [7])
 })
 
-test('delete returning', () => {
+test('appends returning clause to delete', () => {
 	let query = toQuery(
 		new YdbDeleteBuilder(users, session)
 			.where(eq(users.id, 7))
@@ -35,7 +35,7 @@ test('delete returning', () => {
 	assert.deepEqual(query.params, [7])
 })
 
-test('delete on select sql', () => {
+test('generates delete on … select sql', () => {
 	let keyedUsers = ydbTable('keyed_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),
@@ -61,7 +61,7 @@ test('delete on select sql', () => {
 	assert.deepEqual(query.params, [1])
 })
 
-test('delete on validates target columns and primary key', () => {
+test('validates delete-on target columns and primary key', () => {
 	let keyedUsers = ydbTable('keyed_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),
@@ -121,7 +121,7 @@ test('delete on validates target columns and primary key', () => {
 	)
 })
 
-test('insert defaults', () => {
+test('applies default values to insert', () => {
 	let query = toQuery(new YdbInsertBuilder(users, session).values({ id: 1, name: 'Pinkie Pie' }))
 
 	assert.equal(
@@ -131,7 +131,7 @@ test('insert defaults', () => {
 	assert.deepEqual(query.params, [1, 'Pinkie Pie', 100, 200])
 })
 
-test('insert order', () => {
+test('preserves declared column order on insert', () => {
 	let query = toQuery(
 		new YdbInsertBuilder(users, session).values([
 			{ id: 1, name: 'Twilight Sparkle', createdAt: 10, updatedAt: 11 },
@@ -146,7 +146,7 @@ test('insert order', () => {
 	assert.deepEqual(query.params, [1, 'Twilight Sparkle', 10, 11, 2, 'Rainbow Dash', 100, 22])
 })
 
-test('insert rejects unknown', () => {
+test('rejects unknown fields on insert', () => {
 	assert.throws(
 		() =>
 			toQuery(
@@ -160,7 +160,7 @@ test('insert rejects unknown', () => {
 	)
 })
 
-test('insert returning', () => {
+test('appends returning clause to insert', () => {
 	let allColumns = toQuery(
 		new YdbInsertBuilder(users, session).values({ id: 1, name: 'Pinkie Pie' }).returning()
 	)
@@ -184,7 +184,7 @@ test('insert returning', () => {
 	assert.deepEqual(selectedColumns.params, [2, 'Rarity', 100, 200])
 })
 
-test('native upsert values use provided columns', () => {
+test('restricts native upsert values to provided columns', () => {
 	let query = toQuery(
 		new YdbUpsertBuilder(users, session)
 			.values({ id: 1, name: 'Starlight' })
@@ -198,7 +198,7 @@ test('native upsert values use provided columns', () => {
 	assert.deepEqual(query.params, [1, 'Starlight'])
 })
 
-test('native upsert rejects inconsistent value columns', () => {
+test('rejects inconsistent value columns in native upsert', () => {
 	assert.throws(
 		() =>
 			toQuery(
@@ -211,7 +211,7 @@ test('native upsert rejects inconsistent value columns', () => {
 	)
 })
 
-test('native replace values', () => {
+test('generates native replace values', () => {
 	let query = toQuery(new YdbReplaceBuilder(users, session).values({ id: 1, name: 'Fluttershy' }))
 
 	assert.equal(
@@ -221,7 +221,7 @@ test('native replace values', () => {
 	assert.deepEqual(query.params, [1, 'Fluttershy', 100, 200])
 })
 
-test('native replace returning is explicitly unsupported', () => {
+test('rejects returning clause on native replace', () => {
 	assert.throws(
 		() =>
 			new YdbReplaceBuilder(users, session).values({ id: 1, name: 'Fluttershy' }).returning(),
@@ -229,7 +229,7 @@ test('native replace returning is explicitly unsupported', () => {
 	)
 })
 
-test('update onUpdate', () => {
+test('applies onUpdate hooks during update', () => {
 	let query = toQuery(
 		new YdbUpdateBuilder(users, session).set({ name: 'Fluttershy' }).where(eq(users.id, 5))
 	)
@@ -241,7 +241,7 @@ test('update onUpdate', () => {
 	assert.deepEqual(query.params, ['Fluttershy', 200, 5])
 })
 
-test('update returning', () => {
+test('appends returning clause to update', () => {
 	let query = toQuery(
 		new YdbUpdateBuilder(users, session)
 			.set({ name: 'Fluttershy' })
@@ -256,7 +256,7 @@ test('update returning', () => {
 	assert.deepEqual(query.params, ['Fluttershy', 200, 5])
 })
 
-test('update on select sql', () => {
+test('generates update on … select sql', () => {
 	let keyedUsers = ydbTable('keyed_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),
@@ -283,7 +283,7 @@ test('update on select sql', () => {
 	assert.deepEqual(query.params, ['updated', 1])
 })
 
-test('update on validates target columns and primary key', () => {
+test('validates update-on target columns and primary key', () => {
 	let keyedUsers = ydbTable('keyed_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),
@@ -330,14 +330,14 @@ test('update on validates target columns and primary key', () => {
 	)
 })
 
-test('update rejects unknown', () => {
+test('rejects unknown fields on update', () => {
 	assert.throws(
 		() => toQuery(new YdbUpdateBuilder(users, session).set({ nope: true } as any)),
 		/Unknown column "nope" in update\(\)/
 	)
 })
 
-test('update rejects empty', () => {
+test('rejects empty update sets', () => {
 	let tableWithoutUpdateHooks = ydbTable('plain_users', {
 		id: integer('id').notNull(),
 		name: text('name').notNull(),
@@ -349,7 +349,7 @@ test('update rejects empty', () => {
 	)
 })
 
-test('batch update and delete sql', () => {
+test('generates batch update and delete sql', () => {
 	let updateQuery = toQuery(
 		new YdbBatchUpdateBuilder(users, session).set({ name: 'Applejack' }).where(eq(users.id, 1))
 	)
@@ -364,7 +364,7 @@ test('batch update and delete sql', () => {
 	assert.deepEqual(deleteQuery.params, [2])
 })
 
-test('batch update and delete reject unsupported mutation clauses', () => {
+test('rejects unsupported clauses on batch update and delete', () => {
 	assert.throws(() => new YdbBatchUpdateBuilder(users, session).returning(), /not supported/)
 	assert.throws(() => new YdbBatchUpdateBuilder(users, session).on(), /not supported/)
 	assert.throws(() => new YdbBatchDeleteBuilder(users, session).returning(), /not supported/)

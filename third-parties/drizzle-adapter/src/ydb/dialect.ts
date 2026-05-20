@@ -1,4 +1,4 @@
-// eslint-disable no-await-in-loop
+/* oxlint-disable no-await-in-loop -- migrate() applies statements sequentially and polls the lock with backoff */
 import * as crypto from 'node:crypto'
 import {
 	aliasedTable,
@@ -140,10 +140,10 @@ interface MigrationLockHandle {
 	release(): Promise<void>
 }
 
-const defaultMigrationLockLeaseMs = 10 * 60 * 1000
-const defaultMigrationLockAcquireTimeoutMs = 60 * 1000
-const defaultMigrationLockRetryIntervalMs = 1000
-const defaultMigrationStaleRunningAfterMs = 60 * 60 * 1000
+let defaultMigrationLockLeaseMs = 10 * 60 * 1000
+let defaultMigrationLockAcquireTimeoutMs = 60 * 1000
+let defaultMigrationLockRetryIntervalMs = 1000
+let defaultMigrationStaleRunningAfterMs = 60 * 60 * 1000
 
 function isMigrationTransactionalSession(
 	session: MigrationSession
@@ -173,12 +173,12 @@ function toOptionalNumber(value: unknown): number | undefined {
 		return undefined
 	}
 
-	const numberValue = typeof value === 'bigint' ? Number(value) : Number(value)
+	let numberValue = typeof value === 'bigint' ? Number(value) : Number(value)
 	return Number.isFinite(numberValue) ? numberValue : undefined
 }
 
 function normalizeMigrationHistoryRow(row: unknown[]): NormalizedMigrationHistoryRow {
-	const status =
+	let status: YdbMigrationStatus =
 		row[3] === 'running' || row[3] === 'failed' || row[3] === 'applied' ? row[3] : 'applied'
 
 	return {
@@ -206,7 +206,7 @@ function normalizePositiveNumber(value: unknown, fallback: number): number {
 function normalizeMigrationLockConfig(
 	config: YdbDialectMigrationConfig
 ): NormalizedMigrationLockConfig {
-	const lockConfig = typeof config.migrationLock === 'object' ? config.migrationLock : {}
+	let lockConfig = typeof config.migrationLock === 'object' ? config.migrationLock : {}
 
 	return {
 		key: lockConfig.key ?? 'migrate',
@@ -228,8 +228,8 @@ function shouldRetryMigration(
 	now: number,
 	config: YdbDialectMigrationConfig
 ): boolean {
-	const recovery = config.migrationRecovery ?? {}
-	const mode = recovery.mode ?? 'fail'
+	let recovery = config.migrationRecovery ?? {}
+	let mode = recovery.mode ?? 'fail'
 	if (mode !== 'retry') {
 		return false
 	}
@@ -238,7 +238,7 @@ function shouldRetryMigration(
 		return true
 	}
 
-	const staleAfterMs = normalizePositiveNumber(
+	let staleAfterMs = normalizePositiveNumber(
 		recovery.staleRunningAfterMs,
 		defaultMigrationStaleRunningAfterMs
 	)
@@ -269,11 +269,11 @@ function assertMigrationRecoverable(
 		)
 	}
 
-	const staleAfterMs = normalizePositiveNumber(
+	let staleAfterMs = normalizePositiveNumber(
 		config.migrationRecovery?.staleRunningAfterMs,
 		defaultMigrationStaleRunningAfterMs
 	)
-	const age = row.startedAt === undefined ? 'unknown' : `${now - row.startedAt}ms`
+	let age = row.startedAt === undefined ? 'unknown' : `${now - row.startedAt}ms`
 	throw new Error(
 		`YDB migration "${row.name}" (${row.hash}) is still marked as running (age: ${age}, owner: ${row.ownerId ?? 'unknown'}). ` +
 			`It is treated as active until it is older than ${staleAfterMs}ms; use migrationRecovery.mode = "retry" only after verifying the previous run is dead.`
@@ -303,7 +303,7 @@ async function ensureMigrationHistoryTable(
 		}
 	}
 
-	for (const statement of buildMigrationHistoryMetadataColumnSql(config)) {
+	for (let statement of buildMigrationHistoryMetadataColumnSql(config)) {
 		try {
 			await session.execute(yql.raw(statement))
 		} catch (error) {
@@ -324,21 +324,21 @@ async function acquireMigrationLock(
 		)
 	}
 
-	const lockConfig = normalizeMigrationLockConfig(config)
-	const deadline = Date.now() + lockConfig.acquireTimeoutMs
+	let lockConfig = normalizeMigrationLockConfig(config)
+	let deadline = Date.now() + lockConfig.acquireTimeoutMs
 	let lastError: unknown
 
 	while (Date.now() <= deadline) {
-		const now = Date.now()
+		let now = Date.now()
 
 		try {
-			const acquired = await session.transaction(
+			let acquired = await session.transaction(
 				async (tx) => {
-					const rows = await tx.values<[string, number | string]>(
+					let rows = await tx.values<[string, number | string]>(
 						yql.raw(buildMigrationLockSelectSql(config, lockConfig.key))
 					)
-					const [ownerId, expiresAtRaw] = rows[0] ?? []
-					const expiresAt = Number(expiresAtRaw ?? 0)
+					let [ownerId, expiresAtRaw] = rows[0] ?? []
+					let expiresAt = Number(expiresAtRaw ?? 0)
 
 					if (ownerId && ownerId !== lockConfig.ownerId && expiresAt > now) {
 						return false
@@ -364,14 +364,14 @@ async function acquireMigrationLock(
 			if (acquired) {
 				let heartbeatError: unknown
 				let heartbeatInFlight = false
-				const heartbeatEveryMs = Math.max(1000, Math.floor(lockConfig.leaseMs / 3))
-				const heartbeat = setInterval(() => {
+				let heartbeatEveryMs = Math.max(1000, Math.floor(lockConfig.leaseMs / 3))
+				let heartbeat = setInterval(() => {
 					if (heartbeatInFlight) {
 						return
 					}
 
 					heartbeatInFlight = true
-					const heartbeatAt = Date.now()
+					let heartbeatAt = Date.now()
 					void session
 						.execute(
 							yql.raw(
@@ -419,7 +419,7 @@ async function acquireMigrationLock(
 			lastError = error
 		}
 
-		const remainingMs = deadline - Date.now()
+		let remainingMs = deadline - Date.now()
 		if (remainingMs <= 0) {
 			break
 		}
@@ -435,10 +435,10 @@ async function acquireMigrationLock(
 
 export class YdbDialect {
 	static readonly [entityKind] = 'YdbDialect'
-	private readonly casing: CasingCache
+	readonly #casing: CasingCache
 
 	constructor(config: YdbDialectConfig = {}) {
-		this.casing = new CasingCache(config.casing)
+		this.#casing = new CasingCache(config.casing)
 	}
 
 	escapeName(name: string): string {
@@ -454,7 +454,7 @@ export class YdbDialect {
 	}
 
 	prepareTyping(encoder?: DriverValueEncoder<unknown, unknown>): QueryTypingsValue {
-		const sqlType =
+		let sqlType =
 			typeof (encoder as unknown as { getSQLType?: () => string } | undefined)?.getSQLType ===
 			'function'
 				? (encoder as unknown as { getSQLType(): string }).getSQLType()
@@ -493,8 +493,8 @@ export class YdbDialect {
 			return undefined
 		}
 
-		const withSqlChunks: SQL[] = []
-		for (const query of queries) {
+		let withSqlChunks: SQL[] = []
+		for (let query of queries) {
 			withSqlChunks.push(yql`${yql.raw(yqlBindingName(query._.alias))} = (${query._.sql}); `)
 		}
 
@@ -561,31 +561,31 @@ export class YdbDialect {
 	}
 
 	buildSelectQuery(config: YdbSelectConfig) {
-		const withSql = this.buildWithCTE(config.withList)
-		const query = buildSelectQuery(config)
+		let withSql = this.buildWithCTE(config.withList)
+		let query = buildSelectQuery(config)
 		return withSql ? yql`${withSql}${query}` : query
 	}
 
 	buildInsertQuery(config: YdbInsertConfig): SQL {
-		const withSql = this.buildWithCTE(config.withList)
-		const columnEntries = config.columnEntries ?? getInsertColumnEntries(config.table)
+		let withSql = this.buildWithCTE(config.withList)
+		let columnEntries = config.columnEntries ?? getInsertColumnEntries(config.table)
 		if (columnEntries.length === 0) {
 			throw new Error('Insertable columns are missing')
 		}
 
-		const commandName = config.command ?? 'insert'
-		const commandLabel = commandName.charAt(0).toUpperCase() + commandName.slice(1)
-		const insertOrder = yql`(${yql.join(
+		let commandName = config.command ?? 'insert'
+		let commandLabel = commandName.charAt(0).toUpperCase() + commandName.slice(1)
+		let insertOrder = yql`(${yql.join(
 			columnEntries.map(([, column]) => yql.identifier(column.name)),
 			yql`, `
 		)})`
-		const command = yql.raw(commandName)
-		const returningSql = config.returning
+		let command = yql.raw(commandName)
+		let returningSql = config.returning
 			? yql` returning ${this.buildReturningSelection(config.returning)}`
 			: undefined
 
 		if (config.select) {
-			const selectQuery = is(config.values, SQL)
+			let selectQuery = is(config.values, SQL)
 				? config.values
 				: (config.values as { getSQL(): SQL }).getSQL()
 			return yql`${withSql}${command} into ${config.table} ${insertOrder} ${selectQuery}${returningSql}`
@@ -599,11 +599,11 @@ export class YdbDialect {
 			throw new Error(`${commandLabel} values are empty`)
 		}
 
-		for (const row of config.values) {
+		for (let row of config.values) {
 			validateTableColumnKeys(config.table, row, commandName)
 		}
 
-		const valuesSql = config.values.map(
+		let valuesSql = config.values.map(
 			(row) =>
 				yql`(${yql.join(
 					columnEntries.map(
@@ -617,9 +617,9 @@ export class YdbDialect {
 	}
 
 	buildUpdateSet(table: YdbUpdateConfig['table'], set: NonNullable<YdbUpdateConfig['set']>): SQL {
-		const columns = getTableColumns(table)
-		const setEntries = Object.entries(columns).flatMap(([key, column]) => {
-			const value = resolveUpdateValue(column, set[key])
+		let columns = getTableColumns(table)
+		let setEntries = Object.entries(columns).flatMap(([key, column]) => {
+			let value = resolveUpdateValue(column, set[key])
 			if (value === undefined) {
 				return []
 			}
@@ -635,11 +635,11 @@ export class YdbDialect {
 	}
 
 	buildUpdateQuery(config: YdbUpdateConfig): SQL {
-		const withSql = this.buildWithCTE(config.withList)
-		const returningSql = config.returning
+		let withSql = this.buildWithCTE(config.withList)
+		let returningSql = config.returning
 			? yql` returning ${this.buildReturningSelection(config.returning)}`
 			: undefined
-		const updateKeyword = config.batch ? yql`batch update` : yql`update`
+		let updateKeyword = config.batch ? yql`batch update` : yql`update`
 
 		if (config.batch && (config.on || returningSql || withSql)) {
 			throw new Error('YDB BATCH UPDATE cannot use WITH, ON, or RETURNING')
@@ -653,19 +653,19 @@ export class YdbDialect {
 			throw new Error('Update values are missing')
 		}
 
-		const set = config.set
-		const setSql = this.buildUpdateSet(config.table, set)
-		const whereSql = config.where ? yql` where ${config.where}` : undefined
+		let set = config.set
+		let setSql = this.buildUpdateSet(config.table, set)
+		let whereSql = config.where ? yql` where ${config.where}` : undefined
 
 		return yql`${withSql}${updateKeyword} ${this.buildFromTable(config.table)} set ${setSql}${whereSql}${returningSql}`
 	}
 
 	buildDeleteQuery(config: YdbDeleteConfig): SQL {
-		const withSql = this.buildWithCTE(config.withList)
-		const returningSql = config.returning
+		let withSql = this.buildWithCTE(config.withList)
+		let returningSql = config.returning
 			? yql` returning ${this.buildReturningSelection(config.returning)}`
 			: undefined
-		const deleteKeyword = config.batch ? yql`batch delete from` : yql`delete from`
+		let deleteKeyword = config.batch ? yql`batch delete from` : yql`delete from`
 
 		if (
 			config.batch &&
@@ -683,9 +683,9 @@ export class YdbDialect {
 		}
 
 		if (config.using && config.using.length > 0) {
-			const targetTable = config.table as Parameters<typeof getTableColumns>[0]
-			const columns = getTableColumns(targetTable)
-			const primaryColumns = getPrimaryColumnKeys(targetTable)
+			let targetTable = config.table as Parameters<typeof getTableColumns>[0]
+			let columns = getTableColumns(targetTable)
+			let primaryColumns = getPrimaryColumnKeys(targetTable)
 				.map((key) => columns[key])
 				.filter((column): column is NonNullable<typeof column> => column !== undefined)
 
@@ -693,25 +693,25 @@ export class YdbDialect {
 				throw new Error('YDB delete().using() requires at least one primary key column')
 			}
 
-			const usingJoinsSql = yql.join(
+			let usingJoinsSql = yql.join(
 				config.using.map((table) => yql` cross join ${this.buildFromTable(table)}`),
 				yql``
 			)
-			const innerWhereSql = config.where ? yql` where ${config.where}` : undefined
-			const keySelection = yql.join(
+			let innerWhereSql = config.where ? yql` where ${config.where}` : undefined
+			let keySelection = yql.join(
 				primaryColumns.map((column) => yql`${column}`),
 				yql`, `
 			)
-			const outerKey =
+			let outerKey =
 				primaryColumns.length === 1 ? yql`${primaryColumns[0]!}` : yql`(${keySelection})`
-			const innerKey = primaryColumns.length === 1 ? yql`${primaryColumns[0]!}` : keySelection
+			let innerKey = primaryColumns.length === 1 ? yql`${primaryColumns[0]!}` : keySelection
 
 			return yql`${withSql}delete from ${this.buildFromTable(config.table)} where ${outerKey} in (select ${innerKey} from ${this.buildFromTable(
 				config.table
 			)}${usingJoinsSql}${innerWhereSql})${returningSql}`
 		}
 
-		const whereSql = config.where ? yql` where ${config.where}` : undefined
+		let whereSql = config.where ? yql` where ${config.where}` : undefined
 
 		return yql`${withSql}${deleteKeyword} ${this.buildFromTable(config.table)}${whereSql}${returningSql}`
 	}
@@ -728,9 +728,9 @@ export class YdbDialect {
 		let limit: number | undefined
 		let offset: number | undefined
 		let selectedColumns: string[] = []
-		const selectedExtras: Array<{ tsKey: string; field: SQL.Aliased }> = []
+		let selectedExtras: Array<{ tsKey: string; field: SQL.Aliased }> = []
 
-		const aliasedColumns = Object.fromEntries(
+		let aliasedColumns = Object.fromEntries(
 			Object.entries(tableConfig.columns).map(([key, value]) => [
 				key,
 				aliasedTableColumn(value, tableAlias),
@@ -741,7 +741,7 @@ export class YdbDialect {
 			selectedColumns = Object.keys(tableConfig.columns)
 		} else {
 			if (config.where) {
-				const whereSql =
+				let whereSql =
 					typeof config.where === 'function'
 						? config.where(aliasedColumns, getOperators())
 						: config.where
@@ -750,7 +750,7 @@ export class YdbDialect {
 
 			if (config.columns) {
 				let isIncludeMode = false
-				for (const [field, value] of Object.entries(config.columns)) {
+				for (let [field, value] of Object.entries(config.columns)) {
 					if (value === undefined) {
 						continue
 					}
@@ -775,12 +775,12 @@ export class YdbDialect {
 			}
 
 			if (config.extras) {
-				const extras =
+				let extras =
 					typeof config.extras === 'function'
 						? config.extras(aliasedColumns as Record<string, Column>, { sql: yql })
 						: config.extras
 
-				for (const [tsKey, value] of Object.entries(extras)) {
+				for (let [tsKey, value] of Object.entries(extras)) {
 					selectedExtras.push({
 						tsKey,
 						field: mapColumnsInAliasedSQLToAlias(value, tableAlias) as SQL.Aliased,
@@ -811,7 +811,7 @@ export class YdbDialect {
 				limit = config.limit
 			}
 
-			const offsetValue = 'offset' in config ? config.offset : undefined
+			let offsetValue = 'offset' in config ? config.offset : undefined
 			if (offsetValue !== undefined) {
 				if (!isNumberValue(offsetValue)) {
 					throw new Error('YDB relational query offset must be a finite number')
@@ -840,9 +840,9 @@ export class YdbDialect {
 			})
 		}
 
-		const selection = [
+		let selection = [
 			...selectedColumns.map((field) => {
-				const column = tableConfig.columns[field]!
+				let column = tableConfig.columns[field]!
 				return {
 					dbKey: column.name,
 					tsKey: field,
@@ -863,7 +863,7 @@ export class YdbDialect {
 			})),
 		]
 
-		const result = this.buildSelectQuery({
+		let result = this.buildSelectQuery({
 			table: aliasedTable(table, tableAlias),
 			fields: {},
 			fieldsFlat: selection.map(({ field }) => ({
@@ -895,8 +895,8 @@ export class YdbDialect {
 		session: MigrationSessionInput,
 		config: string | YdbDialectMigrationConfig = {}
 	): Promise<void> {
-		const migrationConfig = typeof config === 'string' ? { migrationsTable: config } : config
-		const lockEnabled = migrationConfig.migrationLock !== false
+		let migrationConfig = typeof config === 'string' ? { migrationsTable: config } : config
+		let lockEnabled = migrationConfig.migrationLock !== false
 		let lock: MigrationLockHandle | undefined
 		let primaryError: unknown
 		let releaseError: unknown
@@ -909,7 +909,7 @@ export class YdbDialect {
 
 			await ensureMigrationHistoryTable(session, migrationConfig)
 
-			const appliedRows = await session.values<
+			let appliedRows = await session.values<
 				[
 					string,
 					number | string,
@@ -923,33 +923,33 @@ export class YdbDialect {
 					number | string | null,
 				]
 			>(yql.raw(buildMigrationHistorySelectSql(migrationConfig)))
-			const historyRows = appliedRows.map((row) => normalizeMigrationHistoryRow(row))
-			const historyByHash = new Map(historyRows.map((row) => [row.hash, row]))
-			const appliedHashes = new Set(
+			let historyRows = appliedRows.map((row) => normalizeMigrationHistoryRow(row))
+			let historyByHash = new Map(historyRows.map((row) => [row.hash, row]))
+			let appliedHashes = new Set(
 				historyRows.filter((row) => row.status === 'applied').map((row) => row.hash)
 			)
-			const orderedMigrations = [...migrations].sort(
+			let orderedMigrations = [...migrations].sort(
 				(left, right) => left.folderMillis - right.folderMillis
 			)
 
-			for (const migration of orderedMigrations) {
+			for (let migration of orderedMigrations) {
 				if (appliedHashes.has(migration.hash)) {
 					continue
 				}
 
-				const now = Date.now()
-				const existingRow = historyByHash.get(migration.hash)
+				let now = Date.now()
+				let existingRow = historyByHash.get(migration.hash)
 				if (existingRow) {
 					assertMigrationRecoverable(existingRow, now, migrationConfig)
 				}
 
 				lock?.assertHealthy()
 
-				const migrationName = deriveMigrationName(migration)
-				const statements = migration.sql
+				let migrationName = deriveMigrationName(migration)
+				let statements = migration.sql
 					.map((statement) => statement.trim())
 					.filter((statement) => statement !== '')
-				const startedAt = Date.now()
+				let startedAt = Date.now()
 				let statementsApplied = 0
 
 				await session.execute(
@@ -971,7 +971,7 @@ export class YdbDialect {
 				)
 
 				try {
-					for (const statement of statements) {
+					for (let statement of statements) {
 						lock?.assertHealthy()
 						await session.execute(yql.raw(statement))
 						statementsApplied += 1
@@ -994,7 +994,7 @@ export class YdbDialect {
 						)
 					}
 
-					const finishedAt = Date.now()
+					let finishedAt = Date.now()
 					await session.execute(
 						yql.raw(
 							buildMigrationHistoryInsertSql(
@@ -1027,8 +1027,8 @@ export class YdbDialect {
 						statementsApplied,
 					})
 				} catch (error) {
-					const finishedAt = Date.now()
-					const message = getErrorMessage(error)
+					let finishedAt = Date.now()
+					let message = getErrorMessage(error)
 					await session.execute(
 						yql.raw(
 							buildMigrationHistoryInsertSql(
@@ -1078,7 +1078,7 @@ export class YdbDialect {
 
 	sqlToQuery(sqlValue: SQL, invokeSource?: 'indexes'): QueryWithTypings {
 		return sqlValue.toQuery({
-			casing: this.casing,
+			casing: this.#casing,
 			escapeName: this.escapeName,
 			escapeParam: this.escapeParam,
 			escapeString: this.escapeString,

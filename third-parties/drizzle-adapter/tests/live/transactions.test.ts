@@ -7,7 +7,7 @@ import { users, usersTableName } from './helpers/schema.ts'
 
 let live = createLiveContext()
 
-test('transaction', async (t) => {
+test('runs transactions against live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

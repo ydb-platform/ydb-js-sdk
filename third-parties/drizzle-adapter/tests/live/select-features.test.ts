@@ -6,7 +6,7 @@ import { posts, postsTableName, users, usersTableName } from './helpers/schema.t
 
 let live = createLiveContext()
 
-test('advanced select clauses', async (t) => {
+test('runs advanced select clauses on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -92,7 +92,7 @@ test('advanced select clauses', async (t) => {
 	}
 })
 
-test('joins and set operators', async (t) => {
+test('runs joins and set operators on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

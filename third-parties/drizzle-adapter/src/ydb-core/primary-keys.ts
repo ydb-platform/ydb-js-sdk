@@ -4,9 +4,9 @@ import type { YdbColumn } from './columns/common.js'
 import type { YdbTable } from './table.js'
 
 function assertColumnsBelongToTable(table: YdbTable, columns: readonly YdbColumn[]): void {
-	const tableName = getTableName(table)
+	let tableName = getTableName(table)
 
-	for (const column of columns) {
+	for (let column of columns) {
 		if (column.table !== table) {
 			throw new Error(
 				`Primary key column "${column.name}" does not belong to table "${tableName}"`

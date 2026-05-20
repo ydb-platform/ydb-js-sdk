@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict'
 import { sql as yql } from 'drizzle-orm'
 import { YdbDialect } from '../../src/ydb/dialect.ts'
 
-test('dialect', () => {
+test('instantiates YdbDialect with default options', () => {
 	let dialect = new YdbDialect({ casing: 'snake_case' })
 
 	assert.equal(dialect.escapeName('pony`name'), '`pony``name`')

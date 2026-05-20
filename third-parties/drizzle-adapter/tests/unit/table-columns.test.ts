@@ -15,7 +15,7 @@ let typedTable = ydbTable('typed_table', {
 
 void typedTable
 
-test('table columns', () => {
+test('exposes declared columns on YDB tables', () => {
 	let table = ydbTable('ponies', {
 		id: uuid('id').notNull(),
 		price: integer('price').notNull(),
@@ -34,7 +34,7 @@ test('table columns', () => {
 	assert.equal(extraColumns.name, table.name)
 })
 
-test('table callback', () => {
+test('invokes the table extras callback with column refs', () => {
 	let callbackTable = ydbTable('mares', ({ integer: int, text: textType }) => ({
 		id: int('id').notNull(),
 		name: textType('name').notNull(),
@@ -49,7 +49,7 @@ test('table callback', () => {
 	assert.equal(callbackTable.name.name, 'name')
 })
 
-test('column builders', () => {
+test('provides column builders for YDB types', () => {
 	let firstRegistry = getYdbColumnBuilders()
 	let secondRegistry = getYdbColumnBuilders()
 	let callbackCalls: unknown[] = []
@@ -73,7 +73,7 @@ test('column builders', () => {
 	assert.equal(table.payload.name, 'payload')
 })
 
-test('column builder metadata', () => {
+test('attaches builder metadata to columns', () => {
 	let table = ydbTable('builder_columns', {
 		id: integer('id')
 			.notNull()
@@ -98,14 +98,14 @@ test('column builder metadata', () => {
 	assert.equal(plainColumn.mapFromDriverValue('Rarity'), 'Rarity')
 })
 
-test('generatedAlwaysAs is rejected for YDB columns', () => {
+test('rejects generatedAlwaysAs on YDB columns', () => {
 	assert.throws(
 		() => integer('id').generatedAlwaysAs(() => yql`1`),
 		/generatedAlwaysAs\(\) is not supported/u
 	)
 })
 
-test('custom columns', () => {
+test('supports custom column definitions', () => {
 	let uppercase = customType<{ data: string; driverData: string }>({
 		dataType() {
 			return 'Utf8'
@@ -138,7 +138,7 @@ test('custom columns', () => {
 	assert.equal(table.configured.mapToDriverValue('dash'), 'cfg:dash')
 })
 
-test('column unique metadata', () => {
+test('tracks unique metadata on columns', () => {
 	let users = ydbTable('constraint_users', {
 		id: integer('id').notNull().primaryKey(),
 		email: text('email').notNull().unique(),

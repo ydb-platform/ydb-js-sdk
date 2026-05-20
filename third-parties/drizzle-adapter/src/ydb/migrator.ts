@@ -44,7 +44,7 @@ function normalizeMigrations(config: YdbMigrateConfig): YdbNormalizedMigration[]
 }
 
 function getMigrationTableConfig(config: YdbMigrateConfig): YdbMigrationTableConfig {
-	const migrationConfig: YdbMigrationTableConfig = {}
+	let migrationConfig: YdbMigrationTableConfig = {}
 
 	if (config.migrationsTable !== undefined) {
 		migrationConfig.migrationsTable = config.migrationsTable
@@ -69,9 +69,9 @@ export async function migrate<TSchema extends Record<string, unknown>>(
 	db: YdbDatabase<TSchema, any>,
 	config: YdbMigrateConfig
 ): Promise<void> {
-	const session = db._.session
-	const migrationConfig = getMigrationTableConfig(config)
+	let session = db._.session
+	let migrationConfig = getMigrationTableConfig(config)
 
-	const dialect = new YdbDialect()
+	let dialect = new YdbDialect()
 	await dialect.migrate(normalizeMigrations(config), session, migrationConfig)
 }

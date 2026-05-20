@@ -59,7 +59,7 @@ function assertColumnsBelongToTable(
 	columns: readonly YdbColumn[],
 	kind: string
 ): void {
-	for (const column of columns) {
+	for (let column of columns) {
 		if (column.table !== table) {
 			throw new Error(`${kind} column "${column.name}" does not belong to table`)
 		}
@@ -73,12 +73,16 @@ export function rawTableOption(value: string): YdbRawTableOptionValue {
 export class YdbTableOptionsBuilder {
 	static readonly [entityKind] = 'YdbTableOptionsBuilder'
 
-	constructor(private readonly options: Readonly<Record<string, YdbTableOptionValue>>) {}
+	readonly #options: Readonly<Record<string, YdbTableOptionValue>>
+
+	constructor(options: Readonly<Record<string, YdbTableOptionValue>>) {
+		this.#options = options
+	}
 
 	build(table: YdbTable): YdbTableOptions {
 		return new YdbTableOptions({
 			table,
-			options: { ...this.options },
+			options: { ...this.#options },
 		})
 	}
 }
@@ -92,14 +96,18 @@ export class YdbTableOptions {
 export class YdbPartitioningBuilder {
 	static readonly [entityKind] = 'YdbPartitioningBuilder'
 
-	constructor(private readonly columns: [YdbColumn, ...YdbColumn[]]) {}
+	readonly #columns: [YdbColumn, ...YdbColumn[]]
+
+	constructor(columns: [YdbColumn, ...YdbColumn[]]) {
+		this.#columns = columns
+	}
 
 	build(table: YdbTable): YdbPartitioning {
-		assertColumnsBelongToTable(table, this.columns, 'Partitioning')
+		assertColumnsBelongToTable(table, this.#columns, 'Partitioning')
 		return new YdbPartitioning({
 			table,
 			type: 'hash',
-			columns: [...this.columns],
+			columns: [...this.#columns],
 		})
 	}
 }
@@ -113,23 +121,27 @@ export class YdbPartitioning {
 export class YdbTtlBuilder {
 	static readonly [entityKind] = 'YdbTtlBuilder'
 
-	constructor(
-		private readonly column: YdbColumn,
-		private readonly actions: readonly YdbTtlAction[],
-		private readonly unit?: YdbTtlUnit
-	) {}
+	readonly #column: YdbColumn
+	readonly #actions: readonly YdbTtlAction[]
+	readonly #unit: YdbTtlUnit | undefined
+
+	constructor(column: YdbColumn, actions: readonly YdbTtlAction[], unit?: YdbTtlUnit) {
+		this.#column = column
+		this.#actions = actions
+		this.#unit = unit
+	}
 
 	build(table: YdbTable): YdbTtl {
-		assertColumnsBelongToTable(table, [this.column], 'TTL')
-		if (this.actions.length === 0) {
+		assertColumnsBelongToTable(table, [this.#column], 'TTL')
+		if (this.#actions.length === 0) {
 			throw new Error('YDB TTL requires at least one action')
 		}
 
 		return new YdbTtl({
 			table,
-			column: this.column,
-			actions: [...this.actions],
-			unit: this.unit,
+			column: this.#column,
+			actions: [...this.#actions],
+			unit: this.#unit,
 		})
 	}
 }
@@ -143,25 +155,28 @@ export class YdbTtl {
 export class YdbColumnFamilyBuilder {
 	static readonly [entityKind] = 'YdbColumnFamilyBuilder'
 
-	private familyColumns: YdbColumn[] = []
+	#familyColumns: YdbColumn[] = []
 
-	constructor(
-		private readonly name: string,
-		private readonly options: YdbColumnFamilyOptions = {}
-	) {}
+	readonly #name: string
+	readonly #options: YdbColumnFamilyOptions
+
+	constructor(name: string, options: YdbColumnFamilyOptions = {}) {
+		this.#name = name
+		this.#options = options
+	}
 
 	columns(...columns: YdbColumn[]): this {
-		this.familyColumns = [...columns]
+		this.#familyColumns = [...columns]
 		return this
 	}
 
 	build(table: YdbTable): YdbColumnFamily {
-		assertColumnsBelongToTable(table, this.familyColumns, 'Column family')
+		assertColumnsBelongToTable(table, this.#familyColumns, 'Column family')
 		return new YdbColumnFamily({
 			table,
-			name: this.name,
-			options: { ...this.options },
-			columns: [...this.familyColumns],
+			name: this.#name,
+			options: { ...this.#options },
+			columns: [...this.#familyColumns],
 		})
 	}
 }
@@ -197,7 +212,7 @@ export function ttl(
 	intervalOrActions: string | [YdbTtlAction, ...YdbTtlAction[]],
 	options: { unit?: YdbTtlUnit } = {}
 ): YdbTtlBuilder {
-	const actions =
+	let actions =
 		typeof intervalOrActions === 'string'
 			? [{ interval: intervalOrActions }]
 			: intervalOrActions

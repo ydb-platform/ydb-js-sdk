@@ -28,79 +28,88 @@ function getAllReturningFields(table: YdbTable): Record<string, unknown> {
 }
 
 export class YdbUpdateBuilder<TResult = unknown> extends QueryPromise<TResult> {
-	private valuesData: UpdateValues | undefined
-	private whereClause: SQLType | undefined
-	private onQuery: UpdateOnQuery | undefined
-	private returningFields: YdbSelectedFieldsOrdered | undefined
+	#valuesData: UpdateValues | undefined
+	#whereClause: SQLType | undefined
+	#onQuery: UpdateOnQuery | undefined
+	#returningFields: YdbSelectedFieldsOrdered | undefined
+
+	readonly #table: YdbTable
+	readonly #session: YdbSession
+	readonly #dialect: YdbDialect
+	readonly #withList: Subquery[]
 
 	constructor(
-		private readonly table: YdbTable,
-		private readonly session: YdbSession,
-		private readonly dialect = new YdbDialect(),
-		private readonly withList: Subquery[] = []
+		table: YdbTable,
+		session: YdbSession,
+		dialect = new YdbDialect(),
+		withList: Subquery[] = []
 	) {
 		super()
+		this.#table = table
+		this.#session = session
+		this.#dialect = dialect
+		this.#withList = withList
 	}
 
 	set(values: UpdateValues): this {
-		this.valuesData = values
-		this.onQuery = undefined
+		this.#valuesData = values
+		this.#onQuery = undefined
 		return this
 	}
 
 	where(where: SQLType | undefined): this {
-		if (this.onQuery) {
+		if (this.#onQuery) {
 			throw new Error('YDB update().on() does not support where()')
 		}
 
-		this.whereClause = where ?? undefined
+		this.#whereClause = where ?? undefined
 		return this
 	}
 
 	on(query: UpdateOnQuery | ((qb: YdbQueryBuilder) => UpdateOnQuery)): this {
-		const resolved =
-			typeof query === 'function' ? query(new YdbQueryBuilder(this.dialect)) : query
+		let resolved =
+			typeof query === 'function' ? query(new YdbQueryBuilder(this.#dialect)) : query
 
 		if (!is(resolved, SQL)) {
-			validateSetBasedMutationSelection(this.table, resolved.getSelectedFields(), 'update')
+			validateSetBasedMutationSelection(this.#table, resolved.getSelectedFields(), 'update')
 		}
 
-		this.onQuery = resolved
-		this.valuesData = undefined
-		this.whereClause = undefined
+		this.#onQuery = resolved
+		this.#valuesData = undefined
+		this.#whereClause = undefined
 		return this
 	}
 
-	returning(fields: Record<string, unknown> = getAllReturningFields(this.table)): this {
-		const orderedFields = orderSelectedFields(fields)
+	returning(fields: Record<string, unknown> = getAllReturningFields(this.#table)): this {
+		let orderedFields = orderSelectedFields(fields)
 		if (orderedFields.length === 0) {
 			throw new Error('YDB returning() requires at least one field')
 		}
 
-		this.returningFields = orderedFields
+		this.#returningFields = orderedFields
 		return this
 	}
 
 	getSQL(): SQLType {
-		if (this.onQuery) {
-			const onSql = is(this.onQuery, SQL) ? this.onQuery : this.onQuery.getSQL()
-			return this.dialect.buildUpdateQuery({
-				table: this.table,
+		if (this.#onQuery) {
+			let onSql = is(this.#onQuery, SQL) ? this.#onQuery : this.#onQuery.getSQL()
+			return this.#dialect.buildUpdateQuery({
+				table: this.#table,
 				on: onSql,
-				withList: this.withList,
-				returning: this.returningFields,
+				withList: this.#withList,
+				returning: this.#returningFields,
 			})
 		}
 
-		if (!this.valuesData) {
+		if (!this.#valuesData) {
 			throw new Error('Update values are missing')
 		}
 
-		validateTableColumnKeys(this.table, this.valuesData, 'update')
+		validateTableColumnKeys(this.#table, this.#valuesData, 'update')
 
-		const columns = getTableColumns(this.table)
-		const setEntries = Object.entries(columns).flatMap(([key, column]) => {
-			const value = resolveUpdateValue(column, this.valuesData?.[key])
+		let columns = getTableColumns(this.#table)
+		let setEntries = Object.entries(columns).flatMap(([key, column]) => {
+			let value = resolveUpdateValue(column, this.#valuesData?.[key])
 			if (value === undefined) {
 				return []
 			}
@@ -112,26 +121,26 @@ export class YdbUpdateBuilder<TResult = unknown> extends QueryPromise<TResult> {
 			throw new Error('Update values are empty')
 		}
 
-		return this.dialect.buildUpdateQuery({
-			table: this.table,
-			set: this.valuesData,
-			where: this.whereClause,
-			withList: this.withList,
-			returning: this.returningFields,
+		return this.#dialect.buildUpdateQuery({
+			table: this.#table,
+			set: this.#valuesData,
+			where: this.#whereClause,
+			withList: this.#withList,
+			returning: this.#returningFields,
 		})
 	}
 
 	toSQL() {
-		const { typings: _typings, ...query } = this.dialect.sqlToQuery(this.getSQL())
+		let { typings: _typings, ...query } = this.#dialect.sqlToQuery(this.getSQL())
 		return query
 	}
 
 	prepare(name?: string) {
-		return this.session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
+		return this.#session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
 			this.getSQL(),
-			this.returningFields,
+			this.#returningFields,
 			name,
-			this.returningFields !== undefined
+			this.#returningFields !== undefined
 		)
 	}
 
@@ -141,24 +150,27 @@ export class YdbUpdateBuilder<TResult = unknown> extends QueryPromise<TResult> {
 }
 
 export class YdbBatchUpdateBuilder<TResult = unknown> extends QueryPromise<TResult> {
-	private valuesData: UpdateValues | undefined
-	private whereClause: SQLType | undefined
+	#valuesData: UpdateValues | undefined
+	#whereClause: SQLType | undefined
 
-	constructor(
-		private readonly table: YdbTable,
-		private readonly session: YdbSession,
-		private readonly dialect = new YdbDialect()
-	) {
+	readonly #table: YdbTable
+	readonly #session: YdbSession
+	readonly #dialect: YdbDialect
+
+	constructor(table: YdbTable, session: YdbSession, dialect = new YdbDialect()) {
 		super()
+		this.#table = table
+		this.#session = session
+		this.#dialect = dialect
 	}
 
 	set(values: UpdateValues): this {
-		this.valuesData = values
+		this.#valuesData = values
 		return this
 	}
 
 	where(where: SQLType | undefined): this {
-		this.whereClause = where ?? undefined
+		this.#whereClause = where ?? undefined
 		return this
 	}
 
@@ -171,27 +183,27 @@ export class YdbBatchUpdateBuilder<TResult = unknown> extends QueryPromise<TResu
 	}
 
 	getSQL(): SQLType {
-		if (!this.valuesData) {
+		if (!this.#valuesData) {
 			throw new Error('Update values are missing')
 		}
 
-		validateTableColumnKeys(this.table, this.valuesData, 'update')
+		validateTableColumnKeys(this.#table, this.#valuesData, 'update')
 
-		return this.dialect.buildUpdateQuery({
-			table: this.table,
-			set: this.valuesData,
-			where: this.whereClause,
+		return this.#dialect.buildUpdateQuery({
+			table: this.#table,
+			set: this.#valuesData,
+			where: this.#whereClause,
 			batch: true,
 		})
 	}
 
 	toSQL() {
-		const { typings: _typings, ...query } = this.dialect.sqlToQuery(this.getSQL())
+		let { typings: _typings, ...query } = this.#dialect.sqlToQuery(this.getSQL())
 		return query
 	}
 
 	prepare(name?: string) {
-		return this.session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
+		return this.#session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
 			this.getSQL(),
 			undefined,
 			name,

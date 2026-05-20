@@ -40,7 +40,7 @@ function toQuery(builder: { getSQL(): any }) {
 	return dialect.sqlToQuery(builder.getSQL())
 }
 
-test('select sql', () => {
+test('generates basic select sql', () => {
 	let query = toQuery(new YdbSelectBuilder(session).from(users).where(eq(users.id, 7)))
 
 	assert.equal(
@@ -50,14 +50,14 @@ test('select sql', () => {
 	assert.deepEqual(query.params, [7])
 })
 
-test('select without from sql', () => {
+test('generates select without from clause', () => {
 	let query = toQuery(new YdbSelectBuilder(session, { value: yql<number>`${1}` }))
 
 	assert.equal(query.sql, 'select $p0')
 	assert.deepEqual(query.params, [1])
 })
 
-test('select advanced clauses sql', () => {
+test('generates select with advanced clauses', () => {
 	let query = toQuery(
 		new YdbSelectBuilder(session)
 			.from(users)
@@ -76,7 +76,7 @@ test('select advanced clauses sql', () => {
 	assert.deepEqual(query.params, [1, 5, 2])
 })
 
-test('join sql', () => {
+test('generates joined select sql', () => {
 	let leftJoinQuery = toQuery(
 		new YdbSelectBuilder(session, { userId: users.id, postId: posts.id })
 			.from(users)
@@ -153,7 +153,7 @@ test('join sql', () => {
 	)
 })
 
-test('index view table source sql', () => {
+test('generates select sql with index view table source', () => {
 	let query = toQuery(
 		new YdbSelectBuilder(session, {
 			id: yql`${yql.identifier('u')}.${yql.identifier('id')}`,
@@ -408,7 +408,7 @@ test('YDB script helpers render PRAGMA, DECLARE, ACTION, COMMIT, and INTO RESULT
 	assert.equal(intoResultQuery.sql, 'select `users`.`id` from `users` INTO RESULT `Result name`;')
 })
 
-test('distinctOn and set operators sql', () => {
+test('generates distinctOn and set operator sql', () => {
 	let distinctOnQuery = toQuery(
 		new YdbSelectBuilder(session, { userId: posts.userId, title: posts.title })
 			.from(posts)

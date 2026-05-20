@@ -30,7 +30,7 @@ function findSelectionAlias(
 	fields: YdbSelectedFieldsOrdered,
 	selectionAliases: string[]
 ): string | undefined {
-	const foundIndex = fields.findIndex(({ path, field }) => {
+	let foundIndex = fields.findIndex(({ path, field }) => {
 		if (field === value) {
 			return true
 		}
@@ -64,7 +64,7 @@ function mapChunkToSelectionAlias(
 	}
 
 	if (is(chunk, Column) || is(chunk, SQL.Aliased)) {
-		const alias = findSelectionAlias(chunk, fields, selectionAliases)
+		let alias = findSelectionAlias(chunk, fields, selectionAliases)
 
 		if (!alias) {
 			throw new Error(`YDB ${context} can only reference selected fields`)
@@ -88,7 +88,7 @@ export function mapExpressionsToSelectionAliases(
 ): SQLWrapper[] {
 	return expressions.map((expression) => {
 		if (is(expression, Column) || is(expression, SQL.Aliased)) {
-			const alias = findSelectionAlias(expression, fields, selectionAliases)
+			let alias = findSelectionAlias(expression, fields, selectionAliases)
 
 			if (!alias) {
 				throw new Error(`YDB ${context} can only reference selected fields`)
@@ -114,11 +114,11 @@ export function buildSelection(fields: YdbSelectedFieldsOrdered, aliases?: strin
 		return yql.raw('*')
 	}
 
-	const selection = fields.map(({ field }, index) => {
-		const alias = aliases?.[index]
+	let selection = fields.map(({ field }, index) => {
+		let alias = aliases?.[index]
 
 		if (is(field, SQL.Aliased) && (field as any).isSelectionField) {
-			const base = yql.identifier(field.fieldAlias)
+			let base = yql.identifier(field.fieldAlias)
 			return alias ? yql`${base} as ${yql.identifier(alias)}` : base
 		}
 
@@ -154,7 +154,7 @@ export function buildReturningSelection(fields: YdbSelectedFieldsOrdered): SQL {
 		return yql.raw('*')
 	}
 
-	const selection = fields.map(({ field }) => {
+	let selection = fields.map(({ field }) => {
 		if (is(field, SQL.Aliased) && (field as any).isSelectionField) {
 			return yql.identifier(field.fieldAlias)
 		}
@@ -175,7 +175,7 @@ export function buildReturningSelection(fields: YdbSelectedFieldsOrdered): SQL {
 
 export function buildFromTable(table: unknown): SQLWrapper {
 	if (is(table, Subquery)) {
-		const alias = table._.alias
+		let alias = table._.alias
 
 		if (table._.isWith) {
 			return yql`${yql.raw(yqlBindingName(alias))} as ${yql.identifier(alias)}`
@@ -196,9 +196,9 @@ export function buildJoins(joins: YdbJoinConfig[] | undefined): SQL | undefined 
 		return undefined
 	}
 
-	const joinsSql = joins.map((join) => {
-		const onSql = join.on ? yql` on ${join.on}` : undefined
-		const joinKeyword = yql.raw(`${join.joinType} join`)
+	let joinsSql = joins.map((join) => {
+		let onSql = join.on ? yql` on ${join.on}` : undefined
+		let joinKeyword = yql.raw(`${join.joinType} join`)
 
 		if (is(join.table, Table) && (join.table as any)[(Table as any).Symbol.IsAlias]) {
 			return yql`${joinKeyword} ${yql.identifier((join.table as any)[(Table as any).Symbol.OriginalName])} ${yql.identifier((join.table as any)[(Table as any).Symbol.Name])}${onSql}`
@@ -268,7 +268,7 @@ function buildSample(sample: YdbSampleConfig | undefined): SQL | undefined {
 		return yql` sample ${typeof sample.ratio === 'number' ? yql`${sample.ratio}` : sample.ratio}`
 	}
 
-	const repeatable =
+	let repeatable =
 		sample.repeatable === undefined
 			? undefined
 			: yql` repeatable(${typeof sample.repeatable === 'number' ? yql`${sample.repeatable}` : sample.repeatable})`
@@ -302,41 +302,41 @@ function buildSimpleSelectQuery(
 		extraSelections?: SQL[]
 	}
 ): SQL {
-	const selection =
+	let selection =
 		config.without && config.without.length > 0
 			? buildSelectionWithout(config.without)
 			: buildSelection(config.fieldsFlat, config.selectionAliases)
-	const allSelections =
+	let allSelections =
 		config.extraSelections && config.extraSelections.length > 0
 			? yql`${selection}, ${yql.join(config.extraSelections, yql`, `)}`
 			: selection
-	const joinsSql = buildJoins(config.joins)
-	const whereSql = config.where ? yql` where ${config.where}` : undefined
-	const groupBySql =
+	let joinsSql = buildJoins(config.joins)
+	let whereSql = config.where ? yql` where ${config.where}` : undefined
+	let groupBySql =
 		config.groupBy && config.groupBy.length > 0
 			? yql` ${yql.raw(config.groupByCompact ? 'group compact by' : 'group by')} ${yql.join(
 					config.groupBy.map((value) => yql`${value}`),
 					yql`, `
 				)}`
 			: undefined
-	const havingSql = config.having ? yql` having ${config.having}` : undefined
-	const windowSql = buildWindows(config.windows)
-	const orderBySql = buildOrderBy(config.orderBy)
-	const assumeOrderBySql = buildAssumeOrderBy(config.assumeOrderBy)
-	const limitSql = buildLimit(config.limit)
-	const offsetSql = buildOffset(config.offset)
-	const intoResultSql = config.intoResult
+	let havingSql = config.having ? yql` having ${config.having}` : undefined
+	let windowSql = buildWindows(config.windows)
+	let orderBySql = buildOrderBy(config.orderBy)
+	let assumeOrderBySql = buildAssumeOrderBy(config.assumeOrderBy)
+	let limitSql = buildLimit(config.limit)
+	let offsetSql = buildOffset(config.offset)
+	let intoResultSql = config.intoResult
 		? yql` into result ${yql.identifier(config.intoResult)}`
 		: undefined
-	const uniqueDistinctSql =
+	let uniqueDistinctSql =
 		config.uniqueDistinctHints && config.uniqueDistinctHints.length > 0
 			? yql` ${renderUniqueDistinctHints(config.uniqueDistinctHints)}`
 			: undefined
-	const distinctSql = config.distinct ? yql` distinct` : undefined
-	const sampleSql = buildSample(config.sample)
-	const matchRecognizeSql = buildMatchRecognize(config.matchRecognize)
-	const flattenSql = buildFlatten(config.flatten)
-	const fromSql =
+	let distinctSql = config.distinct ? yql` distinct` : undefined
+	let sampleSql = buildSample(config.sample)
+	let matchRecognizeSql = buildMatchRecognize(config.matchRecognize)
+	let flattenSql = buildFlatten(config.flatten)
+	let fromSql =
 		config.table === undefined
 			? undefined
 			: yql` from ${buildFromTable(config.table)}${sampleSql}${matchRecognizeSql}${flattenSql}`
@@ -353,9 +353,9 @@ function buildDistinctOnQuery(
 		throw new Error('YDB distinctOn() requires at least one expression')
 	}
 
-	const distinctAlias = '__ydb_distinct_on'
-	const rowNumberAlias = '__ydb_row_number'
-	const rowNumberSelection = yql`row_number() over (
+	let distinctAlias = '__ydb_distinct_on'
+	let rowNumberAlias = '__ydb_row_number'
+	let rowNumberSelection = yql`row_number() over (
       partition by ${yql.join(
 			config.distinctOn.map((value) => yql`${value}`),
 			yql`, `
@@ -363,7 +363,7 @@ function buildDistinctOnQuery(
       ${buildOrderBy(config.orderBy)}
     ) as ${yql.identifier(rowNumberAlias)}`
 
-	const innerQuery = buildSimpleSelectQuery({
+	let innerQuery = buildSimpleSelectQuery({
 		table: config.table,
 		fieldsFlat,
 		joins: config.joins,
@@ -382,7 +382,7 @@ function buildDistinctOnQuery(
 		extraSelections: [rowNumberSelection],
 	})
 
-	const outerOrderBy =
+	let outerOrderBy =
 		config.orderBy && config.orderBy.length > 0
 			? mapExpressionsToSelectionAliases(
 					config.orderBy,
@@ -391,13 +391,13 @@ function buildDistinctOnQuery(
 					'distinctOn() orderBy()'
 				)
 			: undefined
-	const selection = yql.join(
+	let selection = yql.join(
 		selectionAliases.map((alias) => yql.identifier(alias)),
 		yql`, `
 	)
-	const rowNumberFilter = yql`${qualifyIdentifier(distinctAlias, rowNumberAlias)} = 1`
+	let rowNumberFilter = yql`${qualifyIdentifier(distinctAlias, rowNumberAlias)} = 1`
 
-	const intoResultSql = config.intoResult
+	let intoResultSql = config.intoResult
 		? yql` into result ${yql.identifier(config.intoResult)}`
 		: undefined
 
@@ -413,34 +413,34 @@ function buildEmulatedSetOperationQuery(
 	limit: number | undefined,
 	offset: number | undefined
 ): SQL {
-	const leftAlias = '__ydb_left'
-	const rightAlias = '__ydb_right'
-	const matchAlias = '__ydb_match'
-	const rightInputAlias = '__ydb_right_input'
-	const rightSelection = yql.join(
+	let leftAlias = '__ydb_left'
+	let rightAlias = '__ydb_right'
+	let matchAlias = '__ydb_match'
+	let rightInputAlias = '__ydb_right_input'
+	let rightSelection = yql.join(
 		selectionAliases.map(
 			(alias) => yql`${qualifyIdentifier(rightInputAlias, alias)} as ${yql.identifier(alias)}`
 		),
 		yql`, `
 	)
-	const rightComparable = yql`select ${rightSelection}, 1 as ${yql.identifier(matchAlias)} from (${rightSelect}) as ${yql.identifier(rightInputAlias)}`
-	const joinConditions = selectionAliases.map((alias) => {
-		const leftValue = qualifyIdentifier(leftAlias, alias)
-		const rightValue = qualifyIdentifier(rightAlias, alias)
+	let rightComparable = yql`select ${rightSelection}, 1 as ${yql.identifier(matchAlias)} from (${rightSelect}) as ${yql.identifier(rightInputAlias)}`
+	let joinConditions = selectionAliases.map((alias) => {
+		let leftValue = qualifyIdentifier(leftAlias, alias)
+		let rightValue = qualifyIdentifier(rightAlias, alias)
 		return yql`${leftValue} = ${rightValue}`
 	})
-	const onSql = yql.join(joinConditions, yql` and `)
-	const selection = yql.join(
+	let onSql = yql.join(joinConditions, yql` and `)
+	let selection = yql.join(
 		selectionAliases.map(
 			(alias) => yql`${qualifyIdentifier(leftAlias, alias)} as ${yql.identifier(alias)}`
 		),
 		yql`, `
 	)
-	const joinSql =
+	let joinSql =
 		type === 'intersect'
 			? yql`inner join (${rightComparable}) as ${yql.identifier(rightAlias)} on ${onSql}`
 			: yql`left join (${rightComparable}) as ${yql.identifier(rightAlias)} on ${onSql}`
-	const whereSql =
+	let whereSql =
 		type === 'except'
 			? yql` where ${qualifyIdentifier(rightAlias, matchAlias)} is null`
 			: undefined
@@ -454,8 +454,8 @@ export function buildSetOperationQuery(
 	selectionAliases: string[],
 	setOperator: YdbSetOperatorConfig
 ): SQL {
-	const rightSelect = setOperator.rightSelect.getSQL(selectionAliases)
-	const mappedOrderBy =
+	let rightSelect = setOperator.rightSelect.getSQL(selectionAliases)
+	let mappedOrderBy =
 		setOperator.orderBy && setOperator.orderBy.length > 0
 			? mapExpressionsToSelectionAliases(
 					setOperator.orderBy,
@@ -466,7 +466,7 @@ export function buildSetOperationQuery(
 			: undefined
 
 	if (setOperator.type === 'union') {
-		const operator = yql.raw(`union${setOperator.isAll ? ' all' : ''}`)
+		let operator = yql.raw(`union${setOperator.isAll ? ' all' : ''}`)
 		return yql`${leftSelect} ${operator} ${rightSelect}${buildOrderBy(mappedOrderBy)}${buildLimit(setOperator.limit)}${buildOffset(setOperator.offset)}`
 	}
 
@@ -495,9 +495,9 @@ export function buildSetOperations(
 }
 
 export function buildSelectQuery(config: YdbSelectConfig): SQL {
-	const fieldsFlat = config.fieldsFlat ?? orderSelectedFields(config.fields)
-	const selectionAliases = config.selectionAliases
-	const baseQuery =
+	let fieldsFlat = config.fieldsFlat ?? orderSelectedFields(config.fields)
+	let selectionAliases = config.selectionAliases
+	let baseQuery =
 		config.distinctOn && config.distinctOn.length > 0
 			? buildDistinctOnQuery(
 					config,

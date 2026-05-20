@@ -18,7 +18,7 @@ function getRowObjectValue(
 	field: unknown,
 	columnIndex: number
 ): unknown {
-	const pathKey = path[path.length - 1]
+	let pathKey = path[path.length - 1]
 
 	if (is(field, Column)) {
 		if (field.name in row) {
@@ -61,7 +61,7 @@ export function orderSelectedFields(
 	pathPrefix?: string[]
 ): YdbSelectedFieldsOrdered {
 	return Object.entries(fields).reduce<YdbSelectedFieldsOrdered>((result, [name, field]) => {
-		const path = pathPrefix ? [...pathPrefix, name] : [name]
+		let path = pathPrefix ? [...pathPrefix, name] : [name]
 
 		if (is(field, Column) || is(field, SQL) || is(field, SQL.Aliased) || is(field, Subquery)) {
 			result.push({ path, field })
@@ -80,10 +80,10 @@ export function mapResultRow<TResult>(
 	row: unknown[] | Record<string, unknown>,
 	joinsNotNullableMap?: Record<string, boolean>
 ): TResult {
-	const nullifyMap: Record<string, string | false> = {}
-	const rowValues = rowToArray(columns, row)
+	let nullifyMap: Record<string, string | false> = {}
+	let rowValues = rowToArray(columns, row)
 
-	const result = columns.reduce<Record<string, any>>((current, { path, field }, columnIndex) => {
+	let result = columns.reduce<Record<string, any>>((current, { path, field }, columnIndex) => {
 		let decoder: { mapFromDriverValue(value: unknown): unknown }
 
 		if (is(field, Column)) {
@@ -97,19 +97,19 @@ export function mapResultRow<TResult>(
 		}
 
 		let node = current
-		for (const [pathChunkIndex, pathChunk] of path.entries()) {
+		for (let [pathChunkIndex, pathChunk] of path.entries()) {
 			if (pathChunkIndex < path.length - 1) {
 				if (!(pathChunk in node)) {
 					node[pathChunk] = {}
 				}
 				node = node[pathChunk]
 			} else {
-				const rawValue = rowValues[columnIndex]
-				const value = rawValue === null ? null : decoder.mapFromDriverValue(rawValue)
+				let rawValue = rowValues[columnIndex]
+				let value = rawValue === null ? null : decoder.mapFromDriverValue(rawValue)
 				node[pathChunk] = value
 
 				if (joinsNotNullableMap && is(field, Column) && path.length === 2) {
-					const objectName = path[0]!
+					let objectName = path[0]!
 					if (!(objectName in nullifyMap)) {
 						nullifyMap[objectName] = value === null ? getTableName(field.table) : false
 					} else if (
@@ -126,7 +126,7 @@ export function mapResultRow<TResult>(
 	}, {})
 
 	if (joinsNotNullableMap && Object.keys(nullifyMap).length > 0) {
-		for (const [objectName, tableName] of Object.entries(nullifyMap)) {
+		for (let [objectName, tableName] of Object.entries(nullifyMap)) {
 			if (typeof tableName === 'string' && !joinsNotNullableMap[tableName]) {
 				result[objectName] = null
 			}

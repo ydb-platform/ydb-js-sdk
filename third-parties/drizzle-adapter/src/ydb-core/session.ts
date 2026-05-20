@@ -1,4 +1,4 @@
-// eslint-disable no-await-in-loop
+/* oxlint-disable no-await-in-loop -- batch() runs queries sequentially by contract */
 import { entityKind } from 'drizzle-orm/entity'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
 import { type Logger, NoopLogger } from 'drizzle-orm/logger'
@@ -107,24 +107,40 @@ function attachResultMeta(rows: unknown[], result: YdbQueryResult): unknown[] {
 export class YdbPreparedQuery<T extends YdbPreparedQueryConfig = YdbPreparedQueryConfig> {
 	static readonly [entityKind] = 'YdbPreparedQuery'
 
+	readonly #client: YdbExecutor
+	readonly #query: QueryWithTypings
+	readonly #logger: Logger
+	readonly #fields: SelectedFieldsOrdered | undefined
+	readonly #responseInArrayMode: boolean
+	readonly #customResultMapper:
+		| ((rows: unknown[][], mapColumnValue?: (value: unknown) => unknown) => T['execute'])
+		| undefined
+
 	constructor(
-		private readonly client: YdbExecutor,
-		private readonly query: QueryWithTypings,
-		private readonly logger: Logger,
-		private readonly fields: SelectedFieldsOrdered | undefined,
-		private readonly responseInArrayMode: boolean,
-		private readonly customResultMapper?: (
+		client: YdbExecutor,
+		query: QueryWithTypings,
+		logger: Logger,
+		fields: SelectedFieldsOrdered | undefined,
+		responseInArrayMode: boolean,
+		customResultMapper?: (
 			rows: unknown[][],
 			mapColumnValue?: (value: unknown) => unknown
 		) => T['execute']
-	) {}
+	) {
+		this.#client = client
+		this.#query = query
+		this.#logger = logger
+		this.#fields = fields
+		this.#responseInArrayMode = responseInArrayMode
+		this.#customResultMapper = customResultMapper
+	}
 
 	getQuery(): QueryWithTypings {
-		return this.query
+		return this.#query
 	}
 
 	isResponseInArrayMode(): boolean {
-		return this.responseInArrayMode
+		return this.#responseInArrayMode
 	}
 
 	mapResult(response: unknown, _isFromBatch?: boolean): unknown {
@@ -132,76 +148,80 @@ export class YdbPreparedQuery<T extends YdbPreparedQueryConfig = YdbPreparedQuer
 			return response
 		}
 
-		if (this.customResultMapper) {
-			const rows = this.fields
-				? response.map((row) => rowToArray(this.fields as any, row as any))
+		if (this.#customResultMapper) {
+			let rows = this.#fields
+				? response.map((row) => rowToArray(this.#fields as any, row as any))
 				: (response as unknown[][])
-			return this.customResultMapper(rows as unknown[][], (value) => value)
+			return this.#customResultMapper(rows as unknown[][], (value) => value)
 		}
 
-		if (!this.fields) {
+		if (!this.#fields) {
 			return response
 		}
 
 		return (response as Array<unknown[] | Record<string, unknown>>).map((row) =>
-			mapResultRow(this.fields as any, row, undefined)
+			mapResultRow(this.#fields as any, row, undefined)
 		)
 	}
 
-	private async run(method: 'execute' | 'all', arrayMode: boolean): Promise<unknown[]> {
-		const options: YdbExecuteOptions = {
+	async #run(method: 'execute' | 'all', arrayMode: boolean): Promise<unknown[]> {
+		let options: YdbExecuteOptions = {
 			arrayMode,
 		}
-		if (this.query.typings !== undefined) {
-			options.typings = this.query.typings
+		if (this.#query.typings !== undefined) {
+			options.typings = this.#query.typings
 		}
 
-		this.logger.logQuery(this.query.sql, this.query.params)
+		this.#logger.logQuery(this.#query.sql, this.#query.params)
 		try {
-			const result = await this.client.execute(
-				this.query.sql,
-				this.query.params,
+			let result = await this.#client.execute(
+				this.#query.sql,
+				this.#query.params,
 				method,
 				options
 			)
 			return attachResultMeta(result.rows, result)
 		} catch (error) {
-			throw mapYdbQueryError(this.query.sql, this.query.params, error)
+			throw mapYdbQueryError(this.#query.sql, this.#query.params, error)
 		}
 	}
 
 	async execute(): Promise<T['execute']> {
-		const rows = await this.run('execute', this.responseInArrayMode)
+		let rows = await this.#run('execute', this.#responseInArrayMode)
 		return this.mapResult(rows) as T['execute']
 	}
 
 	async all(): Promise<T['all']> {
-		const rows = await this.run('all', this.responseInArrayMode)
+		let rows = await this.#run('all', this.#responseInArrayMode)
 		return this.mapResult(rows) as T['all']
 	}
 
 	async get(): Promise<T['get']> {
-		const rows = await this.run('all', this.responseInArrayMode)
-		const result = this.mapResult(rows)
+		let rows = await this.#run('all', this.#responseInArrayMode)
+		let result = this.mapResult(rows)
 		return (Array.isArray(result) ? result[0] : result) as T['get']
 	}
 
 	async values(): Promise<T['values']> {
-		const rows = await this.run('all', true)
+		let rows = await this.#run('all', true)
 		return rows as T['values']
 	}
 }
 
 export class YdbSession {
 	static readonly [entityKind] = 'YdbSession'
-	private readonly logger: Logger
+	readonly #logger: Logger
+	readonly #client: YdbExecutor | YdbTransactionalExecutor
+	readonly #dialect: YdbDialect
 
 	constructor(
-		private readonly client: YdbExecutor | YdbTransactionalExecutor,
-		private readonly dialect: YdbDialect,
+		client: YdbExecutor | YdbTransactionalExecutor,
+		dialect: YdbDialect,
 		options: YdbSessionOptions = {}
 	) {
-		this.logger = options.logger ?? new NoopLogger()
+		this.#client = client
+		this.#dialect = dialect
+		this.#logger = options.logger ?? new NoopLogger()
 	}
 
 	prepareQuery<T extends YdbPreparedQueryConfig = YdbPreparedQueryConfig>(
@@ -215,9 +235,9 @@ export class YdbSession {
 		) => T['execute']
 	): YdbPreparedQuery<T> {
 		return new YdbPreparedQuery<T>(
-			this.client,
-			normalizeQuery(query, this.dialect),
-			this.logger,
+			this.#client,
+			normalizeQuery(query, this.#dialect),
+			this.#logger,
 			fields,
 			isResponseInArrayMode,
 			customResultMapper
@@ -229,7 +249,7 @@ export class YdbSession {
 			return query.prepare().execute() as Promise<T>
 		}
 
-		const prepared = this.prepareQuery<YdbPreparedQueryConfig & { execute: T }>(
+		let prepared = this.prepareQuery<YdbPreparedQueryConfig & { execute: T }>(
 			query,
 			undefined,
 			undefined,
@@ -246,7 +266,7 @@ export class YdbSession {
 			return query.prepare().all() as Promise<T[]>
 		}
 
-		const prepared = this.prepareQuery<YdbPreparedQueryConfig & { all: T[] }>(
+		let prepared = this.prepareQuery<YdbPreparedQueryConfig & { all: T[] }>(
 			query,
 			undefined,
 			undefined,
@@ -287,9 +307,9 @@ export class YdbSession {
 	async batch<T extends readonly YdbBatchQuery[]>(
 		queries: T
 	): Promise<{ [K in keyof T]: unknown }> {
-		const results: unknown[] = []
+		let results: unknown[] = []
 
-		for (const query of queries) {
+		for (let query of queries) {
 			if (query instanceof YdbPreparedQuery) {
 				results.push(await query.execute())
 				continue
@@ -307,8 +327,8 @@ export class YdbSession {
 	}
 
 	async count(query: YdbQuerySource): Promise<number> {
-		const rows = await this.values<[number | bigint | string]>(query)
-		const value = rows[0]?.[0]
+		let rows = await this.values<[number | bigint | string]>(query)
+		let value = rows[0]?.[0]
 		return Number(value ?? 0)
 	}
 
@@ -334,22 +354,22 @@ export class YdbSession {
 		config?: YdbTransactionConfig,
 		schema?: RelationalSchemaConfig<TSchemaRelations>
 	): Promise<T> {
-		if (!supportsTransactions(this.client)) {
+		if (!supportsTransactions(this.#client)) {
 			throw new Error('Transactions are not supported')
 		}
 
 		try {
-			return await this.client.transaction(async (txClient) => {
-				const session = new YdbSession(txClient, this.dialect, { logger: this.logger })
-				const tx = new YdbTransaction<TSchemaDefinition, TSchemaRelations>(
-					this.dialect,
+			return await this.#client.transaction(async (txClient) => {
+				let session = new YdbSession(txClient, this.#dialect, { logger: this.#logger })
+				let tx = new YdbTransaction<TSchemaDefinition, TSchemaRelations>(
+					this.#dialect,
 					session,
 					schema
 				)
 				return transaction(tx)
 			}, config)
 		} catch (error) {
-			const rollbackError = findTransactionRollbackError(error)
+			let rollbackError = findTransactionRollbackError(error)
 			if (rollbackError) {
 				throw rollbackError
 			}

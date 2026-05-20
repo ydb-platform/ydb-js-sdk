@@ -86,28 +86,28 @@ export class YdbCustomColumn<
 > extends YdbColumn<T> {
 	static override readonly [entityKind]: string = 'YdbCustomColumn'
 
-	private readonly sqlName: string
-	private readonly mapTo: ((value: T['data']) => T['driverParam'] | SQL) | undefined
-	private readonly mapFrom: ((value: T['driverParam']) => T['data']) | undefined
+	readonly #sqlName: string
+	readonly #mapTo: ((value: T['data']) => T['driverParam'] | SQL) | undefined
+	readonly #mapFrom: ((value: T['driverParam']) => T['data']) | undefined
 
 	constructor(table: Table, config: YdbCustomColumnBuilder<any>['config']) {
 		super(table, config)
-		this.sqlName = config.customTypeParams.dataType(config.fieldConfig)
-		this.mapTo = config.customTypeParams.toDriver
-		this.mapFrom = config.customTypeParams.fromDriver
+		this.#sqlName = config.customTypeParams.dataType(config.fieldConfig)
+		this.#mapTo = config.customTypeParams.toDriver
+		this.#mapFrom = config.customTypeParams.fromDriver
 	}
 
 	override getSQLType(): string {
-		return this.sqlName
+		return this.#sqlName
 	}
 
 	override mapFromDriverValue(value: T['driverParam']): T['data'] {
-		return typeof this.mapFrom === 'function' ? this.mapFrom(value) : (value as T['data'])
+		return typeof this.#mapFrom === 'function' ? this.#mapFrom(value) : (value as T['data'])
 	}
 
 	override mapToDriverValue(value: T['data']): T['driverParam'] {
-		return typeof this.mapTo === 'function'
-			? (this.mapTo(value) as T['driverParam'])
+		return typeof this.#mapTo === 'function'
+			? (this.#mapTo(value) as T['driverParam'])
 			: (value as T['driverParam'])
 	}
 }
@@ -135,7 +135,7 @@ export function customType<T extends CustomTypeValues = CustomTypeValues>(
 			): YdbCustomColumnBuilder<ConvertCustomConfig<TName, T>>
 		} {
 	return ((a?: string | T['config'], b?: T['config']) => {
-		const { name, config } = getColumnNameAndConfig<T['config']>(a, b)
+		let { name, config } = getColumnNameAndConfig<T['config']>(a, b)
 		return new YdbCustomColumnBuilder(name as any, config, customTypeParams)
 	}) as any
 }

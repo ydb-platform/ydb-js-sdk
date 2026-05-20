@@ -15,7 +15,7 @@ import {
 } from './table-options.js'
 import { YdbTable, type YdbTableExtraConfigValue, type YdbTableWithColumns } from './table.js'
 import { type YdbUniqueConstraint, YdbUniqueConstraintBuilder } from './unique-constraint.js'
-const drizzleTableSymbol = (Table as any).Symbol
+let drizzleTableSymbol = (Table as any).Symbol
 
 export interface YdbTableRuntimeConfig {
 	readonly name: string
@@ -44,23 +44,23 @@ function normalizeExtraConfig(
 }
 
 export function getTableConfig(table: YdbTableWithColumns): YdbTableRuntimeConfig {
-	const columns = Object.values((table as any)[YdbTable.Symbol.Columns] ?? {}) as YdbColumn[]
-	const indexes: YdbIndex[] = []
-	const primaryKeys: YdbPrimaryKey[] = []
-	const uniqueConstraints: YdbUniqueConstraint[] = []
-	const tableOptions: YdbTableOptions[] = []
-	const partitioning: YdbPartitioning[] = []
-	const ttls: YdbTtl[] = []
-	const columnFamilies: YdbColumnFamily[] = []
+	let columns = Object.values((table as any)[YdbTable.Symbol.Columns] ?? {}) as YdbColumn[]
+	let indexes: YdbIndex[] = []
+	let primaryKeys: YdbPrimaryKey[] = []
+	let uniqueConstraints: YdbUniqueConstraint[] = []
+	let tableOptions: YdbTableOptions[] = []
+	let partitioning: YdbPartitioning[] = []
+	let ttls: YdbTtl[] = []
+	let columnFamilies: YdbColumnFamily[] = []
 
-	const extraConfigBuilder = (table as any)[YdbTable.Symbol.ExtraConfigBuilder] as
+	let extraConfigBuilder = (table as any)[YdbTable.Symbol.ExtraConfigBuilder] as
 		| ((
 				self: YdbTableWithColumns
 		  ) => YdbTableExtraConfigValue[] | Record<string, YdbTableExtraConfigValue>)
 		| undefined
 
-	const extraValues = normalizeExtraConfig(extraConfigBuilder?.(table))
-	for (const builder of extraValues) {
+	let extraValues = normalizeExtraConfig(extraConfigBuilder?.(table))
+	for (let builder of extraValues) {
 		if (is(builder, YdbIndexBuilder)) {
 			indexes.push(builder.build(table))
 		} else if (is(builder, YdbPrimaryKeyBuilder)) {
@@ -78,12 +78,12 @@ export function getTableConfig(table: YdbTableWithColumns): YdbTableRuntimeConfi
 		}
 	}
 
-	for (const column of columns) {
+	for (let column of columns) {
 		if (!column.isUnique) {
 			continue
 		}
 
-		const hasTableLevelDuplicate = uniqueConstraints.some(
+		let hasTableLevelDuplicate = uniqueConstraints.some(
 			(constraint) =>
 				constraint.config.columns.length === 1 && constraint.config.columns[0] === column
 		)

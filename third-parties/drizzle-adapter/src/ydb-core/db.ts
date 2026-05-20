@@ -75,26 +75,26 @@ export class YdbDatabase<
 					session,
 				}
 
-		const queryBuilders = new Map<string, YdbRelationalQueryBuilder<TSchemaRelations, any>>()
-		const getRelationalTableConfig = (tableKey: string) => {
-			const schemaByKey = this._.schema as
+		let queryBuilders = new Map<string, YdbRelationalQueryBuilder<TSchemaRelations, any>>()
+		let getRelationalTableConfig = (tableKey: string) => {
+			let schemaByKey = this._.schema as
 				| Record<string, TSchemaRelations[keyof TSchemaRelations]>
 				| undefined
 			return schemaByKey?.[tableKey]
 		}
-		const getRelationalQueryBuilder = (tableKey: string) => {
-			const tableConfig = getRelationalTableConfig(tableKey)
+		let getRelationalQueryBuilder = (tableKey: string) => {
+			let tableConfig = getRelationalTableConfig(tableKey)
 
 			if (!tableConfig) {
 				return undefined
 			}
 
-			const cached = queryBuilders.get(tableKey)
+			let cached = queryBuilders.get(tableKey)
 			if (cached) {
 				return cached
 			}
 
-			const table = (this._.fullSchema as Record<string, unknown>)[tableConfig.tsName] as
+			let table = (this._.fullSchema as Record<string, unknown>)[tableConfig.tsName] as
 				| YdbTable
 				| undefined
 
@@ -102,7 +102,7 @@ export class YdbDatabase<
 				throw new Error(`Table ${tableConfig.tsName} not found in schema`)
 			}
 
-			const builder = new YdbRelationalQueryBuilder(
+			let builder = new YdbRelationalQueryBuilder(
 				this._.fullSchema,
 				this._.schema!,
 				this._.tableNamesMap,
@@ -167,7 +167,7 @@ export class YdbDatabase<
 	}
 
 	with(...queries: WithSubquery[]) {
-		const { session, dialect } = this
+		let { session, dialect } = this
 
 		function select<TFields extends Record<string, unknown> | undefined = undefined>(
 			fields?: TFields
@@ -289,7 +289,7 @@ export class YdbDatabase<
 		transaction: (tx: YdbTransactionScope<TSchemaDefinition, TSchemaRelations>) => Promise<T>,
 		config?: YdbTransactionConfig
 	) {
-		const schema = this._.schema
+		let schema = this._.schema
 			? ({
 					fullSchema: this._.fullSchema,
 					schema: this._.schema,

@@ -8,7 +8,7 @@ function createTopLevelSetOperator(type: 'union' | 'intersect' | 'except', isAll
 		rightSelect: YdbSetOperatorSource,
 		...restSelects: YdbSetOperatorSource[]
 	) => {
-		const setOperators = [rightSelect, ...restSelects].map((select) => {
+		let setOperators = [rightSelect, ...restSelects].map((select) => {
 			if (!haveSameKeys(leftSelect.getSelectedFields(), select.getSelectedFields())) {
 				throw new Error(
 					'Set operator error (union / intersect / except): selected fields are not the same or are in a different order'
@@ -26,10 +26,10 @@ function createTopLevelSetOperator(type: 'union' | 'intersect' | 'except', isAll
 	}
 }
 
-export const union = createTopLevelSetOperator('union', false)
-export const unionAll = createTopLevelSetOperator('union', true)
-export const intersect = createTopLevelSetOperator('intersect', false)
-export const except = createTopLevelSetOperator('except', false)
+export let union = createTopLevelSetOperator('union', false)
+export let unionAll = createTopLevelSetOperator('union', true)
+export let intersect = createTopLevelSetOperator('intersect', false)
+export let except = createTopLevelSetOperator('except', false)
 
 export function getSetOperatorHelpers() {
 	return { union, unionAll, intersect, except }

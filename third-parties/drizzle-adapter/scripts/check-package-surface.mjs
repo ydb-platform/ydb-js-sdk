@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const scriptDir = dirname(fileURLToPath(import.meta.url))
-const packageDir = resolve(scriptDir, '..')
-const packageJsonPath = resolve(packageDir, 'package.json')
-const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+let scriptDir = dirname(fileURLToPath(import.meta.url))
+let packageDir = resolve(scriptDir, '..')
+let packageJsonPath = resolve(packageDir, 'package.json')
+let packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
 
 assert.equal(packageJson.type, 'module')
 assert.equal(packageJson.sideEffects, false)
@@ -20,8 +20,8 @@ assert.deepEqual(packageJson.exports, {
 	},
 })
 
-const publicApi = await import('@ydbjs/drizzle-adapter')
-const expectedRuntimeExports = [
+let publicApi = await import('@ydbjs/drizzle-adapter')
+let expectedRuntimeExports = [
 	'YdbAuthenticationError',
 	'YdbCancelledQueryError',
 	'YdbDriver',
@@ -47,11 +47,11 @@ const expectedRuntimeExports = [
 	'ydbTable',
 ]
 
-for (const name of expectedRuntimeExports) {
+for (let name of expectedRuntimeExports) {
 	assert.equal(Object.hasOwn(publicApi, name), true, `Missing root runtime export: ${name}`)
 }
 
-const internalRuntimeExports = [
+let internalRuntimeExports = [
 	'YdbColumn',
 	'YdbColumnBuilder',
 	'YdbCountBuilder',
@@ -62,7 +62,7 @@ const internalRuntimeExports = [
 	'YdbTransaction',
 ]
 
-for (const name of internalRuntimeExports) {
+for (let name of internalRuntimeExports) {
 	assert.equal(
 		Object.hasOwn(publicApi, name),
 		false,
@@ -70,7 +70,7 @@ for (const name of internalRuntimeExports) {
 	)
 }
 
-const forbiddenSubpaths = [
+let forbiddenSubpaths = [
 	'@ydbjs/drizzle-adapter/dist/index.js',
 	'@ydbjs/drizzle-adapter/ydb/dialect.js',
 	'@ydbjs/drizzle-adapter/ydb-core/session.js',
@@ -91,17 +91,17 @@ await Promise.all(
 	})
 )
 
-const pack = spawnSync('npm', ['pack', '--dry-run', '--json'], {
+let pack = spawnSync('npm', ['pack', '--dry-run', '--json'], {
 	cwd: packageDir,
 	encoding: 'utf8',
 })
 
 assert.equal(pack.status, 0, pack.stderr || pack.stdout)
 
-const packManifest = JSON.parse(pack.stdout)[0]
-const packedFiles = new Set(packManifest.files.map((file) => file.path))
+let packManifest = JSON.parse(pack.stdout)[0]
+let packedFiles = new Set(packManifest.files.map((file) => file.path))
 
-for (const file of [
+for (let file of [
 	'package.json',
 	'README.md',
 	'CHANGELOG.md',
@@ -111,7 +111,7 @@ for (const file of [
 	assert.equal(packedFiles.has(file), true, `Packed package is missing ${file}`)
 }
 
-for (const file of packedFiles) {
+for (let file of packedFiles) {
 	assert.equal(file.startsWith('src/'), false, `Source file leaked into package: ${file}`)
 	assert.equal(file.startsWith('tests/'), false, `Test file leaked into package: ${file}`)
 }

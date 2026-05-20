@@ -26,4 +26,4 @@ export function integer(a?: string, _b?: YdbIntegerConfig): YdbIntegerBuilder {
 	return new YdbIntegerBuilder(a ?? '')
 }
 
-export const int = integer
+export let int = integer
