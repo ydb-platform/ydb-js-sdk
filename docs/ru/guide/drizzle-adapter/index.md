@@ -23,7 +23,8 @@ Drizzle-совместимый API для YDB: DSL описания схемы, 
 
 ```ts
 import { eq } from 'drizzle-orm'
-import { createDrizzle, integer, text, ydbTable } from '@ydbjs/drizzle-adapter'
+import { createDrizzle } from '@ydbjs/drizzle-adapter'
+import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
 export const users = ydbTable('users', {
   id: integer('id').primaryKey(),
@@ -132,7 +133,7 @@ await db.transaction(
 ### Миграции {#examples-migrations}
 
 ```ts
-import { migrate } from '@ydbjs/drizzle-adapter'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 await migrate(db, {
   migrationsFolder: './drizzle',
@@ -144,7 +145,7 @@ await migrate(db, {
 
 ```ts
 import { sql } from 'drizzle-orm'
-import { asTable, valuesTable } from '@ydbjs/drizzle-adapter'
+import { asTable, valuesTable } from '@ydbjs/drizzle-adapter/sql'
 
 await db
   .select({ id: sql`r.id`, name: sql`r.name` })
@@ -165,7 +166,8 @@ await db
 
 ```ts
 import { sql } from 'drizzle-orm'
-import { knnCosineDistance, vectorIndexView } from '@ydbjs/drizzle-adapter'
+import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
+import { vectorIndexView } from '@ydbjs/drizzle-adapter/schema'
 
 const nearest = await db
   .select()
