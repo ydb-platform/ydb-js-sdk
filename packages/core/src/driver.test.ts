@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { createServer } from 'nice-grpc'
 
-import { Driver } from './driver.ts'
+import { Driver, kRegisterLibrary } from './driver.ts'
 import pkg from '../package.json' with { type: 'json' }
 
 test('database in pathname', async () => {
@@ -90,6 +90,49 @@ test('adds x-ydb-sdk-build-info header with current sdk version', async () => {
 		await client.listEndpoints({ database: driver.database })
 
 		expect(receivedBuildInfo).toBe(`ydb-js-sdk/${pkg.version}`)
+	} finally {
+		driver.close()
+		await server.shutdown()
+	}
+})
+
+test('appends registered libraries to x-ydb-sdk-build-info after the native sdk token', async () => {
+	let server = createServer()
+	let received: string[] = []
+	let discoveryService = {
+		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+		whoAmI: DiscoveryServiceDefinition.whoAmI,
+	}
+
+	server.add(discoveryService, {
+		async listEndpoints(_, context) {
+			received.push(context.metadata.get('x-ydb-sdk-build-info') ?? '')
+			return {}
+		},
+		async whoAmI() {
+			return {}
+		},
+	})
+
+	let port = await server.listen('127.0.0.1:0')
+	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+
+	try {
+		let client = driver.createClient(discoveryService)
+
+		driver[kRegisterLibrary]('@ydbjs/drizzle-adapter', '1.2.3')
+		await client.listEndpoints({ database: driver.database })
+
+		driver[kRegisterLibrary]('@ydbjs/drizzle-adapter', '1.2.3')
+		driver[kRegisterLibrary]('@ydbjs/other', '0.1.0')
+		await client.listEndpoints({ database: driver.database })
+
+		expect(received[0]).toBe(`ydb-js-sdk/${pkg.version};@ydbjs/drizzle-adapter/1.2.3`)
+		expect(received[1]).toBe(
+			`ydb-js-sdk/${pkg.version};@ydbjs/drizzle-adapter/1.2.3;@ydbjs/other/0.1.0`
+		)
 	} finally {
 		driver.close()
 		await server.shutdown()

@@ -1,6 +1,8 @@
-import { Driver } from '@ydbjs/core'
+import { Driver, kRegisterLibrary } from '@ydbjs/core'
 import { type QueryClient, type TX, query as createQueryClient } from '@ydbjs/query'
 import { fromJs } from '@ydbjs/value'
+
+import pkg from '../../package.json' with { type: 'json' }
 export interface YdbTransactionConfig {
 	accessMode?: 'read only' | 'read write' | undefined
 	isolationLevel?: 'serializableReadWrite' | 'snapshotReadOnly' | undefined
@@ -163,6 +165,8 @@ export class YdbDriver implements YdbTransactionalExecutor {
 			this.driver = new Driver(arg.connectionString)
 			this.#ownsDriver = true
 		}
+
+		this.driver[kRegisterLibrary]('@ydbjs/drizzle-adapter', pkg.version)
 	}
 
 	// Lazy: avoid constructing SessionPool until the first query/transaction.
