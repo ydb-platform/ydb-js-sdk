@@ -1,35 +1,10 @@
 name: SLO
 
 on:
-  push:
-    branches:
-      - main
-
   pull_request:
     types: [opened, reopened, synchronize, labeled]
     branches:
       - main
-
-  workflow_dispatch:
-    inputs:
-      github_issue:
-        description: 'GitHub issue number where the SLO results will be reported'
-        required: true
-      baseline_ref:
-        description: 'Baseline commit/branch/tag to compare against (leave empty to auto-detect merge-base with main)'
-        required: false
-      slo_workload_duration_seconds:
-        description: 'Duration of the SLO workload in seconds'
-        required: false
-        default: '600'
-      slo_workload_read_max_rps:
-        description: 'Maximum read RPS for the SLO workload'
-        required: false
-        default: '1000'
-      slo_workload_write_max_rps:
-        description: 'Maximum write RPS for the SLO workload'
-        required: false
-        default: '100'
 
 jobs:
   ydb-slo-action:
@@ -100,11 +75,7 @@ jobs:
         id: baseline
         run: |
           cd current
-          if [[ -n "${{ inputs.baseline_ref }}" ]]; then
-            BASELINE="${{ inputs.baseline_ref }}"
-          else
-            BASELINE=$(git merge-base HEAD origin/main)
-          fi
+          BASELINE=$(git merge-base HEAD origin/main)
           echo "sha=$BASELINE" >> $GITHUB_OUTPUT
 
           # Try to determine a human-readable ref name for baseline
@@ -162,35 +133,19 @@ jobs:
         uses: ydb-platform/ydb-slo-action/init@v2
         timeout-minutes: 30
         with:
-          github_issue: ${{ github.event.inputs.github_issue }}
+          github_issue: ${{ github.event.pull_request.number }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           workload_name: ${{ matrix.sdk.name }}
-          workload_duration: ${{ inputs.slo_workload_duration_seconds || '600' }}
+          workload_duration: '600'
           workload_current_ref: ${{ github.head_ref || github.ref_name }}
           workload_current_image: ydb-app-current
           workload_current_command: >-
             ${{ matrix.sdk.command }}
-            --kv.read.rps=${{ inputs.slo_workload_read_max_rps || '1000' }}
-            --kv.write.rps=${{ inputs.slo_workload_write_max_rps || '100' }}
+            --kv.read.rps=1000
+            --kv.write.rps=100
           workload_baseline_ref: ${{ steps.baseline.outputs.ref }}
           workload_baseline_image: ydb-app-baseline
           workload_baseline_command: >-
             ${{ matrix.sdk.command }}
-            --kv.read.rps=${{ inputs.slo_workload_read_max_rps || '1000' }}
-            --kv.write.rps=${{ inputs.slo_workload_write_max_rps || '100' }}
-
-  ydb-slo-report:
-    if: always()
-    needs: ydb-slo-action
-    runs-on: ubuntu-latest
-    name: Publish YDB SLO Report
-    permissions:
-      checks: write
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Publish YDB SLO Report
-        uses: ydb-platform/ydb-slo-action/report@v2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          github_run_id: ${{ github.run_id }}
+            --kv.read.rps=1000
+            --kv.write.rps=100
