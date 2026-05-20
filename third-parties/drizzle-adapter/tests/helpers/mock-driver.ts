@@ -1,3 +1,14 @@
+import { Driver, kRegisterLibrary } from '@ydbjs/core'
+
+// Object.create(Driver.prototype) skips constructor → no private fields.
+// Driver.prototype[kRegisterLibrary] reads #libraries, so YdbDriver's
+// constructor would TypeError on such a mock. Stub the symbol to no-op.
+export function createBorrowedDriverStub(): Driver {
+	let stub = Object.create(Driver.prototype) as Driver
+	;(stub as unknown as Record<symbol, unknown>)[kRegisterLibrary] = () => {}
+	return stub
+}
+
 export type MockQueryCall = {
 	text: string
 	params: Array<{ name: string; value: unknown }>

@@ -107,6 +107,8 @@ function databaseFromUrl(url: URL): string {
 	return ''
 }
 
+export const kRegisterLibrary: unique symbol = Symbol('ydbjs.core.registerLibrary')
+
 let defaultOptions: DriverOptions = {
 	'ydb.sdk.ready_timeout_ms': 30_000,
 	'ydb.sdk.token_timeout_ms': 10_000,
@@ -168,6 +170,9 @@ export class Driver implements Disposable {
 	#shutdown = new AbortController()
 
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
+
+	#libraries: Set<string> = new Set()
+	#buildInfo: string = `ydb-js-sdk/${pkg.version}`
 
 	// Construction time, used for `driver.ready.duration` and `driver.closed.uptime`.
 	#initAt: number
@@ -409,10 +414,17 @@ export class Driver implements Disposable {
 		return this.isSecure ? credentials.createSsl() : credentials.createInsecure()
 	}
 
+	[kRegisterLibrary](name: string, version: string): void {
+		let entry = `${name}/${version}`
+		if (this.#libraries.has(entry)) return
+		this.#libraries.add(entry)
+		this.#buildInfo = `${this.#buildInfo};${entry}`
+	}
+
 	#buildMiddleware(): ClientMiddleware {
 		let stamp: ClientMiddleware = (call, options) => {
 			let metadata = Metadata(options.metadata)
-				.set('x-ydb-sdk-build-info', `ydb-js-sdk/${pkg.version}`)
+				.set('x-ydb-sdk-build-info', this.#buildInfo)
 				.set('x-ydb-database', this.database)
 				.set('x-ydb-application-name', this.application)
 

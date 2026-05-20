@@ -1,17 +1,18 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
-import { Driver } from '@ydbjs/core'
+import { kRegisterLibrary } from '@ydbjs/core'
 import { YdbDriver } from '../index.ts'
-import { createMockQueryFunction } from '../../tests/helpers/mock-driver.ts'
+import {
+	createBorrowedDriverStub,
+	createMockQueryFunction,
+} from '../../tests/helpers/mock-driver.ts'
+import pkg from '../../package.json' with { type: 'json' }
 
 test('wraps a borrowed Driver without owning it', async () => {
 	let readyCalls = 0
 	let closeCalls = 0
 	let signal = new AbortController().signal
-	let borrowedDriver = Object.create(Driver.prototype) as Driver & {
-		ready(signal?: AbortSignal): Promise<void>
-		close(): void
-	}
+	let borrowedDriver = createBorrowedDriverStub()
 
 	borrowedDriver.ready = async (incomingSignal?: AbortSignal) => {
 		readyCalls++
@@ -32,7 +33,7 @@ test('wraps a borrowed Driver without owning it', async () => {
 })
 
 test('forwards execute params and result meta', async () => {
-	let borrowedDriver = Object.create(Driver.prototype) as Driver
+	let borrowedDriver = createBorrowedDriverStub()
 	let driver = new YdbDriver(borrowedDriver)
 	let mockClient = createMockQueryFunction([{ pony: 'Twilight' }], [['Twilight', 7]])
 
@@ -71,7 +72,7 @@ test('forwards execute params and result meta', async () => {
 })
 
 test('begins transactions with mapped isolation', async () => {
-	let borrowedDriver = Object.create(Driver.prototype) as Driver
+	let borrowedDriver = createBorrowedDriverStub()
 	let driver = new YdbDriver(borrowedDriver)
 	let txQuery = createMockQueryFunction([{ ok: true }])
 	let beginCalls: unknown[][] = []
@@ -112,7 +113,7 @@ test('begins transactions with mapped isolation', async () => {
 })
 
 test('rejects multi-result-set responses', async () => {
-	let borrowedDriver = Object.create(Driver.prototype) as Driver
+	let borrowedDriver = createBorrowedDriverStub()
 	let driver = new YdbDriver(borrowedDriver)
 
 	;(driver as any).client = ((_text: string) => {
@@ -131,6 +132,21 @@ test('rejects multi-result-set responses', async () => {
 	}) as any
 
 	await assert.rejects(driver.execute('select 1; select 2', [], 'execute'), /2 result sets/)
+})
+
+test('registers itself in x-ydb-sdk-build-info via kRegisterLibrary', () => {
+	let calls: Array<[string, string]> = []
+	let borrowedDriver = createBorrowedDriverStub()
+	;(borrowedDriver as unknown as Record<symbol, unknown>)[kRegisterLibrary] = (
+		name: string,
+		version: string
+	) => {
+		calls.push([name, version])
+	}
+
+	new YdbDriver(borrowedDriver)
+
+	assert.deepEqual(calls, [['@ydbjs/drizzle-adapter', pkg.version]])
 })
 
 test('creates an executor from a remote callback', async () => {
