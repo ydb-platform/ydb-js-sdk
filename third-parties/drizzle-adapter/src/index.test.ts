@@ -106,7 +106,12 @@ import { createDrizzle, drizzle } from './index.ts'
 import { YdbDriver } from './index.ts'
 import {
 	asTable,
+	crc32c,
+	crc64,
 	cube,
+	currentUtcDate,
+	currentUtcDatetime,
+	currentUtcTimestamp,
 	distinctHint,
 	groupKey,
 	grouping,
@@ -122,14 +127,21 @@ import {
 	knnManhattanDistance,
 	knnSimilarity,
 	matchRecognize,
+	maxOf,
+	minOf,
 	numericHash,
+	random,
+	randomNumber,
+	randomUuid,
 	rollup,
 	sessionStart,
 	sessionWindow,
 	uniqueHint,
+	unwrap,
 	values,
 	valuesTable,
 	windowDefinition,
+	xxHash,
 } from './index.ts'
 import {
 	commit,
@@ -199,8 +211,13 @@ let expectedRootRuntimeExports = [
 	'bytes',
 	'columnFamily',
 	'commit',
+	'crc32c',
+	'crc64',
 	'createDrizzle',
 	'cube',
+	'currentUtcDate',
+	'currentUtcDatetime',
+	'currentUtcTimestamp',
 	'customType',
 	'date',
 	'date32',
@@ -245,12 +262,17 @@ let expectedRootRuntimeExports = [
 	'knnSimilarity',
 	'many',
 	'matchRecognize',
+	'maxOf',
 	'migrate',
+	'minOf',
 	'numericHash',
 	'one',
 	'partitionByHash',
 	'pragma',
 	'primaryKey',
+	'random',
+	'randomNumber',
+	'randomUuid',
 	'rawTableOption',
 	'relations',
 	'rollup',
@@ -270,12 +292,14 @@ let expectedRootRuntimeExports = [
 	'unique',
 	'uniqueHint',
 	'uniqueIndex',
+	'unwrap',
 	'uuid',
 	'values',
 	'valuesTable',
 	'vectorIndex',
 	'vectorIndexView',
 	'windowDefinition',
+	'xxHash',
 	'ydbTable',
 	'ydbTableCreator',
 	'yqlScript',
@@ -408,7 +432,19 @@ test('root public API re-exports runtime entry points', () => {
 	assert.equal(publicApi.values, values)
 	assert.equal(publicApi.valuesTable, valuesTable)
 	assert.equal(publicApi.matchRecognize, matchRecognize)
+	assert.equal(publicApi.maxOf, maxOf)
+	assert.equal(publicApi.minOf, minOf)
 	assert.equal(publicApi.numericHash, numericHash)
+	assert.equal(publicApi.crc32c, crc32c)
+	assert.equal(publicApi.crc64, crc64)
+	assert.equal(publicApi.xxHash, xxHash)
+	assert.equal(publicApi.currentUtcDate, currentUtcDate)
+	assert.equal(publicApi.currentUtcDatetime, currentUtcDatetime)
+	assert.equal(publicApi.currentUtcTimestamp, currentUtcTimestamp)
+	assert.equal(publicApi.random, random)
+	assert.equal(publicApi.randomNumber, randomNumber)
+	assert.equal(publicApi.randomUuid, randomUuid)
+	assert.equal(publicApi.unwrap, unwrap)
 	assert.equal(publicApi.pragma, pragma)
 	assert.equal(publicApi.rollup, rollup)
 	assert.equal(publicApi.sessionStart, sessionStart)
@@ -496,7 +532,19 @@ test('query builder barrel re-exports concrete builder implementations', () => {
 	assert.equal(queryBuilders.values, values)
 	assert.equal(queryBuilders.valuesTable, valuesTable)
 	assert.equal(queryBuilders.matchRecognize, matchRecognize)
+	assert.equal(queryBuilders.maxOf, maxOf)
+	assert.equal(queryBuilders.minOf, minOf)
 	assert.equal(queryBuilders.numericHash, numericHash)
+	assert.equal(queryBuilders.crc32c, crc32c)
+	assert.equal(queryBuilders.crc64, crc64)
+	assert.equal(queryBuilders.xxHash, xxHash)
+	assert.equal(queryBuilders.currentUtcDate, currentUtcDate)
+	assert.equal(queryBuilders.currentUtcDatetime, currentUtcDatetime)
+	assert.equal(queryBuilders.currentUtcTimestamp, currentUtcTimestamp)
+	assert.equal(queryBuilders.random, random)
+	assert.equal(queryBuilders.randomNumber, randomNumber)
+	assert.equal(queryBuilders.randomUuid, randomUuid)
+	assert.equal(queryBuilders.unwrap, unwrap)
 	assert.equal(queryBuilders.pragma, pragma)
 	assert.equal(queryBuilders.rollup, rollup)
 	assert.equal(queryBuilders.sessionStart, sessionStart)

@@ -1,6 +1,7 @@
 import { asc, eq, sql } from 'drizzle-orm'
 import {
 	createDrizzle,
+	currentUtcTimestamp,
 	index,
 	integer,
 	migrate,
@@ -220,8 +221,8 @@ try {
 			email: 'grace@example.com',
 			name: 'Grace Hopper',
 			status: 'review',
-			createdAt: new Date(),
-			updatedAt: new Date(),
+			createdAt: currentUtcTimestamp(),
+			updatedAt: currentUtcTimestamp(),
 		})
 		.execute()
 
@@ -333,8 +334,8 @@ try {
 					status: 'done',
 					priority: 'low',
 					estimateHours: 1,
-					createdAt: new Date(),
-					updatedAt: new Date(),
+					createdAt: currentUtcTimestamp(),
+					updatedAt: currentUtcTimestamp(),
 				})
 				.execute()
 		},
