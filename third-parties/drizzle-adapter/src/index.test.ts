@@ -122,6 +122,7 @@ import {
 	knnManhattanDistance,
 	knnSimilarity,
 	matchRecognize,
+	numericHash,
 	rollup,
 	sessionStart,
 	sessionWindow,
@@ -245,6 +246,7 @@ let expectedRootRuntimeExports = [
 	'many',
 	'matchRecognize',
 	'migrate',
+	'numericHash',
 	'one',
 	'partitionByHash',
 	'pragma',
@@ -406,6 +408,7 @@ test('root public API re-exports runtime entry points', () => {
 	assert.equal(publicApi.values, values)
 	assert.equal(publicApi.valuesTable, valuesTable)
 	assert.equal(publicApi.matchRecognize, matchRecognize)
+	assert.equal(publicApi.numericHash, numericHash)
 	assert.equal(publicApi.pragma, pragma)
 	assert.equal(publicApi.rollup, rollup)
 	assert.equal(publicApi.sessionStart, sessionStart)
@@ -493,6 +496,7 @@ test('query builder barrel re-exports concrete builder implementations', () => {
 	assert.equal(queryBuilders.values, values)
 	assert.equal(queryBuilders.valuesTable, valuesTable)
 	assert.equal(queryBuilders.matchRecognize, matchRecognize)
+	assert.equal(queryBuilders.numericHash, numericHash)
 	assert.equal(queryBuilders.pragma, pragma)
 	assert.equal(queryBuilders.rollup, rollup)
 	assert.equal(queryBuilders.sessionStart, sessionStart)

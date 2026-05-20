@@ -1,4 +1,5 @@
 export { YdbSelectBuilder } from './select.builder.js'
+export { numericHash } from './digest.js'
 export { except, intersect, union, unionAll } from './select.set-operators.js'
 export {
 	asTable,
