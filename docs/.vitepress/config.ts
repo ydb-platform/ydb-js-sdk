@@ -20,6 +20,7 @@ export default defineConfig({
 					{ text: 'Query', link: '/guide/query/' },
 					{ text: 'Topic', link: '/guide/topic/' },
 					{ text: 'Coordination', link: '/guide/coordination/' },
+					{ text: 'Drizzle', link: '/guide/drizzle/' },
 					{ text: 'Advanced', link: '/advanced/' },
 				],
 				sidebar: [
@@ -190,6 +191,15 @@ export default defineConfig({
 						],
 					},
 					{
+						text: 'Drizzle',
+						items: [
+							{ text: 'Overview', link: '/guide/drizzle/' },
+							{ text: 'Schema', link: '/guide/drizzle/schema' },
+							{ text: 'SQL helpers', link: '/guide/drizzle/sql' },
+							{ text: 'Migrations', link: '/guide/drizzle/migrator' },
+						],
+					},
+					{
 						text: 'Advanced',
 						items: [
 							{
@@ -231,6 +241,7 @@ export default defineConfig({
 					{ text: 'Query', link: '/ru/guide/query/' },
 					{ text: 'Topic', link: '/ru/guide/topic/' },
 					{ text: 'Coordination', link: '/ru/guide/coordination/' },
+					{ text: 'Drizzle', link: '/ru/guide/drizzle/' },
 					{ text: 'Расширенные темы', link: '/ru/advanced/' },
 				],
 				sidebar: [
@@ -404,6 +415,15 @@ export default defineConfig({
 									},
 								],
 							},
+						],
+					},
+					{
+						text: 'Drizzle',
+						items: [
+							{ text: 'Обзор', link: '/ru/guide/drizzle/' },
+							{ text: 'Schema', link: '/ru/guide/drizzle/schema' },
+							{ text: 'SQL helpers', link: '/ru/guide/drizzle/sql' },
+							{ text: 'Migrations', link: '/ru/guide/drizzle/migrator' },
 						],
 					},
 					{
