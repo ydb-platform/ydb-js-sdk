@@ -16,17 +16,17 @@ type YdbSelectableQuery =
 export class YdbQueryBuilder {
 	static readonly [entityKind] = 'YdbQueryBuilder'
 
-	private dialect: YdbDialect | undefined
+	#dialect: YdbDialect | undefined
 
 	constructor(dialect?: YdbDialect) {
-		this.dialect = dialect
+		this.#dialect = dialect
 	}
 
 	$with<TAlias extends string>(alias: TAlias) {
 		return {
 			as: (query: YdbSelectableQuery | ((qb: YdbQueryBuilder) => YdbSelectableQuery)) => {
-				const resolved = typeof query === 'function' ? query(this) : query
-				const selectedFields =
+				let resolved = typeof query === 'function' ? query(this) : query
+				let selectedFields =
 					'getSelectedFields' in resolved ? (resolved.getSelectedFields() ?? {}) : {}
 
 				return new Proxy(
@@ -42,27 +42,27 @@ export class YdbQueryBuilder {
 	}
 
 	with(...queries: Subquery[]) {
-		const select = <TFields extends SelectFields | undefined = undefined>(fields?: TFields) =>
-			new YdbSelectBuilder(undefined, this.getDialect(), fields as any, {}, queries)
+		let select = <TFields extends SelectFields | undefined = undefined>(fields?: TFields) =>
+			new YdbSelectBuilder(undefined, this.#getDialect(), fields as any, {}, queries)
 
-		const selectDistinct = <TFields extends SelectFields | undefined = undefined>(
+		let selectDistinct = <TFields extends SelectFields | undefined = undefined>(
 			fields?: TFields
 		) =>
 			new YdbSelectBuilder(
 				undefined,
-				this.getDialect(),
+				this.#getDialect(),
 				fields as any,
 				{ distinct: true },
 				queries
 			)
 
-		const selectDistinctOn = <TFields extends SelectFields | undefined = undefined>(
+		let selectDistinctOn = <TFields extends SelectFields | undefined = undefined>(
 			on: SQLWrapper | SQLWrapper[],
 			fields?: TFields
 		) =>
 			new YdbSelectBuilder(
 				undefined,
-				this.getDialect(),
+				this.#getDialect(),
 				fields as any,
 				{
 					distinctOn: Array.isArray(on) ? on : [on],
@@ -74,27 +74,29 @@ export class YdbQueryBuilder {
 	}
 
 	select<TFields extends SelectFields | undefined = undefined>(fields?: TFields) {
-		return new YdbSelectBuilder(undefined, this.getDialect(), fields as any)
+		return new YdbSelectBuilder(undefined, this.#getDialect(), fields as any)
 	}
 
 	selectDistinct<TFields extends SelectFields | undefined = undefined>(fields?: TFields) {
-		return new YdbSelectBuilder(undefined, this.getDialect(), fields as any, { distinct: true })
+		return new YdbSelectBuilder(undefined, this.#getDialect(), fields as any, {
+			distinct: true,
+		})
 	}
 
 	selectDistinctOn<TFields extends SelectFields | undefined = undefined>(
 		on: SQLWrapper | SQLWrapper[],
 		fields?: TFields
 	) {
-		return new YdbSelectBuilder(undefined, this.getDialect(), fields as any, {
+		return new YdbSelectBuilder(undefined, this.#getDialect(), fields as any, {
 			distinctOn: Array.isArray(on) ? on : [on],
 		})
 	}
 
-	private getDialect(): YdbDialect {
-		if (!this.dialect) {
-			this.dialect = new YdbDialect()
+	#getDialect(): YdbDialect {
+		if (!this.#dialect) {
+			this.#dialect = new YdbDialect()
 		}
 
-		return this.dialect
+		return this.#dialect
 	}
 }

@@ -12,15 +12,15 @@ export class YdbCountBuilder extends SQL<number> {
 	static override readonly [entityKind] = 'YdbCountBuilder'
 	readonly [Symbol.toStringTag] = 'YdbCountBuilder'
 
-	private readonly session: Pick<YdbSession, 'count'>
-	private readonly countSql: SQL<number>
+	readonly #session: Pick<YdbSession, 'count'>
+	readonly #countSql: SQL<number>
 
 	constructor(params: YdbCountBuilderParams) {
-		const embeddedCount = YdbCountBuilder.buildEmbeddedCount(params.source, params.filters)
+		let embeddedCount = YdbCountBuilder.buildEmbeddedCount(params.source, params.filters)
 		super(embeddedCount.queryChunks)
-		this.session = params.session
+		this.#session = params.session
 		this.mapWith(Number)
-		this.countSql = YdbCountBuilder.buildCount(params.source, params.filters)
+		this.#countSql = YdbCountBuilder.buildCount(params.source, params.filters)
 	}
 
 	static buildEmbeddedCount(source: SQLWrapper, filters?: SQL): SQL<number> {
@@ -35,7 +35,7 @@ export class YdbCountBuilder extends SQL<number> {
 		onfulfilled?: ((value: number) => TResult1 | PromiseLike<TResult1>) | null,
 		onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
 	): Promise<TResult1 | TResult2> {
-		return Promise.resolve(this.session.count(this.countSql)).then(onfulfilled, onrejected)
+		return Promise.resolve(this.#session.count(this.#countSql)).then(onfulfilled, onrejected)
 	}
 
 	catch<TResult = never>(

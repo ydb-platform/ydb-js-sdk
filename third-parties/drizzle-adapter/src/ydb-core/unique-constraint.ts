@@ -15,9 +15,9 @@ function defaultUniqueName(table: YdbTable, columns: readonly YdbColumn[]): stri
 }
 
 function assertColumnsBelongToTable(table: YdbTable, columns: readonly YdbColumn[]): void {
-	const tableName = getTableName(table)
+	let tableName = getTableName(table)
 
-	for (const column of columns) {
+	for (let column of columns) {
 		if (column.table !== table) {
 			throw new Error(
 				`Unique constraint column "${column.name}" does not belong to table "${tableName}"`
@@ -35,28 +35,35 @@ export interface YdbUniqueConstraintConfig {
 export class YdbUniqueConstraintBuilderOn {
 	static readonly [entityKind] = 'YdbUniqueConstraintBuilderOn'
 
-	constructor(private readonly name: string | undefined) {}
+	readonly #name: string | undefined
+
+	constructor(name: string | undefined) {
+		this.#name = name
+	}
 
 	on(...columns: [YdbColumn, ...YdbColumn[]]): YdbUniqueConstraintBuilder {
-		return new YdbUniqueConstraintBuilder(this.name, columns)
+		return new YdbUniqueConstraintBuilder(this.#name, columns)
 	}
 }
 
 export class YdbUniqueConstraintBuilder {
 	static readonly [entityKind] = 'YdbUniqueConstraintBuilder'
 
-	constructor(
-		private readonly name: string | undefined,
-		private readonly columns: [YdbColumn, ...YdbColumn[]]
-	) {}
+	readonly #name: string | undefined
+	readonly #columns: [YdbColumn, ...YdbColumn[]]
+
+	constructor(name: string | undefined, columns: [YdbColumn, ...YdbColumn[]]) {
+		this.#name = name
+		this.#columns = columns
+	}
 
 	build(table: YdbTable): YdbUniqueConstraint {
-		assertColumnsBelongToTable(table, this.columns)
+		assertColumnsBelongToTable(table, this.#columns)
 
 		return new YdbUniqueConstraint({
 			table,
-			columns: [...this.columns],
-			name: this.name ?? defaultUniqueName(table, this.columns),
+			columns: [...this.#columns],
+			name: this.#name ?? defaultUniqueName(table, this.#columns),
 		})
 	}
 }

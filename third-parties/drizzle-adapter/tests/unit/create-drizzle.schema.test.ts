@@ -28,7 +28,7 @@ let schema = {
 	})),
 }
 
-test('schema', async () => {
+test('extracts relational schema config from createDrizzle', async () => {
 	let executedQueries: string[] = []
 	let buildObjectRows = (query: string, values: unknown[]) => {
 		let aliases = Array.from(query.matchAll(/ as `([^`]+)`/g), (match) => match[1]!)

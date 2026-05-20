@@ -54,7 +54,7 @@ import {
 	ydbTable,
 } from '../../src/index.ts'
 
-test('migration DDL generates create table with inline indexes and unique constraints', () => {
+test('generates create table with inline indexes and unique constraints', () => {
 	let users = ydbTable(
 		'migration_users',
 		{
@@ -78,7 +78,7 @@ test('migration DDL generates create table with inline indexes and unique constr
 	assert.match(ddl, /PRIMARY KEY \(`id`\)/u)
 })
 
-test('migration DDL generates table options, partitioning, TTL, and column families', () => {
+test('generates table options, partitioning, TTL, and column families', () => {
 	let events = ydbTable(
 		'migration_events',
 		{
@@ -110,7 +110,7 @@ test('migration DDL generates table options, partitioning, TTL, and column famil
 	assert.match(ddl, /TTL = Interval\("P7D"\) ON `expires_at` AS SECONDS/u)
 })
 
-test('migration DDL generates vector k-means tree indexes', () => {
+test('generates vector k-means tree indexes', () => {
 	let articles = ydbTable(
 		'user_articles',
 		{
@@ -168,7 +168,7 @@ test('migration DDL generates vector k-means tree indexes', () => {
 	)
 })
 
-test('migration DDL generates ALTER statements for table options and column families', () => {
+test('generates ALTER statements for table options and column families', () => {
 	let events = ydbTable('migration_events', {
 		id: integer('id').notNull().primaryKey(),
 		payload: text('payload').notNull(),
@@ -238,7 +238,7 @@ test('migration DDL generates ALTER statements for table options and column fami
 	)
 })
 
-test('migration DDL generates alter and drop statements', () => {
+test('generates alter and drop statements', () => {
 	let users = ydbTable('migration_users', {
 		id: integer('id').notNull().primaryKey(),
 		age: integer('age'),
@@ -280,7 +280,7 @@ test('migration DDL generates alter and drop statements', () => {
 	)
 })
 
-test('migration DDL generates ANALYZE, VIEW, TOPIC, CHANGEFEED, rename, and multi-action ALTER TABLE', () => {
+test('generates ANALYZE, VIEW, TOPIC, CHANGEFEED, rename, and multi-action ALTER TABLE', () => {
 	let users = ydbTable('migration_admin_users', {
 		id: integer('id').notNull().primaryKey(),
 		age: integer('age'),
@@ -411,7 +411,7 @@ test('migration DDL generates ANALYZE, VIEW, TOPIC, CHANGEFEED, rename, and mult
 	)
 })
 
-test('migration DDL generates temporary tables, replication, transfer, secrets, users, groups, grants, and SHOW CREATE', () => {
+test('generates temporary tables, replication, transfer, secrets, users, groups, grants, and SHOW CREATE', () => {
 	let tempTable = ydbTable('migration_temp_events', {
 		id: integer('id').notNull().primaryKey(),
 		payload: text('payload'),
@@ -555,7 +555,7 @@ test('migration DDL generates temporary tables, replication, transfer, secrets, 
 	)
 })
 
-test('migration DDL rejects invalid YDB constructs', () => {
+test('rejects invalid YDB constructs', () => {
 	let users = ydbTable('users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name'),
@@ -565,7 +565,7 @@ test('migration DDL rejects invalid YDB constructs', () => {
 	assert.throws(() => buildAddIndexSql(users, uniqueAge), /cannot add UNIQUE indexes/u)
 })
 
-test('migration DDL rejects invalid table option and family definitions', () => {
+test('rejects invalid table option and family definitions', () => {
 	let duplicateOptionTable = ydbTable(
 		'duplicate_options',
 		{
@@ -628,7 +628,7 @@ test('migration DDL rejects invalid table option and family definitions', () => 
 	)
 })
 
-test('migration DDL escapes identifiers and rejects unsafe option names', () => {
+test('escapes identifiers and rejects unsafe option names', () => {
 	let users = ydbTable(
 		'users` DROP TABLE audit; --',
 		{
@@ -667,7 +667,7 @@ test('migration DDL escapes identifiers and rejects unsafe option names', () => 
 	)
 })
 
-test('migration DDL escapes service object identifiers and literal values', () => {
+test('escapes service object identifiers and literal values', () => {
 	assert.equal(
 		buildDropTableSql('safe` DROP TABLE audit; --', { ifExists: true }),
 		'DROP TABLE IF EXISTS `safe`` DROP TABLE audit; --`'
@@ -697,7 +697,7 @@ test('migration DDL escapes service object identifiers and literal values', () =
 	)
 })
 
-test('migration DDL rejects invalid vector indexes', () => {
+test('rejects invalid vector indexes', () => {
 	let articles = ydbTable('user_articles', {
 		id: uint32('id').notNull().primaryKey(),
 		embedding: bytes('embedding').notNull(),
@@ -760,7 +760,7 @@ test('migration DDL rejects invalid vector indexes', () => {
 	)
 })
 
-test('migration DDL includes inline column unique constraints', () => {
+test('includes inline column unique constraints', () => {
 	let users = ydbTable('migration_unique_users', {
 		id: integer('id').notNull().primaryKey(),
 		email: text('email').notNull().unique(),

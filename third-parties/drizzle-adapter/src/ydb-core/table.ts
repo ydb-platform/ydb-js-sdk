@@ -20,7 +20,7 @@ import type { YdbUniqueConstraintBuilder } from './unique-constraint.js'
 import { getYdbColumnBuilders } from './columns/all.js'
 
 export type TableConfig = TableConfigBase<YdbColumn>
-const drizzleTableSymbol = (Table as any).Symbol
+let drizzleTableSymbol = (Table as any).Symbol
 
 export class YdbTable<T extends TableConfig = TableConfig> extends Table<T> {
 	static override readonly [entityKind] = 'YdbTable'
@@ -99,19 +99,19 @@ function ydbTableBase<
 	columns: YdbBuildColumns<TTableName, TColumnsMap>
 	dialect: 'ydb'
 }> {
-	const rawTable = new YdbTable(name, schema, baseName)
-	const parsedColumns = (
+	let rawTable = new YdbTable(name, schema, baseName)
+	let parsedColumns = (
 		typeof columns === 'function' ? columns(getYdbColumnBuilders()) : columns
 	) as TColumnsMap
-	const builtColumns = Object.fromEntries(
+	let builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([key, builder]) => {
 			;(builder as any).setName?.(key)
-			const column = (builder as any).build?.(rawTable)
+			let column = (builder as any).build?.(rawTable)
 			return [key, column]
 		})
 	) as Record<string, YdbColumn>
 
-	const table = Object.assign(rawTable, builtColumns)
+	let table = Object.assign(rawTable, builtColumns)
 	;(table as any)[drizzleTableSymbol.Columns] = builtColumns
 	;(table as any)[drizzleTableSymbol.ExtraConfigColumns] = builtColumns
 
@@ -170,7 +170,7 @@ export interface YdbTableFn<TSchemaName extends string | undefined = undefined> 
 	}>
 }
 
-export const ydbTable: YdbTableFn = ((
+export let ydbTable: YdbTableFn = ((
 	name: string,
 	columns: YdbColumnsInput,
 	extraConfig?: unknown

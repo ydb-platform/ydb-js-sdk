@@ -18,7 +18,7 @@ import { posts, users } from './helpers/schema.ts'
 
 let live = createLiveContext()
 
-test('cte helpers and count builder', async (t) => {
+test('runs cte helpers and count builder on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -54,7 +54,7 @@ test('cte helpers and count builder', async (t) => {
 	}
 })
 
-test('insert select', async (t) => {
+test('runs insert select on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -95,7 +95,7 @@ test('insert select', async (t) => {
 	}
 })
 
-test('onDuplicateKeyUpdate', async (t) => {
+test('runs onDuplicateKeyUpdate on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -140,7 +140,7 @@ test('onDuplicateKeyUpdate', async (t) => {
 	}
 })
 
-test('mutation returning', async (t) => {
+test('returns mutated rows on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -182,7 +182,7 @@ test('mutation returning', async (t) => {
 	}
 })
 
-test('native set and batch mutations', async (t) => {
+test('runs native set and batch mutations on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -254,7 +254,7 @@ test('native set and batch mutations', async (t) => {
 	}
 })
 
-test('advanced table DDL', async (t) => {
+test('applies advanced table DDL on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -295,7 +295,7 @@ test('advanced table DDL', async (t) => {
 	}
 })
 
-test('delete using', async (t) => {
+test('runs delete using on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -338,7 +338,7 @@ test('delete using', async (t) => {
 	}
 })
 
-test('session batch', async (t) => {
+test('runs session.batch() through live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

@@ -5,7 +5,7 @@ import { posts, postsTableName, users, usersTableName } from './helpers/schema.t
 
 let live = createLiveContext()
 
-test('schema query', async (t) => {
+test('runs schema queries against live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -42,7 +42,7 @@ test('schema query', async (t) => {
 	}
 })
 
-test('findMany', async (t) => {
+test('returns hydrated rows from findMany on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -80,7 +80,7 @@ test('findMany', async (t) => {
 	}
 })
 
-test('many relation hydration', async (t) => {
+test('hydrates many relations on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -139,7 +139,7 @@ test('many relation hydration', async (t) => {
 	}
 })
 
-test('one relation hydration', async (t) => {
+test('hydrates one relations on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

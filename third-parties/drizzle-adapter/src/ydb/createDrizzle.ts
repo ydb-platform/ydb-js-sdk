@@ -46,7 +46,7 @@ function makeDb<TSchemaDefinition extends YdbSchemaDefinition>(
 	executor: YdbExecutor | YdbTransactionalExecutor,
 	config: YdbDrizzleConfig<TSchemaDefinition> = {}
 ): YdbDrizzleDatabase<TSchemaDefinition> {
-	const dialect = new YdbDialect(config.casing === undefined ? {} : { casing: config.casing })
+	let dialect = new YdbDialect(config.casing === undefined ? {} : { casing: config.casing })
 
 	let logger: Logger | undefined = undefined
 	if (config.logger === true) {
@@ -55,9 +55,9 @@ function makeDb<TSchemaDefinition extends YdbSchemaDefinition>(
 		logger = config.logger
 	}
 
-	const schema = config.schema
+	let schema = config.schema
 		? (() => {
-				const tablesConfig = extractTablesRelationalConfig(
+				let tablesConfig = extractTablesRelationalConfig(
 					config.schema,
 					createTableRelationsHelpers
 				)
@@ -70,8 +70,8 @@ function makeDb<TSchemaDefinition extends YdbSchemaDefinition>(
 			})()
 		: undefined
 
-	const session = new YdbSession(executor, dialect, logger === undefined ? {} : { logger })
-	const db = new YdbDatabase<TSchemaDefinition>(
+	let session = new YdbSession(executor, dialect, logger === undefined ? {} : { logger })
+	let db = new YdbDatabase<TSchemaDefinition>(
 		dialect,
 		session,
 		schema
@@ -131,7 +131,7 @@ export function createDrizzle<
 			return makeDb(input.client, input)
 		}
 		if (input.connectionString) {
-			const client = new YdbDriver(input.connectionString)
+			let client = new YdbDriver(input.connectionString)
 			return makeDb(client, input)
 		}
 		throw new Error('Must include either `client` or `connectionString`.')
@@ -140,4 +140,4 @@ export function createDrizzle<
 	return makeDb(input, config)
 }
 
-export const drizzle = createDrizzle
+export let drizzle = createDrizzle

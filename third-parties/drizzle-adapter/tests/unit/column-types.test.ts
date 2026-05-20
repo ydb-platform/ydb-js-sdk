@@ -154,7 +154,7 @@ function typeRow(values: {
 	]
 }
 
-test('sql types', () => {
+test('emits expected YQL types for each column builder', () => {
 	assert.equal(typesTable.id.getSQLType(), 'Int32')
 	assert.equal(typesTable.flag.getSQLType(), 'Bool')
 	assert.equal(typesTable.i8.getSQLType(), 'Int8')
@@ -184,7 +184,7 @@ test('sql types', () => {
 	assert.equal(typesTable.name.getSQLType(), 'Utf8')
 })
 
-test('insert codecs', () => {
+test('encodes typed values on insert', () => {
 	let now = new Date()
 	let rowDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 	let rowDatetime = new Date(Math.floor(now.getTime() / 1000) * 1000)
@@ -256,7 +256,7 @@ test('insert codecs', () => {
 	assert.equal(query.params[25], 'Rarity')
 })
 
-test('decimal rejects invalid', () => {
+test('rejects invalid decimal definitions', () => {
 	assert.throws(
 		() =>
 			toQuery(
@@ -269,7 +269,7 @@ test('decimal rejects invalid', () => {
 	)
 })
 
-test('decimal supports inferred column names', () => {
+test('infers column name for decimal()', () => {
 	let inferredDecimalTable = ydbTable('inferred_decimal', {
 		id: integer('id').notNull(),
 		amount: decimal(22, 9),
@@ -279,7 +279,7 @@ test('decimal supports inferred column names', () => {
 	assert.equal(inferredDecimalTable.amount.getSQLType(), 'Decimal(22, 9)')
 })
 
-test('customType', () => {
+test('wires customType encoders and decoders', () => {
 	let slugType = customType<{ data: string; driverData: SQL }>({
 		dataType() {
 			return 'Utf8'
@@ -301,7 +301,7 @@ test('customType', () => {
 	assert.deepEqual(query.params, [1])
 })
 
-test('select decoders', async () => {
+test('decodes selected rows through column codecs', async () => {
 	let mockClient = {
 		execute: async () => ({
 			rows: [

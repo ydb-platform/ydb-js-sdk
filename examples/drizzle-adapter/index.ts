@@ -10,9 +10,9 @@ import {
 	ydbTable,
 } from '@ydbjs/drizzle-adapter'
 
-const connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
+let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
 
-const users = ydbTable(
+let users = ydbTable(
 	'drizzle_example_users',
 	{
 		id: integer('id').primaryKey(),
@@ -25,7 +25,7 @@ const users = ydbTable(
 	(table) => [index('drizzle_example_users_status_idx').on(table.status).global().sync()]
 )
 
-const projects = ydbTable(
+let projects = ydbTable(
 	'drizzle_example_projects',
 	{
 		id: integer('id').primaryKey(),
@@ -38,7 +38,7 @@ const projects = ydbTable(
 	(table) => [index('drizzle_example_projects_owner_idx').on(table.ownerId).global().sync()]
 )
 
-const tasks = ydbTable(
+let tasks = ydbTable(
 	'drizzle_example_tasks',
 	{
 		id: integer('id').primaryKey(),
@@ -57,12 +57,12 @@ const tasks = ydbTable(
 	]
 )
 
-const usersRelations = relations(users, ({ many }) => ({
+let usersRelations = relations(users, ({ many }) => ({
 	ownedProjects: many(projects),
 	assignedTasks: many(tasks),
 }))
 
-const projectsRelations = relations(projects, ({ one, many }) => ({
+let projectsRelations = relations(projects, ({ one, many }) => ({
 	owner: one(users, {
 		fields: [projects.ownerId],
 		references: [users.id],
@@ -70,7 +70,7 @@ const projectsRelations = relations(projects, ({ one, many }) => ({
 	tasks: many(tasks),
 }))
 
-const tasksRelations = relations(tasks, ({ one }) => ({
+let tasksRelations = relations(tasks, ({ one }) => ({
 	project: one(projects, {
 		fields: [tasks.projectId],
 		references: [projects.id],
@@ -81,7 +81,7 @@ const tasksRelations = relations(tasks, ({ one }) => ({
 	}),
 }))
 
-const schema = {
+let schema = {
 	users,
 	projects,
 	tasks,
@@ -90,7 +90,7 @@ const schema = {
 	tasksRelations,
 }
 
-const db = createDrizzle({
+let db = createDrizzle({
 	connectionString,
 	schema,
 })
@@ -125,7 +125,7 @@ async function resetData() {
 }
 
 async function seedData() {
-	const now = new Date()
+	let now = new Date()
 
 	await db.insert(users).values([
 		{
@@ -201,7 +201,7 @@ try {
 
 	await db.update(tasks).set({ status: 'review' }).where(eq(tasks.id, 101)).execute()
 
-	const joinedRows = await db
+	let joinedRows = await db
 		.select({
 			projectTitle: projects.title,
 			taskTitle: tasks.title,
@@ -214,7 +214,7 @@ try {
 		.orderBy(asc(tasks.id))
 		.execute()
 
-	const projectDashboard = await db.query.projects.findMany({
+	let projectDashboard = await db.query.projects.findMany({
 		columns: { id: true, title: true, status: true },
 		where: (table, { eq }) => eq(table.status, 'active'),
 		orderBy: (table, { asc }) => [asc(table.id)],
@@ -234,7 +234,7 @@ try {
 		},
 	})
 
-	const reviewTask = await db.query.tasks.findFirst({
+	let reviewTask = await db.query.tasks.findFirst({
 		columns: {
 			id: true,
 			title: true,
@@ -259,7 +259,7 @@ try {
 		},
 	})
 
-	const userWorkloads = await db.query.users.findMany({
+	let userWorkloads = await db.query.users.findMany({
 		columns: { id: true, name: true, email: true, status: true },
 		orderBy: (table, { asc }) => [asc(table.id)],
 		with: {
@@ -291,8 +291,8 @@ try {
 		},
 	})
 
-	const taskCount = await db.$count(tasks)
-	const rawValues = await db.values(sql`SELECT id, name FROM ${users} ORDER BY id`)
+	let taskCount = await db.$count(tasks)
+	let rawValues = await db.values(sql`SELECT id, name FROM ${users} ORDER BY id`)
 
 	await db.transaction(
 		async (tx) => {

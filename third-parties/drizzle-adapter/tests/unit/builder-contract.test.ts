@@ -11,7 +11,7 @@ import {
 } from '../../src/ydb-core/query-builders/index.ts'
 import { createMockSession, users } from '../helpers/unit-basic.ts'
 
-test('builders', async () => {
+test('builds executable CRUD chains', async () => {
 	let { session, prepareCalls } = createMockSession()
 
 	let selectBuilder = new YdbSelectBuilder(session).from(users).where(eq(users.id, 7))
@@ -76,7 +76,7 @@ test('builders', async () => {
 	assert.match(executedDelete.prepared, /^delete from /)
 })
 
-test('returning mutation builders prepare in array mode', async () => {
+test('prepares returning mutation builders in array mode', async () => {
 	let { session, prepareCalls } = createMockSession()
 
 	await new YdbInsertBuilder(users, session)
@@ -115,7 +115,7 @@ test('returning mutation builders prepare in array mode', async () => {
 	)
 })
 
-test('builders reject invalid state', () => {
+test('rejects builders constructed in invalid state', () => {
 	let { session } = createMockSession()
 
 	assert.throws(

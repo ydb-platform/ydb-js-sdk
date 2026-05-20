@@ -22,94 +22,103 @@ function getAllReturningFields(table: YdbTable): Record<string, unknown> {
 }
 
 export class YdbDeleteBuilder<TResult = unknown> extends QueryPromise<TResult> {
-	private whereClause: SQLType | undefined
-	private usingTables: SQLWrapper[] = []
-	private onQuery: DeleteOnQuery | undefined
-	private returningFields: YdbSelectedFieldsOrdered | undefined
+	#whereClause: SQLType | undefined
+	#usingTables: SQLWrapper[] = []
+	#onQuery: DeleteOnQuery | undefined
+	#returningFields: YdbSelectedFieldsOrdered | undefined
+
+	readonly #table: YdbTable
+	readonly #session: YdbSession
+	readonly #dialect: YdbDialect
+	readonly #withList: Subquery[]
 
 	constructor(
-		private readonly table: YdbTable,
-		private readonly session: YdbSession,
-		private readonly dialect = new YdbDialect(),
-		private readonly withList: Subquery[] = []
+		table: YdbTable,
+		session: YdbSession,
+		dialect = new YdbDialect(),
+		withList: Subquery[] = []
 	) {
 		super()
+		this.#table = table
+		this.#session = session
+		this.#dialect = dialect
+		this.#withList = withList
 	}
 
 	where(where: SQLType | undefined): this {
-		if (this.onQuery) {
+		if (this.#onQuery) {
 			throw new Error('YDB delete().on() does not support where()')
 		}
 
-		this.whereClause = where ?? undefined
+		this.#whereClause = where ?? undefined
 		return this
 	}
 
 	using(...tables: SQLWrapper[]): this {
-		if (this.onQuery) {
+		if (this.#onQuery) {
 			throw new Error('YDB delete().on() does not support using()')
 		}
 
-		this.usingTables = [...tables]
+		this.#usingTables = [...tables]
 		return this
 	}
 
 	on(query: DeleteOnQuery | ((qb: YdbQueryBuilder) => DeleteOnQuery)): this {
-		const resolved =
-			typeof query === 'function' ? query(new YdbQueryBuilder(this.dialect)) : query
+		let resolved =
+			typeof query === 'function' ? query(new YdbQueryBuilder(this.#dialect)) : query
 
 		if (!is(resolved, SQL)) {
-			validateSetBasedMutationSelection(this.table, resolved.getSelectedFields(), 'delete')
+			validateSetBasedMutationSelection(this.#table, resolved.getSelectedFields(), 'delete')
 		}
 
-		this.onQuery = resolved
-		this.whereClause = undefined
-		this.usingTables = []
+		this.#onQuery = resolved
+		this.#whereClause = undefined
+		this.#usingTables = []
 		return this
 	}
 
-	returning(fields: Record<string, unknown> = getAllReturningFields(this.table)): this {
-		const orderedFields = orderSelectedFields(fields)
+	returning(fields: Record<string, unknown> = getAllReturningFields(this.#table)): this {
+		let orderedFields = orderSelectedFields(fields)
 		if (orderedFields.length === 0) {
 			throw new Error('YDB returning() requires at least one field')
 		}
 
-		this.returningFields = orderedFields
+		this.#returningFields = orderedFields
 		return this
 	}
 
 	getSQL(): SQLType {
-		if (this.onQuery) {
-			const onSql = is(this.onQuery, SQL) ? this.onQuery : this.onQuery.getSQL()
+		if (this.#onQuery) {
+			let onSql = is(this.#onQuery, SQL) ? this.#onQuery : this.#onQuery.getSQL()
 
-			return this.dialect.buildDeleteQuery({
-				table: this.table,
+			return this.#dialect.buildDeleteQuery({
+				table: this.#table,
 				on: onSql,
-				withList: this.withList,
-				returning: this.returningFields,
+				withList: this.#withList,
+				returning: this.#returningFields,
 			})
 		}
 
-		return this.dialect.buildDeleteQuery({
-			table: this.table,
-			where: this.whereClause,
-			using: this.usingTables.length > 0 ? [...this.usingTables] : undefined,
-			withList: this.withList,
-			returning: this.returningFields,
+		return this.#dialect.buildDeleteQuery({
+			table: this.#table,
+			where: this.#whereClause,
+			using: this.#usingTables.length > 0 ? [...this.#usingTables] : undefined,
+			withList: this.#withList,
+			returning: this.#returningFields,
 		})
 	}
 
 	toSQL() {
-		const { typings: _typings, ...query } = this.dialect.sqlToQuery(this.getSQL())
+		let { typings: _typings, ...query } = this.#dialect.sqlToQuery(this.getSQL())
 		return query
 	}
 
 	prepare(name?: string) {
-		return this.session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
+		return this.#session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
 			this.getSQL(),
-			this.returningFields,
+			this.#returningFields,
 			name,
-			this.returningFields !== undefined
+			this.#returningFields !== undefined
 		)
 	}
 
@@ -119,18 +128,21 @@ export class YdbDeleteBuilder<TResult = unknown> extends QueryPromise<TResult> {
 }
 
 export class YdbBatchDeleteBuilder<TResult = unknown> extends QueryPromise<TResult> {
-	private whereClause: SQLType | undefined
+	#whereClause: SQLType | undefined
 
-	constructor(
-		private readonly table: YdbTable,
-		private readonly session: YdbSession,
-		private readonly dialect = new YdbDialect()
-	) {
+	readonly #table: YdbTable
+	readonly #session: YdbSession
+	readonly #dialect: YdbDialect
+
+	constructor(table: YdbTable, session: YdbSession, dialect = new YdbDialect()) {
 		super()
+		this.#table = table
+		this.#session = session
+		this.#dialect = dialect
 	}
 
 	where(where: SQLType | undefined): this {
-		this.whereClause = where ?? undefined
+		this.#whereClause = where ?? undefined
 		return this
 	}
 
@@ -147,20 +159,20 @@ export class YdbBatchDeleteBuilder<TResult = unknown> extends QueryPromise<TResu
 	}
 
 	getSQL(): SQLType {
-		return this.dialect.buildDeleteQuery({
-			table: this.table,
-			where: this.whereClause,
+		return this.#dialect.buildDeleteQuery({
+			table: this.#table,
+			where: this.#whereClause,
 			batch: true,
 		})
 	}
 
 	toSQL() {
-		const { typings: _typings, ...query } = this.dialect.sqlToQuery(this.getSQL())
+		let { typings: _typings, ...query } = this.#dialect.sqlToQuery(this.getSQL())
 		return query
 	}
 
 	prepare(name?: string) {
-		return this.session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
+		return this.#session.prepareQuery<YdbPreparedQueryConfig & { execute: TResult }>(
 			this.getSQL(),
 			undefined,
 			name,

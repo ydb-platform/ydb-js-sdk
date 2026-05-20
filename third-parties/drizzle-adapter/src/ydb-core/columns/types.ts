@@ -57,7 +57,7 @@ export interface YdbDecimalConfig {
 	scale: number
 }
 
-const booleanBase = customType<{ data: boolean; driverData: boolean | Bool }>({
+let booleanBase = customType<{ data: boolean; driverData: boolean | Bool }>({
 	dataType() {
 		return 'Bool'
 	},
@@ -66,7 +66,7 @@ const booleanBase = customType<{ data: boolean; driverData: boolean | Bool }>({
 	},
 })
 
-const int8Base = customType<{ data: number; driverData: YdbInt8 }>({
+let int8Base = customType<{ data: number; driverData: YdbInt8 }>({
 	dataType() {
 		return 'Int8'
 	},
@@ -75,7 +75,7 @@ const int8Base = customType<{ data: number; driverData: YdbInt8 }>({
 	},
 })
 
-const int16Base = customType<{ data: number; driverData: YdbInt16 }>({
+let int16Base = customType<{ data: number; driverData: YdbInt16 }>({
 	dataType() {
 		return 'Int16'
 	},
@@ -84,7 +84,7 @@ const int16Base = customType<{ data: number; driverData: YdbInt16 }>({
 	},
 })
 
-const bigintBase = customType<{ data: bigint; driverData: bigint | YdbInt64 }>({
+let bigintBase = customType<{ data: bigint; driverData: bigint | YdbInt64 }>({
 	dataType() {
 		return 'Int64'
 	},
@@ -93,7 +93,7 @@ const bigintBase = customType<{ data: bigint; driverData: bigint | YdbInt64 }>({
 	},
 })
 
-const uint8Base = customType<{ data: number; driverData: YdbUint8 }>({
+let uint8Base = customType<{ data: number; driverData: YdbUint8 }>({
 	dataType() {
 		return 'Uint8'
 	},
@@ -102,7 +102,7 @@ const uint8Base = customType<{ data: number; driverData: YdbUint8 }>({
 	},
 })
 
-const uint16Base = customType<{ data: number; driverData: YdbUint16 }>({
+let uint16Base = customType<{ data: number; driverData: YdbUint16 }>({
 	dataType() {
 		return 'Uint16'
 	},
@@ -111,7 +111,7 @@ const uint16Base = customType<{ data: number; driverData: YdbUint16 }>({
 	},
 })
 
-const uint32Base = customType<{ data: number; driverData: YdbUint32 }>({
+let uint32Base = customType<{ data: number; driverData: YdbUint32 }>({
 	dataType() {
 		return 'Uint32'
 	},
@@ -120,7 +120,7 @@ const uint32Base = customType<{ data: number; driverData: YdbUint32 }>({
 	},
 })
 
-const uint64Base = customType<{ data: bigint; driverData: YdbUint64 }>({
+let uint64Base = customType<{ data: bigint; driverData: YdbUint64 }>({
 	dataType() {
 		return 'Uint64'
 	},
@@ -129,7 +129,7 @@ const uint64Base = customType<{ data: bigint; driverData: YdbUint64 }>({
 	},
 })
 
-const floatBase = customType<{ data: number; driverData: YdbFloat }>({
+let floatBase = customType<{ data: number; driverData: YdbFloat }>({
 	dataType() {
 		return 'Float'
 	},
@@ -138,7 +138,7 @@ const floatBase = customType<{ data: number; driverData: YdbFloat }>({
 	},
 })
 
-const doubleBase = customType<{ data: number; driverData: YdbDouble }>({
+let doubleBase = customType<{ data: number; driverData: YdbDouble }>({
 	dataType() {
 		return 'Double'
 	},
@@ -147,7 +147,7 @@ const doubleBase = customType<{ data: number; driverData: YdbDouble }>({
 	},
 })
 
-const dyNumberBase = customType<{ data: string; driverData: Primitive }>({
+let dyNumberBase = customType<{ data: string; driverData: Primitive }>({
 	dataType() {
 		return 'DyNumber'
 	},
@@ -162,7 +162,7 @@ const dyNumberBase = customType<{ data: string; driverData: Primitive }>({
 	},
 })
 
-const bytesBase = customType<{ data: Uint8Array; driverData: unknown }>({
+let bytesBase = customType<{ data: Uint8Array; driverData: unknown }>({
 	dataType() {
 		return 'String'
 	},
@@ -171,7 +171,7 @@ const bytesBase = customType<{ data: Uint8Array; driverData: unknown }>({
 	},
 })
 
-const dateBase = customType<{ data: Date; driverData: YdbDate }>({
+let dateBase = customType<{ data: Date; driverData: YdbDate }>({
 	dataType() {
 		return 'Date'
 	},
@@ -180,7 +180,7 @@ const dateBase = customType<{ data: Date; driverData: YdbDate }>({
 	},
 })
 
-const date32Base = customType<{ data: Date; driverData: Primitive }>({
+let date32Base = customType<{ data: Date; driverData: Primitive }>({
 	dataType() {
 		return 'Date32'
 	},
@@ -192,7 +192,7 @@ const date32Base = customType<{ data: Date; driverData: Primitive }>({
 	},
 })
 
-const datetimeBase = customType<{ data: Date; driverData: YdbDatetime }>({
+let datetimeBase = customType<{ data: Date; driverData: YdbDatetime }>({
 	dataType() {
 		return 'Datetime'
 	},
@@ -201,7 +201,7 @@ const datetimeBase = customType<{ data: Date; driverData: YdbDatetime }>({
 	},
 })
 
-const datetime64Base = customType<{ data: Date; driverData: Primitive }>({
+let datetime64Base = customType<{ data: Date; driverData: Primitive }>({
 	dataType() {
 		return 'Datetime64'
 	},
@@ -213,7 +213,7 @@ const datetime64Base = customType<{ data: Date; driverData: Primitive }>({
 	},
 })
 
-const timestampBase = customType<{ data: Date; driverData: YdbTimestamp }>({
+let timestampBase = customType<{ data: Date; driverData: YdbTimestamp }>({
 	dataType() {
 		return 'Timestamp'
 	},
@@ -222,7 +222,7 @@ const timestampBase = customType<{ data: Date; driverData: YdbTimestamp }>({
 	},
 })
 
-const timestamp64Base = customType<{ data: Date; driverData: Primitive }>({
+let timestamp64Base = customType<{ data: Date; driverData: Primitive }>({
 	dataType() {
 		return 'Timestamp64'
 	},
@@ -234,7 +234,7 @@ const timestamp64Base = customType<{ data: Date; driverData: Primitive }>({
 	},
 })
 
-const intervalBase = customType<{ data: number; driverData: YdbInterval }>({
+let intervalBase = customType<{ data: number; driverData: YdbInterval }>({
 	dataType() {
 		return 'Interval'
 	},
@@ -243,7 +243,7 @@ const intervalBase = customType<{ data: number; driverData: YdbInterval }>({
 	},
 })
 
-const interval64Base = customType<{ data: bigint | number; driverData: Primitive }>({
+let interval64Base = customType<{ data: bigint | number; driverData: Primitive }>({
 	dataType() {
 		return 'Interval64'
 	},
@@ -255,7 +255,7 @@ const interval64Base = customType<{ data: bigint | number; driverData: Primitive
 	},
 })
 
-const uuidBase = customType<{ data: string; driverData: YdbUuid }>({
+let uuidBase = customType<{ data: string; driverData: YdbUuid }>({
 	dataType() {
 		return 'Uuid'
 	},
@@ -264,7 +264,7 @@ const uuidBase = customType<{ data: string; driverData: YdbUuid }>({
 	},
 })
 
-const ysonBase = customType<{ data: Uint8Array; driverData: unknown }>({
+let ysonBase = customType<{ data: Uint8Array; driverData: unknown }>({
 	dataType() {
 		return 'Yson'
 	},
@@ -324,7 +324,7 @@ export function bytes(name?: string) {
 	return bytesBase(name as any)
 }
 
-export const binary = bytes
+export let binary = bytes
 
 export function date(name?: string) {
 	return dateBase(name as any)
@@ -422,9 +422,9 @@ export function decimal(
 	precisionOrScale: number,
 	scaleOrUndefined?: number
 ) {
-	const name = typeof nameOrPrecision === 'string' ? nameOrPrecision : ''
-	const precision = typeof nameOrPrecision === 'string' ? precisionOrScale : nameOrPrecision
-	const scale = typeof nameOrPrecision === 'string' ? scaleOrUndefined : precisionOrScale
+	let name = typeof nameOrPrecision === 'string' ? nameOrPrecision : ''
+	let precision = typeof nameOrPrecision === 'string' ? precisionOrScale : nameOrPrecision
+	let scale = typeof nameOrPrecision === 'string' ? scaleOrUndefined : precisionOrScale
 
 	if (scale === undefined) {
 		throw new Error('YDB decimal() requires precision and scale')

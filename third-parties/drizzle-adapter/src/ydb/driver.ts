@@ -83,9 +83,9 @@ async function execQuery(
 		query = query.parameter(`p${i}`, fromJs(params[i] as any))
 	}
 
-	const executedQuery = options?.arrayMode ? query.values() : query
-	const raw = await executedQuery
-	const rows = getRows(raw)
+	let executedQuery = options?.arrayMode ? query.values() : query
+	let raw = await executedQuery
+	let rows = getRows(raw)
 	return {
 		rows,
 		rowCount: rows.length,
@@ -193,7 +193,7 @@ export class YdbDriver implements YdbTransactionalExecutor {
 		callback: (tx: YdbExecutor) => Promise<T>,
 		config?: YdbTransactionConfig
 	): Promise<T> {
-		const options = mapTransactionConfig(config)
+		let options = mapTransactionConfig(config)
 
 		if (options) {
 			return this.client.begin(options, async (tx) => callback(new YdbTxExecutor(tx)))

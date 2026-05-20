@@ -22,7 +22,7 @@ type YdbErrorDiagnostics = {
 	retryable?: boolean
 }
 
-const grpcStatus = {
+let grpcStatus = {
 	CANCELLED: 1,
 	DEADLINE_EXCEEDED: 4,
 	PERMISSION_DENIED: 7,
@@ -31,7 +31,7 @@ const grpcStatus = {
 	UNAUTHENTICATED: 16,
 } as const
 
-const retryableYdbStatusCodes = new Set<number>([
+let retryableYdbStatusCodes = new Set<number>([
 	StatusIds_StatusCode.ABORTED,
 	StatusIds_StatusCode.INTERNAL_ERROR,
 	StatusIds_StatusCode.UNAVAILABLE,

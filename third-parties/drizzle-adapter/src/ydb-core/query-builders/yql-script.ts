@@ -16,7 +16,7 @@ function assertPragmaName(name: string): void {
 }
 
 function renderNamedExpression(name: string, context: string): string {
-	const rendered = name.startsWith('$') ? name : `$${name}`
+	let rendered = name.startsWith('$') ? name : `$${name}`
 	if (!/^\$[A-Za-z_][A-Za-z0-9_]*$/u.test(rendered)) {
 		throw new Error(`YDB ${context} must look like $name`)
 	}
@@ -103,7 +103,7 @@ export function pragma(
 	}
 
 	if (Array.isArray(value)) {
-		const values = value as readonly YdbScriptExpression[]
+		let values = value as readonly YdbScriptExpression[]
 		return yql`PRAGMA ${yql.raw(name)}(${yql.join(
 			values.map((item) => renderExpression(item)),
 			yql`, `
@@ -118,7 +118,7 @@ export function kMeansTreeSearchTopSize(value: number | string): SQL {
 }
 
 export function declareParam(name: string, dataType: string): SQL {
-	const parameterName = renderNamedExpression(name, 'DECLARE parameter')
+	let parameterName = renderNamedExpression(name, 'DECLARE parameter')
 	if (!dataType.trim()) {
 		throw new Error('YDB DECLARE data type must not be empty')
 	}
@@ -135,10 +135,10 @@ export function defineAction(
 	parameters: readonly (string | YdbActionParameter)[],
 	statements: readonly (string | SQLWrapper)[]
 ): SQL {
-	const actionName = renderNamedExpression(name, 'ACTION name')
-	const renderedParameters = parameters.map((parameter) => {
-		const config = typeof parameter === 'string' ? { name: parameter } : parameter
-		const parameterName = renderNamedExpression(config.name, 'ACTION parameter')
+	let actionName = renderNamedExpression(name, 'ACTION name')
+	let renderedParameters = parameters.map((parameter) => {
+		let config = typeof parameter === 'string' ? { name: parameter } : parameter
+		let parameterName = renderNamedExpression(config.name, 'ACTION parameter')
 		return `${parameterName}${config.optional ? '?' : ''}`
 	})
 
@@ -152,12 +152,7 @@ END DEFINE;`
 }
 
 export function doAction(name: string, args: readonly YdbScriptExpression[] = []): SQL {
-	if (name !== 'EMPTY_ACTION') {
-		renderNamedExpression(name, 'DO action name')
-	}
-
-	const actionName =
-		name === 'EMPTY_ACTION' ? name : renderNamedExpression(name, 'DO action name')
+	let actionName = name === 'EMPTY_ACTION' ? name : renderNamedExpression(name, 'DO action name')
 	return yql`DO ${yql.raw(actionName)}(${yql.join(
 		args.map((arg) => renderExpression(arg)),
 		yql`, `

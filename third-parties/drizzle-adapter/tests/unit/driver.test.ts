@@ -4,7 +4,7 @@ import { Driver } from '@ydbjs/core'
 import { YdbDriver } from '../../src/index.ts'
 import { createMockQueryFunction } from '../helpers/mock-driver.ts'
 
-test('borrowed driver', async () => {
+test('wraps a borrowed Driver without owning it', async () => {
 	let readyCalls = 0
 	let closeCalls = 0
 	let signal = new AbortController().signal
@@ -31,7 +31,7 @@ test('borrowed driver', async () => {
 	assert.equal(closeCalls, 0)
 })
 
-test('execute', async () => {
+test('forwards execute params and result meta', async () => {
 	let borrowedDriver = Object.create(Driver.prototype) as Driver
 	let driver = new YdbDriver(borrowedDriver)
 	let mockClient = createMockQueryFunction([{ pony: 'Twilight' }], [['Twilight', 7]])
@@ -70,7 +70,7 @@ test('execute', async () => {
 	)
 })
 
-test('transaction', async () => {
+test('begins transactions with mapped isolation', async () => {
 	let borrowedDriver = Object.create(Driver.prototype) as Driver
 	let driver = new YdbDriver(borrowedDriver)
 	let txQuery = createMockQueryFunction([{ ok: true }])
@@ -133,7 +133,7 @@ test('rejects multi-result-set responses', async () => {
 	await assert.rejects(driver.execute('select 1; select 2', [], 'execute'), /2 result sets/)
 })
 
-test('fromCallback', async () => {
+test('creates an executor from a remote callback', async () => {
 	let calls: Array<{ sql: string; params: unknown[]; method: string; options: unknown }> = []
 	let executor = YdbDriver.fromCallback(async (query, params, method, options) => {
 		calls.push({ sql: query, params, method, options })

@@ -40,19 +40,19 @@ interface YdbIndexBuilderDefaults {
 	readonly withOptions?: YdbIndexWithOptions | undefined
 }
 
-const vectorKMeansTreeIndexType = 'vector_kmeans_tree'
-const vectorTypes: readonly YdbVectorType[] = ['float', 'uint8', 'int8']
-const vectorDistances: readonly YdbVectorDistance[] = ['cosine', 'manhattan', 'euclidean']
-const vectorSimilarities: readonly YdbVectorSimilarity[] = ['inner_product', 'cosine']
+let vectorKMeansTreeIndexType = 'vector_kmeans_tree'
+let vectorTypes: readonly YdbVectorType[] = ['float', 'uint8', 'int8']
+let vectorDistances: readonly YdbVectorDistance[] = ['cosine', 'manhattan', 'euclidean']
+let vectorSimilarities: readonly YdbVectorSimilarity[] = ['inner_product', 'cosine']
 
 function assertColumnsBelongToTable(
 	table: YdbTable,
 	columns: readonly YdbColumn[],
 	kind: string
 ): void {
-	const tableName = getTableName(table)
+	let tableName = getTableName(table)
 
-	for (const column of columns) {
+	for (let column of columns) {
 		if (column.table !== table) {
 			throw new Error(
 				`${kind} column "${column.name}" does not belong to table "${tableName}"`
@@ -89,7 +89,7 @@ function normalizeVectorKMeansTreeOptions(
 		throw new Error('YDB vector index requires exactly one of distance or similarity')
 	}
 
-	const result: YdbIndexWithOptions = {}
+	let result: YdbIndexWithOptions = {}
 	if (options.distance !== undefined) {
 		assertOneOf('distance', options.distance, vectorDistances)
 		result['distance'] = options.distance
@@ -116,21 +116,25 @@ function normalizeVectorKMeansTreeOptions(
 export class YdbIndexBuilderOn {
 	static readonly [entityKind] = 'YdbIndexBuilderOn'
 
-	constructor(
-		private readonly name: string | undefined,
-		private readonly unique: boolean,
-		private readonly defaults: YdbIndexBuilderDefaults = {}
-	) {}
+	readonly #name: string | undefined
+	readonly #unique: boolean
+	readonly #defaults: YdbIndexBuilderDefaults
+
+	constructor(name: string | undefined, unique: boolean, defaults: YdbIndexBuilderDefaults = {}) {
+		this.#name = name
+		this.#unique = unique
+		this.#defaults = defaults
+	}
 
 	on(...columns: [YdbColumn, ...YdbColumn[]]): YdbIndexBuilder {
-		const builder = new YdbIndexBuilder(this.name, columns, this.unique)
+		let builder = new YdbIndexBuilder(this.#name, columns, this.#unique)
 
-		if (this.defaults.indexType) {
-			builder.using(this.defaults.indexType)
+		if (this.#defaults.indexType) {
+			builder.using(this.#defaults.indexType)
 		}
 
-		if (this.defaults.withOptions) {
-			builder.with(this.defaults.withOptions)
+		if (this.#defaults.withOptions) {
+			builder.with(this.#defaults.withOptions)
 		}
 
 		return builder
@@ -140,40 +144,44 @@ export class YdbIndexBuilderOn {
 export class YdbIndexBuilder {
 	static readonly [entityKind] = 'YdbIndexBuilder'
 
-	private locality: YdbIndexLocality = 'GLOBAL'
-	private syncMode: YdbIndexSyncMode = 'SYNC'
-	private indexType?: string
-	private coverColumns: YdbColumn[] = []
-	private withOptions: YdbIndexWithOptions = {}
+	#locality: YdbIndexLocality = 'GLOBAL'
+	#syncMode: YdbIndexSyncMode = 'SYNC'
+	#indexType?: string
+	#coverColumns: YdbColumn[] = []
+	#withOptions: YdbIndexWithOptions = {}
 
-	constructor(
-		private readonly name: string | undefined,
-		private readonly columns: [YdbColumn, ...YdbColumn[]],
-		private readonly unique: boolean
-	) {}
+	readonly #name: string | undefined
+	readonly #columns: [YdbColumn, ...YdbColumn[]]
+	readonly #unique: boolean
+
+	constructor(name: string | undefined, columns: [YdbColumn, ...YdbColumn[]], unique: boolean) {
+		this.#name = name
+		this.#columns = columns
+		this.#unique = unique
+	}
 
 	global(): this {
-		this.locality = 'GLOBAL'
+		this.#locality = 'GLOBAL'
 		return this
 	}
 
 	local(): this {
-		this.locality = 'LOCAL'
+		this.#locality = 'LOCAL'
 		return this
 	}
 
 	sync(): this {
-		this.syncMode = 'SYNC'
+		this.#syncMode = 'SYNC'
 		return this
 	}
 
 	async(): this {
-		this.syncMode = 'ASYNC'
+		this.#syncMode = 'ASYNC'
 		return this
 	}
 
 	using(indexType: string): this {
-		this.indexType = indexType
+		this.#indexType = indexType
 		return this
 	}
 
@@ -182,43 +190,43 @@ export class YdbIndexBuilder {
 	}
 
 	cover(...columns: YdbColumn[]): this {
-		this.coverColumns = [...columns]
+		this.#coverColumns = [...columns]
 		return this
 	}
 
 	with(options: YdbIndexWithOptions): this {
-		this.withOptions = { ...this.withOptions, ...options }
+		this.#withOptions = { ...this.#withOptions, ...options }
 		return this
 	}
 
 	build(table: YdbTable): YdbIndex {
-		assertColumnsBelongToTable(table, this.columns, 'Index')
-		assertColumnsBelongToTable(table, this.coverColumns, 'Index cover')
+		assertColumnsBelongToTable(table, this.#columns, 'Index')
+		assertColumnsBelongToTable(table, this.#coverColumns, 'Index cover')
 
-		if (this.indexType === vectorKMeansTreeIndexType) {
-			if (this.unique) {
+		if (this.#indexType === vectorKMeansTreeIndexType) {
+			if (this.#unique) {
 				throw new Error('YDB vector indexes cannot be UNIQUE')
 			}
 
-			if (this.locality !== 'GLOBAL') {
+			if (this.#locality !== 'GLOBAL') {
 				throw new Error('YDB vector indexes support only GLOBAL locality')
 			}
 
-			if (this.syncMode !== 'SYNC') {
+			if (this.#syncMode !== 'SYNC') {
 				throw new Error('YDB vector indexes support only SYNC mode')
 			}
 		}
 
 		return new YdbIndex({
-			name: this.name,
+			name: this.#name,
 			table,
-			columns: [...this.columns],
-			unique: this.unique,
-			locality: this.locality,
-			sync: this.syncMode,
-			indexType: this.indexType,
-			cover: [...this.coverColumns],
-			withOptions: { ...this.withOptions },
+			columns: [...this.#columns],
+			unique: this.#unique,
+			locality: this.#locality,
+			sync: this.#syncMode,
+			indexType: this.#indexType,
+			cover: [...this.#coverColumns],
+			withOptions: { ...this.#withOptions },
 		})
 	}
 }
@@ -243,8 +251,8 @@ export function vectorIndex(
 	nameOrOptions: string | YdbVectorKMeansTreeOptions,
 	options?: YdbVectorKMeansTreeOptions
 ): YdbIndexBuilderOn {
-	const name = typeof nameOrOptions === 'string' ? nameOrOptions : undefined
-	const vectorOptions = typeof nameOrOptions === 'string' ? options : nameOrOptions
+	let name = typeof nameOrOptions === 'string' ? nameOrOptions : undefined
+	let vectorOptions = typeof nameOrOptions === 'string' ? options : nameOrOptions
 
 	if (!vectorOptions) {
 		throw new Error('YDB vectorIndex() requires vector index options')
@@ -257,8 +265,8 @@ export function vectorIndex(
 }
 
 export function indexView(table: YdbTable | string, indexName: string, alias?: string): SQL {
-	const tableSql = typeof table === 'string' ? yql.identifier(table) : yql`${table}`
-	const aliasSql = alias ? yql` as ${yql.identifier(alias)}` : undefined
+	let tableSql = typeof table === 'string' ? yql.identifier(table) : yql`${table}`
+	let aliasSql = alias ? yql` as ${yql.identifier(alias)}` : undefined
 	return yql`${tableSql} view ${yql.identifier(indexName)}${aliasSql}`
 }
 

@@ -27,7 +27,7 @@ let users = ydbTable('users', {
 	name: text('name').notNull(),
 })
 
-test('prepareQuery', () => {
+test('normalises queries and builds YdbPreparedQuery', () => {
 	let logs: Array<{ query: string; params: unknown[] }> = []
 	let session = new YdbSession(
 		{
@@ -61,7 +61,7 @@ test('prepareQuery', () => {
 	assert.deepEqual(logs, [])
 })
 
-test('prepared rows', async () => {
+test('returns prepared rows in array mode', async () => {
 	let logs: Array<{ query: string; params: unknown[] }> = []
 	let calls: Array<{ method: string; options: unknown }> = []
 	let fields = orderSelectedFields({ id: users.id, name: users.name })
@@ -105,7 +105,7 @@ test('prepared rows', async () => {
 	assert.ok(logs.every(({ query }) => query === 'select $p0 as id, $p1 as name'))
 })
 
-test('prepared execute', async () => {
+test('executes prepared queries against the client', async () => {
 	let session = new YdbSession(
 		{
 			async execute(_query, _params, method, options) {
@@ -359,7 +359,7 @@ test('prepared query errors preserve YDB diagnostic fields on Drizzle errors', a
 	)
 })
 
-test('prepared get', async () => {
+test('returns the first row from prepared get', async () => {
 	let session = new YdbSession(
 		{
 			async execute() {
@@ -436,7 +436,7 @@ test('prepareQuery passes ordered rows and mapColumnValue to customResultMapper'
 	})
 })
 
-test('session helpers', async () => {
+test('wires session helpers around prepareQuery', async () => {
 	let calls: Array<{ method: string; arrayMode: boolean | undefined; query: string }> = []
 	let rowsQuery = yql`select ${7} as ${yql.identifier('id')}, ${'Applejack'} as ${yql.identifier('name')}`
 	let countQuery = yql`select count(*) as ${yql.identifier('count')} from ${yql.identifier('users')}`
@@ -482,7 +482,7 @@ test('session helpers', async () => {
 	)
 })
 
-test('session helpers with builders', async () => {
+test('routes session helpers through runnable builders', async () => {
 	let db = drizzle({
 		async execute(query, _params, _method, options) {
 			if (query.startsWith('insert into `users`')) {
@@ -517,7 +517,7 @@ test('session helpers with builders', async () => {
 	assert.deepEqual(await db.execute(insertBuilder), [])
 })
 
-test('session transaction', async () => {
+test('runs transaction callbacks through session.transaction', async () => {
 	let transactionConfigs: unknown[] = []
 	let sessionWithoutTransactions = new YdbSession(
 		{

@@ -7,7 +7,7 @@ import { orderSelectedFields } from '../../src/ydb-core/result-mapping.ts'
 
 let live = createLiveContext()
 
-test('types round-trip', async (t) => {
+test('round-trips every column type on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

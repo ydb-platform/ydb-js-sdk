@@ -7,7 +7,7 @@ import { liveSchema, users, usersTableName, ydbUrl } from './helpers/schema.ts'
 
 let live = createLiveContext()
 
-test('createDrizzle inputs', async (t) => {
+test('accepts every createDrizzle input shape on live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -46,7 +46,7 @@ test('createDrizzle inputs', async (t) => {
 	}
 })
 
-test('builder CRUD', async (t) => {
+test('runs builder CRUD against live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,
@@ -96,7 +96,7 @@ test('builder CRUD', async (t) => {
 	}
 })
 
-test('db helpers', async (t) => {
+test('runs db helpers against live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(
 		t,

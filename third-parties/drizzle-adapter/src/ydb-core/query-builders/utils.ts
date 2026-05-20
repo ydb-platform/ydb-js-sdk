@@ -16,9 +16,9 @@ export function validateTableColumnKeys(
 	input: Record<string, unknown>,
 	operation: 'insert' | 'update' | 'upsert' | 'replace'
 ): void {
-	const columns = getTableColumns(table)
+	let columns = getTableColumns(table)
 
-	for (const key of Object.keys(input)) {
+	for (let key of Object.keys(input)) {
 		if (!(key in columns)) {
 			throw new Error(`Unknown column "${key}" in ${operation}()`)
 		}
@@ -26,17 +26,17 @@ export function validateTableColumnKeys(
 }
 
 export function getPrimaryColumnKeys(table: YdbTable): string[] {
-	const columns = getTableColumns(table)
-	const primaryColumns = new Set<YdbColumn>()
+	let columns = getTableColumns(table)
+	let primaryColumns = new Set<YdbColumn>()
 
-	for (const column of Object.values(columns)) {
+	for (let column of Object.values(columns)) {
 		if (column.primary) {
 			primaryColumns.add(column)
 		}
 	}
 
-	for (const primaryKey of getTableConfig(table as any).primaryKeys) {
-		for (const column of primaryKey.config.columns) {
+	for (let primaryKey of getTableConfig(table as any).primaryKeys) {
+		for (let column of primaryKey.config.columns) {
 			primaryColumns.add(column)
 		}
 	}
@@ -51,15 +51,15 @@ export function validateSetBasedMutationSelection(
 	fields: Record<string, unknown> | undefined,
 	operation: 'update' | 'delete'
 ): void {
-	const label = operation === 'update' ? 'Update on' : 'Delete on'
+	let label = operation === 'update' ? 'Update on' : 'Delete on'
 
 	if (!fields || Object.keys(fields).length === 0) {
 		throw new Error(`${label} error: selected fields must include table columns`)
 	}
 
-	const columns = getTableColumns(table)
-	const selectedKeys = Object.keys(fields)
-	for (const key of selectedKeys) {
+	let columns = getTableColumns(table)
+	let selectedKeys = Object.keys(fields)
+	for (let key of selectedKeys) {
 		if (!(key in columns)) {
 			throw new Error(
 				`${label} error: selected field "${key}" is not a column of the target table`
@@ -67,12 +67,12 @@ export function validateSetBasedMutationSelection(
 		}
 	}
 
-	const primaryKeys = getPrimaryColumnKeys(table)
+	let primaryKeys = getPrimaryColumnKeys(table)
 	if (primaryKeys.length === 0) {
 		throw new Error(`YDB ${operation}().on() requires at least one primary key column`)
 	}
 
-	for (const key of primaryKeys) {
+	for (let key of primaryKeys) {
 		if (!selectedKeys.includes(key)) {
 			throw new Error(
 				`YDB ${operation}().on() requires primary key column "${key}" in selected fields`
@@ -90,7 +90,7 @@ export function getInsertColumnEntries(table: YdbTable): Array<[string, YdbColum
 export function resolveInsertValue(column: YdbColumn, value: unknown): unknown {
 	if (value === undefined || (is(value, Param) && value.value === undefined)) {
 		if (column.defaultFn !== undefined) {
-			const defaultValue = column.defaultFn()
+			let defaultValue = column.defaultFn()
 			return is(defaultValue, SQL) ? defaultValue : yql.param(defaultValue, column)
 		}
 
@@ -99,7 +99,7 @@ export function resolveInsertValue(column: YdbColumn, value: unknown): unknown {
 		}
 
 		if (column.onUpdateFn !== undefined) {
-			const onUpdateValue = column.onUpdateFn()
+			let onUpdateValue = column.onUpdateFn()
 			return is(onUpdateValue, SQL) ? onUpdateValue : yql.param(onUpdateValue, column)
 		}
 
@@ -115,7 +115,7 @@ export function resolveUpdateValue(column: YdbColumn, value: unknown): unknown {
 	}
 
 	if (column.onUpdateFn !== undefined) {
-		const onUpdateValue = column.onUpdateFn()
+		let onUpdateValue = column.onUpdateFn()
 		return is(onUpdateValue, SQL) ? onUpdateValue : yql.param(onUpdateValue, column)
 	}
 

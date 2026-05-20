@@ -30,7 +30,7 @@ import {
 import { integer } from './integer.js'
 import { text } from './text.js'
 
-export const ydbColumnBuilders = {
+export let ydbColumnBuilders = {
 	bigint,
 	binary,
 	boolean,

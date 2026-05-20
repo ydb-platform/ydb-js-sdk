@@ -501,7 +501,7 @@ function escapeDoubleQuoted(value: string): string {
 }
 
 function getMigrationHashNamePart(hash: string): string {
-	const sanitized = hash.replace(/[^a-zA-Z0-9]+/gu, '').slice(0, 12)
+	let sanitized = hash.replace(/[^a-zA-Z0-9]+/gu, '').slice(0, 12)
 	return sanitized || crypto.createHash('sha256').update(hash).digest('hex').slice(0, 12)
 }
 
@@ -517,7 +517,7 @@ export function buildStableMigrationName(
 		return migration.name
 	}
 
-	const hashPart = getMigrationHashNamePart(migration.hash)
+	let hashPart = getMigrationHashNamePart(migration.hash)
 	if (typeof migration.folderMillis === 'number' && Number.isFinite(migration.folderMillis)) {
 		return `${prefix}_${Math.trunc(migration.folderMillis)}_${hashPart}`
 	}
@@ -542,14 +542,14 @@ function getObjectName(value: string | YdbTable): string {
 }
 
 function getMigrationTableName(config: YdbMigrationTableConfig): string {
-	const tableName = config.migrationsTable ?? '__drizzle_migrations'
+	let tableName = config.migrationsTable ?? '__drizzle_migrations'
 	return config.migrationsSchema ? `${config.migrationsSchema}/${tableName}` : tableName
 }
 
 function getMigrationLockTableName(config: YdbMigrationTableConfig): string {
-	const configuredTable =
+	let configuredTable =
 		typeof config.migrationLock === 'object' ? config.migrationLock.table : undefined
-	const tableName =
+	let tableName =
 		config.migrationsLockTable ??
 		configuredTable ??
 		`${config.migrationsTable ?? '__drizzle_migrations'}_lock`
@@ -567,7 +567,7 @@ function ensureSupportedColumn(column: YdbColumn): void {
 function renderColumnDefinition(column: YdbColumn, familyName?: string): string {
 	ensureSupportedColumn(column)
 
-	const parts = [escapeName(column.name), column.getSQLType()]
+	let parts = [escapeName(column.name), column.getSQLType()]
 	if (familyName) {
 		parts.push('FAMILY', escapeName(familyName))
 	}
@@ -583,7 +583,7 @@ function getPrimaryKeyColumns(
 	columns: readonly YdbColumn[],
 	primaryKeys: readonly YdbPrimaryKey[]
 ): YdbColumn[] {
-	const inlinePrimaryKeys = columns.filter((column) => (column as any).primary === true)
+	let inlinePrimaryKeys = columns.filter((column) => (column as any).primary === true)
 
 	if (inlinePrimaryKeys.length > 0 && primaryKeys.length > 0) {
 		throw new Error(
@@ -652,7 +652,7 @@ function requireNonEmptyOptions(
 	options: Readonly<Record<string, YdbTableOptionValue>>,
 	context: string
 ): string[] {
-	const rendered = renderTableOptions(options)
+	let rendered = renderTableOptions(options)
 	if (rendered.length === 0) {
 		throw new Error(`YDB migrate() ${context} requires at least one option`)
 	}
@@ -661,10 +661,10 @@ function requireNonEmptyOptions(
 }
 
 function renderTtl(ttl: YdbTtl): string {
-	const { column, actions, unit } = ttl.config
-	const actionSql = actions
+	let { column, actions, unit } = ttl.config
+	let actionSql = actions
 		.map((action) => {
-			const interval = `Interval(${escapeDoubleQuoted(action.interval)})`
+			let interval = `Interval(${escapeDoubleQuoted(action.interval)})`
 
 			if ('externalDataSource' in action) {
 				return `${interval} TO EXTERNAL DATA SOURCE ${escapeName(action.externalDataSource)}`
@@ -673,7 +673,7 @@ function renderTtl(ttl: YdbTtl): string {
 			return action.delete === true ? `${interval} DELETE` : interval
 		})
 		.join(', ')
-	const unitSql = unit ? ` AS ${unit}` : ''
+	let unitSql = unit ? ` AS ${unit}` : ''
 
 	return `${actionSql} ON ${escapeName(column.name)}${unitSql}`
 }
@@ -682,11 +682,11 @@ function collectWithOptions(
 	tableOptions: readonly YdbTableOptions[],
 	ttls: readonly YdbTtl[]
 ): string[] {
-	const rendered: string[] = []
-	const used = new Set<string>()
+	let rendered: string[] = []
+	let used = new Set<string>()
 
-	for (const tableOption of tableOptions) {
-		for (const [key, value] of Object.entries(tableOption.config.options)) {
+	for (let tableOption of tableOptions) {
+		for (let [key, value] of Object.entries(tableOption.config.options)) {
 			if (used.has(key)) {
 				throw new Error(`YDB migrate() duplicate table option "${key}"`)
 			}
@@ -710,7 +710,7 @@ function collectWithOptions(
 }
 
 function renderColumnFamilyOptions(options: YdbColumnFamilyOptions): string[] {
-	const rendered: string[] = []
+	let rendered: string[] = []
 	if (options.data !== undefined) {
 		rendered.push(`DATA = ${escapeDoubleQuoted(options.data)}`)
 	}
@@ -724,8 +724,8 @@ function renderColumnFamilyOptions(options: YdbColumnFamilyOptions): string[] {
 }
 
 function renderColumnFamilyAlterActions(name: string, options: YdbColumnFamilyOptions): string[] {
-	const familyName = escapeName(name)
-	const rendered: string[] = []
+	let familyName = escapeName(name)
+	let rendered: string[] = []
 	if (options.data !== undefined) {
 		rendered.push(`ALTER FAMILY ${familyName} SET DATA ${escapeDoubleQuoted(options.data)}`)
 	}
@@ -745,7 +745,7 @@ function renderColumnFamilyAlterActions(name: string, options: YdbColumnFamilyOp
 function renderColumnFamilyDefinition(
 	family: Pick<YdbColumnFamily['config'], 'name' | 'options'>
 ): string {
-	const options = renderColumnFamilyOptions(family.options)
+	let options = renderColumnFamilyOptions(family.options)
 	return options.length > 0
 		? `FAMILY ${escapeName(family.name)} (${options.join(', ')})`
 		: `FAMILY ${escapeName(family.name)}`
@@ -754,17 +754,17 @@ function renderColumnFamilyDefinition(
 function getColumnFamilyByColumnName(
 	columnFamilies: readonly YdbColumnFamily[]
 ): Map<string, string> {
-	const familyByColumn = new Map<string, string>()
-	const usedFamilyNames = new Set<string>()
+	let familyByColumn = new Map<string, string>()
+	let usedFamilyNames = new Set<string>()
 
-	for (const family of columnFamilies) {
+	for (let family of columnFamilies) {
 		if (usedFamilyNames.has(family.config.name)) {
 			throw new Error(`YDB migrate() duplicate column family "${family.config.name}"`)
 		}
 		usedFamilyNames.add(family.config.name)
 
-		for (const column of family.config.columns) {
-			const existing = familyByColumn.get(column.name)
+		for (let column of family.config.columns) {
+			let existing = familyByColumn.get(column.name)
 			if (existing) {
 				throw new Error(
 					`YDB migrate() column "${column.name}" is assigned to both "${existing}" and "${family.config.name}" families`
@@ -789,12 +789,12 @@ function renderPartitioning(
 		throw new Error('YDB migrate() supports only one PARTITION BY definition per table')
 	}
 
-	const partitioningConfig = partitioning[0]!.config
+	let partitioningConfig = partitioning[0]!.config
 	return `PARTITION BY HASH(${partitioningConfig.columns.map((column) => escapeName(column.name)).join(', ')})`
 }
 
 function renderIndexConfig(config: YdbIndexConfig): string {
-	const fragments = [
+	let fragments = [
 		'INDEX',
 		escapeName(
 			config.name ??
@@ -821,7 +821,7 @@ function renderIndexConfig(config: YdbIndexConfig): string {
 		)
 	}
 
-	const withEntries = Object.entries(config.withOptions)
+	let withEntries = Object.entries(config.withOptions)
 	if (withEntries.length > 0) {
 		fragments.push(
 			`WITH (${withEntries.map(([key, value]) => `${renderOptionName(key)} = ${typeof value === 'string' ? escapeString(value) : String(value)}`).join(', ')})`
@@ -832,7 +832,7 @@ function renderIndexConfig(config: YdbIndexConfig): string {
 }
 
 function renderAddIndexAction(index: YdbIndex | YdbUniqueConstraint): string {
-	const rendered =
+	let rendered =
 		'config' in index && 'unique' in index.config
 			? renderIndexConfig(index.config)
 			: renderIndexConfig(uniqueConstraintToIndex(index as YdbUniqueConstraint))
@@ -867,7 +867,7 @@ function renderColumnsList(columns: readonly (string | YdbColumn)[]): string {
 }
 
 function renderTopicConsumer(consumer: YdbTopicConsumer): string {
-	const settings = consumer.settings ? renderTableOptions(consumer.settings) : []
+	let settings = consumer.settings ? renderTableOptions(consumer.settings) : []
 	return settings.length > 0
 		? `CONSUMER ${escapeName(consumer.name)} WITH (${settings.join(', ')})`
 		: `CONSUMER ${escapeName(consumer.name)}`
@@ -899,7 +899,7 @@ function addIntervalOption(
 function normalizeAsyncReplicationOptions(
 	options: YdbAsyncReplicationOptions
 ): Record<string, YdbTableOptionValue> {
-	const rendered: Record<string, YdbTableOptionValue> = {
+	let rendered: Record<string, YdbTableOptionValue> = {
 		...(options.options ?? {}),
 	}
 
@@ -925,7 +925,7 @@ function normalizeAsyncReplicationOptions(
 function normalizeAlterAsyncReplicationOptions(
 	options: YdbAlterAsyncReplicationOptions
 ): Record<string, YdbTableOptionValue> {
-	const rendered: Record<string, YdbTableOptionValue> = {
+	let rendered: Record<string, YdbTableOptionValue> = {
 		...(options.options ?? {}),
 	}
 
@@ -938,7 +938,7 @@ function normalizeAlterAsyncReplicationOptions(
 function normalizeTransferOptions(
 	options: YdbTransferOptions
 ): Record<string, YdbTableOptionValue> {
-	const rendered: Record<string, YdbTableOptionValue> = {
+	let rendered: Record<string, YdbTableOptionValue> = {
 		...(options.options ?? {}),
 	}
 
@@ -963,7 +963,7 @@ function normalizeTransferOptions(
 function normalizeAlterTransferOptions(
 	options: YdbAlterTransferOptions
 ): Record<string, YdbTableOptionValue> {
-	const rendered: Record<string, YdbTableOptionValue> = {
+	let rendered: Record<string, YdbTableOptionValue> = {
 		...(options.options ?? {}),
 	}
 
@@ -978,7 +978,7 @@ function renderAdminOptions(
 	options: Readonly<Record<string, YdbTableOptionValue>>,
 	context: string
 ): string {
-	const rendered = renderStatementOptions(options)
+	let rendered = renderStatementOptions(options)
 	if (rendered.length === 0) {
 		throw new Error(`YDB migrate() ${context} requires at least one option`)
 	}
@@ -987,7 +987,7 @@ function renderAdminOptions(
 }
 
 function renderUserOptions(options: YdbUserOptions = {}): string {
-	const rendered: string[] = []
+	let rendered: string[] = []
 	if ('password' in options) {
 		rendered.push(
 			options.password === null
@@ -1027,7 +1027,7 @@ function renderAccessPermission(permission: YdbAccessPermission): string {
 }
 
 function renderAccessPermissions(permissions: YdbAccessPermissions): string {
-	const list = Array.isArray(permissions) ? permissions : [permissions]
+	let list = Array.isArray(permissions) ? permissions : [permissions]
 	if (list.length === 0) {
 		throw new Error('YDB migrate() ACL statement requires permissions')
 	}
@@ -1042,7 +1042,7 @@ function renderShowCreateObjectType(type: YdbShowCreateObjectType): string {
 function normalizeChangefeedOptions(
 	options: YdbChangefeedOptions
 ): Record<string, YdbTableOptionValue> {
-	const rendered: Record<string, YdbTableOptionValue> = {
+	let rendered: Record<string, YdbTableOptionValue> = {
 		...(options.options ?? {}),
 	}
 
@@ -1070,7 +1070,7 @@ function normalizeChangefeedOptions(
 }
 
 function renderChangefeedOptions(options: YdbChangefeedOptions): string {
-	const renderedOptions = Object.entries(normalizeChangefeedOptions(options)).map(
+	let renderedOptions = Object.entries(normalizeChangefeedOptions(options)).map(
 		([key, value]) => {
 			if (isRawTableOptionValue(value)) {
 				return `${renderOptionName(key)} = ${value.value}`
@@ -1110,8 +1110,7 @@ function renderAlterTableAction(action: YdbAlterTableAction): string[] {
 		case 'alter_column_family':
 			return renderColumnFamilyAlterActions(action.name, action.options)
 		case 'set_column_family': {
-			const columnName =
-				typeof action.column === 'string' ? action.column : action.column.name
+			let columnName = typeof action.column === 'string' ? action.column : action.column.name
 			return [
 				`ALTER COLUMN ${escapeName(columnName)} SET FAMILY ${escapeName(action.familyName)}`,
 			]
@@ -1132,9 +1131,9 @@ type DefinedOptions<T extends Record<string, unknown>> = {
 }
 
 function definedOptions<T extends Record<string, unknown>>(options: T): DefinedOptions<T> {
-	const result: Partial<Record<keyof T, unknown>> = {}
+	let result: Partial<Record<keyof T, unknown>> = {}
 
-	for (const [key, value] of Object.entries(options) as Array<[keyof T, T[keyof T]]>) {
+	for (let [key, value] of Object.entries(options) as Array<[keyof T, T[keyof T]]>) {
 		if (value !== undefined) {
 			result[key] = value
 		}
@@ -1144,7 +1143,7 @@ function definedOptions<T extends Record<string, unknown>>(options: T): DefinedO
 }
 
 export function buildMigrationTableBootstrapSql(config: YdbMigrationTableConfig = {}): string {
-	const migrationTableName = getMigrationTableName(config)
+	let migrationTableName = getMigrationTableName(config)
 
 	return [
 		`CREATE TABLE IF NOT EXISTS ${escapeName(migrationTableName)} (`,
@@ -1166,14 +1165,14 @@ export function buildMigrationTableBootstrapSql(config: YdbMigrationTableConfig 
 export function buildMigrationHistoryMetadataProbeSql(
 	config: YdbMigrationTableConfig = {}
 ): string {
-	const migrationTableName = getMigrationTableName(config)
+	let migrationTableName = getMigrationTableName(config)
 	return `SELECT ${escapeName('status')} FROM ${escapeName(migrationTableName)} LIMIT 1`
 }
 
 export function buildMigrationHistoryMetadataColumnSql(
 	config: YdbMigrationTableConfig = {}
 ): string[] {
-	const migrationTableName = escapeName(getMigrationTableName(config))
+	let migrationTableName = escapeName(getMigrationTableName(config))
 	return [
 		`ALTER TABLE ${migrationTableName} ADD COLUMN ${escapeName('status')} Utf8`,
 		`ALTER TABLE ${migrationTableName} ADD COLUMN ${escapeName('started_at')} Int64`,
@@ -1186,7 +1185,7 @@ export function buildMigrationHistoryMetadataColumnSql(
 }
 
 export function buildMigrationLockTableBootstrapSql(config: YdbMigrationTableConfig = {}): string {
-	const lockTableName = getMigrationLockTableName(config)
+	let lockTableName = getMigrationLockTableName(config)
 
 	return [
 		`CREATE TABLE IF NOT EXISTS ${escapeName(lockTableName)} (`,
@@ -1207,7 +1206,7 @@ export function buildCreateTableSql(
 		temporary?: boolean | 'temp' | 'temporary'
 	} = {}
 ): string {
-	const {
+	let {
 		columns,
 		indexes,
 		primaryKeys,
@@ -1218,15 +1217,15 @@ export function buildCreateTableSql(
 		columnFamilies,
 	} = getTableConfig(table)
 
-	const primaryKeyColumns = getPrimaryKeyColumns(columns, primaryKeys)
+	let primaryKeyColumns = getPrimaryKeyColumns(columns, primaryKeys)
 	if (primaryKeyColumns.length === 0) {
 		throw new Error(
 			`YDB migrate() CREATE TABLE requires a primary key for "${getTableName(table)}"`
 		)
 	}
 
-	const familyByColumnName = getColumnFamilyByColumnName(columnFamilies)
-	const definitions = [
+	let familyByColumnName = getColumnFamilyByColumnName(columnFamilies)
+	let definitions = [
 		...columns.map((column) =>
 			renderColumnDefinition(column, familyByColumnName.get(column.name))
 		),
@@ -1237,16 +1236,16 @@ export function buildCreateTableSql(
 		...columnFamilies.map((family) => renderColumnFamilyDefinition(family.config)),
 		`PRIMARY KEY (${primaryKeyColumns.map((column) => escapeName(column.name)).join(', ')})`,
 	]
-	const partitioningSql = renderPartitioning(partitioning)
-	const withOptions = collectWithOptions(tableOptions, ttls)
+	let partitioningSql = renderPartitioning(partitioning)
+	let withOptions = collectWithOptions(tableOptions, ttls)
 
-	const temporarySql =
+	let temporarySql =
 		options.temporary === true
 			? 'TEMPORARY '
 			: options.temporary
 				? `${options.temporary.toUpperCase()} `
 				: ''
-	const parts = [
+	let parts = [
 		`CREATE ${temporarySql}TABLE ${options.ifNotExists ? 'IF NOT EXISTS ' : ''}${escapeName(getTableName(table))} (`,
 		definitions.map((definition) => `  ${definition}`).join(',\n'),
 		`)`,
@@ -1274,7 +1273,7 @@ export function buildAnalyzeSql(
 	table: string | YdbTable,
 	columns?: readonly (string | YdbColumn)[]
 ): string {
-	const columnSql = columns && columns.length > 0 ? ` (${renderColumnsList(columns)})` : ''
+	let columnSql = columns && columns.length > 0 ? ` (${renderColumnsList(columns)})` : ''
 	return `ANALYZE ${escapeName(getObjectName(table))}${columnSql}`
 }
 
@@ -1283,12 +1282,12 @@ export function buildCreateViewSql(
 	query: string,
 	options: YdbCreateViewOptions = {}
 ): string {
-	const viewOptions: Record<string, YdbTableOptionValue> = {
+	let viewOptions: Record<string, YdbTableOptionValue> = {
 		security_invoker: options.securityInvoker ?? true,
 		...(options.options ?? {}),
 	}
-	const renderedOptions = renderTableOptions(viewOptions)
-	const ifNotExists = options.ifNotExists ? 'IF NOT EXISTS ' : ''
+	let renderedOptions = renderTableOptions(viewOptions)
+	let ifNotExists = options.ifNotExists ? 'IF NOT EXISTS ' : ''
 	return `CREATE VIEW ${ifNotExists}${escapeName(name)} WITH (${renderedOptions.join(', ')}) AS ${query}`
 }
 
@@ -1297,10 +1296,10 @@ export function buildDropViewSql(name: string, options: { ifExists?: boolean } =
 }
 
 export function buildCreateTopicSql(name: string, options: YdbCreateTopicOptions = {}): string {
-	const consumers = (options.consumers ?? []).map((consumer) => renderTopicConsumer(consumer))
-	const settings = renderTableOptions(options.settings ?? {})
-	const consumersSql = consumers.length > 0 ? ` (\n  ${consumers.join(',\n  ')}\n)` : ''
-	const settingsSql = settings.length > 0 ? ` WITH (\n  ${settings.join(',\n  ')}\n)` : ''
+	let consumers = (options.consumers ?? []).map((consumer) => renderTopicConsumer(consumer))
+	let settings = renderTableOptions(options.settings ?? {})
+	let consumersSql = consumers.length > 0 ? ` (\n  ${consumers.join(',\n  ')}\n)` : ''
+	let settingsSql = settings.length > 0 ? ` WITH (\n  ${settings.join(',\n  ')}\n)` : ''
 	return `CREATE TOPIC ${escapeName(name)}${consumersSql}${settingsSql}`
 }
 
@@ -1320,10 +1319,10 @@ export function buildCreateAsyncReplicationSql(
 	targets: [YdbAsyncReplicationTarget, ...YdbAsyncReplicationTarget[]],
 	options: YdbAsyncReplicationOptions
 ): string {
-	const targetSql = targets
+	let targetSql = targets
 		.map((target) => `${escapeName(target.remote)} AS ${escapeName(target.local)}`)
 		.join(', ')
-	const optionSql = renderAdminOptions(
+	let optionSql = renderAdminOptions(
 		normalizeAsyncReplicationOptions(options),
 		'CREATE ASYNC REPLICATION WITH'
 	)
@@ -1335,7 +1334,7 @@ export function buildAlterAsyncReplicationSql(
 	name: string,
 	options: YdbAlterAsyncReplicationOptions
 ): string {
-	const optionSql = renderAdminOptions(
+	let optionSql = renderAdminOptions(
 		normalizeAlterAsyncReplicationOptions(options),
 		'ALTER ASYNC REPLICATION SET'
 	)
@@ -1356,8 +1355,8 @@ export function buildCreateTransferSql(
 	using: string,
 	options: YdbTransferOptions = {}
 ): string {
-	const renderedOptions = renderStatementOptions(normalizeTransferOptions(options))
-	const withSql = renderedOptions.length > 0 ? ` WITH (${renderedOptions.join(', ')})` : ''
+	let renderedOptions = renderStatementOptions(normalizeTransferOptions(options))
+	let withSql = renderedOptions.length > 0 ? ` WITH (${renderedOptions.join(', ')})` : ''
 	return `CREATE TRANSFER ${escapeName(name)} FROM ${escapeName(from)} TO ${escapeName(to)} USING ${using}${withSql}`
 }
 
@@ -1379,7 +1378,7 @@ export function buildAlterTransferSql(
 		throw new Error('YDB migrate() ALTER TRANSFER requires using or options')
 	}
 
-	const optionSql = renderAdminOptions(
+	let optionSql = renderAdminOptions(
 		normalizeAlterTransferOptions(config.options),
 		'ALTER TRANSFER SET'
 	)
@@ -1395,12 +1394,12 @@ export function buildCreateSecretSql(name: string, value: string): string {
 }
 
 export function buildCreateUserSql(name: string, options: YdbUserOptions = {}): string {
-	const optionSql = renderUserOptions(options)
+	let optionSql = renderUserOptions(options)
 	return `CREATE USER ${escapeName(name)}${optionSql ? ` ${optionSql}` : ''}`
 }
 
 export function buildAlterUserSql(name: string, options: YdbUserOptions): string {
-	const optionSql = renderUserOptions(options)
+	let optionSql = renderUserOptions(options)
 	if (!optionSql) {
 		throw new Error('YDB migrate() ALTER USER requires at least one option')
 	}
@@ -1419,7 +1418,7 @@ export function buildCreateGroupSql(
 	name: string,
 	options: { users?: readonly string[] } = {}
 ): string {
-	const usersSql =
+	let usersSql =
 		options.users && options.users.length > 0
 			? ` WITH USER ${renderRoleList(options.users)}`
 			: ''
@@ -1498,7 +1497,7 @@ export function buildAlterTableSetOptionsSql(
 	table: string | YdbTable,
 	options: Readonly<Record<string, YdbTableOptionValue>>
 ): string {
-	const renderedOptions = requireNonEmptyOptions(options, 'ALTER TABLE SET')
+	let renderedOptions = requireNonEmptyOptions(options, 'ALTER TABLE SET')
 	return `ALTER TABLE ${escapeName(getObjectName(table))} SET (${renderedOptions.join(', ')})`
 }
 
@@ -1521,7 +1520,7 @@ export function buildAlterColumnFamilySql(
 	name: string,
 	options: YdbColumnFamilyOptions
 ): string {
-	const actions = renderColumnFamilyAlterActions(name, options)
+	let actions = renderColumnFamilyAlterActions(name, options)
 	if (actions.length === 0) {
 		throw new Error('YDB migrate() ALTER FAMILY requires at least one option')
 	}
@@ -1535,7 +1534,7 @@ export function buildAlterColumnSetFamilySql(
 	familyName: string
 ): string[] {
 	return columns.map((column) => {
-		const columnName = typeof column === 'string' ? column : column.name
+		let columnName = typeof column === 'string' ? column : column.name
 		return `ALTER TABLE ${escapeName(getObjectName(table))} ALTER COLUMN ${escapeName(columnName)} SET FAMILY ${escapeName(familyName)}`
 	})
 }
@@ -1560,7 +1559,7 @@ export function buildAlterTableSql(
 	table: string | YdbTable,
 	actions: [YdbAlterTableAction, ...YdbAlterTableAction[]]
 ): string {
-	const rendered = actions.flatMap((action) => renderAlterTableAction(action))
+	let rendered = actions.flatMap((action) => renderAlterTableAction(action))
 	if (rendered.length === 0) {
 		throw new Error('YDB migrate() ALTER TABLE requires at least one action')
 	}
@@ -1569,9 +1568,9 @@ export function buildAlterTableSql(
 }
 
 export function buildMigrationSql(operations: readonly YdbMigrationOperation[]): string[] {
-	const statements: string[] = []
+	let statements: string[] = []
 
-	for (const operation of operations) {
+	for (let operation of operations) {
 		switch (operation.kind) {
 			case 'create_table':
 				statements.push(
@@ -1596,9 +1595,8 @@ export function buildMigrationSql(operations: readonly YdbMigrationOperation[]):
 				statements.push(buildAnalyzeSql(operation.table, operation.columns))
 				break
 			case 'create_view':
-				const createViewOptions: YdbCreateViewOptions = { ...operation.options }
-				const createViewIfNotExists =
-					operation.ifNotExists ?? operation.options?.ifNotExists
+				let createViewOptions: YdbCreateViewOptions = { ...operation.options }
+				let createViewIfNotExists = operation.ifNotExists ?? operation.options?.ifNotExists
 				if (createViewIfNotExists !== undefined) {
 					createViewOptions.ifNotExists = createViewIfNotExists
 				}
@@ -1787,7 +1785,7 @@ export function normalizeInlineMigration(
 	migration: YdbInlineMigration,
 	index: number
 ): YdbNormalizedMigration {
-	const sqlStatements = migration.sql
+	let sqlStatements = migration.sql
 		? [...migration.sql]
 		: migration.operations
 			? buildMigrationSql(migration.operations)
@@ -1797,8 +1795,8 @@ export function normalizeInlineMigration(
 		throw new Error(`YDB migrate() received migration #${index + 1} without sql or operations`)
 	}
 
-	const text = sqlStatements.join('\n--> statement-breakpoint\n')
-	const hash = migration.hash ?? crypto.createHash('sha256').update(text).digest('hex')
+	let text = sqlStatements.join('\n--> statement-breakpoint\n')
+	let hash = migration.hash ?? crypto.createHash('sha256').update(text).digest('hex')
 
 	return {
 		name: buildStableMigrationName(
@@ -1813,7 +1811,7 @@ export function normalizeInlineMigration(
 }
 
 export function buildMigrationHistorySelectSql(config: YdbMigrationTableConfig = {}): string {
-	const migrationTableName = getMigrationTableName(config)
+	let migrationTableName = getMigrationTableName(config)
 
 	return [
 		`SELECT ${escapeName('hash')}, ${escapeName('created_at')}, ${escapeName('name')}, ${escapeName('status')},`,
@@ -1838,8 +1836,8 @@ export function buildMigrationHistoryInsertSql(
 		| YdbMigrationHistoryRecord,
 	config: YdbMigrationTableConfig = {}
 ): string {
-	const migrationTableName = getMigrationTableName(config)
-	const record: YdbMigrationHistoryRecord =
+	let migrationTableName = getMigrationTableName(config)
+	let record: YdbMigrationHistoryRecord =
 		'status' in migration
 			? migration
 			: {
@@ -1884,7 +1882,7 @@ export function buildMigrationLockSelectSql(
 	config: YdbMigrationTableConfig = {},
 	key = 'migrate'
 ): string {
-	const lockTableName = getMigrationLockTableName(config)
+	let lockTableName = getMigrationLockTableName(config)
 
 	return [
 		`SELECT ${escapeName('owner_id')}, ${escapeName('expires_at')}`,
@@ -1903,7 +1901,7 @@ export function buildMigrationLockUpsertSql(
 		expiresAt: number
 	}
 ): string {
-	const lockTableName = getMigrationLockTableName(config)
+	let lockTableName = getMigrationLockTableName(config)
 
 	return [
 		`UPSERT INTO ${escapeName(lockTableName)} (`,
@@ -1935,7 +1933,7 @@ export function buildMigrationLockRefreshSql(
 		expiresAt: number
 	}
 ): string {
-	const lockTableName = getMigrationLockTableName(config)
+	let lockTableName = getMigrationLockTableName(config)
 
 	return [
 		`UPDATE ${escapeName(lockTableName)}`,
@@ -1948,7 +1946,7 @@ export function buildMigrationLockReleaseSql(
 	config: YdbMigrationTableConfig = {},
 	lock: { key: string; ownerId: string }
 ): string {
-	const lockTableName = getMigrationLockTableName(config)
+	let lockTableName = getMigrationLockTableName(config)
 
 	return [
 		`DELETE FROM ${escapeName(lockTableName)}`,

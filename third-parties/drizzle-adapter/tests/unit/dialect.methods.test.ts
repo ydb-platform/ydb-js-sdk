@@ -33,7 +33,7 @@ test('prepareTyping maps YDB column encoders to Drizzle typings', () => {
 	assert.equal(dialect.prepareTyping(typedTable.decimalValue), 'decimal')
 })
 
-test('direct dialect fragment helpers build selection, table, join and tail clauses', () => {
+test('builds selection, table, join and tail clauses through direct dialect helpers', () => {
 	let aliasedUsers = aliasedTable(users, 'u')
 	let fields = orderSelectedFields({ userId: users.id, postTitle: posts.title })
 	let selectionAliases = ['user_id_alias', 'post_title_alias']
@@ -80,7 +80,7 @@ test('direct dialect fragment helpers build selection, table, join and tail clau
 	)
 })
 
-test('direct dialect set-operation helpers build single and chained set queries', () => {
+test('builds single and chained set queries through direct dialect helpers', () => {
 	let leftSelectBuilder = new YdbSelectBuilder(session, { value: users.name })
 		.from(users)
 		.where(eq(users.id, 1))
@@ -134,7 +134,7 @@ test('direct dialect set-operation helpers build single and chained set queries'
 	assert.deepEqual(chained.params, [1, 1, 2])
 })
 
-test('buildWithCTE, buildInsertQuery, buildUpdateSet, buildUpdateQuery and buildDeleteQuery', () => {
+test('builds WITH, INSERT, UPDATE set, UPDATE and DELETE statements', () => {
 	let ponyCte = new WithSubquery(
 		yql`select ${1} as ${yql.identifier('id')}`,
 		{ id: users.id } as any,

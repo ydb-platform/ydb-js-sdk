@@ -8,7 +8,7 @@ let users = ydbTable('users', {
 	name: text('name').notNull(),
 })
 
-test('logger', async () => {
+test('forwards executed queries and bound params to the configured logger', async () => {
 	let logs: Array<{ query: string; params: unknown[] }> = []
 
 	let db = drizzle(

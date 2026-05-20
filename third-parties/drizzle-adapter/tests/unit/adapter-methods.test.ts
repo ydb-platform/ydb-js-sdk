@@ -5,7 +5,7 @@ import { drizzle, integer, primaryKey, text, ydbTable } from '../../src/index.ts
 import { YdbDeleteBuilder, YdbInsertBuilder } from '../../src/ydb-core/query-builders/index.ts'
 import { dialect, session, users } from '../helpers/unit-basic.ts'
 
-test('db $with()/with() builds CTE-backed select queries', () => {
+test('builds CTE-backed select queries via $with/with', () => {
 	let db = drizzle({
 		async execute() {
 			return { rows: [] }
@@ -29,7 +29,7 @@ test('db $with()/with() builds CTE-backed select queries', () => {
 	assert.deepEqual(query.params, [1])
 })
 
-test('db $count() embeds count sql and resolves numeric results', async () => {
+test('embeds $count subquery and resolves numeric results', async () => {
 	let queries: string[] = []
 	let db = drizzle({
 		async execute(query) {
@@ -52,7 +52,7 @@ test('db $count() embeds count sql and resolves numeric results', async () => {
 	assert.deepEqual(embedded.params, [2])
 })
 
-test('insert select sql', () => {
+test('builds insert select with full target columns', () => {
 	let query = dialect.sqlToQuery(
 		new YdbInsertBuilder(users, session, dialect)
 			.select((qb) =>
@@ -76,7 +76,7 @@ test('insert select sql', () => {
 	assert.deepEqual(query.params, [2, 1])
 })
 
-test('insert select supports partial target columns', () => {
+test('supports partial target columns for insert select', () => {
 	let query = dialect.sqlToQuery(
 		new YdbInsertBuilder(users, session, dialect)
 			.select((qb) =>
@@ -98,7 +98,7 @@ test('insert select supports partial target columns', () => {
 	assert.deepEqual(query.params, [2, 1])
 })
 
-test('upsert and replace select support partial target columns', () => {
+test('supports partial target columns for upsert and replace select', () => {
 	let upsertQuery = dialect.sqlToQuery(
 		drizzle({
 			async execute() {
@@ -144,7 +144,7 @@ test('upsert and replace select support partial target columns', () => {
 	)
 })
 
-test('insert select rejects mismatched fields', () => {
+test('rejects insert select with fields missing from the target table', () => {
 	assert.throws(
 		() =>
 			new YdbInsertBuilder(users, session, dialect).select((qb) =>
@@ -159,7 +159,7 @@ test('insert select rejects mismatched fields', () => {
 	)
 })
 
-test('onDuplicateKeyUpdate rejects insert select', () => {
+test('rejects onDuplicateKeyUpdate combined with insert select', () => {
 	assert.throws(
 		() =>
 			new YdbInsertBuilder(users, session, dialect)
@@ -179,7 +179,7 @@ test('onDuplicateKeyUpdate rejects insert select', () => {
 	)
 })
 
-test('onDuplicateKeyUpdate sql', () => {
+test('generates onDuplicateKeyUpdate sql', () => {
 	let plainUsers = ydbTable('plain_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),
@@ -259,7 +259,7 @@ test('db exposes native batch mutation builders', () => {
 	)
 })
 
-test('delete using sql', () => {
+test('generates delete using sql', () => {
 	let keyedUsers = ydbTable('keyed_users', {
 		id: integer('id').notNull().primaryKey(),
 		name: text('name').notNull(),

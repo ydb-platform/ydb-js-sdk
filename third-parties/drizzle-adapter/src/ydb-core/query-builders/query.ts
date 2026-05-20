@@ -42,10 +42,10 @@ function isNumberValue(value: unknown): value is number {
 }
 
 function dedupeColumns(columns: YdbColumn[]): YdbColumn[] {
-	const seen = new Set<YdbColumn>()
-	const result: YdbColumn[] = []
+	let seen = new Set<YdbColumn>()
+	let result: YdbColumn[] = []
 
-	for (const column of columns) {
+	for (let column of columns) {
 		if (seen.has(column)) {
 			continue
 		}
@@ -137,14 +137,14 @@ type YdbExecuteLevelOptions = {
 	applyOffset?: boolean
 }
 
-const relationalRelationParameterBudget = 256
+let relationalRelationParameterBudget = 256
 
 function chunkRelationTuples(tuples: unknown[][], columnCount: number): unknown[][][] {
-	const chunkSize = Math.max(
+	let chunkSize = Math.max(
 		1,
 		Math.floor(relationalRelationParameterBudget / Math.max(1, columnCount))
 	)
-	const chunks: unknown[][][] = []
+	let chunks: unknown[][][] = []
 
 	for (let index = 0; index < tuples.length; index += chunkSize) {
 		chunks.push(tuples.slice(index, index + chunkSize))
@@ -161,18 +161,16 @@ function getSelectedColumnKeys(
 		return Object.keys(tableConfig.columns)
 	}
 
-	const explicitEntries = Object.entries(config.columns).filter(
+	let explicitEntries = Object.entries(config.columns).filter(
 		([key, include]) => key in tableConfig.columns && include !== undefined
 	)
-	const includeKeys = explicitEntries
-		.filter(([, include]) => include === true)
-		.map(([key]) => key)
+	let includeKeys = explicitEntries.filter(([, include]) => include === true).map(([key]) => key)
 
 	if (includeKeys.length > 0) {
 		return includeKeys
 	}
 
-	const excludeKeys = new Set(
+	let excludeKeys = new Set(
 		explicitEntries.filter(([, include]) => include === false).map(([key]) => key)
 	)
 
@@ -200,8 +198,8 @@ function getWhereClause(
 		return undefined
 	}
 
-	const aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
-	const whereSql =
+	let aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
+	let whereSql =
 		typeof config.where === 'function'
 			? config.where(aliasedColumns as Record<string, YdbColumn>, getOperators())
 			: config.where
@@ -218,8 +216,8 @@ function getOrderByClause(
 		return []
 	}
 
-	const aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
-	const orderBy =
+	let aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
+	let orderBy =
 		typeof config.orderBy === 'function'
 			? config.orderBy(aliasedColumns as Record<string, YdbColumn>, getOrderByOperators())
 			: config.orderBy
@@ -246,7 +244,7 @@ function getLimitClause(config: YdbRelationalAnyConfig): number | undefined {
 }
 
 function getOffsetClause(config: YdbRelationalAnyConfig): number | undefined {
-	const offset = 'offset' in config ? config.offset : undefined
+	let offset = 'offset' in config ? config.offset : undefined
 	if (offset === undefined) {
 		return undefined
 	}
@@ -267,8 +265,8 @@ function getExtrasSelection(
 		return []
 	}
 
-	const aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
-	const extras =
+	let aliasedColumns = getAliasedColumns(tableConfig, tableAlias)
+	let extras =
 		typeof config.extras === 'function'
 			? config.extras(aliasedColumns as Record<string, YdbColumn>, { sql: yql })
 			: config.extras
@@ -285,8 +283,8 @@ function buildRelationFilter(columns: YdbColumn[], tuples: unknown[][]): SQL {
 	}
 
 	if (columns.length === 1) {
-		const column = columns[0]!
-		const values = tuples.map(([value]) => value)
+		let column = columns[0]!
+		let values = tuples.map(([value]) => value)
 		return values.length === 1 ? eq(column, values[0]) : inArray(column, values)
 	}
 
@@ -305,27 +303,43 @@ export class YdbRelationalQueryBuilder<
 > {
 	static readonly [entityKind] = 'YdbRelationalQueryBuilder'
 
+	readonly #fullSchema: Record<string, unknown>
+	readonly #schema: TSchema
+	readonly #tableNamesMap: Record<string, string>
+	readonly #table: YdbTable
+	readonly #tableConfig: TFields
+	readonly #dialect: YdbDialect
+	readonly #session: YdbSession
+
 	constructor(
-		private readonly fullSchema: Record<string, unknown>,
-		private readonly schema: TSchema,
-		private readonly tableNamesMap: Record<string, string>,
-		private readonly table: YdbTable,
-		private readonly tableConfig: TFields,
-		private readonly dialect: YdbDialect,
-		private readonly session: YdbSession
-	) {}
+		fullSchema: Record<string, unknown>,
+		schema: TSchema,
+		tableNamesMap: Record<string, string>,
+		table: YdbTable,
+		tableConfig: TFields,
+		dialect: YdbDialect,
+		session: YdbSession
+	) {
+		this.#fullSchema = fullSchema
+		this.#schema = schema
+		this.#tableNamesMap = tableNamesMap
+		this.#table = table
+		this.#tableConfig = tableConfig
+		this.#dialect = dialect
+		this.#session = session
+	}
 
 	findMany<TConfig extends YdbRelationalManyConfig<TSchema, TFields>>(
 		config?: KnownKeysOnly<TConfig, YdbRelationalManyConfig<TSchema, TFields>>
 	): YdbRelationalQuery<BuildQueryResult<TSchema, TFields, TConfig>[]> {
 		return new YdbRelationalQuery(
-			this.fullSchema,
-			this.schema,
-			this.tableNamesMap,
-			this.table,
-			this.tableConfig,
-			this.dialect,
-			this.session,
+			this.#fullSchema,
+			this.#schema,
+			this.#tableNamesMap,
+			this.#table,
+			this.#tableConfig,
+			this.#dialect,
+			this.#session,
 			(config ?? {}) as YdbRelationalAnyConfig,
 			'many'
 		)
@@ -335,13 +349,13 @@ export class YdbRelationalQueryBuilder<
 		config?: KnownKeysOnly<TConfig, YdbRelationalFirstConfig<TSchema, TFields>>
 	): YdbRelationalQuery<BuildQueryResult<TSchema, TFields, TConfig> | undefined> {
 		return new YdbRelationalQuery(
-			this.fullSchema,
-			this.schema,
-			this.tableNamesMap,
-			this.table,
-			this.tableConfig,
-			this.dialect,
-			this.session,
+			this.#fullSchema,
+			this.#schema,
+			this.#tableNamesMap,
+			this.#table,
+			this.#tableConfig,
+			this.#dialect,
+			this.#session,
 			{ ...((config ?? {}) as YdbRelationalAnyConfig), limit: 1 },
 			'first'
 		)
@@ -356,21 +370,40 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		readonly result: TResult
 	}
 
+	readonly #fullSchema: Record<string, unknown>
+	readonly #schema: TablesRelationalConfig
+	readonly #tableNamesMap: Record<string, string>
+	readonly #table: YdbTable
+	readonly #tableConfig: TableRelationalConfig
+	readonly #dialect: YdbDialect
+	readonly #session: YdbSession
+	readonly #config: YdbRelationalAnyConfig
+	readonly #mode: 'many' | 'first'
+
 	constructor(
-		private readonly fullSchema: Record<string, unknown>,
-		private readonly schema: TablesRelationalConfig,
-		private readonly tableNamesMap: Record<string, string>,
-		private readonly table: YdbTable,
-		private readonly tableConfig: TableRelationalConfig,
-		private readonly dialect: YdbDialect,
-		private readonly session: YdbSession,
-		private readonly config: YdbRelationalAnyConfig,
-		private readonly mode: 'many' | 'first'
+		fullSchema: Record<string, unknown>,
+		schema: TablesRelationalConfig,
+		tableNamesMap: Record<string, string>,
+		table: YdbTable,
+		tableConfig: TableRelationalConfig,
+		dialect: YdbDialect,
+		session: YdbSession,
+		config: YdbRelationalAnyConfig,
+		mode: 'many' | 'first'
 	) {
 		super()
+		this.#fullSchema = fullSchema
+		this.#schema = schema
+		this.#tableNamesMap = tableNamesMap
+		this.#table = table
+		this.#tableConfig = tableConfig
+		this.#dialect = dialect
+		this.#session = session
+		this.#config = config
+		this.#mode = mode
 	}
 
-	private getSelectedRelations(
+	#getSelectedRelations(
 		tableConfig: TableRelationalConfig,
 		config: YdbRelationalAnyConfig
 	): YdbSelectedRelation[] {
@@ -383,15 +416,15 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 				return []
 			}
 
-			const relation = tableConfig.relations[tsKey]
+			let relation = tableConfig.relations[tsKey]
 			if (!relation) {
 				throw new Error(
 					`YDB relational query relation "${tableConfig.tsName}.${tsKey}" is missing`
 				)
 			}
 
-			const relationTableTsName =
-				this.tableNamesMap[getTableUniqueName(relation.referencedTable)]
+			let relationTableTsName =
+				this.#tableNamesMap[getTableUniqueName(relation.referencedTable)]
 			if (!relationTableTsName) {
 				throw new Error(
 					`YDB relational query table metadata for "${relation.referencedTableName}" is missing`
@@ -405,8 +438,8 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 					relationTableTsName,
 					queryConfig: queryConfig as true | DBQueryConfig<'many', false>,
 					normalizedRelation: normalizeRelation(
-						this.schema,
-						this.tableNamesMap,
+						this.#schema,
+						this.#tableNamesMap,
 						relation
 					),
 				},
@@ -414,7 +447,7 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		})
 	}
 
-	private buildFlatQueryPlan({
+	#buildFlatQueryPlan({
 		table,
 		tableConfig,
 		config,
@@ -424,28 +457,28 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		applyLimit = true,
 		applyOffset = true,
 	}: YdbExecuteLevelOptions): YdbFlatQueryPlan {
-		const selectedRelations = this.getSelectedRelations(tableConfig, config)
-		const selectedColumnKeys = getSelectedColumnKeys(tableConfig, config)
-		const selectedExtras = getExtrasSelection(tableConfig, config, tableAlias)
+		let selectedRelations = this.#getSelectedRelations(tableConfig, config)
+		let selectedColumnKeys = getSelectedColumnKeys(tableConfig, config)
+		let selectedExtras = getExtrasSelection(tableConfig, config, tableAlias)
 
-		const columnEntries = selectedColumnKeys.map((tsKey, index) => ({
+		let columnEntries = selectedColumnKeys.map((tsKey, index) => ({
 			tsKey,
 			alias: `__ydb_c${index}`,
 			field: aliasedTableColumn(tableConfig.columns[tsKey]!, tableAlias),
 		}))
-		const extraEntries = selectedExtras.map(({ tsKey, field }, index) => ({
+		let extraEntries = selectedExtras.map(({ tsKey, field }, index) => ({
 			tsKey,
 			alias: `__ydb_e${index}`,
 			field,
 		}))
 
-		const hiddenColumnAliases = new Map<YdbColumn, string>()
-		for (const entry of columnEntries) {
+		let hiddenColumnAliases = new Map<YdbColumn, string>()
+		for (let entry of columnEntries) {
 			hiddenColumnAliases.set(tableConfig.columns[entry.tsKey] as YdbColumn, entry.alias)
 		}
 
-		const hiddenFields: Array<{ alias: string; field: SQLWrapper }> = []
-		const hiddenColumns = dedupeColumns([
+		let hiddenFields: Array<{ alias: string; field: SQLWrapper }> = []
+		let hiddenColumns = dedupeColumns([
 			...requiredColumns,
 			...selectedRelations.flatMap(
 				({ normalizedRelation }) => normalizedRelation.fields as YdbColumn[]
@@ -453,12 +486,12 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		])
 
 		let hiddenIndex = 0
-		for (const column of hiddenColumns) {
+		for (let column of hiddenColumns) {
 			if (hiddenColumnAliases.has(column)) {
 				continue
 			}
 
-			const alias = `__ydb_h${hiddenIndex++}`
+			let alias = `__ydb_h${hiddenIndex++}`
 			hiddenColumnAliases.set(column, alias)
 			hiddenFields.push({
 				alias,
@@ -466,21 +499,21 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			})
 		}
 
-		const fields = [...columnEntries, ...extraEntries, ...hiddenFields]
+		let fields = [...columnEntries, ...extraEntries, ...hiddenFields]
 		if (fields.length === 0) {
 			throw new Error(`YDB relational query selected zero fields for "${tableConfig.tsName}"`)
 		}
 
-		const where = and(
+		let where = and(
 			extraWhere ? mapColumnsInSQLToAlias(extraWhere, tableAlias) : undefined,
 			getWhereClause(tableConfig, config, tableAlias)
 		)
-		const orderBy = getOrderByClause(tableConfig, config, tableAlias)
-		const limit = applyLimit ? getLimitClause(config) : undefined
-		const offset = applyOffset ? getOffsetClause(config) : undefined
+		let orderBy = getOrderByClause(tableConfig, config, tableAlias)
+		let limit = applyLimit ? getLimitClause(config) : undefined
+		let offset = applyOffset ? getOffsetClause(config) : undefined
 
 		return {
-			sql: this.dialect.buildSelectQuery({
+			sql: this.#dialect.buildSelectQuery({
 				table: aliasedTable(table, tableAlias),
 				fields: {},
 				fieldsFlat: fields.map(({ field }) => ({ path: [], field })),
@@ -504,13 +537,13 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		}
 	}
 
-	private getColumnTuple(
+	#getColumnTuple(
 		row: Record<string, unknown>,
 		columns: YdbColumn[],
 		aliases: Map<YdbColumn, string>
 	): unknown[] {
 		return columns.map((column) => {
-			const alias = aliases.get(column)
+			let alias = aliases.get(column)
 			if (!alias) {
 				throw new Error(
 					`YDB relational query hidden alias for column "${column.name}" is missing`
@@ -521,9 +554,9 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 		})
 	}
 
-	private async executeLevel(options: YdbExecuteLevelOptions): Promise<YdbExecutedLevel> {
-		const plan = this.buildFlatQueryPlan(options)
-		const rows = await this.session
+	async #executeLevel(options: YdbExecuteLevelOptions): Promise<YdbExecutedLevel> {
+		let plan = this.#buildFlatQueryPlan(options)
+		let rows = await this.#session
 			.prepareQuery<YdbPreparedQueryConfig & { execute: Array<Record<string, unknown>> }>(
 				plan.sql,
 				undefined,
@@ -531,36 +564,36 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 				false
 			)
 			.execute()
-		const values = rows.map((row) => {
-			const result: Record<string, unknown> = {}
+		let values = rows.map((row) => {
+			let result: Record<string, unknown> = {}
 
-			for (const entry of plan.columnEntries) {
+			for (let entry of plan.columnEntries) {
 				result[entry.tsKey] = row[entry.alias]
 			}
 
-			for (const entry of plan.extraEntries) {
+			for (let entry of plan.extraEntries) {
 				result[entry.tsKey] = row[entry.alias]
 			}
 
 			return result
 		})
 
-		for (const relation of plan.selectedRelations) {
-			await this.hydrateRelation(plan, rows, values, relation)
+		for (let relation of plan.selectedRelations) {
+			await this.#hydrateRelation(plan, rows, values, relation)
 		}
 
 		return { plan, rows, values }
 	}
 
-	private async hydrateRelation(
+	async #hydrateRelation(
 		parentPlan: YdbFlatQueryPlan,
 		parentRows: Array<Record<string, unknown>>,
 		parentValues: Array<Record<string, unknown>>,
 		relationSelection: YdbSelectedRelation
 	): Promise<void> {
-		const parentTuples = parentRows
+		let parentTuples = parentRows
 			.map((row) =>
-				this.getColumnTuple(
+				this.#getColumnTuple(
 					row,
 					relationSelection.normalizedRelation.fields as YdbColumn[],
 					parentPlan.hiddenColumnAliases
@@ -569,7 +602,7 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			.filter((tuple) => tuple.every((value) => value !== null && value !== undefined))
 
 		if (parentTuples.length === 0) {
-			for (const parentValue of parentValues) {
+			for (let parentValue of parentValues) {
 				parentValue[relationSelection.tsKey] = is(relationSelection.relation, One)
 					? null
 					: []
@@ -577,12 +610,12 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			return
 		}
 
-		const uniqueParentTuples = Array.from(
+		let uniqueParentTuples = Array.from(
 			new Map(parentTuples.map((tuple) => [getTupleKey(tuple), tuple])),
 			([, tuple]) => tuple
 		)
-		const relationTableConfig = this.schema[relationSelection.relationTableTsName]
-		const relationTable = this.fullSchema[relationSelection.relationTableTsName] as
+		let relationTableConfig = this.#schema[relationSelection.relationTableTsName]
+		let relationTable = this.#fullSchema[relationSelection.relationTableTsName] as
 			| YdbTable
 			| undefined
 
@@ -592,16 +625,16 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			)
 		}
 
-		const relationConfig =
+		let relationConfig =
 			relationSelection.queryConfig === true
 				? ({} as YdbRelationalAnyConfig)
 				: (relationSelection.queryConfig as YdbRelationalAnyConfig)
-		const referenceColumns = relationSelection.normalizedRelation.references as YdbColumn[]
-		const relationResults: YdbExecutedLevel[] = []
+		let referenceColumns = relationSelection.normalizedRelation.references as YdbColumn[]
+		let relationResults: YdbExecutedLevel[] = []
 
-		for (const tupleChunk of chunkRelationTuples(uniqueParentTuples, referenceColumns.length)) {
-			const relationFilter = buildRelationFilter(referenceColumns, tupleChunk)
-			const relationResult = await this.executeLevel({
+		for (let tupleChunk of chunkRelationTuples(uniqueParentTuples, referenceColumns.length)) {
+			let relationFilter = buildRelationFilter(referenceColumns, tupleChunk)
+			let relationResult = await this.#executeLevel({
 				table: relationTable,
 				tableConfig: relationTableConfig,
 				config: relationConfig,
@@ -614,17 +647,17 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			relationResults.push(relationResult)
 		}
 
-		const groupedValues = new Map<string, Array<Record<string, unknown>>>()
-		for (const relationResult of relationResults) {
-			for (const [index, row] of relationResult.rows.entries()) {
-				const key = getTupleKey(
-					this.getColumnTuple(
+		let groupedValues = new Map<string, Array<Record<string, unknown>>>()
+		for (let relationResult of relationResults) {
+			for (let [index, row] of relationResult.rows.entries()) {
+				let key = getTupleKey(
+					this.#getColumnTuple(
 						row,
 						referenceColumns,
 						relationResult.plan.hiddenColumnAliases
 					)
 				)
-				const existing = groupedValues.get(key)
+				let existing = groupedValues.get(key)
 
 				if (existing) {
 					existing.push(relationResult.values[index]!)
@@ -634,11 +667,11 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			}
 		}
 
-		const relationOffset = getOffsetClause(relationConfig) ?? 0
-		const relationLimit = getLimitClause(relationConfig)
+		let relationOffset = getOffsetClause(relationConfig) ?? 0
+		let relationLimit = getLimitClause(relationConfig)
 
-		for (const [index, parentValue] of parentValues.entries()) {
-			const tuple = this.getColumnTuple(
+		for (let [index, parentValue] of parentValues.entries()) {
+			let tuple = this.#getColumnTuple(
 				parentRows[index]!,
 				relationSelection.normalizedRelation.fields as YdbColumn[],
 				parentPlan.hiddenColumnAliases
@@ -651,13 +684,13 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 				continue
 			}
 
-			const relatedValues = groupedValues.get(getTupleKey(tuple)) ?? []
+			let relatedValues = groupedValues.get(getTupleKey(tuple)) ?? []
 			if (is(relationSelection.relation, One)) {
 				parentValue[relationSelection.tsKey] = relatedValues[0] ?? null
 				continue
 			}
 
-			const sliced =
+			let sliced =
 				relationLimit === undefined
 					? relatedValues.slice(relationOffset)
 					: relatedValues.slice(relationOffset, relationOffset + relationLimit)
@@ -666,23 +699,23 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 	}
 
 	getSQL(): SQL {
-		return this.buildFlatQueryPlan({
-			table: this.table,
-			tableConfig: this.tableConfig,
-			config: this.config,
-			tableAlias: this.tableConfig.tsName,
+		return this.#buildFlatQueryPlan({
+			table: this.#table,
+			tableConfig: this.#tableConfig,
+			config: this.#config,
+			tableAlias: this.#tableConfig.tsName,
 		}).sql
 	}
 
-	private async run(): Promise<TResult> {
-		const result = await this.executeLevel({
-			table: this.table,
-			tableConfig: this.tableConfig,
-			config: this.config,
-			tableAlias: this.tableConfig.tsName,
+	async #run(): Promise<TResult> {
+		let result = await this.#executeLevel({
+			table: this.#table,
+			tableConfig: this.#tableConfig,
+			config: this.#config,
+			tableAlias: this.#tableConfig.tsName,
 		})
 
-		if (this.mode === 'first') {
+		if (this.#mode === 'first') {
 			return result.values[0] as TResult | undefined as TResult
 		}
 
@@ -690,17 +723,17 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 	}
 
 	prepare(name?: string) {
-		const flatPrepared = this.session.prepareQuery(this.getSQL(), undefined, name, false)
+		let flatPrepared = this.#session.prepareQuery(this.getSQL(), undefined, name, false)
 
 		return {
 			getQuery: () => {
 				return flatPrepared.getQuery()
 			},
 			execute: async () => {
-				return this.run()
+				return this.#run()
 			},
 			all: async () => {
-				const result = await this.run()
+				let result = await this.#run()
 				if (Array.isArray(result)) {
 					return result
 				}
@@ -708,7 +741,7 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 				return result === undefined ? [] : [result]
 			},
 			get: async () => {
-				const result = await this.run()
+				let result = await this.#run()
 				return Array.isArray(result) ? result[0] : result
 			},
 			values: async () => {
@@ -718,12 +751,12 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 	}
 
 	toSQL() {
-		const prepared = this.prepare()
-		const { typings: _typings, ...query } = prepared.getQuery()
+		let prepared = this.prepare()
+		let { typings: _typings, ...query } = prepared.getQuery()
 		return query
 	}
 
 	override execute(): Promise<TResult> {
-		return this.run()
+		return this.#run()
 	}
 }

@@ -71,7 +71,7 @@ function assertHintColumn(name: string): void {
 }
 
 function renderBindingName(name: string): SQL {
-	const binding = name.startsWith('$') ? name : `$${name}`
+	let binding = name.startsWith('$') ? name : `$${name}`
 	if (!/^\$[A-Za-z_][A-Za-z0-9_]*$/u.test(binding)) {
 		throw new Error('YDB AS_TABLE binding must look like $name')
 	}
@@ -92,7 +92,7 @@ function normalizeRows(rows: readonly YdbValuesRow[]): {
 	}
 
 	if (Array.isArray(rows[0])) {
-		const expectedLength = (rows[0] as readonly unknown[]).length
+		let expectedLength = (rows[0] as readonly unknown[]).length
 		if (expectedLength === 0) {
 			throw new Error('YDB VALUES rows require at least one value')
 		}
@@ -111,12 +111,12 @@ function normalizeRows(rows: readonly YdbValuesRow[]): {
 		}
 	}
 
-	const columns = Object.keys(rows[0] as Record<string, YdbValuesPrimitive>)
+	let columns = Object.keys(rows[0] as Record<string, YdbValuesPrimitive>)
 	if (columns.length === 0) {
 		throw new Error('YDB VALUES object rows require at least one key')
 	}
 
-	for (const column of columns) {
+	for (let column of columns) {
 		assertIdentifier(column, 'VALUES column')
 	}
 
@@ -127,7 +127,7 @@ function normalizeRows(rows: readonly YdbValuesRow[]): {
 				throw new Error('YDB VALUES cannot mix object and array rows')
 			}
 
-			const keys = Object.keys(row)
+			let keys = Object.keys(row)
 			if (
 				keys.length !== columns.length ||
 				keys.some((key, index) => key !== columns[index])
@@ -135,7 +135,7 @@ function normalizeRows(rows: readonly YdbValuesRow[]): {
 				throw new Error('YDB VALUES object rows must have identical key order')
 			}
 
-			const objectRow = row as Record<string, YdbValuesPrimitive>
+			let objectRow = row as Record<string, YdbValuesPrimitive>
 			return yql`(${yql.join(
 				columns.map((column) => renderValue(objectRow[column] ?? null)),
 				yql`, `
@@ -172,15 +172,15 @@ function renderIntervalLiteral(value: string | SQLWrapper): SQLWrapper {
 }
 
 export function values(rows: readonly YdbValuesRow[]): SQL {
-	const normalized = normalizeRows(rows)
+	let normalized = normalizeRows(rows)
 	return yql`VALUES ${yql.join([...normalized.rows], yql`, `)}`
 }
 
 export function valuesTable(rows: readonly YdbValuesRow[], options: YdbValuesOptions = {}): SQL {
-	const normalized = normalizeRows(rows)
-	const alias = options.alias
-	const columns = options.columns ?? normalized.columns
-	const columnSql =
+	let normalized = normalizeRows(rows)
+	let alias = options.alias
+	let columns = options.columns ?? normalized.columns
+	let columnSql =
 		columns && columns.length > 0
 			? yql.raw(
 					`(${columns
@@ -191,7 +191,7 @@ export function valuesTable(rows: readonly YdbValuesRow[], options: YdbValuesOpt
 						.join(', ')})`
 				)
 			: undefined
-	const source = yql`(${yql.raw('VALUES')} ${yql.join([...normalized.rows], yql`, `)})`
+	let source = yql`(${yql.raw('VALUES')} ${yql.join([...normalized.rows], yql`, `)})`
 
 	if (!alias) {
 		return source
@@ -204,7 +204,7 @@ export function valuesTable(rows: readonly YdbValuesRow[], options: YdbValuesOpt
 }
 
 export function asTable(binding: string | SQLWrapper, alias?: string): SQL {
-	const source =
+	let source =
 		typeof binding === 'string'
 			? yql`AS_TABLE(${renderBindingName(binding)})`
 			: yql`AS_TABLE(${binding})`
@@ -222,21 +222,21 @@ export function matchRecognize(config: YdbMatchRecognizeConfig | SQLWrapper): SQ
 		return yql`${config}`
 	}
 
-	const partitionBy =
+	let partitionBy =
 		config.partitionBy && config.partitionBy.length > 0
 			? yql`PARTITION BY ${yql.join(
 					config.partitionBy.map((value) => yql`${value}`),
 					yql`, `
 				)} `
 			: undefined
-	const orderBy =
+	let orderBy =
 		config.orderBy && config.orderBy.length > 0
 			? yql`ORDER BY ${yql.join(
 					config.orderBy.map((value) => yql`${value}`),
 					yql`, `
 				)} `
 			: undefined
-	const measures =
+	let measures =
 		config.measures && Object.keys(config.measures).length > 0
 			? yql`MEASURES ${yql.join(
 					Object.entries(config.measures).map(([alias, expression]) => {
@@ -246,12 +246,12 @@ export function matchRecognize(config: YdbMatchRecognizeConfig | SQLWrapper): SQ
 					yql`, `
 				)} `
 			: undefined
-	const rowsPerMatch = config.rowsPerMatch ? yql.raw(`${config.rowsPerMatch} `) : undefined
-	const afterMatchSkip = config.afterMatchSkip
+	let rowsPerMatch = config.rowsPerMatch ? yql.raw(`${config.rowsPerMatch} `) : undefined
+	let afterMatchSkip = config.afterMatchSkip
 		? yql.raw(`AFTER MATCH SKIP ${config.afterMatchSkip} `)
 		: undefined
-	const pattern = typeof config.pattern === 'string' ? yql.raw(config.pattern) : config.pattern
-	const define =
+	let pattern = typeof config.pattern === 'string' ? yql.raw(config.pattern) : config.pattern
+	let define =
 		config.define && Object.keys(config.define).length > 0
 			? yql` DEFINE ${yql.join(
 					Object.entries(config.define).map(([name, expression]) => {
@@ -280,8 +280,8 @@ export function renderUniqueDistinctHints(hints: readonly YdbUniqueDistinctHint[
 		throw new Error('YDB UNIQUE DISTINCT hints require at least one hint')
 	}
 
-	const rendered = hints.map((hint) => {
-		const columns = hint.columns ?? []
+	let rendered = hints.map((hint) => {
+		let columns = hint.columns ?? []
 		columns.forEach(assertHintColumn)
 		return `${hint.kind}(${columns.join(' ')})`
 	})
@@ -294,7 +294,7 @@ export function windowDefinition(config: YdbWindowDefinitionConfig | SQLWrapper)
 		return yql`${config}`
 	}
 
-	const parts: SQL[] = []
+	let parts: SQL[] = []
 	if (config.partitionBy && config.partitionBy.length > 0) {
 		parts.push(yql`PARTITION BY ${renderExpressionList(config.partitionBy)}`)
 	}

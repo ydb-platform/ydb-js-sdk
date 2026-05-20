@@ -29,7 +29,7 @@ let schema = {
 	})),
 }
 
-test('transaction commit', async () => {
+test('commits transactional work through createDrizzle', async () => {
 	let transactionConfigs: unknown[] = []
 	let logs: Array<{ query: string; params: unknown[] }> = []
 	let buildObjectRows = (query: string, values: unknown[]) => {
@@ -103,7 +103,7 @@ test('transaction commit', async () => {
 	)
 })
 
-test('transaction rollback', async () => {
+test('rolls back when the transaction callback throws', async () => {
 	let rolledBack = false
 
 	let db = drizzle(
