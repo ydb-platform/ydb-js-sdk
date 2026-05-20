@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/drizzle-adapter",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "YDB adapter for Drizzle ORM.",
 	"keywords": [
 		"database",
@@ -62,7 +62,7 @@
 	},
 	"dependencies": {
 		"@ydbjs/api": "^6.0.6",
-		"@ydbjs/core": "^6.1.1",
+		"@ydbjs/core": "^6.3.0",
 		"@ydbjs/query": "^6.1.0",
 		"@ydbjs/value": "^6.0.7"
 	},
