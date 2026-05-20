@@ -2,7 +2,6 @@ import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { and, eq, sql as yql } from 'drizzle-orm'
 import {
-	buildCreateTableSql,
 	columnFamily,
 	integer,
 	partitionByHash,
@@ -11,7 +10,8 @@ import {
 	ttl,
 	uint32,
 	ydbTable,
-} from '../src/index.ts'
+} from '../src/schema.ts'
+import { buildCreateTableSql } from '../src/migrator.ts'
 import { createLiveContext } from './helpers/context.ts'
 import { ignoreUnsupportedYqlFeature } from './helpers/errors.ts'
 import { posts, users } from './helpers/schema.ts'

@@ -1,5 +1,16 @@
 import { expect, test } from 'vitest'
 import { eq, sql as yql } from 'drizzle-orm'
+import { index, integer, rawTableOption, text, uint32, ydbTable } from '../src/schema.ts'
+import {
+	distinctHint,
+	groupKey,
+	pragma,
+	sessionStart,
+	sessionWindow,
+	uniqueHint,
+	windowDefinition,
+	yqlScript,
+} from '../src/sql.ts'
 import {
 	buildAddChangefeedSql,
 	buildAlterTableSql,
@@ -12,21 +23,7 @@ import {
 	buildDropTopicSql,
 	buildDropViewSql,
 	buildRenameTableSql,
-	distinctHint,
-	groupKey,
-	index,
-	integer,
-	pragma,
-	rawTableOption,
-	sessionStart,
-	sessionWindow,
-	text,
-	uint32,
-	uniqueHint,
-	windowDefinition,
-	ydbTable,
-	yqlScript,
-} from '../src/index.ts'
+} from '../src/migrator.ts'
 import { createLiveContext } from './helpers/context.ts'
 import { ignoreMissingObject, ignoreUnsupportedYqlFeature } from './helpers/errors.ts'
 import { users } from './helpers/schema.ts'

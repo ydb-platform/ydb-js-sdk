@@ -1,6 +1,21 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import {
+	bytes,
+	columnFamily,
+	index,
+	integer,
+	partitionByHash,
+	rawTableOption,
+	tableOptions,
+	text,
+	ttl,
+	uint32,
+	unique,
+	vectorIndex,
+	ydbTable,
+} from '../schema.ts'
+import {
 	buildAddChangefeedSql,
 	buildAddColumnFamilySql,
 	buildAddColumnsSql,
@@ -39,20 +54,7 @@ import {
 	buildRenameTableSql,
 	buildRevokeSql,
 	buildShowCreateSql,
-	bytes,
-	columnFamily,
-	index,
-	integer,
-	partitionByHash,
-	rawTableOption,
-	tableOptions,
-	text,
-	ttl,
-	uint32,
-	unique,
-	vectorIndex,
-	ydbTable,
-} from '../index.ts'
+} from '../migrator.ts'
 
 test('generates create table with inline indexes and unique constraints', () => {
 	let users = ydbTable(

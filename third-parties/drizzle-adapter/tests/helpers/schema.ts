@@ -1,3 +1,4 @@
+import { relations } from '../../src/index.ts'
 import {
 	bigint,
 	boolean,
@@ -9,7 +10,6 @@ import {
 	integer,
 	json,
 	jsonDocument,
-	relations,
 	text,
 	timestamp,
 	uint32,
@@ -17,7 +17,7 @@ import {
 	uuid,
 	ydbTable,
 	yson,
-} from '../../src/index.ts'
+} from '../../src/schema.ts'
 import { loadTestEnv } from './load-env.ts'
 import { inject } from 'vitest'
 

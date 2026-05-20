@@ -1,7 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
-import { drizzle, integer, primaryKey, text, ydbTable } from '../index.ts'
+import { drizzle } from '../index.ts'
+import { integer, primaryKey, text, ydbTable } from '../schema.ts'
 import { YdbDeleteBuilder, YdbInsertBuilder } from '../ydb-core/query-builders/index.ts'
 import { dialect, session, users } from '../../tests/helpers/unit-basic.ts'
 

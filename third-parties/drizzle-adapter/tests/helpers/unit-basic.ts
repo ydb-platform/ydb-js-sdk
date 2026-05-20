@@ -1,4 +1,4 @@
-import { integer, text, ydbTable } from '../../src/index.ts'
+import { integer, text, ydbTable } from '../../src/schema.ts'
 import { YdbDialect } from '../../src/ydb/dialect.ts'
 
 export let dialect = new YdbDialect()

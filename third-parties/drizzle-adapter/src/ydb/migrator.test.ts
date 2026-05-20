@@ -1,7 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
-import { type YdbExecutor, drizzle, migrate } from '../index.ts'
+import { type YdbExecutor, drizzle } from '../index.ts'
+import { migrate } from '../migrator.ts'
 
 function normalizeSql(query: string): string {
 	return query.replace(/\s+/gu, ' ').trim()

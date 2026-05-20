@@ -18,40 +18,60 @@ assert.deepEqual(packageJson.exports, {
 		types: './dist/index.d.ts',
 		import: './dist/index.js',
 	},
+	'./schema': {
+		types: './dist/schema.d.ts',
+		import: './dist/schema.js',
+	},
+	'./sql': {
+		types: './dist/sql.d.ts',
+		import: './dist/sql.js',
+	},
+	'./migrator': {
+		types: './dist/migrator.d.ts',
+		import: './dist/migrator.js',
+	},
 })
 
-let publicApi = await import('@ydbjs/drizzle-adapter')
-let expectedRuntimeExports = [
-	'YdbAuthenticationError',
-	'YdbCancelledQueryError',
-	'YdbDriver',
-	'YdbOverloadedQueryError',
-	'YdbQueryExecutionError',
-	'YdbRetryableQueryError',
-	'YdbTimeoutQueryError',
-	'YdbUnavailableQueryError',
-	'YdbUniqueConstraintViolationError',
-	'asTable',
-	'buildCreateTableSql',
-	'createDrizzle',
-	'drizzle',
-	'index',
-	'integer',
-	'many',
-	'migrate',
-	'one',
-	'primaryKey',
-	'relations',
-	'text',
-	'unique',
-	'ydbTable',
-]
-
-for (let name of expectedRuntimeExports) {
-	assert.equal(Object.hasOwn(publicApi, name), true, `Missing root runtime export: ${name}`)
+let entryExpectations = {
+	'@ydbjs/drizzle-adapter': [
+		'YdbAuthenticationError',
+		'YdbCancelledQueryError',
+		'YdbDriver',
+		'YdbOverloadedQueryError',
+		'YdbQueryExecutionError',
+		'YdbRetryableQueryError',
+		'YdbTimeoutQueryError',
+		'YdbUnavailableQueryError',
+		'YdbUniqueConstraintViolationError',
+		'createDrizzle',
+		'drizzle',
+		'many',
+		'one',
+		'relations',
+	],
+	'@ydbjs/drizzle-adapter/schema': ['integer', 'primaryKey', 'text', 'unique', 'ydbTable'],
+	'@ydbjs/drizzle-adapter/sql': ['numericHash', 'currentUtcTimestamp', 'pragma', 'yqlScript'],
+	'@ydbjs/drizzle-adapter/migrator': ['buildCreateTableSql', 'migrate'],
 }
 
-let internalRuntimeExports = [
+let [publicApi, schemaApi, sqlApi, migratorApi] = await Promise.all(
+	Object.keys(entryExpectations).map((specifier) => import(specifier))
+)
+let loadedEntries = {
+	'@ydbjs/drizzle-adapter': publicApi,
+	'@ydbjs/drizzle-adapter/schema': schemaApi,
+	'@ydbjs/drizzle-adapter/sql': sqlApi,
+	'@ydbjs/drizzle-adapter/migrator': migratorApi,
+}
+for (let [specifier, expected] of Object.entries(entryExpectations)) {
+	let mod = loadedEntries[specifier]
+	for (let name of expected) {
+		assert.equal(Object.hasOwn(mod, name), true, `Missing export from ${specifier}: ${name}`)
+	}
+}
+
+// Implementation details must not leak from the root entrypoint.
+let rootInternalLeaks = [
 	'YdbColumn',
 	'YdbColumnBuilder',
 	'YdbCountBuilder',
@@ -61,12 +81,52 @@ let internalRuntimeExports = [
 	'YdbSession',
 	'YdbTransaction',
 ]
-
-for (let name of internalRuntimeExports) {
+for (let name of rootInternalLeaks) {
 	assert.equal(
 		Object.hasOwn(publicApi, name),
 		false,
 		`Root public API exposes implementation detail: ${name}`
+	)
+}
+
+// Cross-entry hygiene: schema-only symbols don't leak into the root, DDL
+// builders don't leak into /schema or /sql, etc.
+for (let name of ['ydbTable', 'integer', 'text', 'primaryKey']) {
+	assert.equal(
+		Object.hasOwn(publicApi, name),
+		false,
+		`Schema helper leaked into root entry: ${name}`
+	)
+}
+
+for (let name of ['numericHash', 'pragma', 'yqlScript']) {
+	assert.equal(
+		Object.hasOwn(publicApi, name),
+		false,
+		`SQL helper leaked into root entry: ${name}`
+	)
+	assert.equal(
+		Object.hasOwn(schemaApi, name),
+		false,
+		`SQL helper leaked into /schema entry: ${name}`
+	)
+}
+
+for (let name of ['migrate', 'buildCreateTableSql']) {
+	assert.equal(
+		Object.hasOwn(publicApi, name),
+		false,
+		`Migrator symbol leaked into root entry: ${name}`
+	)
+	assert.equal(
+		Object.hasOwn(schemaApi, name),
+		false,
+		`Migrator symbol leaked into /schema entry: ${name}`
+	)
+	assert.equal(
+		Object.hasOwn(sqlApi, name),
+		false,
+		`Migrator symbol leaked into /sql entry: ${name}`
 	)
 }
 
@@ -107,6 +167,12 @@ for (let file of [
 	'CHANGELOG.md',
 	'dist/index.js',
 	'dist/index.d.ts',
+	'dist/schema.js',
+	'dist/schema.d.ts',
+	'dist/sql.js',
+	'dist/sql.d.ts',
+	'dist/migrator.js',
+	'dist/migrator.d.ts',
 ]) {
 	assert.equal(packedFiles.has(file), true, `Packed package is missing ${file}`)
 }

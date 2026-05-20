@@ -30,7 +30,7 @@ import {
 	uuid,
 	ydbTable,
 	yson,
-} from '../../index.ts'
+} from '../../schema.ts'
 import { YdbDialect } from '../../ydb/dialect.ts'
 import { YdbInsertBuilder } from '../../ydb-core/query-builders/index.ts'
 import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
