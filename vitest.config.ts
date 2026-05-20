@@ -28,12 +28,18 @@ export default defineConfig({
 						label: 'int',
 						color: 'blue',
 					},
-					include: ['packages/*/tests/**/*.test.ts'],
+					include: [
+						'packages/*/tests/**/*.test.ts',
+						'third-parties/*/tests/**/*.test.ts',
+					],
 					environment: 'node',
 					execArgv: ['--expose-gc'],
 					globalSetup: './vitest.setup.ydb.ts',
 					benchmark: {
-						include: ['packages/*/tests/**/*.bench.ts'],
+						include: [
+							'packages/*/tests/**/*.bench.ts',
+							'third-parties/*/tests/**/*.bench.ts',
+						],
 					},
 				},
 			},

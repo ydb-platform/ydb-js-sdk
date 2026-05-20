@@ -17,8 +17,8 @@ import {
 	uuid,
 	ydbTable,
 	yson,
-} from '../../../src/index.ts'
-import { loadTestEnv } from '../../helpers/load-env.ts'
+} from '../../src/index.ts'
+import { loadTestEnv } from './load-env.ts'
 import { inject } from 'vitest'
 
 declare module 'vitest' {

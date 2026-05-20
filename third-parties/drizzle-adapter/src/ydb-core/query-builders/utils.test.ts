@@ -1,15 +1,15 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { sql as yql } from 'drizzle-orm'
-import { integer, text, ydbTable } from '../../src/index.ts'
+import { integer, text, ydbTable } from '../../index.ts'
 import {
 	getInsertColumnEntries,
 	getTableColumns,
 	resolveInsertValue,
 	resolveUpdateValue,
 	validateTableColumnKeys,
-} from '../../src/ydb-core/query-builders/utils.ts'
-import { dialect, users } from '../helpers/unit-basic.ts'
+} from '../../ydb-core/query-builders/utils.ts'
+import { dialect, users } from '../../../tests/helpers/unit-basic.ts'
 
 function fragmentToQuery(fragment: unknown) {
 	return dialect.sqlToQuery(yql`${fragment as any}`)

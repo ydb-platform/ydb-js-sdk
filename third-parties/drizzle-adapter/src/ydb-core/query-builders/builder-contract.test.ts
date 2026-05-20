@@ -8,8 +8,8 @@ import {
 	YdbSelectBuilder,
 	YdbUpdateBuilder,
 	YdbUpsertBuilder,
-} from '../../src/ydb-core/query-builders/index.ts'
-import { createMockSession, users } from '../helpers/unit-basic.ts'
+} from '../../ydb-core/query-builders/index.ts'
+import { createMockSession, users } from '../../../tests/helpers/unit-basic.ts'
 
 test('builds executable CRUD chains', async () => {
 	let { session, prepareCalls } = createMockSession()

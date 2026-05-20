@@ -1,8 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
-import { YdbDialect } from '../../src/ydb/dialect.ts'
-import { YdbTransaction } from '../../src/ydb-core/transaction.ts'
+import { YdbDialect } from '../ydb/dialect.ts'
+import { YdbTransaction } from '../ydb-core/transaction.ts'
 
 test('transaction rollback throws Drizzle rollback error', () => {
 	let tx = new YdbTransaction(new YdbDialect(), {} as any)

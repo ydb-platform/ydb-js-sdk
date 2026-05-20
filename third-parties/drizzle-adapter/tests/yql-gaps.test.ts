@@ -26,7 +26,7 @@ import {
 	windowDefinition,
 	ydbTable,
 	yqlScript,
-} from '../../src/index.ts'
+} from '../src/index.ts'
 import { createLiveContext } from './helpers/context.ts'
 import { ignoreMissingObject, ignoreUnsupportedYqlFeature } from './helpers/errors.ts'
 import { users } from './helpers/schema.ts'
