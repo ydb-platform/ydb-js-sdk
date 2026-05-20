@@ -4,16 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql as yql } from 'drizzle-orm'
+import { index, integer, text, ydbTable } from '../src/schema.ts'
 import {
 	type YdbInlineMigration,
 	buildCreateTableSql,
 	buildMigrationLockTableBootstrapSql,
-	index,
-	integer,
 	migrate,
-	text,
-	ydbTable,
-} from '../src/index.ts'
+} from '../src/migrator.ts'
 import { createLiveContext } from './helpers/context.ts'
 
 let live = createLiveContext()

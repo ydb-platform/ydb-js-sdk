@@ -1,7 +1,7 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { eq, sql as yql } from 'drizzle-orm'
-import { integer, text, ydbTable } from '../../index.ts'
+import { integer, text, ydbTable } from '../../schema.ts'
 import {
 	YdbBatchDeleteBuilder,
 	YdbBatchUpdateBuilder,

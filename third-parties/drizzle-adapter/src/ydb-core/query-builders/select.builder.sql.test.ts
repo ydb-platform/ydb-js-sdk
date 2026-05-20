@@ -1,6 +1,7 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { desc, eq, sql as yql } from 'drizzle-orm'
+import { indexView, vectorIndexView } from '../../schema.ts'
 import {
 	asTable,
 	commit,
@@ -17,7 +18,6 @@ import {
 	hop,
 	hopEnd,
 	hopStart,
-	indexView,
 	intersect,
 	intoResult,
 	kMeansTreeSearchTopSize,
@@ -29,10 +29,9 @@ import {
 	unionAll,
 	uniqueHint,
 	values,
-	vectorIndexView,
 	windowDefinition,
 	yqlScript,
-} from '../../index.ts'
+} from '../../sql.ts'
 import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
 import { dialect, posts, session, users } from '../../../tests/helpers/unit-basic.ts'
 

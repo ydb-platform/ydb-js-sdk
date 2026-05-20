@@ -33,6 +33,18 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./schema": {
+			"types": "./dist/schema.d.ts",
+			"import": "./dist/schema.js"
+		},
+		"./sql": {
+			"types": "./dist/sql.d.ts",
+			"import": "./dist/sql.js"
+		},
+		"./migrator": {
+			"types": "./dist/migrator.d.ts",
+			"import": "./dist/migrator.js"
 		}
 	},
 	"publishConfig": {

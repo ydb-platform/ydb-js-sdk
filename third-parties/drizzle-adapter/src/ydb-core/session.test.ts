@@ -11,12 +11,9 @@ import {
 	YdbTimeoutQueryError,
 	YdbUnavailableQueryError,
 	YdbUniqueConstraintViolationError,
-	customType,
 	drizzle,
-	integer,
-	text,
-	ydbTable,
 } from '../index.ts'
+import { customType, integer, text, ydbTable } from '../schema.ts'
 import { YdbDialect } from '../ydb/dialect.ts'
 import { YdbSession } from '../ydb-core/session.ts'
 import { orderSelectedFields } from '../ydb-core/result-mapping.ts'

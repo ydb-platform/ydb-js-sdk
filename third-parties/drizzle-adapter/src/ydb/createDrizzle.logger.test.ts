@@ -1,7 +1,8 @@
 import { test } from 'vitest'
 import * as assert from 'node:assert/strict'
 import { sql as yql } from 'drizzle-orm'
-import { drizzle, integer, text, ydbTable } from '../index.ts'
+import { drizzle } from '../index.ts'
+import { integer, text, ydbTable } from '../schema.ts'
 
 let users = ydbTable('users', {
 	id: integer('id').notNull(),

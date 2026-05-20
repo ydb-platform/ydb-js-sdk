@@ -1,18 +1,16 @@
 import { asc, eq, sql } from 'drizzle-orm'
+import { createDrizzle, relations } from '@ydbjs/drizzle-adapter'
 import {
-	createDrizzle,
-	currentUtcTimestamp,
 	index,
 	integer,
-	migrate,
-	numericHash,
 	primaryKey,
-	relations,
 	text,
 	timestamp,
 	uint64,
 	ydbTable,
-} from '@ydbjs/drizzle-adapter'
+} from '@ydbjs/drizzle-adapter/schema'
+import { currentUtcTimestamp, numericHash } from '@ydbjs/drizzle-adapter/sql'
+import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
 let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
 

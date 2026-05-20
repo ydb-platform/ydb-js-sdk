@@ -1,0 +1,62 @@
+import * as assert from 'node:assert/strict'
+
+import { test } from 'vitest'
+
+import * as sql from './sql.ts'
+
+let expectedSqlExports = [
+	'asTable',
+	'commit',
+	'crc32c',
+	'crc64',
+	'cube',
+	'currentUtcDate',
+	'currentUtcDatetime',
+	'currentUtcTimestamp',
+	'declareParam',
+	'defineAction',
+	'distinctHint',
+	'doAction',
+	'doBlock',
+	'except',
+	'groupKey',
+	'grouping',
+	'groupingSets',
+	'hop',
+	'hopEnd',
+	'hopStart',
+	'intersect',
+	'intoResult',
+	'kMeansTreeSearchTopSize',
+	'knnCosineDistance',
+	'knnCosineSimilarity',
+	'knnDistance',
+	'knnEuclideanDistance',
+	'knnInnerProductSimilarity',
+	'knnManhattanDistance',
+	'knnSimilarity',
+	'matchRecognize',
+	'maxOf',
+	'minOf',
+	'numericHash',
+	'pragma',
+	'random',
+	'randomNumber',
+	'randomUuid',
+	'rollup',
+	'sessionStart',
+	'sessionWindow',
+	'union',
+	'unionAll',
+	'uniqueHint',
+	'unwrap',
+	'values',
+	'valuesTable',
+	'windowDefinition',
+	'xxHash',
+	'yqlScript',
+] as const
+
+test('sql entrypoint exposes exactly the YQL-expression surface', () => {
+	assert.deepEqual(Object.keys(sql).sort(), [...expectedSqlExports])
+})
