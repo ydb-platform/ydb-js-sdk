@@ -1,5 +1,5 @@
 ---
-'@ydbjs/drizzle-adapter': major
+'@ydbjs/drizzle-adapter': minor
 ---
 
 Initial release of `@ydbjs/drizzle-adapter` — a YDB adapter for [Drizzle ORM](https://orm.drizzle.team).
