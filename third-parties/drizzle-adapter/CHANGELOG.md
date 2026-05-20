@@ -1,5 +1,14 @@
 # @ydbjs/drizzle-adapter
 
+## 0.1.1
+
+### Patch Changes
+
+- [#617](https://github.com/ydb-platform/ydb-js-sdk/pull/617) [`3a661c5`](https://github.com/ydb-platform/ydb-js-sdk/commit/3a661c5e1803fb89a604a5332e142990558c7691) Thanks [@polRk](https://github.com/polRk)! - Advertise the adapter in `x-ydb-sdk-build-info`. `YdbDriver` now registers `@ydbjs/drizzle-adapter/<version>` on the underlying `Driver` for both owned and borrowed instances, so server-side telemetry can attribute traffic to the adapter without losing the native SDK identity (which stays first in the header).
+
+- Updated dependencies [[`3a661c5`](https://github.com/ydb-platform/ydb-js-sdk/commit/3a661c5e1803fb89a604a5332e142990558c7691)]:
+  - @ydbjs/core@6.3.0
+
 ## 0.1.0
 
 ### Minor Changes
