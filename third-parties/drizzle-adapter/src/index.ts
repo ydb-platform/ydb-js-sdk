@@ -69,6 +69,7 @@ export {
 	knnManhattanDistance,
 	knnSimilarity,
 	matchRecognize,
+	numericHash,
 	pragma,
 	rollup,
 	sessionStart,

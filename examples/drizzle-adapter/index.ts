@@ -4,44 +4,63 @@ import {
 	index,
 	integer,
 	migrate,
+	numericHash,
+	primaryKey,
 	relations,
 	text,
 	timestamp,
+	uint64,
 	ydbTable,
 } from '@ydbjs/drizzle-adapter'
 
 let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
 
+// YDB partitions row-oriented tables by primary-key prefix. A monotonically
+// growing PK (auto-increment, timestamp, etc.) sends every insert to the same
+// tablet and turns that one shard into a write bottleneck. The idiomatic fix
+// is a composite PK whose first column is a uniformly distributed hash of the
+// natural id; numericHash() wraps YDB's Digest::NumericHash UDF so the cluster
+// computes the value at insert time.
+
 let users = ydbTable(
 	'drizzle_example_users',
 	{
-		id: integer('id').primaryKey(),
+		hash: uint64('hash').notNull(),
+		id: integer('id').notNull(),
 		email: text('email').notNull(),
 		name: text('name').notNull(),
 		status: text('status').notNull(),
 		createdAt: timestamp('created_at').notNull(),
 		updatedAt: timestamp('updated_at').notNull(),
 	},
-	(table) => [index('drizzle_example_users_status_idx').on(table.status).global().sync()]
+	(table) => [
+		primaryKey(table.hash, table.id),
+		index('drizzle_example_users_status_idx').on(table.status).global().sync(),
+	]
 )
 
 let projects = ydbTable(
 	'drizzle_example_projects',
 	{
-		id: integer('id').primaryKey(),
+		hash: uint64('hash').notNull(),
+		id: integer('id').notNull(),
 		ownerId: integer('owner_id').notNull(),
 		title: text('title').notNull(),
 		status: text('status').notNull(),
 		createdAt: timestamp('created_at').notNull(),
 		updatedAt: timestamp('updated_at').notNull(),
 	},
-	(table) => [index('drizzle_example_projects_owner_idx').on(table.ownerId).global().sync()]
+	(table) => [
+		primaryKey(table.hash, table.id),
+		index('drizzle_example_projects_owner_idx').on(table.ownerId).global().sync(),
+	]
 )
 
 let tasks = ydbTable(
 	'drizzle_example_tasks',
 	{
-		id: integer('id').primaryKey(),
+		hash: uint64('hash').notNull(),
+		id: integer('id').notNull(),
 		projectId: integer('project_id').notNull(),
 		assigneeId: integer('assignee_id').notNull(),
 		title: text('title').notNull(),
@@ -52,6 +71,7 @@ let tasks = ydbTable(
 		updatedAt: timestamp('updated_at').notNull(),
 	},
 	(table) => [
+		primaryKey(table.hash, table.id),
 		index('drizzle_example_tasks_project_idx').on(table.projectId).global().sync(),
 		index('drizzle_example_tasks_assignee_idx').on(table.assigneeId).global().sync(),
 	]
@@ -129,6 +149,7 @@ async function seedData() {
 
 	await db.insert(users).values([
 		{
+			hash: numericHash(1),
 			id: 1,
 			email: 'ada@example.com',
 			name: 'Ada Lovelace',
@@ -137,6 +158,7 @@ async function seedData() {
 			updatedAt: now,
 		},
 		{
+			hash: numericHash(2),
 			id: 2,
 			email: 'grace@example.com',
 			name: 'Grace Hopper',
@@ -147,6 +169,7 @@ async function seedData() {
 	])
 
 	await db.insert(projects).values({
+		hash: numericHash(10),
 		id: 10,
 		ownerId: 1,
 		title: 'Drizzle Adapter Demo',
@@ -157,6 +180,7 @@ async function seedData() {
 
 	await db.insert(tasks).values([
 		{
+			hash: numericHash(100),
 			id: 100,
 			projectId: 10,
 			assigneeId: 1,
@@ -168,6 +192,7 @@ async function seedData() {
 			updatedAt: now,
 		},
 		{
+			hash: numericHash(101),
 			id: 101,
 			projectId: 10,
 			assigneeId: 2,
@@ -190,6 +215,7 @@ try {
 	await db
 		.upsert(users)
 		.values({
+			hash: numericHash(2),
 			id: 2,
 			email: 'grace@example.com',
 			name: 'Grace Hopper',
@@ -299,6 +325,7 @@ try {
 			await tx
 				.insert(tasks)
 				.values({
+					hash: numericHash(102),
 					id: 102,
 					projectId: 10,
 					assigneeId: 1,

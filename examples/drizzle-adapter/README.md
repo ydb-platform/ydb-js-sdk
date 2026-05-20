@@ -4,7 +4,7 @@ Small TypeScript CLI example for `@ydbjs/drizzle-adapter`.
 
 ## What It Demonstrates
 
-- Schema declarations with `ydbTable()`.
+- Schema declarations with `ydbTable()` using a composite primary key `(hash, id)`, where `hash` is filled server-side via `Digest::NumericHash(CAST(id AS Uint64))` so consecutive ids spread across tablets instead of hot-spotting the "last" partition.
 - Relations with `relations()`, `one()`, and `many()`.
 - Inline migrations with `migrate()`.
 - CRUD through `insert`, `upsert`, `update`, and `delete`.
