@@ -1,5 +1,16 @@
 export { YdbSelectBuilder } from './select.builder.js'
-export { numericHash } from './digest.js'
+export {
+	currentUtcDate,
+	currentUtcDatetime,
+	currentUtcTimestamp,
+	maxOf,
+	minOf,
+	random,
+	randomNumber,
+	randomUuid,
+	unwrap,
+} from './builtins.js'
+export { crc32c, crc64, numericHash, xxHash } from './digest.js'
 export { except, intersect, union, unionAll } from './select.set-operators.js'
 export {
 	asTable,
