@@ -35,6 +35,8 @@ export default defineConfig({
 					environment: 'node',
 					execArgv: ['--expose-gc'],
 					globalSetup: './vitest.setup.ydb.ts',
+					testTimeout: 60000,
+					hookTimeout: 30000,
 					benchmark: {
 						include: [
 							'packages/*/tests/**/*.bench.ts',

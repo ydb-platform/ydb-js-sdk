@@ -21,6 +21,7 @@ export default defineConfig({
 					{ text: 'Topic', link: '/guide/topic/' },
 					{ text: 'Coordination', link: '/guide/coordination/' },
 					{ text: 'Drizzle', link: '/guide/drizzle/' },
+					{ text: 'LangChain', link: '/guide/langchain/' },
 					{ text: 'Advanced', link: '/advanced/' },
 				],
 				sidebar: [
@@ -267,6 +268,15 @@ export default defineConfig({
 						],
 					},
 					{
+						text: 'LangChain',
+						items: [
+							{
+								text: 'Overview',
+								link: '/guide/langchain/',
+							},
+						],
+					},
+					{
 						text: 'Advanced',
 						items: [
 							{
@@ -309,6 +319,7 @@ export default defineConfig({
 					{ text: 'Topic', link: '/ru/guide/topic/' },
 					{ text: 'Coordination', link: '/ru/guide/coordination/' },
 					{ text: 'Drizzle', link: '/ru/guide/drizzle/' },
+					{ text: 'LangChain', link: '/ru/guide/langchain/' },
 					{ text: 'Расширенные темы', link: '/ru/advanced/' },
 				],
 				sidebar: [
@@ -560,6 +571,15 @@ export default defineConfig({
 										link: '/ru/guide/drizzle/#examples-vector-search',
 									},
 								],
+							},
+						],
+					},
+					{
+						text: 'LangChain',
+						items: [
+							{
+								text: 'Обзор',
+								link: '/ru/guide/langchain/',
 							},
 						],
 					},

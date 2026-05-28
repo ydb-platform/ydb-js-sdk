@@ -1,0 +1,33 @@
+{
+	"name": "@ydbjs/examples-langchain",
+	"version": "6.0.0",
+	"private": true,
+	"type": "module",
+	"publishConfig": {
+		"access": "restricted"
+	},
+	"scripts": {
+		"build:langchain": "npm run build --workspace=@ydbjs/langchain",
+		"prestart": "npm run build:langchain",
+		"start": "tsx index.ts",
+		"predev": "npm run build:langchain",
+		"dev": "DEBUG=ydbjs:* tsx index.ts",
+		"precheck": "npm run build:langchain",
+		"check": "tsc --noEmit",
+		"test": "npm run check"
+	},
+	"dependencies": {
+		"@langchain/openai": "^0.4.0",
+		"@ydbjs/langchain": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^25.6.0",
+		"tsx": "^4.8.1",
+		"typescript": "^5.9.3"
+	},
+	"engines": {
+		"node": ">=20.19.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}
