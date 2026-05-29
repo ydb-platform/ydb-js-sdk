@@ -35,11 +35,7 @@ import { YDBError } from '@ydbjs/error'
  * `release_dead` — those were pool-side observations of stream death, the
  * underlying `stream_*` reason now propagates through.
  */
-export type SessionCloseReason =
-	| 'pool_close'
-	| 'attach_failed'
-	| 'stream_closed'
-	| 'stream_error'
+export type SessionCloseReason = 'pool_close' | 'attach_failed' | 'stream_closed' | 'stream_error'
 
 type SessionDeleteCtx = {
 	driver: DriverIdentity

@@ -183,30 +183,30 @@ Every payload starts with a `driver: DriverIdentity` field (defined in `@ydbjs/c
 
 #### Query execution
 
-| Channel                         | Type    | Extra fields beyond `{ driver }`                                                                |
-| ------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
-| `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation }` — one `ExecuteQuery` RPC                   |
-| `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop  |
-| `tracing:ydb:query.begin`       | tracing | `{ sessionId, nodeId, isolation }` — one `BeginTransaction` RPC                                 |
-| `tracing:ydb:query.commit`      | tracing | `{ sessionId, nodeId, txId }` — one `CommitTransaction` RPC                                     |
-| `tracing:ydb:query.rollback`    | tracing | `{ sessionId, nodeId, txId }` — one `RollbackTransaction` RPC (fire-and-forget)                 |
+| Channel                         | Type    | Extra fields beyond `{ driver }`                                                               |
+| ------------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `tracing:ydb:query.execute`     | tracing | `{ text, sessionId, nodeId, idempotent, isolation }` — one `ExecuteQuery` RPC                  |
+| `tracing:ydb:query.transaction` | tracing | `{ isolation, idempotent }` — from `tx.begin` to `commit`/`rollback`, including the retry loop |
+| `tracing:ydb:query.begin`       | tracing | `{ sessionId, nodeId, isolation }` — one `BeginTransaction` RPC                                |
+| `tracing:ydb:query.commit`      | tracing | `{ sessionId, nodeId, txId }` — one `CommitTransaction` RPC                                    |
+| `tracing:ydb:query.rollback`    | tracing | `{ sessionId, nodeId, txId }` — one `RollbackTransaction` RPC (fire-and-forget)                |
 
 #### Session pool
 
-| Channel                              | Type    | Extra fields beyond `{ driver }`                                                                                  |
-| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `tracing:ydb:query.session.acquire`  | tracing | _(none)_ — wraps each session-lease acquisition                                                                   |
-| `tracing:ydb:query.session.create`   | tracing | _(none)_ — wraps `CreateSession` RPC + first `AttachStream` message                                               |
-| `tracing:ydb:query.session.delete`   | tracing | `{ sessionId, nodeId, reason, uptime }` — wraps the background `DeleteSession` RPC                                |
-| `ydb:query.session.pool.opened`      | publish | `{ maxSize, minSize, maxWaiters }` — once per pool, config snapshot                                               |
-| `ydb:query.session.pool.closed`      | publish | _(none)_                                                                                                          |
-| `ydb:query.session.created`          | publish | `{ sessionId, nodeId }`                                                                                           |
-| `ydb:query.session.closed`           | publish | `{ sessionId, nodeId, reason, uptime }` (ms) — see reasons below                                                  |
-| `ydb:query.session.acquired`         | publish | `{ sessionId, nodeId }` — lease handed to a caller                                                                |
-| `ydb:query.session.released`         | publish | `{ sessionId, nodeId }` — caller dropped the lease (paired with `acquired`)                                       |
-| `ydb:query.session.acquire.failed`   | publish | `{ error }` — `acquire()` rejected (pool full, timeout, pool closed)                                              |
-| `ydb:query.session.waiter.enqueued`  | publish | _(none)_ — a caller started waiting because the pool is saturated                                                 |
-| `ydb:query.session.waiter.dequeued`  | publish | _(none)_ — waiter resolved, rejected, or was aborted                                                              |
+| Channel                             | Type    | Extra fields beyond `{ driver }`                                                   |
+| ----------------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `tracing:ydb:query.session.acquire` | tracing | _(none)_ — wraps each session-lease acquisition                                    |
+| `tracing:ydb:query.session.create`  | tracing | _(none)_ — wraps `CreateSession` RPC + first `AttachStream` message                |
+| `tracing:ydb:query.session.delete`  | tracing | `{ sessionId, nodeId, reason, uptime }` — wraps the background `DeleteSession` RPC |
+| `ydb:query.session.pool.opened`     | publish | `{ maxSize, minSize, maxWaiters }` — once per pool, config snapshot                |
+| `ydb:query.session.pool.closed`     | publish | _(none)_                                                                           |
+| `ydb:query.session.created`         | publish | `{ sessionId, nodeId }`                                                            |
+| `ydb:query.session.closed`          | publish | `{ sessionId, nodeId, reason, uptime }` (ms) — see reasons below                   |
+| `ydb:query.session.acquired`        | publish | `{ sessionId, nodeId }` — lease handed to a caller                                 |
+| `ydb:query.session.released`        | publish | `{ sessionId, nodeId }` — caller dropped the lease (paired with `acquired`)        |
+| `ydb:query.session.acquire.failed`  | publish | `{ error }` — `acquire()` rejected (pool full, timeout, pool closed)               |
+| `ydb:query.session.waiter.enqueued` | publish | _(none)_ — a caller started waiting because the pool is saturated                  |
+| `ydb:query.session.waiter.dequeued` | publish | _(none)_ — waiter resolved, rejected, or was aborted                               |
 
 `reason` (`SessionCloseReason`) is one of: `'pool_close'` (pool tear-down), `'attach_failed'` (initial AttachStream rejected — session never lived), `'stream_closed'` (attach stream ended cleanly, e.g. server-side TTL), `'stream_error'` (attach stream errored mid-flight). Sessions are pool-owned; there is no user-driven close. Carried both on the plain `session.closed` event and inside the `session.delete` tracing ctx.
 

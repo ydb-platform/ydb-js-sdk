@@ -348,7 +348,9 @@ export class Query<T extends any[] = unknown[]>
 		// `transactionId` after a server-side abort cannot recover the
 		// transaction. Skip the retry wrapper entirely; the tx retries the
 		// whole body if it needs to.
-		this.#promise = (txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt))
+		this.#promise = (
+			txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt)
+		)
 			.then((results) => {
 				if (this.#stats) {
 					this.emit('stats', this.#stats)

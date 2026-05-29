@@ -244,7 +244,7 @@ tracing:ydb:<subsystem>.<concept>[.<sub>].<operation>
 - **`<action>`** — verb / state in past tense for plain events
   (`added`, `removed`, `closed`, `completed`) or operation name for tracing
   (`acquire`, `create`, `execute`).
-- **`pool`** appears only when the event is about the pool *itself*
+- **`pool`** appears only when the event is about the pool _itself_
   (`opened`, `closed`, `stats`), not about its contents. Events about
   contents drop the `pool` segment because the pool is the implicit owner.
 

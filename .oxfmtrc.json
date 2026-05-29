@@ -11,7 +11,7 @@
 	"arrowParens": "always",
 	"endOfLine": "lf",
 	"sortPackageJson": false,
-	"ignorePatterns": [],
+	"ignorePatterns": ["**/src/gen/**"],
 	"overrides": [
 		{
 			"files": ["*.md", "*.yml", "*.yaml"],

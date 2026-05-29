@@ -52,7 +52,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.10.1",
+		"@bufbuild/protobuf": "2.12.0",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/core": "^6.2.0",
 		"@ydbjs/debug": "^6.0.0",

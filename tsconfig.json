@@ -12,7 +12,6 @@
 		"declarationMap": true,
 		"rewriteRelativeImportExtensions": true,
 		"types": ["node"],
-		"esModuleInterop": false,
 		// As strict as possible
 		"strict": true,
 		"skipLibCheck": true,
