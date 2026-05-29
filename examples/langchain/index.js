@@ -86,4 +86,4 @@ for (let [doc, score] of distResults) {
 }
 
 await distStore.drop()
-distStore.close()
+await distStore.close()

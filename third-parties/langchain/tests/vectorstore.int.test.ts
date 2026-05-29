@@ -374,7 +374,7 @@ test('connectionString mode creates driver internally and close() releases it', 
 	expect(results[0].pageContent).toBe('via connection string')
 
 	await store.drop()
-	store.close()
+	await store.close()
 })
 
 // ── vector index ──────────────────────────────────────────────────────
@@ -387,7 +387,7 @@ test('createVectorIndex builds index and search uses it', async () => {
 		dropExistingTable: true,
 		indexEnabled: true,
 		indexName: 'test_vec_idx',
-		vectorDimension: 4,
+		indexVectorDimension: 4,
 	})
 
 	await store.addDocuments([
@@ -411,7 +411,11 @@ test('createVectorIndex throws when indexEnabled is false', async () => {
 })
 
 test('search with filter and indexEnabled throws', async () => {
-	const store = makeStore({ dropExistingTable: true, indexEnabled: true })
+	const store = makeStore({
+		dropExistingTable: true,
+		indexEnabled: true,
+		indexVectorDimension: 4,
+	})
 
 	await store.addDocuments([new Document({ pageContent: 'test', metadata: { k: 'v' } })])
 
@@ -420,4 +424,67 @@ test('search with filter and indexEnabled throws', async () => {
 	).rejects.toThrow('Cannot use metadata filter with vector index enabled')
 
 	await store.drop()
+})
+
+// ── concurrency, lifecycle, escaping ──────────────────────────────────
+
+test('serializes concurrent first writes through a single CREATE TABLE', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	// Five parallel adds — without memoised init they race on CREATE TABLE
+	// and (with dropExistingTable) on DROP, risking lost rows.
+	await Promise.all(
+		Array.from({ length: 5 }, (_, i) =>
+			store.addDocuments([new Document({ pageContent: `parallel ${i}`, metadata: { i } })])
+		)
+	)
+
+	const results = await store.similaritySearch('parallel', 10)
+	expect(results).toHaveLength(5)
+})
+
+test('recreates the table after drop without re-dropping new data', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments([new Document({ pageContent: 'first', metadata: {} })])
+	await store.drop()
+	await store.addDocuments([new Document({ pageContent: 'second', metadata: {} })])
+
+	const results = await store.similaritySearch('anything', 10)
+	expect(results).toHaveLength(1)
+	expect(results[0].pageContent).toBe('second')
+})
+
+test('close releases the session pool and refuses further ops', async () => {
+	const tmpTable = `${TABLE}_close`
+	const store = new YDBVectorStore(embeddings, {
+		connectionString: CONNECTION_STRING,
+		table: tmpTable,
+	})
+
+	await store.addDocuments([new Document({ pageContent: 'pre-close', metadata: {} })])
+	await store.close()
+
+	await expect(
+		store.addDocuments([new Document({ pageContent: 'post-close', metadata: {} })])
+	).rejects.toThrow(/closed|pool/i)
+})
+
+test('filter value containing a single quote round-trips correctly', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments([
+		new Document({ pageContent: 'tricky', metadata: { name: "O'Reilly" } }),
+		new Document({ pageContent: 'plain', metadata: { name: 'Smith' } }),
+	])
+
+	const results = await store.similaritySearch('anything', 10, { name: "O'Reilly" })
+	expect(results).toHaveLength(1)
+	expect(results[0].metadata.name).toBe("O'Reilly")
+})
+
+test('construction throws when indexEnabled is true and indexVectorDimension is missing', () => {
+	expect(() => makeStore({ indexEnabled: true })).toThrow(
+		/indexVectorDimension must be a positive/
+	)
 })
