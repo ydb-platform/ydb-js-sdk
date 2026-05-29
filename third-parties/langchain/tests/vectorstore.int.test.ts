@@ -488,3 +488,70 @@ test('construction throws when indexEnabled is true and indexVectorDimension is 
 		/indexVectorDimension must be a positive/
 	)
 })
+
+// ── retriever ─────────────────────────────────────────────────────────
+
+test('asRetriever().invoke() returns Document instances', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments([
+		new Document({ pageContent: 'cats like milk', metadata: { kind: 'animal' } }),
+		new Document({ pageContent: 'dogs chase balls', metadata: { kind: 'animal' } }),
+		new Document({ pageContent: 'compilers parse tokens', metadata: { kind: 'tech' } }),
+	])
+
+	const retriever = store.asRetriever()
+	const results = await retriever.invoke('cat animal')
+
+	expect(results.length).toBeGreaterThan(0)
+	expect(results[0]).toBeInstanceOf(Document)
+	expect(results[0].pageContent).toBeDefined()
+})
+
+test('asRetriever(k) limits the number of returned documents', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments(
+		Array.from(
+			{ length: 5 },
+			(_, i) => new Document({ pageContent: `document ${i}`, metadata: { i } })
+		)
+	)
+
+	const retriever = store.asRetriever(2)
+	const results = await retriever.invoke('document')
+
+	expect(results).toHaveLength(2)
+})
+
+test('asRetriever with filter returns only matching documents', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments([
+		new Document({ pageContent: 'wiki article one', metadata: { source: 'wiki' } }),
+		new Document({ pageContent: 'wiki article two', metadata: { source: 'wiki' } }),
+		new Document({ pageContent: 'api reference', metadata: { source: 'api' } }),
+	])
+
+	const retriever = store.asRetriever({ filter: { source: 'wiki' } })
+	const results = await retriever.invoke('anything')
+
+	expect(results).toHaveLength(2)
+	expect(results.every((r) => r.metadata.source === 'wiki')).toBe(true)
+})
+
+test('asRetriever with explicit searchType similarity works', async () => {
+	const store = makeStore({ dropExistingTable: true })
+
+	await store.addDocuments([
+		new Document({ pageContent: 'alpha', metadata: {} }),
+		new Document({ pageContent: 'beta', metadata: {} }),
+		new Document({ pageContent: 'gamma', metadata: {} }),
+	])
+
+	const retriever = store.asRetriever({ searchType: 'similarity', k: 2 })
+	const results = await retriever.invoke('alpha')
+
+	expect(results).toHaveLength(2)
+	expect(results[0]).toBeInstanceOf(Document)
+})
