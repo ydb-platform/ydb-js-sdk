@@ -1,4 +1,4 @@
-import { Driver, type DriverOptions } from '@ydbjs/core'
+import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
 import {
 	type QueryClient,
 	type UnsafeString,
@@ -9,6 +9,8 @@ import { Uint64 } from '@ydbjs/value/primitive'
 import type { EmbeddingsInterface } from '@langchain/core/embeddings'
 import { VectorStore } from '@langchain/core/vectorstores'
 import { Document } from '@langchain/core/documents'
+
+import pkg from '../package.json' with { type: 'json' }
 
 /**
  * KNN search strategy passed to the YDB `Knn::*` UDF.
@@ -259,6 +261,7 @@ export class YDBVectorStore extends VectorStore {
 			this.#ownedDriver = false
 		}
 
+		this.#driver[kRegisterLibrary]('@ydbjs/langchain', pkg.version)
 		this.#sql = createQueryClient(this.#driver)
 		this.#table = config.table ?? 'langchain_vectors'
 		this.#columnMap = {
