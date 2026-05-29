@@ -17,7 +17,7 @@ import { loggers } from '@ydbjs/debug'
 
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
-import { UnsafeString, identifier, unsafe, yql } from './yql.js'
+import { Fragment, UnsafeString, fragment, identifier, join, unsafe, yql } from './yql.js'
 import { SessionPool, type SessionPoolOptions, sessionAcquireCh } from './session-pool.js'
 
 type TransactionContext = {
@@ -116,6 +116,18 @@ export interface QueryClient extends SQL, AsyncDisposable {
 	identifier(value: string | { toString(): string }): UnsafeString
 
 	/**
+	 * Create a composable {@link Fragment} from a tagged template. A fragment is
+	 * not executable — splice it into another query or {@link QueryClient.join}
+	 * to build dynamic SQL while keeping values bound as parameters.
+	 *
+	 * @example ```ts
+	 * const cond = sql.fragment`${sql.identifier('age')} > ${18}`
+	 * sql`SELECT * FROM users WHERE ${cond}`
+	 * ```
+	 */
+	fragment(strings: TemplateStringsArray, ...values: unknown[]): Fragment
+
+	/**
 	 * Create an UnsafeString that will be injected into the query as-is.
 	 *
 	 * WARNING: Use only with trusted SQL fragments (e.g., migrations) and never
@@ -123,6 +135,17 @@ export interface QueryClient extends SQL, AsyncDisposable {
 	 * dynamic values.
 	 */
 	unsafe(value: string | { toString(): string }): UnsafeString
+
+	/**
+	 * Combine fragments into one, interleaving a separator. Empty list → empty
+	 * fragment; single fragment → no separator. A string separator is inserted
+	 * as raw SQL.
+	 *
+	 * @example ```ts
+	 * sql`... WHERE ${sql.join(conditions, ' AND ')}`
+	 * ```
+	 */
+	join(fragments: readonly Fragment[], separator?: Fragment | string): Fragment
 }
 
 let doImpl = function <T = unknown>(): Promise<T> {
@@ -427,6 +450,8 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		transaction: txIml,
 		identifier: identifier,
 		unsafe: unsafe,
+		fragment: fragment,
+		join: join,
 		async [Symbol.asyncDispose]() {
 			await sessionPool.close()
 		},
@@ -434,5 +459,5 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 }
 
 export { type Query } from './query.ts'
-export { identifier, unsafe, UnsafeString } from './yql.js'
+export { identifier, unsafe, UnsafeString, fragment, join, Fragment } from './yql.js'
 export { type SessionPoolOptions } from './session-pool.js'

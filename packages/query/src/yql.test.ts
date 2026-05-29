@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest'
 
 import { Int32 } from '@ydbjs/value/primitive'
-import { identifier, unsafe, yql } from './yql.ts'
+
+import { fragment, identifier, join, unsafe, yql } from './yql.ts'
 
 test('processes string template', () => {
 	let { text } = yql`SELECT 1;`
@@ -178,6 +179,16 @@ test('public exports identifier/unsafe behave correctly', async () => {
 	expect(pubUnsafe('ORDER BY created_at DESC').toString()).eq('ORDER BY created_at DESC')
 })
 
+test('public exports fragment/join compose into a query', async () => {
+	const { fragment: pubFragment, join: pubJoin } = await import('./index.ts')
+
+	let conds = [pubFragment`a = ${1}`, pubFragment`b = ${2}`]
+	let { text, params } = yql`WHERE ${pubJoin(conds, ' AND ')};`
+
+	expect(text).eq('WHERE a = $p0 AND b = $p1;')
+	expect(Object.keys(params)).toHaveLength(2)
+})
+
 test('handles various data types', () => {
 	let { text, params } = yql`SELECT ${true}, ${'hello'}, ${123}, ${123n};`
 
@@ -224,4 +235,76 @@ test('validates all parameters and reports first error', () => {
 		  • An object property doesn't exist
 		For intentional null database values, use YDB Optional type.]
 	`)
+})
+
+test('continues parameter numbering across a fragment boundary', () => {
+	let frag = fragment`b = ${10}`
+	let { text, params } = yql`SELECT ${1}, ${frag}, ${2};`
+
+	expect(text).eq('SELECT $p0, b = $p1, $p2;')
+	expect(Object.keys(params)).toHaveLength(3)
+})
+
+test('flattens a fragment nested inside another fragment', () => {
+	let inner = fragment`x = ${1}`
+	let outer = fragment`(${inner} AND y = ${2})`
+	let { text, params } = yql`WHERE ${outer};`
+
+	expect(text).eq('WHERE (x = $p0 AND y = $p1);')
+	expect(Object.keys(params)).toHaveLength(2)
+})
+
+test('joins fragments with a separator', () => {
+	let parts = [fragment`a = ${1}`, fragment`b = ${2}`, fragment`c = ${3}`]
+	let { text, params } = yql`WHERE ${join(parts, ' AND ')};`
+
+	expect(text).eq('WHERE a = $p0 AND b = $p1 AND c = $p2;')
+	expect(Object.keys(params)).toHaveLength(3)
+})
+
+test('joins an empty list into empty text', () => {
+	let { text, params } = yql`SELECT 1 ${join([])};`
+
+	expect(text).eq('SELECT 1 ;')
+	expect(Object.keys(params)).toHaveLength(0)
+})
+
+test('joins a single fragment without the separator', () => {
+	let { text, params } = yql`WHERE ${join([fragment`a = ${1}`], ' AND ')};`
+
+	expect(text).eq('WHERE a = $p0;')
+	expect(Object.keys(params)).toHaveLength(1)
+})
+
+test('handles identifier and unsafe inside a fragment', () => {
+	let frag = fragment`${identifier('col')} = ${5} ${unsafe('DESC')}`
+	let { text, params } = yql`ORDER BY ${frag};`
+
+	expect(text).eq('ORDER BY `col` = $p0 DESC;')
+	expect(Object.keys(params)).toHaveLength(1)
+})
+
+test('throws for undefined value inside a fragment', () => {
+	let frag = fragment`x = ${undefined}`
+
+	expect(() => void yql`WHERE ${frag};`).toThrow(/Undefined value/)
+})
+
+test('composes a dynamic KNN search with filter conditions', () => {
+	let meta = identifier('metadata')
+	let filter = { source: 'wiki', lang: 'en' }
+	let conds = Object.entries(filter).map(
+		([k, v]) => fragment`JSON_VALUE(${meta}, ${unsafe(`'$.${k}'`)}) = ${v}`
+	)
+	let where = fragment`WHERE ${join(conds, ' AND ')}`
+	let { text, params } = yql`
+		SELECT Knn::CosineSimilarity(${identifier('embedding')}, ${new Uint8Array([1, 2, 3])}) AS score
+		FROM ${identifier('vectors')} ${where}
+		ORDER BY score DESC LIMIT ${10};`
+
+	expect(text).toContain('Knn::CosineSimilarity(`embedding`, $p0)')
+	expect(text).toContain("JSON_VALUE(`metadata`, '$.source') = $p1")
+	expect(text).toContain("JSON_VALUE(`metadata`, '$.lang') = $p2")
+	expect(text).toContain('LIMIT $p3')
+	expect(Object.keys(params)).toHaveLength(4)
 })
