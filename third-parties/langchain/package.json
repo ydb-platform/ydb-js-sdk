@@ -53,7 +53,7 @@
 		"@ydbjs/value": "^6.0.7"
 	},
 	"peerDependencies": {
-		"@langchain/core": ">=0.2.0"
+		"@langchain/core": ">=1.0.0 <2.0.0"
 	},
 	"devDependencies": {
 		"@langchain/core": "^1.1.0"

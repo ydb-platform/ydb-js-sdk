@@ -84,7 +84,7 @@ const results = await store.similaritySearch('query', 4, {
 const store = new YDBVectorStore(embeddings, {
   driver,
   indexEnabled: true,
-  vectorDimension: 1536, // set to skip the auto-detect probe
+  indexVectorDimension: 1536, // length of vectors your embeddings model produces
 })
 
 await store.addDocuments(docs)
