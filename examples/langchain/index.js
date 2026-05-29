@@ -59,7 +59,7 @@ for (let doc of enDocs) {
 
 // ── Delete ──────────────────────────────────────────────────────────────────
 
-await store.delete({ ids: [ids[2]!] })
+await store.delete({ ids: [ids[2]] })
 console.log('\nDeleted one document. Remaining count after search:')
 
 let remaining = await store.similaritySearch('content', 10)

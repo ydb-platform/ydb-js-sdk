@@ -9,9 +9,11 @@ export let EVENT_YDB_DRIVER_CONNECTION_RETIRED = 'ydb.driver.connection.retired'
 export let EVENT_YDB_DRIVER_CONNECTION_REMOVED = 'ydb.driver.connection.removed'
 
 /** unix seconds */
-export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL = 'ydb.driver.connection.pessimization.until'
+export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL =
+	'ydb.driver.connection.pessimization.until'
 /** seconds */
-export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION = 'ydb.driver.connection.pessimization.duration'
+export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION =
+	'ydb.driver.connection.pessimization.duration'
 
 export let ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON = 'ydb.driver.connection.retire.reason'
 export let ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON = 'ydb.driver.connection.remove.reason'

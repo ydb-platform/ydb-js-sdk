@@ -298,7 +298,7 @@ let messageSizes = [
 ]
 
 // oxlint-disable-next-line
-test.sequential.skip.each(messageSizes)(
+test.skip.each(messageSizes)(
 	'measures sustained throughput with %i byte messages',
 	{ timeout: 15_000 },
 	async (messageSize) => {

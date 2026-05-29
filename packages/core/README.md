@@ -84,10 +84,10 @@ All payloads share the same identity envelope, so multi-driver consumers can dis
 
 ```ts
 type DriverIdentity = {
-  address: string         // host:port the driver was constructed with
+  address: string // host:port the driver was constructed with
   port: number | undefined
-  database: string        // YDB database path
-  registeredAt: number    // Date.now() at Driver construction
+  database: string // YDB database path
+  registeredAt: number // Date.now() at Driver construction
 }
 ```
 
@@ -101,30 +101,30 @@ Time values follow Node.js conventions:
 
 #### Driver lifecycle
 
-| Channel             | Type    | Payload                                                              |
-| ------------------- | ------- | -------------------------------------------------------------------- |
-| `ydb:driver.ready`  | publish | `{ driver: DriverIdentity, duration: number }` (ms since `init`)     |
-| `ydb:driver.failed` | publish | `{ driver: DriverIdentity, duration: number, error: unknown }` (ms)  |
-| `ydb:driver.closed` | publish | `{ driver: DriverIdentity, uptime: number }` (ms since `ready`)      |
+| Channel             | Type    | Payload                                                             |
+| ------------------- | ------- | ------------------------------------------------------------------- |
+| `ydb:driver.ready`  | publish | `{ driver: DriverIdentity, duration: number }` (ms since `init`)    |
+| `ydb:driver.failed` | publish | `{ driver: DriverIdentity, duration: number, error: unknown }` (ms) |
+| `ydb:driver.closed` | publish | `{ driver: DriverIdentity, uptime: number }` (ms since `ready`)     |
 
 #### Discovery
 
-| Channel                          | Type    | Payload                                                                                                          |
-| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
-| `tracing:ydb:driver.discovery`   | tracing | `{ driver: DriverIdentity }`                                                                                     |
-| `ydb:driver.discovery.completed` | publish | `{ driver: DriverIdentity, addedCount: number, removedCount: number, totalCount: number, duration: number }` (ms)|
+| Channel                          | Type    | Payload                                                                                                           |
+| -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:driver.discovery`   | tracing | `{ driver: DriverIdentity }`                                                                                      |
+| `ydb:driver.discovery.completed` | publish | `{ driver: DriverIdentity, addedCount: number, removedCount: number, totalCount: number, duration: number }` (ms) |
 
 #### Connection pool
 
 All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, address: string, location: string }` plus the extra field listed below.
 
-| Channel                              | Type    | Extra fields                                                            |
-| ------------------------------------ | ------- | ----------------------------------------------------------------------- |
-| `ydb:driver.connection.added`        | publish | (none)                                                                  |
-| `ydb:driver.connection.pessimized`   | publish | `until: number` — epoch ms when the pessimization window ends           |
-| `ydb:driver.connection.unpessimized` | publish | `duration: number` — ms the connection actually stayed pessimized       |
-| `ydb:driver.connection.retired`      | publish | `reason: 'stale_active' \| 'stale_pessimized'`                          |
-| `ydb:driver.connection.removed`      | publish | `reason: 'replaced' \| 'idle' \| 'pool_close'`                          |
+| Channel                              | Type    | Extra fields                                                      |
+| ------------------------------------ | ------- | ----------------------------------------------------------------- |
+| `ydb:driver.connection.added`        | publish | (none)                                                            |
+| `ydb:driver.connection.pessimized`   | publish | `until: number` — epoch ms when the pessimization window ends     |
+| `ydb:driver.connection.unpessimized` | publish | `duration: number` — ms the connection actually stayed pessimized |
+| `ydb:driver.connection.retired`      | publish | `reason: 'stale_active' \| 'stale_pessimized'`                    |
+| `ydb:driver.connection.removed`      | publish | `reason: 'replaced' \| 'idle' \| 'pool_close'`                    |
 
 The pool exposes two distinct teardown events for connections:
 

@@ -12,6 +12,7 @@
 		"start": "vitepress"
 	},
 	"devDependencies": {
+		"oxc-minify": "^0.133.0",
 		"vitepress": "^2.0.0-alpha.17"
 	}
 }
