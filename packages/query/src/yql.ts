@@ -1,6 +1,15 @@
 import { type Value, fromJs } from '@ydbjs/value'
 
+// ──────────────────────────────────────────────────────────────────────────
+// Internal markers
+// ──────────────────────────────────────────────────────────────────────────
+
 const SymbolUnsafe = Symbol('unsafe')
+const SymbolFragment = Symbol('fragment')
+
+// ──────────────────────────────────────────────────────────────────────────
+// Value helpers
+// ──────────────────────────────────────────────────────────────────────────
 
 function isObject(value: unknown): boolean {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -28,63 +37,18 @@ function validateValue(value: unknown, index: number): void {
 	}
 }
 
-export class UnsafeString extends String {
-	[SymbolUnsafe] = true
+function toYdbValue(value: any): Value {
+	return isObject(value) && 'type' in value && 'kind' in (value as any)['type']
+		? (value as Value)
+		: fromJs(value as any)
 }
 
-export function yql<P extends any[] = unknown[]>(
-	strings: string | TemplateStringsArray,
-	...values: P
-): { text: string; params: Record<string, Value> } {
-	let text = ''
-	let params: Record<string, Value> = Object.assign({}, null)
+// ──────────────────────────────────────────────────────────────────────────
+// Raw SQL: identifiers and unsafe injection
+// ──────────────────────────────────────────────────────────────────────────
 
-	// Handle simple string case
-	if (typeof strings === 'string') {
-		return { text: strings, params }
-	}
-
-	// Handle template literal case
-	if (Array.isArray(strings)) {
-		let skipCount = 0
-
-		// Process parameters first to build params object and count skipped values
-		values.forEach((value, i) => {
-			// Enhanced validation with position info
-			validateValue(value, i)
-
-			if ((value as any)[SymbolUnsafe]) {
-				skipCount++
-				return
-			}
-
-			let ydbValue =
-				isObject(value) && 'type' in value && 'kind' in (value as any)['type']
-					? (value as Value)
-					: fromJs(value as any)
-			params[`$p${i - skipCount}`] = ydbValue
-		})
-
-		// Build text with proper parameter references
-		skipCount = 0
-		text = strings.reduce((prev, curr, i) => {
-			let value = values[i]
-
-			// This should never happen due to validation above, but keep for safety
-			if (value === undefined || value === null) {
-				return prev + curr
-			}
-
-			if ((value as any)[SymbolUnsafe]) {
-				skipCount++
-				return prev + curr + value.toString()
-			}
-
-			return prev + curr + `$p${i - skipCount}`
-		}, '')
-	}
-
-	return { text, params }
+export class UnsafeString extends String {
+	[SymbolUnsafe] = true
 }
 
 export function unsafe(value: string | { toString(): string }) {
@@ -96,4 +60,118 @@ export function identifier(path: string) {
 	// Example: my`table -> my``table
 	let escaped = path.replaceAll('`', '``')
 	return unsafe('`' + escaped + '`')
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Composable fragments
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * A composable, non-executable piece of a query: its own template text plus
+ * bound values, which may themselves be other fragments, `UnsafeString`s, or
+ * scalars. Parameter names are assigned only when the fragment is flattened
+ * into a query, so fragments nest without parameter-name collisions.
+ *
+ * Create with {@link fragment} or {@link join}; splice into a `yql`/`fragment`
+ * template like any other interpolated value.
+ */
+export class Fragment {
+	[SymbolFragment] = true
+
+	constructor(
+		readonly strings: readonly string[],
+		readonly values: readonly unknown[]
+	) {}
+}
+
+function isFragment(value: unknown): value is Fragment {
+	return isObject(value) && (value as any)[SymbolFragment] === true
+}
+
+/**
+ * Create a composable query {@link Fragment} from a tagged template. Unlike the
+ * query client's `sql\`\``, a fragment is not executable — it only nests into
+ * another `yql`/`fragment` template or {@link join}.
+ *
+ * @example ```ts
+ * const cond = fragment`${identifier('age')} > ${18}`
+ * sql`SELECT * FROM users WHERE ${cond}`
+ * ```
+ */
+export function fragment<P extends any[] = unknown[]>(
+	strings: TemplateStringsArray,
+	...values: P
+): Fragment {
+	return new Fragment(strings as readonly string[], values)
+}
+
+/**
+ * Combine fragments into one, interleaving a separator between them. An empty
+ * list yields an empty fragment; a single fragment is returned without a
+ * separator. The separator is structural SQL — a string is inserted as raw text.
+ *
+ * @example ```ts
+ * const where = join(conditions, ' AND ')
+ * sql`SELECT * FROM users WHERE ${where}`
+ * ```
+ */
+export function join(fragments: readonly Fragment[], separator: Fragment | string = ''): Fragment {
+	let sep = typeof separator === 'string' ? unsafe(separator) : separator
+	let values: unknown[] = []
+	for (let i = 0; i < fragments.length; i++) {
+		if (i > 0) values.push(sep)
+		values.push(fragments[i])
+	}
+
+	return new Fragment(new Array(values.length + 1).fill(''), values)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Query building
+// ──────────────────────────────────────────────────────────────────────────
+
+// Single recursive pass over the template tree. A shared counter assigns
+// `$p0..$pN` in traversal order across nested fragments — no renumbering.
+function flatten(
+	strings: readonly string[],
+	values: readonly unknown[],
+	params: Record<string, Value>,
+	counter: { n: number }
+): string {
+	let text = ''
+	for (let i = 0; i < strings.length; i++) {
+		text += strings[i]
+		if (i >= values.length) continue
+
+		let value = values[i]
+		validateValue(value, i)
+
+		if ((value as any)[SymbolUnsafe]) {
+			text += (value as UnsafeString).toString()
+		} else if (isFragment(value)) {
+			text += flatten(value.strings, value.values, params, counter)
+		} else {
+			let name = `$p${counter.n}`
+			params[name] = toYdbValue(value)
+			text += name
+			counter.n++
+		}
+	}
+
+	return text
+}
+
+export function yql<P extends any[] = unknown[]>(
+	strings: string | TemplateStringsArray,
+	...values: P
+): { text: string; params: Record<string, Value> } {
+	let params: Record<string, Value> = Object.assign({}, null)
+
+	if (typeof strings === 'string') {
+		return { text: strings, params }
+	}
+
+	let text = flatten(strings, values, params, { n: 0 })
+
+	return { text, params }
 }
