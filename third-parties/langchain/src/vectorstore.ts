@@ -351,6 +351,15 @@ export class YDBVectorStore extends VectorStore {
 		}
 
 		this.#strategy = config.strategy ?? YDBSearchStrategy.CosineSimilarity
+		// `this.#strategy` is spliced into YQL via `unsafe(...)` in Knn::* and the
+		// index DDL — guard against TS-bypass / JSON-driven values reaching the
+		// query as raw text. Reusing the DDL map doubles as a single source of
+		// truth: a strategy is "known" iff it has a DDL mapping.
+		if (INDEX_STRATEGY_DDL[this.#strategy] === undefined) {
+			throw new YDBVectorStoreConfigError(
+				`Unknown search strategy: "${this.#strategy}". Valid values: ${Object.keys(INDEX_STRATEGY_DDL).join(', ')}.`
+			)
+		}
 
 		this.#batchSize = config.batchSize ?? 32
 		assertPositiveInteger('batchSize', this.#batchSize)

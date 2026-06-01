@@ -37,6 +37,17 @@ test('treats { driver, connectionString: undefined } as the driver branch', () =
 	expect(store).toBeInstanceOf(YDBVectorStore)
 })
 
+test('throws YDBVectorStoreConfigError for an unknown search strategy', () => {
+	expect(
+		() =>
+			new YDBVectorStore(embeddings, {
+				driver: stubDriver,
+				// @ts-expect-error — exercising the runtime guard against TS-bypass.
+				strategy: 'BogusStrategy',
+			})
+	).toThrow(/Unknown search strategy: "BogusStrategy"/)
+})
+
 test.each([
 	['batchSize', 0],
 	['batchSize', -1],
