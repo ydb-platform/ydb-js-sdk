@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/langchain",
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"description": "YDB integration for LangChain.js — VectorStore backed by YDB.",
 	"keywords": [
 		"database",
