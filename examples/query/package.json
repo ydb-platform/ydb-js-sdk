@@ -11,9 +11,9 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@ydbjs/core": "^6.3.0",
-		"@ydbjs/query": "^6.2.0",
-		"@ydbjs/value": "^6.0.7"
+		"@ydbjs/core": "^6.3.1",
+		"@ydbjs/query": "^6.3.0",
+		"@ydbjs/value": "^6.0.8"
 	},
 	"engines": {
 		"node": ">=20.19.0",

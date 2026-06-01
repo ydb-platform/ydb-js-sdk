@@ -1,5 +1,21 @@
 # @ydbjs/query
 
+## 6.3.0
+
+### Minor Changes
+
+- [#622](https://github.com/ydb-platform/ydb-js-sdk/pull/622) [`692a8ee`](https://github.com/ydb-platform/ydb-js-sdk/commit/692a8ee44b0ccfc3f283f1e1b93e47449938efe3) Thanks [@polRk](https://github.com/polRk)! - Add composable query fragments: `fragment` (and `sql.fragment`) builds a non-executable piece of YQL with its own bound parameters, and `join` (and `sql.join`) combines fragments with a separator. Fragments nest into other `sql`/`fragment` templates, with parameters renumbered automatically — enabling dynamic `WHERE`/`IN`/KNN clauses without hand-building parameter names.
+
+### Patch Changes
+
+- [#623](https://github.com/ydb-platform/ydb-js-sdk/pull/623) [`f78bc01`](https://github.com/ydb-platform/ydb-js-sdk/commit/f78bc017482c2acb60a28f12c83eebd21569de63) Thanks [@polRk](https://github.com/polRk)! - Bump `@bufbuild/protobuf` from `2.10.1` to `2.12.0`.
+
+- Updated dependencies [[`f78bc01`](https://github.com/ydb-platform/ydb-js-sdk/commit/f78bc017482c2acb60a28f12c83eebd21569de63)]:
+  - @ydbjs/api@6.0.7
+  - @ydbjs/core@6.3.1
+  - @ydbjs/error@6.0.6
+  - @ydbjs/value@6.0.8
+
 ## 6.2.0
 
 ### Minor Changes

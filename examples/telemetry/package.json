@@ -15,8 +15,8 @@
 		"@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
 		"@opentelemetry/sdk-metrics": "^2.7.1",
 		"@opentelemetry/sdk-node": "^0.218.0",
-		"@ydbjs/core": "^6.3.0",
-		"@ydbjs/query": "^6.2.0",
+		"@ydbjs/core": "^6.3.1",
+		"@ydbjs/query": "^6.3.0",
 		"@ydbjs/telemetry": "^6.0.1"
 	},
 	"engines": {
