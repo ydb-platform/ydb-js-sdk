@@ -608,4 +608,12 @@ export default defineConfig({
 			},
 		},
 	},
+	vite: {
+		build: {
+			rollupOptions: {
+				// @vueuse/core ships misplaced /* #__PURE__ */ comments that Rolldown (Vite 8) can't attach; silence the noise.
+				checks: { invalidAnnotation: false },
+			},
+		},
+	},
 })
