@@ -1,5 +1,7 @@
 # @ydbjs/auth
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=auth)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 The `@ydbjs/auth` package provides authentication utilities for interacting with YDB services. It supports static credentials, token-based authentication, anonymous access, and VM metadata providers.
 
 ## Features

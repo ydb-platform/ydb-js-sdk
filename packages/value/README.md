@@ -1,5 +1,7 @@
 # @ydbjs/value
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=value)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 The `@ydbjs/value` package provides utilities for working with YDB values and types in JavaScript/TypeScript. It includes classes and functions for encoding, decoding, and converting YDB values to and from native JavaScript types.
 
 ## Features

@@ -1,0 +1,108 @@
+# Cross-repo uniform metric: every YDB SDK repo defines this same component_id,
+# so native-SDK coverage is queryable identically via the Codecov API
+# (?component_id=native-sdk), regardless of how each repo tags its uploads.
+#
+# This repo is an npm monorepo. The umbrella native-sdk component maps to the whole
+# packages tree (the generated gRPC bindings in packages/api are excluded from
+# coverage, so they carry no data). On top of that, every workspace gets its own
+# component for per-package visibility — a file matches both its package component
+# and the native-sdk umbrella, since Codecov allows a path to belong to many
+# components. Third-party framework adapters live under third-parties/* and get
+# their own components so they never dilute the native-sdk number.
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+
+  individual_components:
+    # Umbrella component — the whole native SDK (required, cross-repo metric).
+    - component_id: native-sdk
+      name: native-sdk
+      paths:
+        - packages/**
+
+    # Per-package components.
+    - component_id: abortable
+      name: '@ydbjs/abortable'
+      paths:
+        - packages/abortable/**
+    - component_id: auth
+      name: '@ydbjs/auth'
+      paths:
+        - packages/auth/**
+    - component_id: coordination
+      name: '@ydbjs/coordination'
+      paths:
+        - packages/coordination/**
+    - component_id: core
+      name: '@ydbjs/core'
+      paths:
+        - packages/core/**
+    - component_id: debug
+      name: '@ydbjs/debug'
+      paths:
+        - packages/debug/**
+    - component_id: error
+      name: '@ydbjs/error'
+      paths:
+        - packages/error/**
+    - component_id: fsm
+      name: '@ydbjs/fsm'
+      paths:
+        - packages/fsm/**
+    - component_id: query
+      name: '@ydbjs/query'
+      paths:
+        - packages/query/**
+    - component_id: retry
+      name: '@ydbjs/retry'
+      paths:
+        - packages/retry/**
+    - component_id: telemetry
+      name: '@ydbjs/telemetry'
+      paths:
+        - packages/telemetry/**
+    - component_id: topic
+      name: '@ydbjs/topic'
+      paths:
+        - packages/topic/**
+    - component_id: value
+      name: '@ydbjs/value'
+      paths:
+        - packages/value/**
+
+    # Third-party framework adapters — separate so they do not dilute native-sdk.
+    - component_id: auth-yandex-cloud
+      name: '@ydbjs/auth-yandex-cloud'
+      paths:
+        - third-parties/auth-yandex-cloud/**
+    - component_id: drizzle-adapter
+      name: '@ydbjs/drizzle-adapter'
+      paths:
+        - third-parties/drizzle-adapter/**
+    - component_id: langchain
+      name: '@ydbjs/langchain'
+      paths:
+        - third-parties/langchain/**
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+# Coverage still uploads and status checks stay, but Codecov must not post
+# PR comments — status/components are enough, the comment is just noise.
+comment: false
+
+# Coverage is collected once (Node 24 leg) and uploaded from CI; do not wait for
+# multiple uploads before building the report.
+codecov:
+  notify:
+    after_n_builds: 1

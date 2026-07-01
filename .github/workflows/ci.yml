@@ -78,4 +78,19 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - run: npm run build
-      - run: npm run test
+
+      - name: Test
+        if: matrix.node-version != 24
+        run: npm run test
+
+      - name: Test with coverage
+        if: matrix.node-version == 24
+        run: npm run coverage
+
+      - name: Upload coverage to Codecov
+        if: matrix.node-version == 24
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: ./coverage
+          fail_ci_if_error: false

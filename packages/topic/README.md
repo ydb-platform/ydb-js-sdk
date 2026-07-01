@@ -1,5 +1,7 @@
 # @ydbjs/topic
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=topic)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 Read this in Russian: [README.ru.md](README.ru.md)
 
 High‑level, type‑safe clients for YDB Topics (publish–subscribe message streams) in JavaScript/TypeScript. Provides efficient streaming reads and writes, partition session management, offset commits, compression, and transaction‑aware readers/writers.

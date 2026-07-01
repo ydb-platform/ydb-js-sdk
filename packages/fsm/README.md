@@ -1,5 +1,7 @@
 # @ydbjs/fsm
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=fsm)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 `@ydbjs/fsm` is a lightweight async-first finite state machine runtime for YDB JavaScript SDK packages.
 
 It is designed for long-lived async workflows where predictable state transitions, explicit side effects, and safe shutdown semantics are required.
