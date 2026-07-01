@@ -1,5 +1,7 @@
 # @ydbjs/telemetry
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=telemetry)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 OpenTelemetry instrumentation for the YDB JavaScript SDK. Subscribes to
 `node:diagnostics_channel` events emitted by `@ydbjs/core`, `@ydbjs/query`,
 `@ydbjs/auth`, and `@ydbjs/retry`, and converts them into OTel **spans** and

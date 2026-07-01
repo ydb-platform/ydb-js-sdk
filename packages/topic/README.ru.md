@@ -1,5 +1,7 @@
 # @ydbjs/topic
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=topic)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 Читать на английском: [README.md](README.md)
 
 Высокоуровневые, типобезопасные клиенты для YDB Topics (стриминговые очереди сообщений) на JavaScript/TypeScript. Поддерживаются эффективное потоковое чтение/запись, управление сессиями партиций, коммиты оффсетов, сжатие и транзакции.

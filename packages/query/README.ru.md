@@ -1,5 +1,7 @@
 # @ydbjs/query
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=query)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 Читать на английском: [README.md](README.md)
 
 `@ydbjs/query` — высокоуровневый, типобезопасный клиент для выполнения YQL‑запросов и управления транзакциями в YDB. Поддерживает теговый шаблонный синтаксис, автоматическое связывание параметров, хелперы транзакций и глубокую интеграцию с типовой системой YDB.

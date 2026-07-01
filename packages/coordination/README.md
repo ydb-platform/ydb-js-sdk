@@ -1,5 +1,7 @@
 # @ydbjs/coordination
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=coordination)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 Distributed coordination client for [YDB](https://ydb.tech): semaphores, mutexes, and leader elections built on top of YDB coordination nodes.
 
 ## Features

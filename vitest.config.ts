@@ -65,6 +65,10 @@ export default defineConfig({
 		],
 		passWithNoTests: true,
 		coverage: {
+			provider: 'v8',
+			reporter: ['text', 'lcov'],
+			reportsDirectory: './coverage',
+			include: ['packages/*/src/**', 'third-parties/*/src/**'],
 			exclude: [
 				'packages/api/**',
 				'examples/**',

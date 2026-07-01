@@ -1,5 +1,7 @@
 # @ydbjs/query
 
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=query)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+
 Read this in Russian: [README.ru.md](README.ru.md)
 
 The `@ydbjs/query` package provides a high-level, type-safe client for executing YQL queries and managing transactions in YDB. It features a tagged template API, automatic parameter binding, transaction helpers, and deep integration with the YDB type system.
