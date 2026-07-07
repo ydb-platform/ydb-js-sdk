@@ -1,6 +1,6 @@
 # @ydbjs/error
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=error)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=error)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/error/)
 
 The `@ydbjs/error` package provides utilities for handling YDB-specific errors in JavaScript/TypeScript applications. It simplifies error classification and provides detailed error messages for better debugging and troubleshooting.
 

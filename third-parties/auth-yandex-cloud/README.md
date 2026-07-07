@@ -1,6 +1,6 @@
 # @ydbjs/auth-yandex-cloud
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=auth-yandex-cloud)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=auth-yandex-cloud)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/third-parties/auth-yandex-cloud/)
 
 Yandex Cloud Service Account authentication provider for YDB. Supports authorized key JSON files and automatic IAM token management.
 

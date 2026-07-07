@@ -1,6 +1,6 @@
 # @ydbjs/fsm
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=fsm)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=fsm)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/fsm/)
 
 `@ydbjs/fsm` is a lightweight async-first finite state machine runtime for YDB JavaScript SDK packages.
 
