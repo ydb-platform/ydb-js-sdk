@@ -139,9 +139,11 @@ Performance note: awaiting `commit()` in the hot path reduces throughput. For hi
 - `codec?`: `CompressionCodec` — compression (default RAW; built‑ins: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
-- `flushIntervalMs?`: `number` — periodic flush tick (default 10ms)
+- `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
-- `retryConfig?(signal)`: tune connection retry strategy
+- `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` (default 30000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window before the writer fails (default 60000)
+- `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
 - `onAck?(seqNo, status)`: callback on message acknowledgment
 
 ### Writing messages
@@ -161,8 +163,9 @@ await using writer = t.createWriter({
 })
 
 const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-const seqNo = writer.write(payload)
-await writer.flush()
+writer.write(payload) // fire-and-forget (void)
+// flush() returns the last acknowledged seqNo
+const lastSeqNo = await writer.flush()
 ```
 
 `write()` accepts `Uint8Array` only. Encode your own objects/strings as needed.
@@ -233,7 +236,6 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` and types
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types
-- `@ydbjs/topic/writer2`: experimental state‑machine writer
 
 ## License
 

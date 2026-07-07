@@ -28,7 +28,7 @@ title: Topic — семантика
 - `flush()` — отправляет буфер на сервер; возвращает последний `seqNo`.
 - `onAck(seqNo, status)` — уведомления о подтверждении записи.
 - Ограничения: `maxBufferBytes`, `maxInflightCount`, `flushIntervalMs`.
-- Повторные попытки соединения на уровне stream с настраиваемой стратегией (`retryConfig`).
+- Прозрачный реконнект на уровне stream (экспоненциальная задержка + jitter), ограничен `recoveryWindowMs`.
 
 ## Транзакции
 

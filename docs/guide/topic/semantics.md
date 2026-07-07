@@ -28,7 +28,7 @@ Buffering:
 - `flush()` — send the buffer to the server; returns last `seqNo`.
 - `onAck(seqNo, status)` — write acknowledgement notifications.
 - Limits: `maxBufferBytes`, `maxInflightCount`, `flushIntervalMs`.
-- Stream‑level retries with configurable strategy (`retryConfig`).
+- Stream‑level transparent reconnect (exponential backoff + jitter), bounded by `recoveryWindowMs`.
 
 ## Transactions
 

@@ -12,6 +12,7 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.10.0",
+		"@ydbjs/abortable": "*",
 		"@ydbjs/api": "*",
 		"@ydbjs/auth": "*",
 		"@ydbjs/core": "*",

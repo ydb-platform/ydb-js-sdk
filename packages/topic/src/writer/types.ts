@@ -1,82 +1,62 @@
-import type { RetryConfig } from '@ydbjs/retry'
 import type { CompressionCodec } from '../codec.js'
 import type { TX } from '../tx.js'
 
-export type ThroughputSettings = {
-	maxBufferBytes: bigint
-	flushIntervalMs: number
-	maxInflightCount: number
+// Status of a single message acknowledged by the server.
+export type AckStatus = 'written' | 'skipped' | 'writtenInTx'
+
+// A single server acknowledgement, flattened from StreamWriteMessage.WriteResponse.acks.
+export type WriteAck = {
+	seqNo: bigint
+	status: AckStatus
+	// Present only for 'written' acks — the partition offset the message landed at.
+	offset?: bigint
+}
+
+// Optional per-message metadata accepted by write().
+export type WriteExtra = {
+	// User-provided sequence number. Providing it once switches the writer to
+	// manual mode: every subsequent message must then also provide a seqNo.
+	seqNo?: bigint
+	createdAt?: Date
+	metadataItems?: Record<string, Uint8Array>
 }
 
 export type TopicWriterOptions = {
-	// Transaction identity.
-	// If provided, the writer will use the transaction for writing messages.
-	tx?: TX
-	// Path to the topic to write to.
-	// Example: "/Root/my-topic"
+	// Path to the topic to write to, e.g. "/Root/my-topic".
 	topic: string
-	// Compression codec to use for writing messages.
-	// If not provided, the RAW codec will be used by default.
-	// Default supported codecs: RAW_CODEC, GZIP_CODEC, ZSTD_CODEC.
-	codec?: CompressionCodec
-	// The producer name to use for writing messages.
-	// If not provided, a random producer name will be generated.
+	// Producer identity. Together with seqNo it gives the server-side
+	// deduplication key (producer + seqNo), which makes reconnect resends safe.
+	// A unique id is generated if omitted.
 	producer?: string
-	// How often to update the token for the writer.
-	// Default is 60 seconds.
-	updateTokenIntervalMs?: number
-	// Maximum size of the buffer in bytes.
-	// If the buffer exceeds this size, the writer will flush the buffer and send the messages to the topic.
-	// This is useful to avoid memory leaks and to ensure that the writer does not hold too many messages in memory.
-	// If not provided, the default buffer size is 256MiB.
+	// Transaction identity. When set, every write is tagged with the tx and a
+	// stream error is NOT retried — it surfaces to the transaction layer.
+	tx?: TX
+	// Compression codec. Defaults to RAW.
+	codec?: CompressionCodec
+	// Pin writes to a single partition (mutually exclusive with messageGroupId).
+	partitionId?: bigint
+	// Route writes by message group (mutually exclusive with partitionId).
+	messageGroupId?: string
+	// Flush the buffer once it holds at least this many bytes. Default 256MiB.
 	maxBufferBytes?: bigint
-	// Maximum number of messages that can be in flight at the same time.
-	// If the number of messages in flight exceeds this number, the writer will wait for some messages to be acknowledged before sending new messages.
-	// This is useful to avoid overwhelming the topic with too many messages at once.
-	// Default is 1000 messages.
+	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number
-	// The Interval in milliseconds to flush the buffer automatically.
-	// If not provided, the writer will not flush the buffer automatically.
-	// This is useful to ensure that the writer does not hold too many messages in memory.
-	// Default is 10ms.
+	// Background flush cadence in ms — bounds how long a small batch waits. Default 1000.
 	flushIntervalMs?: number
-	// Retry configuration for the writer.
-	retryConfig?(signal: AbortSignal): RetryConfig
-	// Callback that is called when writer receives an acknowledgment for a message.
-	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
+	// How often to refresh the auth token on the stream. Default 60s.
+	updateTokenIntervalMs?: number
+	// Force-close deadline for graceful close() before pending messages are dropped.
+	// JS-specific safety net; other SDKs bound this by the caller's signal only. Default 30s.
+	gracefulShutdownTimeoutMs?: number
+	// Terminal reconnect window: if no successful reconnect happens within this
+	// window the writer fails terminally instead of retrying forever. Default 60s.
+	recoveryWindowMs?: number
+	// Called for every acknowledged message. Errors thrown here are swallowed.
+	onAck?: (seqNo: bigint, status: AckStatus) => void
 }
 
-export interface TopicWriter extends AsyncDisposable {
-	// Write a message to the topic.
-	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
-	write(
-		payload: Uint8Array,
-		extra?: {
-			seqNo?: bigint
-			createdAt?: Date
-			metadataItems?: Record<string, Uint8Array>
-		}
-	): bigint
-	// Flush the buffer and send all messages to the topic.
-	// Returns a promise that resolves to the last sequence number of the topic after flushing.
-	flush(): Promise<bigint | undefined>
-	// Gracefully close the writer. Stop accepting new messages and wait for existing ones to be sent.
-	close(): Promise<void>
-	// Immediately destroy the writer and release all resources.
-	// This will stop all operations immediately without waiting for pending messages.
-	destroy(reason?: Error): void
-}
-
-export interface TopicTxWriter {
-	write(
-		payload: Uint8Array,
-		extra?: {
-			seqNo?: bigint
-			createdAt?: Date
-			metadataItems?: Record<string, Uint8Array>
-		}
-	): bigint
-	flush(): Promise<bigint | undefined>
-	close(): Promise<void>
-	destroy(): void
-}
+// The public writer is the `TopicWriter` class exported from ./writer.js.
+// write() is synchronous and fire-and-forget: it buffers the message and
+// returns. Invalid input (bad seqNo, over-size payload, closed writer) throws
+// synchronously. In auto mode the final seqNo is assigned only when the message
+// reaches the wire, so it is not returned — use flush() for the last acked seqNo.

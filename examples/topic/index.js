@@ -36,7 +36,7 @@ console.log('Connected to', cs)
 	let sql = query(driver)
 
 	await sql.begin(async (tx) => {
-		let reader = t.createTxReader(tx, driver, {
+		let reader = t.createTxReader(tx, {
 			topic: '/Root/demo-topic',
 			consumer: 'demo-consumer',
 		})
@@ -46,7 +46,7 @@ console.log('Connected to', cs)
 			break
 		}
 
-		let writer = t.createTxWriter(tx, driver, {
+		let writer = t.createTxWriter(tx, {
 			topic: '/Root/demo-topic',
 			producer: 'tx-producer',
 		})

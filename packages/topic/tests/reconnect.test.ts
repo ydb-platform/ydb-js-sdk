@@ -113,12 +113,12 @@ test(
 		let index = 0
 
 		while (Date.now() < deadline) {
-			let seqNo = writer.write(new TextEncoder().encode(`msg-${index++}`))
-			writtenSeqNos.add(seqNo)
+			writer.write(new TextEncoder().encode(`msg-${index++}`))
 
-			// flush() waits for the server ACK, so the seqNo is guaranteed to
-			// be committed before we record it.
-			await writer.flush()
+			// write() is void; flush() waits for the server ACK and returns the
+			// last committed seqNo (one write per iteration ⇒ this message's seqNo).
+			let seqNo = await writer.flush()
+			writtenSeqNos.add(seqNo)
 
 			let remaining = deadline - Date.now()
 			if (remaining > 0) {

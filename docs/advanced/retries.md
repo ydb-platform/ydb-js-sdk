@@ -49,7 +49,7 @@ await retry(
 
 ## Topic streaming
 
-Topic readers/writers reconnect on failures and rebuild command queues. Use `retryConfig` on writer for fine tuning; keep producers idempotent with `producerId + seqNo`.
+Topic readers/writers reconnect on failures and rebuild command queues. The writer reconnects automatically (exponential backoff + jitter, bounded by `recoveryWindowMs`); keep producers idempotent with `producer + seqNo`.
 
 ## Best practices
 

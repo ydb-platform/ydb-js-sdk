@@ -38,9 +38,8 @@ title: Topic — опции
 - `codec?`: `CompressionCodec`
 - `maxBufferBytes?`: `bigint` — по умолчанию 256 МБ
 - `maxInflightCount?`: `number` — по умолчанию 1000
-- `flushIntervalMs?`: `number` — по умолчанию 10 мс
+- `flushIntervalMs?`: `number` — по умолчанию 1000 мс
 - `updateTokenIntervalMs?`: `number` — по умолчанию 60000
-- `retryConfig?(signal)`: `RetryConfig`
 - `onAck?(seqNo, status?)`: `(seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void`
 
 Методы и поведение:
@@ -64,7 +63,7 @@ title: Topic — опции
 
 Повторные попытки и устойчивость:
 
-- Подключение к TopicService — потоковое; при обрывах переподнимается с бюджетом/стратегией из `retryConfig`. Очередь команд пересоздаётся.
+- Подключение к TopicService — потоковое; при обрывах прозрачно переподнимается (экспоненциальная задержка + jitter), ограничено `recoveryWindowMs`. Сообщения «в полёте» отправляются повторно.
 
 Транзакционные варианты:
 

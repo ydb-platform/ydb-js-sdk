@@ -330,3 +330,81 @@ test('dispatch inside effect is processed by the same drain loop iteration', asy
 	expect(machine.state).toBe('ready')
 	expect(initialCtx.log).toEqual(['start', 'started'])
 })
+
+test('processes an event dispatched inside a transition after the state change', async () => {
+	// Regression: a dispatch made synchronously from within a transition must be
+	// processed after the current transition's state change is applied — not
+	// re-entrantly against the stale (pre-transition) state.
+	type S = 'idle' | 'ready'
+	type E = { type: 'start' } | { type: 'follow_up' }
+	type Ctx = { seenFollowUpIn: S | null }
+
+	let ctx: Ctx = { seenFollowUpIn: null }
+	let machine = createMachineRuntime<S, Ctx, {}, E, never, never>({
+		initialState: 'idle',
+		ctx,
+		env: {},
+		transition(mctx, event, runtime) {
+			if (event.type === 'start') {
+				runtime.dispatch({ type: 'follow_up' })
+				return { state: 'ready' }
+			}
+			if (event.type === 'follow_up') {
+				mctx.seenFollowUpIn = runtime.state
+			}
+		},
+		effects: {},
+	})
+
+	machine.dispatch({ type: 'start' })
+	await waitFor(() => ctx.seenFollowUpIn !== null)
+
+	expect(ctx.seenFollowUpIn).toBe('ready')
+	expect(machine.state).toBe('ready')
+
+	await machine.destroy()
+})
+
+test('close delivers outputs for events dispatched during an in-flight drain', async () => {
+	// Regression: close() must wait for an in-flight drain to finish (and drain the
+	// tail) before sealing — not early-return via the #draining guard and drop
+	// outputs from events queued mid-drain.
+	type S = 'x'
+	type E = { type: 'a' } | { type: 'b' }
+	type FX = { type: 'work' }
+	type O = { type: 'o'; v: string }
+
+	let outputs: string[] = []
+	let machine = createMachineRuntime<S, {}, {}, E, FX, O>({
+		initialState: 'x',
+		ctx: {},
+		env: {},
+		transition(_ctx, event, runtime) {
+			if (event.type === 'a') {
+				runtime.emit({ type: 'o', v: 'a' })
+				runtime.dispatch({ type: 'b' })
+				return { effects: [{ type: 'work' }] }
+			}
+			if (event.type === 'b') {
+				runtime.emit({ type: 'o', v: 'b' })
+			}
+		},
+		effects: {
+			work: async () => {
+				await sleep(0)
+			},
+		},
+	})
+
+	let consume = (async () => {
+		for await (let out of machine) {
+			outputs.push(out.v)
+		}
+	})()
+
+	machine.dispatch({ type: 'a' })
+	await machine.close()
+	await consume
+
+	expect(outputs).toEqual(['a', 'b'])
+})

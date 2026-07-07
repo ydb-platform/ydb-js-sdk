@@ -33,6 +33,12 @@ class Runtime<
 	#transition: RuntimeOptions<S, LC, RC, E, FX, O>['transition']
 
 	#drainTask: Promise<void> | null = null
+	// Set synchronously while the drain loop body runs. Guards against a
+	// re-entrant drain when a transition or effect dispatches a new event:
+	// #drainTask is not yet assigned during the first transition's synchronous
+	// run, so without this flag a nested dispatch would start a second loop and
+	// process the event against stale (pre-transition) state.
+	#draining = false
 
 	#eventQueue: Array<InternalEventEnvelope<E>> = []
 	#outputQueue = new AsyncQueue<O>()
@@ -162,11 +168,19 @@ class Runtime<
 		}
 
 		this.#closeTask = (async () => {
+			// Set before draining so no new events are enqueued past this point.
 			this.#closing = true
 			this.#stopReason = reason ?? new Error('runtime closed')
 
-			// Drain first so all outputs emitted during pending transitions
-			// are delivered before the output queue is sealed.
+			// Drain first so all outputs emitted during pending transitions are
+			// delivered before the output queue is sealed. A drain may already be
+			// in flight (e.g. an effect that called close() re-entrantly) — the
+			// #draining guard would make a plain #drain() return immediately, so
+			// wait for that loop to finish, then drain any tail.
+			while (this.#drainTask) {
+				// oxlint-disable-next-line no-await-in-loop
+				await this.#drainTask
+			}
 			await this.#drain()
 
 			if (this.#destroyed) {
@@ -223,6 +237,15 @@ class Runtime<
 	}
 
 	async #drain(): Promise<void> {
+		// A drain loop is already running — it was re-entered from a transition or
+		// effect that dispatched a new event. That event is already in the shared
+		// queue and the running loop will pick it up; starting a second loop here
+		// would process it against stale state (the current transition's state
+		// change is not applied until it returns). Just return.
+		if (this.#draining) {
+			return
+		}
+
 		// Loop rather than branch: multiple callers may be waiting on the same
 		// drainTask. When it resolves they all wake up simultaneously — the loop
 		// ensures each re-checks whether a new task was already started before
@@ -236,6 +259,9 @@ class Runtime<
 			return
 		}
 
+		// Set synchronously, before the IIFE body runs its first transition, so a
+		// nested dispatch during that transition sees the guard above.
+		this.#draining = true
 		this.#drainTask = (async () => {
 			try {
 				while (this.#eventQueue.length > 0 && !this.#destroyed) {
@@ -280,6 +306,8 @@ class Runtime<
 				}
 			} catch (error) {
 				await this.#handleError(error)
+			} finally {
+				this.#draining = false
 			}
 		})()
 

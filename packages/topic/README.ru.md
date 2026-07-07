@@ -134,9 +134,11 @@ for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
 - `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
 - `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
-- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 10 мс)
+- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
-- `retryConfig?(signal)` — настройка ретраев соединения
+- `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()` (по умолчанию 30000)
+- `recoveryWindowMs?`: `number` — окно реконнекта, после которого writer завершается ошибкой (по умолчанию 60000)
+- `partitionId?` / `messageGroupId?` — привязка/маршрутизация записи (взаимоисключающие)
 - `onAck?(seqNo, status)` — колбэк подтверждений
 
 ### Запись
@@ -149,8 +151,9 @@ await using writer = t.createWriter({
 })
 
 const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-const seqNo = writer.write(payload)
-await writer.flush()
+writer.write(payload) // fire-and-forget (void)
+// flush() возвращает последний подтверждённый seqNo
+const lastSeqNo = await writer.flush()
 ```
 
 `write()` принимает только `Uint8Array` — строки/объекты кодируйте самостоятельно.
@@ -221,7 +224,6 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
-- `@ydbjs/topic/writer2`: экспериментальный state‑machine writer
 
 ## Лицензия
 

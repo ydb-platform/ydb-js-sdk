@@ -38,19 +38,21 @@ Methods and behavior:
 - `codec?`: `CompressionCodec`
 - `maxBufferBytes?`: `bigint` — default 256 MB
 - `maxInflightCount?`: `number` — default 1000
-- `flushIntervalMs?`: `number` — default 10 ms
+- `flushIntervalMs?`: `number` — default 1000 ms
 - `updateTokenIntervalMs?`: `number` — default 60000
-- `retryConfig?(signal)`: `RetryConfig`
-- `onAck?(seqNo, status?)`: `(seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void`
+- `gracefulShutdownTimeoutMs?`: `number` — default 30000
+- `recoveryWindowMs?`: `number` — default 60000
+- `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
+- `onAck?(seqNo, status)`: `(seqNo: bigint, status: 'skipped' | 'written' | 'writtenInTx') => void`
 
 Methods and behavior:
 
-- `write(payload: Uint8Array, extra?)`: `bigint`
-  - Buffers a message and returns assigned `seqNo`. You may provide `seqNo`, `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher.
-  - Why `seqNo`: `producerId + seqNo` on the producer ensures idempotency, deterministic acks, and per‑partition order.
-- `flush()`: `Promise<bigint | undefined>`
-  - Flushes buffered messages, waits for inflight confirmations, and returns the last `seqNo`. Use at checkpoints (e.g., service shutdown).
-- `close()`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources).
+- `write(payload: Uint8Array, extra?)`: `void`
+  - Buffers a message. You may provide `seqNo` (manual mode), `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher. The final `seqNo` is obtained via `flush()` or `onAck`.
+  - Why `seqNo`: `producer + seqNo` ensures idempotency, deterministic acks, and per‑partition order.
+- `flush()`: `Promise<bigint>`
+  - Flushes buffered messages, waits for inflight confirmations, and returns the last acknowledged `seqNo`. Use at checkpoints (e.g., service shutdown).
+- `close()`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources). Rejects if the drain fails.
 - `destroy()`: `void` — immediate stop without delivery guarantees.
 
 Acknowledgements:
@@ -62,7 +64,7 @@ Acknowledgements:
 
 Retries and resilience:
 
-- The connection to TopicService is streaming; it reestablishes on failures per `retryConfig`. Command queue is recreated.
+- The connection to TopicService is streaming; it transparently reconnects on failures with exponential backoff + jitter, bounded by `recoveryWindowMs`. In‑flight messages are resent; pending writes are not failed by a transparent reconnect.
 
 Transactional variants:
 
