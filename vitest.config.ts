@@ -84,7 +84,7 @@ export default defineConfig({
 			provider: 'v8',
 			reporter: ['text', 'lcov'],
 			reportsDirectory: './coverage',
-			include: ['packages/*/src/**', 'third-parties/*/src/**'],
+			include: ['packages/*/src/**/*.ts', 'third-parties/*/src/**/*.ts'],
 			exclude: [
 				'packages/api/**',
 				'examples/**',
