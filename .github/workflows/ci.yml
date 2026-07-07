@@ -92,3 +92,18 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: ./coverage
           fail_ci_if_error: false
+
+      - name: Publish coverage report to Surge
+        if: matrix.node-version == 'lts/*'
+        continue-on-error: true
+        env:
+          SURGE_TOKEN: ${{ secrets.SURGE_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            domain="ydb-js-sdk-coverage-pr-${{ github.event.pull_request.number }}.surge.sh"
+          else
+            domain="ydb-js-sdk-coverage.surge.sh"
+          fi
+
+          npx surge ./coverage "$domain"
+          echo "### :bar_chart: [Coverage report](https://$domain)" >> "$GITHUB_STEP_SUMMARY"
