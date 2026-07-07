@@ -89,10 +89,10 @@ test('writes and reads messages from a topic', async () => {
 
 // oxlint-disable-next-line expect-expect
 test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
-	const BATCH_SIZE = 1024
-	const MESSAGE_SIZE = 16 * 1024
-	const TOTAL_BATCHES = 16
-	const TOTAL_TRAFFIC = TOTAL_BATCHES * BATCH_SIZE * MESSAGE_SIZE
+	let BATCH_SIZE = 1024
+	let MESSAGE_SIZE = 16 * 1024
+	let TOTAL_BATCHES = 16
+	let TOTAL_TRAFFIC = TOTAL_BATCHES * BATCH_SIZE * MESSAGE_SIZE
 
 	await using writer = createTopicWriter(driver, {
 		topic: testTopicName,
@@ -119,8 +119,6 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 			for (let i = 0; i < BATCH_SIZE; i++) {
 				writer.write(Buffer.alloc(MESSAGE_SIZE))
 			}
-
-			// oxlint-disable-next-line no-await-in-loop
 
 			wb += MESSAGE_SIZE * BATCH_SIZE
 		}

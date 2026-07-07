@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { createLiveContext } from './helpers/context.ts'
 import { posts, postsTableName, users, usersTableName } from './helpers/schema.ts'
 
@@ -27,16 +26,16 @@ test('runs schema queries against live YDB', async (t) => {
 			) => eq(fields.id, id),
 		})
 
-		assert.deepEqual(inserted, { id, name: 'twilight sparkle' })
-		assert.ok((live.db as any)._.schema?.users)
-		assert.ok(
+		expect(inserted).toEqual({ id, name: 'twilight sparkle' })
+		expect((live.db as any)._.schema?.users).toBeTruthy()
+		expect(
 			live.liveQueryLog.some(({ query }) =>
 				query.includes(`insert into \`${usersTableName}\``)
 			)
-		)
-		assert.ok(
+		).toBe(true)
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${usersTableName}\``))
-		)
+		).toBe(true)
 	} finally {
 		await live.deleteUserRows([id])
 	}
@@ -71,7 +70,7 @@ test('returns hydrated rows from findMany on live YDB', async (t) => {
 			limit: 2,
 		})
 
-		assert.deepEqual(rows, [
+		expect(rows).toEqual([
 			{ id: secondId, name: 'sweetie belle' },
 			{ id: firstId, name: 'apple bloom' },
 		])
@@ -119,7 +118,7 @@ test('hydrates many relations on live YDB', async (t) => {
 			},
 		})
 
-		assert.deepEqual(row, {
+		expect(row).toEqual({
 			id: userId,
 			name: 'pinkie pie',
 			posts: [
@@ -127,12 +126,12 @@ test('hydrates many relations on live YDB', async (t) => {
 				{ id: secondPostId, title: 'party cannon' },
 			],
 		})
-		assert.ok(
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${usersTableName}\``))
-		)
-		assert.ok(
+		).toBe(true)
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${postsTableName}\``))
-		)
+		).toBe(true)
 	} finally {
 		await live.deletePostRows([firstPostId, secondPostId])
 		await live.deleteUserRows([userId])
@@ -170,7 +169,7 @@ test('hydrates one relations on live YDB', async (t) => {
 			},
 		})
 
-		assert.deepEqual(row, {
+		expect(row).toEqual({
 			id: postId,
 			title: 'tea time',
 			author: {
@@ -178,12 +177,12 @@ test('hydrates one relations on live YDB', async (t) => {
 				name: 'fluttershy',
 			},
 		})
-		assert.ok(
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${postsTableName}\``))
-		)
-		assert.ok(
+		).toBe(true)
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${usersTableName}\``))
-		)
+		).toBe(true)
 	} finally {
 		await live.deletePostRows([postId])
 		await live.deleteUserRows([userId])

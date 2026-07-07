@@ -626,11 +626,13 @@ test('acquire updates lastAcquiredAt for preferred node', () => {
 	inject(c1)
 	inject(c2)
 
+	let before = Date.now()
 	pool.acquire(2n)
+	let after = Date.now()
 
 	let ts = getLastAcquiredAt(pool).get(c2)
-	expect(ts).toBeDefined()
-	expect(ts).toBeGreaterThan(0)
+	expect(ts).toBeGreaterThanOrEqual(before)
+	expect(ts).toBeLessThanOrEqual(after)
 })
 
 test('sync moves removed connections to retired list', () => {

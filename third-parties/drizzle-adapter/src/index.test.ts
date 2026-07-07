@@ -1,6 +1,4 @@
-import * as assert from 'node:assert/strict'
-
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 
 import * as root from './index.ts'
 import { createDrizzle, drizzle } from './ydb/createDrizzle.ts'
@@ -35,22 +33,22 @@ let expectedRootExports = [
 ] as const
 
 test('root entrypoint exposes exactly the bootstrap surface', () => {
-	assert.deepEqual(Object.keys(root).sort(), [...expectedRootExports])
+	expect(Object.keys(root).sort()).toEqual([...expectedRootExports])
 })
 
 test('root re-exports are the canonical symbols', () => {
-	assert.equal(root.createDrizzle, createDrizzle)
-	assert.equal(root.drizzle, drizzle)
-	assert.equal(root.YdbDriver, YdbDriver)
-	assert.equal(root.YdbAuthenticationError, YdbAuthenticationError)
-	assert.equal(root.YdbCancelledQueryError, YdbCancelledQueryError)
-	assert.equal(root.YdbOverloadedQueryError, YdbOverloadedQueryError)
-	assert.equal(root.YdbQueryExecutionError, YdbQueryExecutionError)
-	assert.equal(root.YdbRetryableQueryError, YdbRetryableQueryError)
-	assert.equal(root.YdbTimeoutQueryError, YdbTimeoutQueryError)
-	assert.equal(root.YdbUnavailableQueryError, YdbUnavailableQueryError)
-	assert.equal(root.YdbUniqueConstraintViolationError, YdbUniqueConstraintViolationError)
-	assert.equal(root.relations, relations)
-	assert.equal(root.many, createMany)
-	assert.equal(root.one, createOne)
+	expect(root.createDrizzle).toBe(createDrizzle)
+	expect(root.drizzle).toBe(drizzle)
+	expect(root.YdbDriver).toBe(YdbDriver)
+	expect(root.YdbAuthenticationError).toBe(YdbAuthenticationError)
+	expect(root.YdbCancelledQueryError).toBe(YdbCancelledQueryError)
+	expect(root.YdbOverloadedQueryError).toBe(YdbOverloadedQueryError)
+	expect(root.YdbQueryExecutionError).toBe(YdbQueryExecutionError)
+	expect(root.YdbRetryableQueryError).toBe(YdbRetryableQueryError)
+	expect(root.YdbTimeoutQueryError).toBe(YdbTimeoutQueryError)
+	expect(root.YdbUnavailableQueryError).toBe(YdbUnavailableQueryError)
+	expect(root.YdbUniqueConstraintViolationError).toBe(YdbUniqueConstraintViolationError)
+	expect(root.relations).toBe(relations)
+	expect(root.many).toBe(createMany)
+	expect(root.one).toBe(createOne)
 })

@@ -34,16 +34,46 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./primitive": "./dist/primitive.js",
-		"./optional": "./dist/optional.js",
-		"./struct": "./dist/struct.js",
-		"./dict": "./dist/dict.js",
-		"./tuple": "./dist/tuple.js",
-		"./list": "./dist/list.js",
-		"./null": "./dist/null.js",
-		"./uuid": "./dist/uuid.js",
-		"./print": "./dist/print.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./primitive": {
+			"development": "./src/primitive.ts",
+			"default": "./dist/primitive.js"
+		},
+		"./optional": {
+			"development": "./src/optional.ts",
+			"default": "./dist/optional.js"
+		},
+		"./struct": {
+			"development": "./src/struct.ts",
+			"default": "./dist/struct.js"
+		},
+		"./dict": {
+			"development": "./src/dict.ts",
+			"default": "./dist/dict.js"
+		},
+		"./tuple": {
+			"development": "./src/tuple.ts",
+			"default": "./dist/tuple.js"
+		},
+		"./list": {
+			"development": "./src/list.ts",
+			"default": "./dist/list.js"
+		},
+		"./null": {
+			"development": "./src/null.ts",
+			"default": "./dist/null.js"
+		},
+		"./uuid": {
+			"development": "./src/uuid.ts",
+			"default": "./dist/uuid.js"
+		},
+		"./print": {
+			"development": "./src/print.ts",
+			"default": "./dist/print.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

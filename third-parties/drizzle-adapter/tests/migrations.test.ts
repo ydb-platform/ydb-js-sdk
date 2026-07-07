@@ -1,10 +1,10 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { sql as yql } from 'drizzle-orm'
 import { index, integer, text, ydbTable } from '../src/schema.ts'
+import { YdbUniqueConstraintViolationError } from '../src/index.ts'
 import {
 	type YdbInlineMigration,
 	buildCreateTableSql,
@@ -77,7 +77,7 @@ test('inline migrate applies DDL, bookkeeping and remains idempotent on live YDB
 		let initialRows = await live.db.values<[number, string]>(
 			yql.raw(`SELECT \`id\`, \`name\` FROM \`${tableName}\` ORDER BY \`id\``)
 		)
-		assert.deepEqual(initialRows, [[1, 'Twilight Sparkle']])
+		expect(initialRows).toEqual([[1, 'Twilight Sparkle']])
 
 		let addAgeIndex = index(`${tableName}_age_idx`).on(usersWithAge.age).build(usersWithAge)
 		let createUsersMigration: YdbInlineMigration = {
@@ -109,7 +109,7 @@ test('inline migrate applies DDL, bookkeeping and remains idempotent on live YDB
 		let rowsWithAge = await live.db.values<[number, string, number | null]>(
 			yql.raw(`SELECT \`id\`, \`name\`, \`age\` FROM \`${tableName}\` ORDER BY \`id\``)
 		)
-		assert.deepEqual(normalize(rowsWithAge), [
+		expect(normalize(rowsWithAge)).toEqual([
 			[1, 'Twilight Sparkle', null],
 			[2, 'Rainbow Dash', 21],
 		])
@@ -119,7 +119,7 @@ test('inline migrate applies DDL, bookkeeping and remains idempotent on live YDB
 				`SELECT \`hash\`, \`created_at\`, \`name\` FROM \`${migrationTableName}\` ORDER BY \`created_at\``
 			)
 		)
-		assert.equal(bookkeepingRows.length, 2)
+		expect(bookkeepingRows.length).toBe(2)
 
 		let dropAgeIndexMigration: YdbInlineMigration = {
 			name: '0003_drop_age_index',
@@ -141,7 +141,9 @@ test('inline migrate applies DDL, bookkeeping and remains idempotent on live YDB
 			],
 		})
 
-		await assert.rejects(async () => live.db.values(yql.raw(`SELECT * FROM \`${tableName}\``)))
+		await expect(live.db.values(yql.raw(`SELECT * FROM \`${tableName}\``))).rejects.toThrow(
+			Error
+		)
 	} finally {
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${tableName}\``))
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${migrationTableName}\``))
@@ -207,14 +209,14 @@ test('folder migrate accepts drizzle journal/sql format on live YDB', async (t) 
 		let rows = await live.db.values<[number, string, number]>(
 			yql.raw(`SELECT \`id\`, \`name\`, \`age\` FROM \`${tableName}\``)
 		)
-		assert.deepEqual(rows, [[1, 'Applejack', 24]])
+		expect(rows).toEqual([[1, 'Applejack', 24]])
 
 		let bookkeepingRows = await live.db.values<[string, number, string]>(
 			yql.raw(
 				`SELECT \`hash\`, \`created_at\`, \`name\` FROM \`${migrationTableName}\` ORDER BY \`created_at\``
 			)
 		)
-		assert.equal(bookkeepingRows.length, 2)
+		expect(bookkeepingRows.length).toBe(2)
 
 		await migrate(live.db, {
 			migrationsFolder: tempDir,
@@ -225,7 +227,7 @@ test('folder migrate accepts drizzle journal/sql format on live YDB', async (t) 
 				`SELECT \`hash\`, \`created_at\`, \`name\` FROM \`${migrationTableName}\` ORDER BY \`created_at\``
 			)
 		)
-		assert.equal(bookkeepingRowsAfter.length, 2)
+		expect(bookkeepingRowsAfter.length).toBe(2)
 	} finally {
 		rmSync(tempDir, { recursive: true, force: true })
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${tableName}\``))
@@ -268,27 +270,25 @@ test('migration lock and failed-state recovery guard work on live YDB', async (t
 			)
 		)
 
-		await assert.rejects(
-			() =>
-				migrate(live.db, {
-					migrationsTable: lockHistoryTable,
-					migrationLock: {
-						ownerId: 'blocked-live-runner',
-						acquireTimeoutMs: 50,
-						retryIntervalMs: 10,
+		await expect(
+			migrate(live.db, {
+				migrationsTable: lockHistoryTable,
+				migrationLock: {
+					ownerId: 'blocked-live-runner',
+					acquireTimeoutMs: 50,
+					retryIntervalMs: 10,
+				},
+				migrations: [
+					{
+						name: '0001_blocked',
+						folderMillis: 1,
+						sql: [
+							`CREATE TABLE \`${failedTable}\` (\`id\` Int32 NOT NULL, PRIMARY KEY (\`id\`))`,
+						],
 					},
-					migrations: [
-						{
-							name: '0001_blocked',
-							folderMillis: 1,
-							sql: [
-								`CREATE TABLE \`${failedTable}\` (\`id\` Int32 NOT NULL, PRIMARY KEY (\`id\`))`,
-							],
-						},
-					],
-				}),
-			/could not acquire migration lock/u
-		)
+				],
+			})
+		).rejects.toThrow(/could not acquire migration lock/u)
 
 		await live.db.execute(
 			yql.raw(`DELETE FROM \`${lockTable}\` WHERE \`lock_key\` = 'migrate'`)
@@ -304,15 +304,13 @@ test('migration lock and failed-state recovery guard work on live YDB', async (t
 			],
 		}
 
-		await assert.rejects(
-			() =>
-				migrate(live.db, {
-					migrationsTable: failedHistoryTable,
-					migrationLock: { ownerId: 'failed-live-runner' },
-					migrations: [failingMigration],
-				}),
-			/failed after 1\/2 statements/u
-		)
+		await expect(
+			migrate(live.db, {
+				migrationsTable: failedHistoryTable,
+				migrationLock: { ownerId: 'failed-live-runner' },
+				migrations: [failingMigration],
+			})
+		).rejects.toThrow(/failed after 1\/2 statements/u)
 
 		let failedRows = await live.db.values<
 			[string, string | null, number | null, number | null]
@@ -321,21 +319,19 @@ test('migration lock and failed-state recovery guard work on live YDB', async (t
 				`SELECT \`status\`, \`error\`, \`statements_total\`, \`statements_applied\` FROM \`${failedHistoryTable}\` WHERE \`hash\` = '${failedHash}'`
 			)
 		)
-		assert.equal(failedRows.length, 1)
-		assert.equal(failedRows[0]![0], 'failed')
-		assert.equal(failedRows[0]![2], 2)
-		assert.equal(failedRows[0]![3], 1)
-		assert.notEqual(failedRows[0]![1], null)
+		expect(failedRows.length).toBe(1)
+		expect(failedRows[0]![0]).toBe('failed')
+		expect(failedRows[0]![2]).toBe(2)
+		expect(failedRows[0]![3]).toBe(1)
+		expect(failedRows[0]![1]).not.toBe(null)
 
-		await assert.rejects(
-			() =>
-				migrate(live.db, {
-					migrationsTable: failedHistoryTable,
-					migrationLock: { ownerId: 'blocked-after-failed-live-runner' },
-					migrations: [failingMigration],
-				}),
-			/marked as failed/u
-		)
+		await expect(
+			migrate(live.db, {
+				migrationsTable: failedHistoryTable,
+				migrationLock: { ownerId: 'blocked-after-failed-live-runner' },
+				migrations: [failingMigration],
+			})
+		).rejects.toThrow(/marked as failed/u)
 	} finally {
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${failedTable}\``))
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${lockHistoryTable}\``))
@@ -369,18 +365,18 @@ test('inline unique column constraints work on live YDB', async (t) => {
 			)
 		)
 
-		await assert.rejects(() =>
+		await expect(
 			live.db.execute(
 				yql.raw(
 					`INSERT INTO \`${tableName}\` (\`id\`, \`email\`) VALUES (2, 'rarity@example.com')`
 				)
 			)
-		)
+		).rejects.toBeInstanceOf(YdbUniqueConstraintViolationError)
 
 		let rows = await live.db.values<[number, string]>(
 			yql.raw(`SELECT \`id\`, \`email\` FROM \`${tableName}\` ORDER BY \`id\``)
 		)
-		assert.deepEqual(rows, [[1, 'rarity@example.com']])
+		expect(rows).toEqual([[1, 'rarity@example.com']])
 	} finally {
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${tableName}\``))
 	}

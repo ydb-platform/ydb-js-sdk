@@ -62,7 +62,7 @@ test('writes single message to topic', async () => {
 	expect(seqNo).toBe(lastSeqNo)
 })
 
-test('messages written before initialization are properly renumbered', async () => {
+test('messages written before initialization are properly renumbered', async (tc) => {
 	let producerId = `test-producer-${Date.now()}`
 
 	// First writer: write messages to establish a sequence
@@ -107,7 +107,7 @@ test('messages written before initialization are properly renumbered', async () 
 	let messagesRead = 0
 	let foundSeqNos: bigint[] = []
 
-	for await (let batch of reader.read({ limit: 10, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 10, waitMs: 2000, signal: tc.signal })) {
 		for (let msg of batch) {
 			foundSeqNos.push(msg.seqNo)
 			messagesRead++

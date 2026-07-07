@@ -114,7 +114,15 @@ let shouldOpenNextSession = async function shouldOpenNextSession(
 	let deferred = createDeferred<void>()
 
 	using combined = linkSignals(session.signal, externalSignal)
-	combined.signal.addEventListener('abort', () => deferred.resolve(), { once: true })
+	// linkSignals aborts `combined` synchronously when an input is already
+	// aborted, without ever firing a future 'abort' event — attaching only a
+	// listener here would wait forever if the session already expired (or the
+	// caller already cancelled) before this function runs.
+	if (combined.signal.aborted) {
+		deferred.resolve()
+	} else {
+		combined.signal.addEventListener('abort', () => deferred.resolve(), { once: true })
+	}
 	await deferred.promise
 
 	if (externalSignal?.aborted) {

@@ -1,6 +1,4 @@
-import * as assert from 'node:assert/strict'
-
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 
 import * as migrator from './migrator.ts'
 
@@ -48,5 +46,5 @@ let expectedMigratorExports = [
 ] as const
 
 test('migrator entrypoint exposes exactly the migration surface', () => {
-	assert.deepEqual(Object.keys(migrator).sort(), [...expectedMigratorExports])
+	expect(Object.keys(migrator).sort()).toEqual([...expectedMigratorExports])
 })

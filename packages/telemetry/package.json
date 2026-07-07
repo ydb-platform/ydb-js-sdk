@@ -33,8 +33,14 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./register": "./dist/register.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./register": {
+			"development": "./src/register.ts",
+			"default": "./dist/register.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

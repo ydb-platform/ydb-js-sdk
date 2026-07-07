@@ -105,7 +105,7 @@ test('publishes ydb:auth.provider.failed when metadata fetch fails', async () =>
 	expect(failed.payloads).toHaveLength(1)
 	let p = failed.payloads[0] as any
 	expect(p.provider).toBe('metadata')
-	expect(p.error).toBeDefined()
+	expect(p.error).toBeInstanceOf(Error)
 })
 
 test('publishes ydb:auth.token.expired once per incident across concurrent metadata calls', async () => {
@@ -142,6 +142,11 @@ test('publishes ydb:auth.token.expired once per incident across concurrent metad
 
 // ── static ──────────────────────────────────────────────────────────────────
 
+// Fake gRPC auth server, not real YDB: real login always returns a JWT
+// (see static.ts), so the non-JWT fallback-expiry branch below is only
+// reachable by controlling the login response ourselves. Same server also
+// simulates the UNAUTHENTICATED failure to keep both diagnostics scenarios
+// (opaque token, login failure) on one fast, deterministic fixture.
 async function startAuthServer(opts: { fail?: boolean } = {}) {
 	let server = createServer()
 
@@ -216,5 +221,5 @@ test('publishes ydb:auth.provider.failed when static login fails', async () => {
 	expect(failed.payloads.length).toBeGreaterThanOrEqual(1)
 	let p = failed.payloads[0] as any
 	expect(p.provider).toBe('static')
-	expect(p.error).toBeDefined()
+	expect(p.error).toBeInstanceOf(Error)
 })

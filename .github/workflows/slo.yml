@@ -66,7 +66,7 @@ jobs:
           docker compose version
 
       - name: Checkout current version
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: current
           fetch-depth: 0
@@ -95,7 +95,7 @@ jobs:
           echo "ref=$BASELINE_REF" >> $GITHUB_OUTPUT
 
       - name: Checkout baseline version
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.baseline.outputs.sha }}
           path: baseline

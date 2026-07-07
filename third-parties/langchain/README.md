@@ -1,6 +1,6 @@
 # @ydbjs/langchain
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=langchain)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=langchain)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/third-parties/langchain/)
 
 [YDB](https://ydb.tech) integration for [LangChain.js](https://js.langchain.com) — a `VectorStore` backed by YDB with KNN search support.
 

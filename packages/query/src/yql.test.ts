@@ -172,7 +172,7 @@ test('identifier escapes backticks inside names', () => {
 
 test('public exports identifier/unsafe behave correctly', async () => {
 	// Import from public entry to ensure re-exports work in tests
-	const { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
+	let { identifier: pubIdentifier, unsafe: pubUnsafe } = await import('./index.ts')
 
 	expect(pubIdentifier('users').toString()).eq('`users`')
 	expect(pubIdentifier('a`b').toString()).eq('`a``b`')
@@ -180,7 +180,7 @@ test('public exports identifier/unsafe behave correctly', async () => {
 })
 
 test('public exports fragment/join compose into a query', async () => {
-	const { fragment: pubFragment, join: pubJoin } = await import('./index.ts')
+	let { fragment: pubFragment, join: pubJoin } = await import('./index.ts')
 
 	let conds = [pubFragment`a = ${1}`, pubFragment`b = ${2}`]
 	let { text, params } = yql`WHERE ${pubJoin(conds, ' AND ')};`

@@ -1,6 +1,6 @@
 # YDB JavaScript SDK
 
-[![Docs](https://ydb.js.org/)](https://ydb.js.org/) [![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![Docs](https://ydb.js.org/)](https://ydb.js.org/) [![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/)
 
 Modern, modular SDK for YDB in TypeScript/JavaScript.
 

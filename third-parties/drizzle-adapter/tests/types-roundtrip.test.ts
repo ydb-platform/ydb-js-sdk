@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { eq, sql as yql } from 'drizzle-orm'
 import { createLiveContext } from './helpers/context.ts'
 import { typesTable, typesTableName } from './helpers/schema.ts'
@@ -58,7 +57,7 @@ test('round-trips every column type on live YDB', async (t) => {
 			.from(typesTable)
 			.where(eq(typesTable.id, id))) as Array<Record<string, unknown>>
 
-		assert.deepEqual(live.normalizeTypeRow(insertedRows[0]!), {
+		expect(live.normalizeTypeRow(insertedRows[0]!)).toEqual({
 			id,
 			flag: true,
 			signed64: -123n,
@@ -97,7 +96,7 @@ test('round-trips every column type on live YDB', async (t) => {
 			.from(typesTable)
 			.where(eq(typesTable.id, id))) as Array<Record<string, unknown>>
 
-		assert.deepEqual(live.normalizeTypeRow(updatedRows[0]!), {
+		expect(live.normalizeTypeRow(updatedRows[0]!)).toEqual({
 			id,
 			flag: false,
 			signed64: 777n,
@@ -156,12 +155,12 @@ test('prepared query decodes typed object rows on live YDB', async (t) => {
 		)
 		let row = (await prepared.get()) as Record<string, unknown>
 
-		assert.equal(row['id'], id)
-		assert.ok(row['bytesValue'] instanceof Uint8Array)
-		assert.deepEqual(Array.from(row['bytesValue'] as Uint8Array), Array.from(bytesValue))
-		assert.deepEqual(row['jsonValue'], jsonValue)
-		assert.ok(row['timestampValue'] instanceof Date)
-		assert.equal((row['timestampValue'] as Date).toISOString(), timestampValue.toISOString())
+		expect(row['id']).toBe(id)
+		expect(row['bytesValue']).toBeInstanceOf(Uint8Array)
+		expect(Array.from(row['bytesValue'] as Uint8Array)).toEqual(Array.from(bytesValue))
+		expect(row['jsonValue']).toEqual(jsonValue)
+		expect(row['timestampValue']).toBeInstanceOf(Date)
+		expect((row['timestampValue'] as Date).toISOString()).toBe(timestampValue.toISOString())
 	} finally {
 		await live.deleteTypeRows([id])
 	}

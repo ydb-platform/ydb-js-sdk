@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { and, eq, sql as yql } from 'drizzle-orm'
 import {
 	columnFamily,
@@ -45,10 +44,14 @@ test('runs cte helpers and count builder on live YDB', async (t) => {
 		)
 		let rows = await live.db.with(sq).select().from(sq)
 
-		assert.equal(count, 1)
-		assert.deepEqual(rows, [{ id: userId, name: userName }])
-		assert.ok(live.liveQueryLog.some(({ query }) => query.startsWith('$sq_users = (select')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('select count(*) as count')))
+		expect(count).toBe(1)
+		expect(rows).toEqual([{ id: userId, name: userName }])
+		expect(live.liveQueryLog.some(({ query }) => query.startsWith('$sq_users = (select'))).toBe(
+			true
+		)
+		expect(
+			live.liveQueryLog.some(({ query }) => query.includes('select count(*) as count'))
+		).toBe(true)
 	} finally {
 		await live.deleteUserRows([userId])
 	}
@@ -86,7 +89,7 @@ test('runs insert select on live YDB', async (t) => {
 			name: string
 		}>
 
-		assert.deepEqual(live.sortById(rows), [
+		expect(live.sortById(rows)).toEqual([
 			{ id: sourceId, name: 'insert select source' },
 			{ id: copiedId, name: 'insert select source' },
 		])
@@ -127,14 +130,14 @@ test('runs onDuplicateKeyUpdate on live YDB', async (t) => {
 			name: string
 		}>
 
-		assert.deepEqual(live.sortById(rows), [
+		expect(live.sortById(rows)).toEqual([
 			{ id: existingId, name: 'updated value' },
 			{ id: newId, name: 'fresh value' },
 		])
-		assert.ok(
+		expect(
 			live.liveQueryLog.some(({ query }) => query.startsWith('$__ydb_incoming = (select'))
-		)
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('upsert into')))
+		).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('upsert into'))).toBe(true)
 	} finally {
 		await live.deleteUserRows([existingId, newId])
 	}
@@ -173,10 +176,10 @@ test('returns mutated rows on live YDB', async (t) => {
 			.where(eq(users.id, deleteId))
 			.returning({ id: users.id, name: users.name })
 
-		assert.deepEqual(inserted, [{ id: insertId, name: 'returning insert' }])
-		assert.deepEqual(upserted, [{ id: upsertId, name: 'returning upsert' }])
-		assert.deepEqual(updated, [{ id: insertId, name: 'returning updated' }])
-		assert.deepEqual(deleted, [{ id: deleteId, name: 'returning delete' }])
+		expect(inserted).toEqual([{ id: insertId, name: 'returning insert' }])
+		expect(upserted).toEqual([{ id: upsertId, name: 'returning upsert' }])
+		expect(updated).toEqual([{ id: insertId, name: 'returning updated' }])
+		expect(deleted).toEqual([{ id: deleteId, name: 'returning delete' }])
 	} finally {
 		await live.deleteUserRows([insertId, upsertId, deleteId])
 	}
@@ -224,31 +227,25 @@ test('runs native set and batch mutations on live YDB', async (t) => {
 			)
 			.returning({ id: keyedUsers.id })
 
-		let batchUpdateUnsupported = await ignoreUnsupportedYqlFeature('BATCH UPDATE', () =>
-			live.db
+		expect(updated).toEqual([{ id: 1, name: 'set updated' }])
+		expect(deleted).toEqual([{ id: 2 }])
+
+		await ignoreUnsupportedYqlFeature('BATCH UPDATE', async () => {
+			await live.db
 				.batchUpdate(keyedUsers)
 				.set({ name: 'batch updated' })
 				.where(eq(keyedUsers.id, 3))
-		)
-		let batchUpdated = batchUpdateUnsupported
-			? [{ id: 3, name: 'batch target' }]
-			: await live.db.select().from(keyedUsers).where(eq(keyedUsers.id, 3))
-		let batchDeleteUnsupported = await ignoreUnsupportedYqlFeature('BATCH DELETE', () =>
-			live.db.batchDelete(keyedUsers).where(eq(keyedUsers.id, 3))
-		)
-		let batchDeleted = batchDeleteUnsupported
-			? [{ id: 3, name: 'batch target' }]
-			: await live.db.select().from(keyedUsers).where(eq(keyedUsers.id, 3))
 
-		assert.deepEqual(updated, [{ id: 1, name: 'set updated' }])
-		assert.deepEqual(deleted, [{ id: 2 }])
-		if (!batchUpdateUnsupported) {
-			assert.deepEqual(batchUpdated, [{ id: 3, name: 'batch updated' }])
-		}
+			let batchUpdated = await live.db.select().from(keyedUsers).where(eq(keyedUsers.id, 3))
+			expect(batchUpdated).toEqual([{ id: 3, name: 'batch updated' }])
+		})
 
-		if (!batchDeleteUnsupported) {
-			assert.deepEqual(batchDeleted, [])
-		}
+		await ignoreUnsupportedYqlFeature('BATCH DELETE', async () => {
+			await live.db.batchDelete(keyedUsers).where(eq(keyedUsers.id, 3))
+
+			let batchDeleted = await live.db.select().from(keyedUsers).where(eq(keyedUsers.id, 3))
+			expect(batchDeleted).toEqual([])
+		})
 	} finally {
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${tableName}\``))
 	}
@@ -289,7 +286,7 @@ test('applies advanced table DDL on live YDB', async (t) => {
 			.values({ id: 1, payload: 'advanced ddl', expiresAt: 4_102_444_800 })
 
 		let rows = await live.db.select().from(events).where(eq(events.id, 1))
-		assert.deepEqual(rows, [{ id: 1, payload: 'advanced ddl', expiresAt: 4_102_444_800 }])
+		expect(rows).toEqual([{ id: 1, payload: 'advanced ddl', expiresAt: 4_102_444_800 }])
 	} finally {
 		await live.db.execute(yql.raw(`DROP TABLE IF EXISTS \`${tableName}\``))
 	}
@@ -329,9 +326,9 @@ test('runs delete using on live YDB', async (t) => {
 			title: string
 		}>
 
-		assert.deepEqual(remainingUsers, [])
-		assert.deepEqual(remainingPosts, [{ id: postId, userId, title: 'delete using post' }])
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes(' in (select ')))
+		expect(remainingUsers).toEqual([])
+		expect(remainingPosts).toEqual([{ id: postId, userId, title: 'delete using post' }])
+		expect(live.liveQueryLog.some(({ query }) => query.includes(' in (select '))).toBe(true)
 	} finally {
 		await live.deletePostRows([postId])
 		await live.deleteUserRows([userId])
@@ -354,8 +351,8 @@ test('runs session.batch() through live YDB', async (t) => {
 			live.db.select().from(users).where(eq(users.id, userId)),
 		] as const)
 
-		assert.deepEqual(results[0], [])
-		assert.deepEqual(results[1], [{ id: userId, name: 'batch user' }])
+		expect(results[0]).toEqual([])
+		expect(results[1]).toEqual([{ id: userId, name: 'batch user' }])
 	} finally {
 		await live.deleteUserRows([userId])
 	}

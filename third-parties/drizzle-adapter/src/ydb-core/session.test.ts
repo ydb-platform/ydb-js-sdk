@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { DrizzleQueryError, TransactionRollbackError } from 'drizzle-orm/errors'
 import { sql as yql } from 'drizzle-orm'
@@ -51,11 +50,11 @@ test('normalises queries and builds YdbPreparedQuery', () => {
 		(rows) => rows.length
 	)
 
-	assert.equal(prepared.getQuery().sql, 'select $p0 as `id`')
-	assert.deepEqual(prepared.getQuery().params, [1])
-	assert.equal(prepared.isResponseInArrayMode(), true)
-	assert.equal(prepared.mapResult([[1, 'Twilight']]), 1)
-	assert.deepEqual(logs, [])
+	expect(prepared.getQuery().sql).toBe('select $p0 as `id`')
+	expect(prepared.getQuery().params).toEqual([1])
+	expect(prepared.isResponseInArrayMode()).toBe(true)
+	expect(prepared.mapResult([[1, 'Twilight']])).toBe(1)
+	expect(logs).toEqual([])
 })
 
 test('returns prepared rows in array mode', async () => {
@@ -90,16 +89,13 @@ test('returns prepared rows in array mode', async () => {
 	let oneRow = await prepared.get()
 	let valueRows = await prepared.values()
 
-	assert.deepEqual(allRows, [{ id: 1, name: 'Twilight Sparkle' }])
-	assert.deepEqual(oneRow, { id: 1, name: 'Twilight Sparkle' })
-	assert.deepEqual(valueRows, [[1, 'Twilight Sparkle']])
-	assert.equal(calls.length, 3)
-	assert.deepEqual(
-		calls.map(({ method }) => method),
-		['all', 'all', 'all']
-	)
-	assert.equal(logs.length, 3)
-	assert.ok(logs.every(({ query }) => query === 'select $p0 as id, $p1 as name'))
+	expect(allRows).toEqual([{ id: 1, name: 'Twilight Sparkle' }])
+	expect(oneRow).toEqual({ id: 1, name: 'Twilight Sparkle' })
+	expect(valueRows).toEqual([[1, 'Twilight Sparkle']])
+	expect(calls.length).toBe(3)
+	expect(calls.map(({ method }) => method)).toEqual(['all', 'all', 'all'])
+	expect(logs.length).toBe(3)
+	expect(logs.every(({ query }) => query === 'select $p0 as id, $p1 as name')).toBe(true)
 })
 
 test('executes prepared queries against the client', async () => {
@@ -120,7 +116,7 @@ test('executes prepared queries against the client', async () => {
 	let rawPrepared = session.prepareQuery(yql`select ${1}`, undefined, undefined, false)
 	let arrayPrepared = session.prepareQuery(yql`select ${1}`, undefined, undefined, true)
 
-	assert.deepEqual(await rawPrepared.execute(), [{ id: 1, name: 'Rarity' }])
+	expect(await rawPrepared.execute()).toEqual([{ id: 1, name: 'Rarity' }])
 	type RowsWithMeta = unknown[][] & {
 		rowCount?: number
 		command?: string
@@ -128,10 +124,10 @@ test('executes prepared queries against the client', async () => {
 	}
 	let arrayRows: RowsWithMeta = (await arrayPrepared.execute()) as any
 
-	assert.equal(arrayRows.rowCount, 1)
-	assert.equal(arrayRows.command, 'execute')
-	assert.deepEqual(arrayRows.meta, { arrayMode: true })
-	assert.deepEqual(arrayRows, [[1, 'Rarity']])
+	expect(arrayRows.rowCount).toBe(1)
+	expect(arrayRows.command).toBe('execute')
+	expect(arrayRows.meta).toEqual({ arrayMode: true })
+	expect(arrayRows).toEqual([[1, 'Rarity']])
 })
 
 test('prepared query errors preserve query context and map unique constraint failures', async () => {
@@ -145,16 +141,19 @@ test('prepared query errors preserve query context and map unique constraint fai
 		dialect
 	)
 
-	await assert.rejects(
-		() => uniqueSession.prepareQuery(yql`insert into users values (${1})`).execute(),
-		(error) => {
-			assert.ok(error instanceof YdbUniqueConstraintViolationError)
-			assert.equal(error.query, 'insert into users values ($p0)')
-			assert.deepEqual(error.params, [1])
-			assert.equal(error.cause, uniqueCause)
-			return true
-		}
+	let uniqueError: unknown
+	try {
+		await uniqueSession.prepareQuery(yql`insert into users values (${1})`).execute()
+	} catch (error) {
+		uniqueError = error
+	}
+
+	expect(uniqueError).toBeInstanceOf(YdbUniqueConstraintViolationError)
+	expect((uniqueError as YdbUniqueConstraintViolationError).query).toBe(
+		'insert into users values ($p0)'
 	)
+	expect((uniqueError as YdbUniqueConstraintViolationError).params).toEqual([1])
+	expect((uniqueError as YdbUniqueConstraintViolationError).cause).toBe(uniqueCause)
 
 	let genericCause = new Error('YDB unavailable')
 	let genericSession = new YdbSession(
@@ -166,17 +165,18 @@ test('prepared query errors preserve query context and map unique constraint fai
 		dialect
 	)
 
-	await assert.rejects(
-		() => genericSession.prepareQuery(yql`select ${1}`).execute(),
-		(error) => {
-			assert.ok(error instanceof DrizzleQueryError)
-			assert.ok(!(error instanceof YdbUniqueConstraintViolationError))
-			assert.equal(error.query, 'select $p0')
-			assert.deepEqual(error.params, [1])
-			assert.equal(error.cause, genericCause)
-			return true
-		}
-	)
+	let genericError: unknown
+	try {
+		await genericSession.prepareQuery(yql`select ${1}`).execute()
+	} catch (error) {
+		genericError = error
+	}
+
+	expect(genericError).toBeInstanceOf(DrizzleQueryError)
+	expect(genericError).not.toBeInstanceOf(YdbUniqueConstraintViolationError)
+	expect((genericError as DrizzleQueryError).query).toBe('select $p0')
+	expect((genericError as DrizzleQueryError).params).toEqual([1])
+	expect((genericError as DrizzleQueryError).cause).toBe(genericCause)
 })
 
 test('prepared query errors inspect YDB issue payloads for unique violations', async () => {
@@ -197,16 +197,19 @@ test('prepared query errors inspect YDB issue payloads for unique violations', a
 		dialect
 	)
 
-	await assert.rejects(
-		() => session.prepareQuery(yql`insert into users values (${1})`).execute(),
-		(error) => {
-			assert.ok(error instanceof YdbUniqueConstraintViolationError)
-			assert.equal(error.query, 'insert into users values ($p0)')
-			assert.deepEqual(error.params, [1])
-			assert.equal(error.cause, ydbCause)
-			return true
-		}
+	let issueError: unknown
+	try {
+		await session.prepareQuery(yql`insert into users values (${1})`).execute()
+	} catch (error) {
+		issueError = error
+	}
+
+	expect(issueError).toBeInstanceOf(YdbUniqueConstraintViolationError)
+	expect((issueError as YdbUniqueConstraintViolationError).query).toBe(
+		'insert into users values ($p0)'
 	)
+	expect((issueError as YdbUniqueConstraintViolationError).params).toEqual([1])
+	expect((issueError as YdbUniqueConstraintViolationError).cause).toBe(ydbCause)
 })
 
 test('prepared query errors map common YDB runtime failures to typed errors', async () => {
@@ -278,21 +281,20 @@ test('prepared query errors map common YDB runtime failures to typed errors', as
 				dialect
 			)
 
-			await assert.rejects(
-				() => session.prepareQuery(yql`select ${item.name}`).execute(),
-				(error) => {
-					assert.ok(error instanceof item.errorClass)
-					if (item.retryable) {
-						assert.ok(error instanceof YdbRetryableQueryError)
-					}
-					assert.equal((error as any).kind, item.kind)
-					assert.equal((error as any).retryable, item.retryable)
-					assert.equal((error as any).statusCode, item.cause.code)
-					assert.equal((error as any).code, item.cause.code)
-					assert.equal(error.cause, item.cause)
-					return true
-				}
-			)
+			let caseError: unknown
+			try {
+				await session.prepareQuery(yql`select ${item.name}`).execute()
+			} catch (error) {
+				caseError = error
+			}
+
+			expect(caseError).toBeInstanceOf(item.errorClass)
+			expect(caseError instanceof YdbRetryableQueryError).toBe(item.retryable)
+			expect((caseError as any).kind).toBe(item.kind)
+			expect((caseError as any).retryable).toBe(item.retryable)
+			expect((caseError as any).statusCode).toBe(item.cause.code)
+			expect((caseError as any).code).toBe(item.cause.code)
+			expect((caseError as Error).cause).toBe(item.cause)
 		})
 	)
 })
@@ -310,17 +312,18 @@ test('prepared query errors classify grpc-shaped retryable failures', async () =
 		dialect
 	)
 
-	await assert.rejects(
-		() => session.prepareQuery(yql`select ${1}`).execute(),
-		(error) => {
-			assert.ok(error instanceof YdbTimeoutQueryError)
-			assert.ok(error instanceof YdbRetryableQueryError)
-			assert.equal((error as any).kind, 'timeout')
-			assert.equal((error as any).retryable, true)
-			assert.equal((error as any).statusCode, 4)
-			return true
-		}
-	)
+	let caughtError: unknown
+	try {
+		await session.prepareQuery(yql`select ${1}`).execute()
+	} catch (error) {
+		caughtError = error
+	}
+
+	expect(caughtError).toBeInstanceOf(YdbTimeoutQueryError)
+	expect(caughtError).toBeInstanceOf(YdbRetryableQueryError)
+	expect((caughtError as any).kind).toBe('timeout')
+	expect((caughtError as any).retryable).toBe(true)
+	expect((caughtError as any).statusCode).toBe(4)
 })
 
 test('prepared query errors preserve YDB diagnostic fields on Drizzle errors', async () => {
@@ -343,17 +346,18 @@ test('prepared query errors preserve YDB diagnostic fields on Drizzle errors', a
 		dialect
 	)
 
-	await assert.rejects(
-		() => session.prepareQuery(yql`select ${1}`).execute(),
-		(error) => {
-			assert.ok(error instanceof DrizzleQueryError)
-			assert.equal((error as any).code, StatusIds_StatusCode.PRECONDITION_FAILED)
-			assert.equal((error as any).issues, issues)
-			assert.equal((error as any).retryable, false)
-			assert.equal(error.cause, ydbCause)
-			return true
-		}
-	)
+	let caughtError: unknown
+	try {
+		await session.prepareQuery(yql`select ${1}`).execute()
+	} catch (error) {
+		caughtError = error
+	}
+
+	expect(caughtError).toBeInstanceOf(DrizzleQueryError)
+	expect((caughtError as any).code).toBe(StatusIds_StatusCode.PRECONDITION_FAILED)
+	expect((caughtError as any).issues).toBe(issues)
+	expect((caughtError as any).retryable).toBe(false)
+	expect((caughtError as Error).cause).toBe(ydbCause)
 })
 
 test('returns the first row from prepared get', async () => {
@@ -374,7 +378,7 @@ test('returns the first row from prepared get', async () => {
 		(rows) => ({ id: rows[0]?.[0], name: rows[0]?.[1] })
 	)
 
-	assert.deepEqual(await prepared.get(), { id: 1, name: 'Pinkie Pie' })
+	expect(await prepared.get()).toEqual({ id: 1, name: 'Pinkie Pie' })
 })
 
 test('prepared rows decode object results with column codecs', async () => {
@@ -402,7 +406,7 @@ test('prepared rows decode object results with column codecs', async () => {
 
 	let prepared = session.prepareQuery(yql.raw('select 1'), fields, undefined, false)
 
-	assert.deepEqual(await prepared.all(), [{ id: 1, slug: 'rainbow-dash' }])
+	expect(await prepared.all()).toEqual([{ id: 1, slug: 'rainbow-dash' }])
 })
 
 test('prepareQuery passes ordered rows and mapColumnValue to customResultMapper', async () => {
@@ -427,7 +431,7 @@ test('prepareQuery passes ordered rows and mapColumnValue to customResultMapper'
 		})
 	)
 
-	assert.deepEqual(await prepared.execute(), {
+	expect(await prepared.execute()).toEqual({
 		rows: [[1, 'Fluttershy']],
 		mapped: 'Fluttershy',
 	})
@@ -462,21 +466,18 @@ test('wires session helpers around prepareQuery', async () => {
 	let valuesResult = await session.values(rowsQuery)
 	let countResult = await session.count(countQuery)
 
-	assert.deepEqual(executeResult, [{ id: 7, name: 'Applejack' }])
-	assert.deepEqual(allResult, [{ id: 7, name: 'Applejack' }])
-	assert.deepEqual(getResult, { id: 7, name: 'Applejack' })
-	assert.deepEqual(valuesResult, [[7, 'Applejack']])
-	assert.equal(countResult, 3)
-	assert.deepEqual(
-		calls.map(({ method, arrayMode }) => ({ method, arrayMode })),
-		[
-			{ method: 'execute', arrayMode: false },
-			{ method: 'all', arrayMode: false },
-			{ method: 'all', arrayMode: false },
-			{ method: 'all', arrayMode: true },
-			{ method: 'all', arrayMode: true },
-		]
-	)
+	expect(executeResult).toEqual([{ id: 7, name: 'Applejack' }])
+	expect(allResult).toEqual([{ id: 7, name: 'Applejack' }])
+	expect(getResult).toEqual({ id: 7, name: 'Applejack' })
+	expect(valuesResult).toEqual([[7, 'Applejack']])
+	expect(countResult).toBe(3)
+	expect(calls.map(({ method, arrayMode }) => ({ method, arrayMode }))).toEqual([
+		{ method: 'execute', arrayMode: false },
+		{ method: 'all', arrayMode: false },
+		{ method: 'all', arrayMode: false },
+		{ method: 'all', arrayMode: true },
+		{ method: 'all', arrayMode: true },
+	])
 })
 
 test('routes session helpers through runnable builders', async () => {
@@ -500,18 +501,18 @@ test('routes session helpers through runnable builders', async () => {
 		.where(yql`${users.id} = ${1}`)
 	let insertBuilder = db.insert(users).values({ id: 1, name: 'Rainbow Dash' })
 
-	assert.deepEqual(await db.execute<Array<{ id: number; name: string }>>(selectBuilder), [
+	expect(await db.execute<Array<{ id: number; name: string }>>(selectBuilder)).toEqual([
 		{ id: 1, name: 'Rainbow Dash' },
 	])
-	assert.deepEqual(await db.all<{ id: number; name: string }>(selectBuilder), [
+	expect(await db.all<{ id: number; name: string }>(selectBuilder)).toEqual([
 		{ id: 1, name: 'Rainbow Dash' },
 	])
-	assert.deepEqual(await db.get<{ id: number; name: string }>(selectBuilder), {
+	expect(await db.get<{ id: number; name: string }>(selectBuilder)).toEqual({
 		id: 1,
 		name: 'Rainbow Dash',
 	})
-	assert.deepEqual(await db.values<[number, string]>(selectBuilder), [[1, 'Rainbow Dash']])
-	assert.deepEqual(await db.execute(insertBuilder), [])
+	expect(await db.values<[number, string]>(selectBuilder)).toEqual([[1, 'Rainbow Dash']])
+	expect(await db.execute(insertBuilder)).toEqual([])
 })
 
 test('runs transaction callbacks through session.transaction', async () => {
@@ -525,8 +526,7 @@ test('runs transaction callbacks through session.transaction', async () => {
 		dialect
 	)
 
-	await assert.rejects(
-		() => sessionWithoutTransactions.transaction(async () => 'nope'),
+	await expect(sessionWithoutTransactions.transaction(async () => 'nope')).rejects.toThrow(
 		/Transactions are not supported/
 	)
 
@@ -560,14 +560,12 @@ test('runs transaction callbacks through session.transaction', async () => {
 		{ accessMode: 'read only' }
 	)
 
-	assert.equal(committed, 'ok')
-	assert.deepEqual(transactionConfigs, [{ accessMode: 'read only' }])
+	expect(committed).toBe('ok')
+	expect(transactionConfigs).toEqual([{ accessMode: 'read only' }])
 
-	await assert.rejects(
-		() =>
-			session.transaction(async (tx) => {
-				tx.rollback()
-			}),
-		TransactionRollbackError
-	)
+	await expect(
+		session.transaction(async (tx) => {
+			tx.rollback()
+		})
+	).rejects.toThrow(TransactionRollbackError)
 })

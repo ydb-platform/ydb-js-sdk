@@ -1,11 +1,21 @@
 import { defineConfig } from 'vitest/config'
 
+// Every packages/* package.json "exports" carries a "development" condition
+// pointing at its src/**.ts (see AGENTS.md); resolving with that condition
+// makes @ydbjs/* imports hit source directly instead of ./dist/**.js, so
+// tests run against live edits and v8 coverage attributes back to src/**.ts.
 export default defineConfig({
+	resolve: {
+		conditions: ['development'],
+	},
 	test: {
 		execArgv: ['--expose-gc'],
 		vmMemoryLimit: '300Mb',
 		projects: [
 			{
+				resolve: {
+					conditions: ['development'],
+				},
 				test: {
 					name: {
 						label: 'uni',
@@ -23,6 +33,9 @@ export default defineConfig({
 				},
 			},
 			{
+				resolve: {
+					conditions: ['development'],
+				},
 				test: {
 					name: {
 						label: 'int',
@@ -46,6 +59,9 @@ export default defineConfig({
 				},
 			},
 			{
+				resolve: {
+					conditions: ['development'],
+				},
 				test: {
 					name: {
 						label: 'e2e',
@@ -66,12 +82,11 @@ export default defineConfig({
 		passWithNoTests: true,
 		coverage: {
 			provider: 'v8',
-			reporter: ['text', 'lcov'],
+			reporter: ['text', 'lcovonly', 'html'],
 			reportsDirectory: './coverage',
-			include: ['packages/*/src/**', 'third-parties/*/src/**'],
+			include: ['packages/*/src/**/*.ts', 'third-parties/*/src/**/*.ts'],
 			exclude: [
 				'packages/api/**',
-				'examples/**',
 				'**/coverage/**',
 				'**/tests/**',
 				'**/dist/**',

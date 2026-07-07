@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { sql as yql } from 'drizzle-orm'
 import { createLiveContext } from './helpers/context.ts'
 import { usersTableName } from './helpers/schema.ts'
@@ -26,7 +25,7 @@ test('runs raw sql against live YDB', async (t) => {
 			yql`select id, name from ${yql.identifier(usersTableName)} where id = ${id}`
 		)
 
-		assert.deepEqual(inserted, [{ id, name: 'pinky' }])
+		expect(inserted).toEqual([{ id, name: 'pinky' }])
 
 		await live.db.execute(yql`delete from ${yql.identifier(usersTableName)} where id = ${id}`)
 
@@ -34,7 +33,7 @@ test('runs raw sql against live YDB', async (t) => {
 			yql`select id, name from ${yql.identifier(usersTableName)} where id = ${id}`
 		)
 
-		assert.deepEqual(remaining, [])
+		expect(remaining).toEqual([])
 	} finally {
 		await live.deleteUserRows([id])
 	}

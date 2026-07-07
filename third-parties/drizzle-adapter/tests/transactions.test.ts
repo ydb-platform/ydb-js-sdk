@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { TransactionRollbackError } from 'drizzle-orm/errors'
 import { createLiveContext } from './helpers/context.ts'
@@ -32,7 +31,7 @@ test('runs transactions against live YDB', async (t) => {
 					) => operators.eq(fields.id, committedId),
 				})
 
-				assert.deepEqual(insideTxRow, { id: committedId, name: 'starlight glimmer' })
+				expect(insideTxRow).toEqual({ id: committedId, name: 'starlight glimmer' })
 			},
 			{ accessMode: 'read write', idempotent: false }
 		)
@@ -44,19 +43,17 @@ test('runs transactions against live YDB', async (t) => {
 			) => operators.eq(fields.id, committedId),
 		})
 
-		assert.deepEqual(committedRow, { id: committedId, name: 'starlight glimmer' })
+		expect(committedRow).toEqual({ id: committedId, name: 'starlight glimmer' })
 
-		await assert.rejects(
-			async () =>
-				live.db.transaction(
-					async (tx) => {
-						await tx.insert(users).values({ id: rolledBackId, name: 'tempest shadow' })
-						tx.rollback()
-					},
-					{ accessMode: 'read write' }
-				),
-			TransactionRollbackError
-		)
+		await expect(
+			live.db.transaction(
+				async (tx) => {
+					await tx.insert(users).values({ id: rolledBackId, name: 'tempest shadow' })
+					tx.rollback()
+				},
+				{ accessMode: 'read write' }
+			)
+		).rejects.toBeInstanceOf(TransactionRollbackError)
 
 		let rolledBackRows = (await live.db
 			.select()
@@ -66,15 +63,15 @@ test('runs transactions against live YDB', async (t) => {
 			name: string
 		}>
 
-		assert.deepEqual(rolledBackRows, [])
-		assert.ok(
+		expect(rolledBackRows).toEqual([])
+		expect(
 			live.liveQueryLog.some(({ query }) =>
 				query.includes(`insert into \`${usersTableName}\``)
 			)
-		)
-		assert.ok(
+		).toBe(true)
+		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${usersTableName}\``))
-		)
+		).toBe(true)
 	} finally {
 		await live.deleteUserRows([committedId, rolledBackId])
 	}
