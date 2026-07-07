@@ -87,7 +87,6 @@ export default defineConfig({
 			include: ['packages/*/src/**/*.ts', 'third-parties/*/src/**/*.ts'],
 			exclude: [
 				'packages/api/**',
-				'examples/**',
 				'**/coverage/**',
 				'**/tests/**',
 				'**/dist/**',
