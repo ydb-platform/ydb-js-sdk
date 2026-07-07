@@ -17,7 +17,7 @@ jobs:
       group: lint-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: npm run lint
 
@@ -28,7 +28,7 @@ jobs:
       group: build-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: npm run build
       - run: npm run attw
@@ -72,7 +72,7 @@ jobs:
 
     steps:
       # Checkout the repository
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node-version }}
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.node-version == 24
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: ./coverage
