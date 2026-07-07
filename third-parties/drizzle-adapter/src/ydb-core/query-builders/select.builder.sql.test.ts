@@ -453,8 +453,9 @@ test('generates distinctOn and set operator sql', () => {
 		distinctOnQuery.sql,
 		/^select `__ydb_f0`, `__ydb_f1` from \(select `posts`\.`user_id` as `__ydb_f0`, `posts`\.`title` as `__ydb_f1`, row_number\(\) over \(\s+partition by `posts`\.`user_id`\s+ order by `posts`\.`user_id`, `posts`\.`title` desc\s+\) as `__ydb_row_number` from `posts`\) as `__ydb_distinct_on` where `__ydb_distinct_on`\.`__ydb_row_number` = 1 order by `__ydb_f0`, `__ydb_f1` desc$/
 	)
-	assert.ok(
-		variadicDistinctOnQuery.sql.includes('partition by `posts`.`user_id`, `posts`.`title`')
+	assert.match(
+		variadicDistinctOnQuery.sql,
+		/^select `__ydb_f0`, `__ydb_f1` from \(select `posts`\.`user_id` as `__ydb_f0`, `posts`\.`title` as `__ydb_f1`, row_number\(\) over \(\s+partition by `posts`\.`user_id`, `posts`\.`title`\s+\) as `__ydb_row_number` from `posts`\) as `__ydb_distinct_on` where `__ydb_distinct_on`\.`__ydb_row_number` = 1$/
 	)
 	assert.equal(
 		unionQuery.sql,

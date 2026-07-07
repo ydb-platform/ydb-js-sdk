@@ -111,7 +111,7 @@ test('caches token and returns cached value', async () => {
 
 	let provider = new ServiceAccountCredentialsProvider(mockKey)
 
-	// First call - fetches token
+	// Seeds the cache with a non-expired token so the next call can be checked against it.
 	let token1 = await provider.getToken()
 	expect(token1).toBe('t1.cached-token')
 	expect(global.fetch).toHaveBeenCalledTimes(1)
@@ -189,7 +189,7 @@ test('forces token refresh when force=true', async () => {
 
 	let provider = new ServiceAccountCredentialsProvider(mockKey)
 
-	// First call - fetches token
+	// Seeds a still-valid cached token so the forced call below can be checked against bypassing it.
 	let token1 = await provider.getToken()
 	expect(token1).toBe('t1.forced-token')
 	expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -256,7 +256,7 @@ test('starts background refresh when token expires soon', async () => {
 
 	let provider = new ServiceAccountCredentialsProvider(mockKey)
 
-	// First call - fetches token
+	// Seeds the cache with a token that's already inside the 5-minute refresh window.
 	let token1 = await provider.getToken()
 	expect(token1).toBe('t1.expiring-token')
 	expect(fetchMock).toHaveBeenCalledTimes(1)

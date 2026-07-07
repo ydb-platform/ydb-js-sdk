@@ -62,26 +62,26 @@ test('prints primitive types', (t) => {
 })
 
 test('prints List type', (t) => {
-	const intList = new ListType(new Int32Type())
+	let intList = new ListType(new Int32Type())
 	t.expect(typeToString(intList)).toMatchInlineSnapshot(`"List<Int32>"`)
 
-	const nestedList = new ListType(new ListType(new BoolType()))
+	let nestedList = new ListType(new ListType(new BoolType()))
 	t.expect(typeToString(nestedList)).toMatchInlineSnapshot(`"List<List<Bool>>"`)
 })
 
 test('prints Dict type', (t) => {
-	const stringToInt = new DictType(new TextType(), new Int32Type())
+	let stringToInt = new DictType(new TextType(), new Int32Type())
 	t.expect(typeToString(stringToInt)).toMatchInlineSnapshot(`"Dict<Utf8,Int32>"`)
 
-	const nestedDict = new DictType(new BytesType(), new ListType(new DoubleType()))
+	let nestedDict = new DictType(new BytesType(), new ListType(new DoubleType()))
 	t.expect(typeToString(nestedDict)).toMatchInlineSnapshot(`"Dict<String,List<Double>>"`)
 })
 
 test('prints Tuple type', (t) => {
-	const simpleTuple = new TupleType([new BoolType(), new Int32Type()])
+	let simpleTuple = new TupleType([new BoolType(), new Int32Type()])
 	t.expect(typeToString(simpleTuple)).toMatchInlineSnapshot(`"Tuple<Bool,Int32>"`)
 
-	const complexTuple = new TupleType([
+	let complexTuple = new TupleType([
 		new BytesType(),
 		new ListType(new DoubleType()),
 		new DictType(new TextType(), new Int32Type()),
@@ -92,10 +92,10 @@ test('prints Tuple type', (t) => {
 })
 
 test('prints Struct type', (t) => {
-	const simpleStruct = new StructType(['id', 'name'], [new Int32Type(), new BytesType()])
+	let simpleStruct = new StructType(['id', 'name'], [new Int32Type(), new BytesType()])
 	t.expect(typeToString(simpleStruct)).eq('Struct<id:Int32,name:String>')
 
-	const nestedStruct = new StructType(
+	let nestedStruct = new StructType(
 		['person', 'scores'],
 		[
 			new StructType(['name', 'age'], [new BytesType(), new Int32Type()]),
@@ -108,10 +108,10 @@ test('prints Struct type', (t) => {
 })
 
 test('prints Optional type', (t) => {
-	const optionalInt = new OptionalType(new Int32Type())
+	let optionalInt = new OptionalType(new Int32Type())
 	t.expect(typeToString(optionalInt)).toMatchInlineSnapshot(`"Optional<Int32>"`)
 
-	const optionalList = new OptionalType(new ListType(new BoolType()))
+	let optionalList = new OptionalType(new ListType(new BoolType()))
 	t.expect(typeToString(optionalList)).toMatchInlineSnapshot(`"Optional<List<Bool>>"`)
 })
 

@@ -4,9 +4,9 @@ import { Document } from '@langchain/core/documents'
 import { FakeEmbeddings, SyntheticEmbeddings } from '@langchain/core/utils/testing'
 import { YDBSearchStrategy, YDBVectorStore } from '../src/index.ts'
 
-const CONNECTION_STRING = inject('connectionString')
-const TABLE = `langchain_int_test_${Date.now()}`
-const embeddings = new FakeEmbeddings()
+let CONNECTION_STRING = inject('connectionString')
+let TABLE = `langchain_int_test_${Date.now()}`
+let embeddings = new FakeEmbeddings()
 
 let driver: Driver
 
@@ -17,7 +17,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	try {
-		const store = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
+		let store = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
 		await store.drop()
 	} catch {
 		// table may not exist if an earlier test already dropped it
@@ -32,40 +32,40 @@ function makeStore(overrides: Record<string, unknown> = {}) {
 // ── basic CRUD ───────────────────────────────────────────────────────
 
 test('fromTexts creates store, inserts, and searches', async () => {
-	const store = await YDBVectorStore.fromTexts(
+	let store = await YDBVectorStore.fromTexts(
 		['cat sat on mat', 'dog ran in park', 'fish swam in sea'],
 		[{ animal: 'cat' }, { animal: 'dog' }, { animal: 'fish' }],
 		embeddings,
 		{ driver, table: TABLE, dropExistingTable: true }
 	)
 
-	const results = await store.similaritySearch('cat', 2)
+	let results = await store.similaritySearch('cat', 2)
 	expect(results.length).toBe(2)
 	expect(results[0].pageContent).toBeDefined()
 })
 
 test('fromDocuments inserts and retrieves document content', async () => {
-	const docs = [
+	let docs = [
 		new Document({ pageContent: 'doc A', metadata: { n: 1 } }),
 		new Document({ pageContent: 'doc B', metadata: { n: 2 } }),
 	]
-	const store = await YDBVectorStore.fromDocuments(docs, embeddings, {
+	let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
 		driver,
 		table: TABLE,
 		dropExistingTable: true,
 	})
 
-	const results = await store.similaritySearch('anything', 2)
+	let results = await store.similaritySearch('anything', 2)
 	expect(results).toHaveLength(2)
-	const contents = results.map((r) => r.pageContent)
+	let contents = results.map((r) => r.pageContent)
 	expect(contents).toContain('doc A')
 	expect(contents).toContain('doc B')
 })
 
 test('addDocuments returns IDs and results carry score and metadata', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
-	const docs = [
+	let docs = [
 		new Document({
 			pageContent: 'LangChain is a framework for LLM apps',
 			metadata: { source: 'docs', lang: 'en' },
@@ -80,13 +80,13 @@ test('addDocuments returns IDs and results carry score and metadata', async () =
 		}),
 	]
 
-	const ids = await store.addDocuments(docs)
+	let ids = await store.addDocuments(docs)
 	expect(ids).toHaveLength(3)
 
-	const results = await store.similaritySearchWithScore('database', 2)
+	let results = await store.similaritySearchWithScore('database', 2)
 	expect(results).toHaveLength(2)
 
-	const [topDoc, topScore] = results[0]
+	let [topDoc, topScore] = results[0]
 	expect(topDoc.pageContent).toBeDefined()
 	expect(typeof topScore).toBe('number')
 	expect(topDoc.metadata).toHaveProperty('source')
@@ -94,9 +94,9 @@ test('addDocuments returns IDs and results carry score and metadata', async () =
 })
 
 test('explicit document ID is preserved', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
-	const ids = await store.addDocuments([
+	let ids = await store.addDocuments([
 		new Document({ pageContent: 'with explicit id', metadata: {}, id: 'my-custom-id' }),
 		new Document({ pageContent: 'without explicit id', metadata: {} }),
 	])
@@ -104,14 +104,14 @@ test('explicit document ID is preserved', async () => {
 	expect(ids[0]).toBe('my-custom-id')
 	expect(ids[1]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
 
-	const results = await store.similaritySearch('anything', 10)
-	const result = results.find((r) => r.id === 'my-custom-id')
+	let results = await store.similaritySearch('anything', 10)
+	let result = results.find((r) => r.id === 'my-custom-id')
 	expect(result).toBeDefined()
 	expect(result!.pageContent).toBe('with explicit id')
 })
 
 test('UPSERT replaces existing document on same ID', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'original content', metadata: {}, id: 'upsert-id' }),
@@ -120,36 +120,36 @@ test('UPSERT replaces existing document on same ID', async () => {
 		new Document({ pageContent: 'updated content', metadata: {}, id: 'upsert-id' }),
 	])
 
-	const results = await store.similaritySearch('anything', 10)
+	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(1)
 	expect(results[0].pageContent).toBe('updated content')
 })
 
 test('splits large batch insert into chunks of 32', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
-	const docs = Array.from(
+	let docs = Array.from(
 		{ length: 35 },
 		(_, i) => new Document({ pageContent: `document ${i}`, metadata: { i } })
 	)
 
-	const ids = await store.addDocuments(docs)
+	let ids = await store.addDocuments(docs)
 	expect(ids).toHaveLength(35)
 
-	const results = await store.similaritySearch('document', 35)
+	let results = await store.similaritySearch('document', 35)
 	expect(results).toHaveLength(35)
 })
 
 test('searches by raw embedding vector', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'alpha', metadata: {} }),
 		new Document({ pageContent: 'beta', metadata: {} }),
 	])
 
-	const queryVector = [0.1, 0.2, 0.3, 0.4]
-	const results = await store.similaritySearchVectorWithScore(queryVector, 2)
+	let queryVector = [0.1, 0.2, 0.3, 0.4]
+	let results = await store.similaritySearchVectorWithScore(queryVector, 2)
 	expect(results).toHaveLength(2)
 	expect(results[0][0]).toBeInstanceOf(Document)
 	expect(typeof results[0][1]).toBe('number')
@@ -158,7 +158,7 @@ test('searches by raw embedding vector', async () => {
 // ── metadata filter ───────────────────────────────────────────────────
 
 test('metadata filter returns only matching documents', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'wiki 1', metadata: { source: 'wiki' } }),
@@ -168,17 +168,17 @@ test('metadata filter returns only matching documents', async () => {
 		new Document({ pageContent: 'docs 2', metadata: { source: 'docs' } }),
 	])
 
-	const wikiResults = await store.similaritySearch('anything', 10, { source: 'wiki' })
+	let wikiResults = await store.similaritySearch('anything', 10, { source: 'wiki' })
 	expect(wikiResults).toHaveLength(3)
 	expect(wikiResults.every((r) => r.metadata.source === 'wiki')).toBe(true)
 
-	const docsResults = await store.similaritySearch('anything', 10, { source: 'docs' })
+	let docsResults = await store.similaritySearch('anything', 10, { source: 'docs' })
 	expect(docsResults).toHaveLength(2)
 	expect(docsResults.every((r) => r.metadata.source === 'docs')).toBe(true)
 })
 
 test('multi-key metadata filter narrows results to all matching keys', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'wiki en', metadata: { source: 'wiki', lang: 'en' } }),
@@ -186,28 +186,28 @@ test('multi-key metadata filter narrows results to all matching keys', async () 
 		new Document({ pageContent: 'docs en', metadata: { source: 'docs', lang: 'en' } }),
 	])
 
-	const results = await store.similaritySearch('anything', 10, { source: 'wiki', lang: 'en' })
+	let results = await store.similaritySearch('anything', 10, { source: 'wiki', lang: 'en' })
 	expect(results).toHaveLength(1)
 	expect(results[0].pageContent).toBe('wiki en')
 })
 
 test('metadata filter with no matches returns empty array', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'some doc', metadata: { source: 'wiki' } }),
 	])
 
-	const results = await store.similaritySearch('anything', 10, { source: 'nonexistent' })
+	let results = await store.similaritySearch('anything', 10, { source: 'nonexistent' })
 	expect(results).toHaveLength(0)
 })
 
 // ── delete ────────────────────────────────────────────────────────────
 
 test('delete by IDs removes specific documents', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
-	const ids = await store.addDocuments([
+	let ids = await store.addDocuments([
 		new Document({ pageContent: 'keep me', metadata: {} }),
 		new Document({ pageContent: 'delete me', metadata: {} }),
 		new Document({ pageContent: 'keep me too', metadata: {} }),
@@ -215,17 +215,17 @@ test('delete by IDs removes specific documents', async () => {
 
 	await store.delete({ ids: [ids[1]] })
 
-	const results = await store.similaritySearch('anything', 10)
+	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(2)
 
-	const contents = results.map((r) => r.pageContent)
+	let contents = results.map((r) => r.pageContent)
 	expect(contents).not.toContain('delete me')
 	expect(contents).toContain('keep me')
 	expect(contents).toContain('keep me too')
 })
 
 test('delete all clears the table', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'one', metadata: {} }),
@@ -234,14 +234,14 @@ test('delete all clears the table', async () => {
 
 	await store.delete({ deleteAll: true })
 
-	const results = await store.similaritySearch('anything', 10)
+	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(0)
 })
 
 // ── metadata round-trip ───────────────────────────────────────────────
 
 test('metadata types survive JSON round-trip', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({
@@ -250,7 +250,7 @@ test('metadata types survive JSON round-trip', async () => {
 		}),
 	])
 
-	const results = await store.similaritySearch('anything', 1)
+	let results = await store.similaritySearch('anything', 1)
 	expect(results).toHaveLength(1)
 	expect(results[0].metadata).toEqual({ str: 'hello', num: 42, flag: true, nested: { x: 1 } })
 })
@@ -258,21 +258,21 @@ test('metadata types survive JSON round-trip', async () => {
 // ── auxiliary methods ─────────────────────────────────────────────────
 
 test('fromExistingTable connects without CREATE TABLE', async () => {
-	const store1 = makeStore({ dropExistingTable: true })
+	let store1 = makeStore({ dropExistingTable: true })
 	await store1.addDocuments([
 		new Document({ pageContent: 'persisted', metadata: { key: 'val' } }),
 	])
 
-	const store2 = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
-	const results = await store2.similaritySearch('persisted', 1)
+	let store2 = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
+	let results = await store2.similaritySearch('persisted', 1)
 	expect(results).toHaveLength(1)
 	expect(results[0].pageContent).toBe('persisted')
 	expect(results[0].metadata).toEqual({ key: 'val' })
 })
 
 test('custom column map stores and retrieves documents', async () => {
-	const customTable = `${TABLE}_custom`
-	const store = new YDBVectorStore(embeddings, {
+	let customTable = `${TABLE}_custom`
+	let store = new YDBVectorStore(embeddings, {
 		driver,
 		table: customTable,
 		dropExistingTable: true,
@@ -286,7 +286,7 @@ test('custom column map stores and retrieves documents', async () => {
 
 	await store.addDocuments([new Document({ pageContent: 'custom columns', metadata: { x: 1 } })])
 
-	const results = await store.similaritySearch('custom', 1)
+	let results = await store.similaritySearch('custom', 1)
 	expect(results).toHaveLength(1)
 	expect(results[0].pageContent).toBe('custom columns')
 	expect(results[0].metadata).toEqual({ x: 1 })
@@ -295,14 +295,14 @@ test('custom column map stores and retrieves documents', async () => {
 })
 
 test('drop removes the table', async () => {
-	const tmpTable = `${TABLE}_drop`
-	const store = new YDBVectorStore(embeddings, { driver, table: tmpTable })
+	let tmpTable = `${TABLE}_drop`
+	let store = new YDBVectorStore(embeddings, { driver, table: tmpTable })
 
 	await store.addDocuments([new Document({ pageContent: 'bye', metadata: {} })])
 	await store.drop()
 
-	const store2 = new YDBVectorStore(embeddings, { driver, table: tmpTable })
-	const ids = await store2.addDocuments([
+	let store2 = new YDBVectorStore(embeddings, { driver, table: tmpTable })
+	let ids = await store2.addDocuments([
 		new Document({ pageContent: 'hello again', metadata: {} }),
 	])
 	expect(ids).toHaveLength(1)
@@ -315,8 +315,8 @@ test('drop removes the table', async () => {
 test('CosineSimilarity returns highest score first (DESC)', async () => {
 	// SyntheticEmbeddings produces content-based vectors, so semantically
 	// similar texts get closer vectors — unlike FakeEmbeddings which is fixed.
-	const synth = new SyntheticEmbeddings({ vectorSize: 4 })
-	const store = new YDBVectorStore(synth, {
+	let synth = new SyntheticEmbeddings({ vectorSize: 4 })
+	let store = new YDBVectorStore(synth, {
 		driver,
 		table: TABLE,
 		dropExistingTable: true,
@@ -328,7 +328,7 @@ test('CosineSimilarity returns highest score first (DESC)', async () => {
 		new Document({ pageContent: 'xyz', metadata: {} }),
 	])
 
-	const results = await store.similaritySearchWithScore('cat', 2)
+	let results = await store.similaritySearchWithScore('cat', 2)
 	expect(results).toHaveLength(2)
 	// Similarity: higher = better → descending
 	expect(results[0][1]).toBeGreaterThanOrEqual(results[1][1])
@@ -336,8 +336,8 @@ test('CosineSimilarity returns highest score first (DESC)', async () => {
 })
 
 test('CosineDistance returns lowest score first (ASC)', async () => {
-	const synth = new SyntheticEmbeddings({ vectorSize: 4 })
-	const store = new YDBVectorStore(synth, {
+	let synth = new SyntheticEmbeddings({ vectorSize: 4 })
+	let store = new YDBVectorStore(synth, {
 		driver,
 		table: TABLE,
 		dropExistingTable: true,
@@ -349,7 +349,7 @@ test('CosineDistance returns lowest score first (ASC)', async () => {
 		new Document({ pageContent: 'xyz', metadata: {} }),
 	])
 
-	const results = await store.similaritySearchWithScore('cat', 2)
+	let results = await store.similaritySearchWithScore('cat', 2)
 	expect(results).toHaveLength(2)
 	// Distance: lower = better → ascending
 	expect(results[0][1]).toBeLessThanOrEqual(results[1][1])
@@ -359,18 +359,18 @@ test('CosineDistance returns lowest score first (ASC)', async () => {
 // ── connectionString mode ─────────────────────────────────────────────
 
 test('connectionString mode creates driver internally and close() releases it', async () => {
-	const connTable = `${TABLE}_connstr`
-	const store = new YDBVectorStore(embeddings, {
+	let connTable = `${TABLE}_connstr`
+	let store = new YDBVectorStore(embeddings, {
 		connectionString: CONNECTION_STRING,
 		table: connTable,
 	})
 
-	const ids = await store.addDocuments([
+	let ids = await store.addDocuments([
 		new Document({ pageContent: 'via connection string', metadata: {} }),
 	])
 	expect(ids).toHaveLength(1)
 
-	const results = await store.similaritySearch('anything', 1)
+	let results = await store.similaritySearch('anything', 1)
 	expect(results[0].pageContent).toBe('via connection string')
 
 	await store.drop()
@@ -380,8 +380,8 @@ test('connectionString mode creates driver internally and close() releases it', 
 // ── vector index ──────────────────────────────────────────────────────
 
 test('createVectorIndex builds index and search uses it', async () => {
-	const indexTable = `${TABLE}_index`
-	const store = new YDBVectorStore(embeddings, {
+	let indexTable = `${TABLE}_index`
+	let store = new YDBVectorStore(embeddings, {
 		driver,
 		table: indexTable,
 		dropExistingTable: true,
@@ -398,7 +398,7 @@ test('createVectorIndex builds index and search uses it', async () => {
 
 	await store.createVectorIndex()
 
-	const results = await store.similaritySearch('indexed', 3)
+	let results = await store.similaritySearch('indexed', 3)
 	expect(results).toHaveLength(3)
 	expect(results[0].pageContent).toBeDefined()
 
@@ -406,12 +406,12 @@ test('createVectorIndex builds index and search uses it', async () => {
 })
 
 test('createVectorIndex throws when indexEnabled is false', async () => {
-	const store = makeStore({ indexEnabled: false })
+	let store = makeStore({ indexEnabled: false })
 	await expect(store.createVectorIndex()).rejects.toThrow('indexEnabled is false')
 })
 
 test('search with filter and indexEnabled throws', async () => {
-	const store = makeStore({
+	let store = makeStore({
 		dropExistingTable: true,
 		indexEnabled: true,
 		indexVectorDimension: 4,
@@ -429,7 +429,7 @@ test('search with filter and indexEnabled throws', async () => {
 // ── concurrency, lifecycle, escaping ──────────────────────────────────
 
 test('serializes concurrent first writes through a single CREATE TABLE', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	// Five parallel adds — without memoised init they race on CREATE TABLE
 	// and (with dropExistingTable) on DROP, risking lost rows.
@@ -439,25 +439,25 @@ test('serializes concurrent first writes through a single CREATE TABLE', async (
 		)
 	)
 
-	const results = await store.similaritySearch('parallel', 10)
+	let results = await store.similaritySearch('parallel', 10)
 	expect(results).toHaveLength(5)
 })
 
 test('recreates the table after drop without re-dropping new data', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([new Document({ pageContent: 'first', metadata: {} })])
 	await store.drop()
 	await store.addDocuments([new Document({ pageContent: 'second', metadata: {} })])
 
-	const results = await store.similaritySearch('anything', 10)
+	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(1)
 	expect(results[0].pageContent).toBe('second')
 })
 
 test('close releases the session pool and refuses further ops', async () => {
-	const tmpTable = `${TABLE}_close`
-	const store = new YDBVectorStore(embeddings, {
+	let tmpTable = `${TABLE}_close`
+	let store = new YDBVectorStore(embeddings, {
 		connectionString: CONNECTION_STRING,
 		table: tmpTable,
 	})
@@ -471,14 +471,14 @@ test('close releases the session pool and refuses further ops', async () => {
 })
 
 test('filter value containing a single quote round-trips correctly', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'tricky', metadata: { name: "O'Reilly" } }),
 		new Document({ pageContent: 'plain', metadata: { name: 'Smith' } }),
 	])
 
-	const results = await store.similaritySearch('anything', 10, { name: "O'Reilly" })
+	let results = await store.similaritySearch('anything', 10, { name: "O'Reilly" })
 	expect(results).toHaveLength(1)
 	expect(results[0].metadata.name).toBe("O'Reilly")
 })
@@ -492,7 +492,7 @@ test('construction throws when indexEnabled is true and indexVectorDimension is 
 // ── retriever ─────────────────────────────────────────────────────────
 
 test('asRetriever().invoke() returns Document instances', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'cats like milk', metadata: { kind: 'animal' } }),
@@ -500,8 +500,8 @@ test('asRetriever().invoke() returns Document instances', async () => {
 		new Document({ pageContent: 'compilers parse tokens', metadata: { kind: 'tech' } }),
 	])
 
-	const retriever = store.asRetriever()
-	const results = await retriever.invoke('cat animal')
+	let retriever = store.asRetriever()
+	let results = await retriever.invoke('cat animal')
 
 	expect(results.length).toBeGreaterThan(0)
 	expect(results[0]).toBeInstanceOf(Document)
@@ -509,7 +509,7 @@ test('asRetriever().invoke() returns Document instances', async () => {
 })
 
 test('asRetriever(k) limits the number of returned documents', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments(
 		Array.from(
@@ -518,14 +518,14 @@ test('asRetriever(k) limits the number of returned documents', async () => {
 		)
 	)
 
-	const retriever = store.asRetriever(2)
-	const results = await retriever.invoke('document')
+	let retriever = store.asRetriever(2)
+	let results = await retriever.invoke('document')
 
 	expect(results).toHaveLength(2)
 })
 
 test('asRetriever with filter returns only matching documents', async () => {
-	const store = makeStore({ dropExistingTable: true })
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'wiki article one', metadata: { source: 'wiki' } }),
@@ -533,15 +533,15 @@ test('asRetriever with filter returns only matching documents', async () => {
 		new Document({ pageContent: 'api reference', metadata: { source: 'api' } }),
 	])
 
-	const retriever = store.asRetriever({ filter: { source: 'wiki' } })
-	const results = await retriever.invoke('anything')
+	let retriever = store.asRetriever({ filter: { source: 'wiki' } })
+	let results = await retriever.invoke('anything')
 
 	expect(results).toHaveLength(2)
 	expect(results.every((r) => r.metadata.source === 'wiki')).toBe(true)
 })
 
-test('asRetriever with explicit searchType similarity works', async () => {
-	const store = makeStore({ dropExistingTable: true })
+test('asRetriever with explicit searchType similarity returns k Document instances', async () => {
+	let store = makeStore({ dropExistingTable: true })
 
 	await store.addDocuments([
 		new Document({ pageContent: 'alpha', metadata: {} }),
@@ -549,8 +549,8 @@ test('asRetriever with explicit searchType similarity works', async () => {
 		new Document({ pageContent: 'gamma', metadata: {} }),
 	])
 
-	const retriever = store.asRetriever({ searchType: 'similarity', k: 2 })
-	const results = await retriever.invoke('alpha')
+	let retriever = store.asRetriever({ searchType: 'similarity', k: 2 })
+	let results = await retriever.invoke('alpha')
 
 	expect(results).toHaveLength(2)
 	expect(results[0]).toBeInstanceOf(Document)

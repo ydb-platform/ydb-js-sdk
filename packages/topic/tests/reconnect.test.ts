@@ -76,8 +76,8 @@ test(
 	'writer and reader survive repeated connection pool refreshes over 60 s',
 	{ timeout: 90_000 },
 	async () => {
-		const TEST_DURATION_MS = 60_000
-		const WRITE_INTERVAL_MS = 500 // one message every 500 ms → ~120 messages
+		let TEST_DURATION_MS = 60_000
+		let WRITE_INTERVAL_MS = 500 // one message every 500 ms → ~120 messages
 
 		let writtenSeqNos = new Set<bigint>()
 		let receivedSeqNos = new Set<bigint>()

@@ -2,6 +2,7 @@ import { beforeEach, expect, inject, onTestFinished, test } from 'vitest'
 
 import { Driver } from '@ydbjs/core'
 import { CoordinationClient, SessionClosedError } from '@ydbjs/coordination'
+import { YDBError } from '@ydbjs/error'
 
 // #region setup
 declare module 'vitest' {
@@ -28,79 +29,75 @@ beforeEach(() => {
 })
 // #endregion
 
-test('creates and describes a coordination node', async () => {
+test('creates and describes a coordination node', async (tc) => {
 	await client.createNode(
 		testNodePath,
 		{ selfCheckPeriod: 1000, sessionGracePeriod: 5000 },
-		AbortSignal.timeout(5000)
+		tc.signal
 	)
 
-	let description = await client.describeNode(testNodePath, AbortSignal.timeout(5000))
+	let description = await client.describeNode(testNodePath, tc.signal)
 
 	expect(description.config.selfCheckPeriod).toBe(1000)
 	expect(description.config.sessionGracePeriod).toBe(5000)
 })
 
-test('alters node configuration', async () => {
+test('alters node configuration', async (tc) => {
 	await client.createNode(
 		testNodePath,
 		{ selfCheckPeriod: 1000, sessionGracePeriod: 5000 },
-		AbortSignal.timeout(5000)
+		tc.signal
 	)
 
 	await client.alterNode(
 		testNodePath,
 		{ selfCheckPeriod: 2000, sessionGracePeriod: 10000 },
-		AbortSignal.timeout(5000)
+		tc.signal
 	)
 
-	let description = await client.describeNode(testNodePath, AbortSignal.timeout(5000))
+	let description = await client.describeNode(testNodePath, tc.signal)
 
 	expect(description.config.selfCheckPeriod).toBe(2000)
 	expect(description.config.sessionGracePeriod).toBe(10000)
 })
 
-test('drops a coordination node', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('drops a coordination node', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
-	await client.dropNode(testNodePath, AbortSignal.timeout(5000))
+	await client.dropNode(testNodePath, tc.signal)
 
 	// Node is gone — describe must reject
-	await expect(client.describeNode(testNodePath, AbortSignal.timeout(5000))).rejects.toThrow(
-		Error
-	)
+	await expect(client.describeNode(testNodePath, tc.signal)).rejects.toBeInstanceOf(YDBError)
 })
 
-test('describes a non-existent node throws an error', async () => {
-	await expect(client.describeNode(testNodePath, AbortSignal.timeout(5000))).rejects.toThrow(
-		Error
-	)
+test('describes a non-existent node throws an error', async (tc) => {
+	await expect(client.describeNode(testNodePath, tc.signal)).rejects.toBeInstanceOf(YDBError)
 })
 
-test('creates a session on an existing node', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('creates a session on an existing node', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
-	let session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let session = await client.createSession(testNodePath, {}, tc.signal)
 
 	try {
 		expect(session.sessionId).not.toBeNull()
 	} finally {
-		await session.close(AbortSignal.timeout(5000))
+		await session.close(tc.signal)
 	}
 })
 
-test('closes a session gracefully via async dispose', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('closes a session gracefully via async dispose', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
 	// Session signal must be alive inside the block and the dispose must not throw
-	await using session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await using session = await client.createSession(testNodePath, {}, tc.signal)
 
 	expect(session.sessionId).not.toBeNull()
 	expect(session.signal.aborted).toBe(false)
 })
 
-test('withSession runs callback and returns result', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('withSession runs callback and returns result', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
 	let result = await client.withSession(
 		testNodePath,
@@ -109,34 +106,34 @@ test('withSession runs callback and returns result', async () => {
 			return 'ok'
 		},
 		{},
-		AbortSignal.timeout(5000)
+		tc.signal
 	)
 
 	expect(result).toBe('ok')
 })
 
-test('createSession rejects when signal is already aborted', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('createSession rejects when signal is already aborted', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
 	let aborted = AbortSignal.abort(new Error('pre-aborted'))
 
 	await expect(client.createSession(testNodePath, {}, aborted)).rejects.toThrow('pre-aborted')
 })
 
-test('session.signal.reason is SessionClosedError after close', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('session.signal.reason is SessionClosedError after close', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
-	let session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
-	await session.close(AbortSignal.timeout(5000))
+	let session = await client.createSession(testNodePath, {}, tc.signal)
+	await session.close(tc.signal)
 
 	expect(session.signal.aborted).toBe(true)
 	expect(session.signal.reason).toBeInstanceOf(SessionClosedError)
 })
 
-test('session.signal carries custom reason after destroy', async () => {
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+test('session.signal carries custom reason after destroy', async (tc) => {
+	await client.createNode(testNodePath, {}, tc.signal)
 
-	let session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	let session = await client.createSession(testNodePath, {}, tc.signal)
 	let reason = new Error('custom destroy reason')
 	session.destroy(reason)
 

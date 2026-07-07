@@ -9,26 +9,30 @@ test('creates logger with correct namespace', () => {
 	expect(typeof logger.extend).toBe('function')
 })
 
-test('extends logger correctly', () => {
+test('extend() returns a logger scoped to the combined namespace', () => {
 	let topicLogger = new YDBDebugLogger('topic')
 	let writerLogger = topicLogger.extend('writer')
 	expect(writerLogger).toBeDefined()
+	expect(typeof writerLogger.log).toBe('function')
+	expect(typeof writerLogger.enabled).toBe('boolean')
+	expect(typeof writerLogger.extend).toBe('function')
 })
 
-test('handles enabled state correctly', () => {
+test('enabled reflects a boolean debug state', () => {
 	let isEnabled = new YDBDebugLogger('topic').enabled
 	expect(typeof isEnabled).toBe('boolean')
 })
 
 test('provides all expected logger categories', () => {
 	expect(loggers.auth).toBeDefined()
-	expect(loggers.grpc).toBeDefined()
+	expect(loggers.coordination).toBeDefined()
 	expect(loggers.driver).toBeDefined()
+	expect(loggers.error).toBeDefined()
+	expect(loggers.grpc).toBeDefined()
 	expect(loggers.query).toBeDefined()
+	expect(loggers.retry).toBeDefined()
 	expect(loggers.topic).toBeDefined()
 	expect(loggers.tx).toBeDefined()
-	expect(loggers.retry).toBeDefined()
-	expect(loggers.error).toBeDefined()
 })
 
 test('logs messages without throwing', () => {

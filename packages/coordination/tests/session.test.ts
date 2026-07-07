@@ -25,12 +25,12 @@ let client = new CoordinationClient(driver)
 let testNodePath: string
 let session: CoordinationSession
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
 	let suffix = `${Date.now()}-${Math.floor(Math.random() * 0xffff).toString(16)}`
 	testNodePath = `/local/test-coord-session-${suffix}`
 
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
-	session = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await client.createNode(testNodePath, {}, ctx.signal)
+	session = await client.createSession(testNodePath, {}, ctx.signal)
 
 	onTestFinished(async () => {
 		session.destroy()
@@ -46,8 +46,8 @@ test('session is ready after createSession', () => {
 	expect(session.signal.aborted).toBe(false)
 })
 
-test('close transitions to closed and aborts signal', async () => {
-	await session.close(AbortSignal.timeout(5000))
+test('close transitions to closed and aborts signal', async (tc) => {
+	await session.close(tc.signal)
 
 	expect(session.status).toBe('closed')
 	expect(session.signal.aborted).toBe(true)
@@ -72,25 +72,25 @@ test('session.signal stays alive while session is ready', () => {
 
 // ── Lease signal ─────────────────────────────────────────────────────────────
 
-test('lease.signal aborts with LeaseReleasedError after release', async () => {
+test('lease.signal aborts with LeaseReleasedError after release', async (tc) => {
 	let sem = session.semaphore(`sem-${Date.now()}`)
 
-	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
-	let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	await sem.create({ limit: 1 }, tc.signal)
+	let lease = await sem.acquire({ count: 1 }, tc.signal)
 
 	expect(lease.signal.aborted).toBe(false)
 
-	await lease.release(AbortSignal.timeout(5000))
+	await lease.release(tc.signal)
 
 	expect(lease.signal.aborted).toBe(true)
 	expect(lease.signal.reason).toBeInstanceOf(LeaseReleasedError)
 })
 
-test('lease.signal is independent from session.signal', async () => {
+test('lease.signal is independent from session.signal', async (tc) => {
 	let sem = session.semaphore(`sem-${Date.now()}`)
 
-	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
-	let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	await sem.create({ limit: 1 }, tc.signal)
+	let lease = await sem.acquire({ count: 1 }, tc.signal)
 
 	session.destroy()
 	await new Promise((r) => setTimeout(r, 100))
@@ -100,30 +100,30 @@ test('lease.signal is independent from session.signal', async () => {
 	expect(lease.signal.aborted).toBe(false)
 })
 
-test('double release is idempotent', async () => {
+test('double release is idempotent', async (tc) => {
 	let sem = session.semaphore(`sem-${Date.now()}`)
 
-	await sem.create({ limit: 1 }, AbortSignal.timeout(5000))
-	let lease = await sem.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	await sem.create({ limit: 1 }, tc.signal)
+	let lease = await sem.acquire({ count: 1 }, tc.signal)
 
-	await lease.release(AbortSignal.timeout(5000))
+	await lease.release(tc.signal)
 	// Second release should not throw
-	await expect(lease.release(AbortSignal.timeout(5000))).resolves.toBeUndefined()
+	await expect(lease.release(tc.signal)).resolves.toBeUndefined()
 })
 
 // ── User signal cancellation ─────────────────────────────────────────────────
 
-test('user signal cancels pending acquire without killing session', async () => {
+test('user signal cancels pending acquire without killing session', async (tc) => {
 	let name = `sem-${Date.now()}`
 
 	let semA = session.semaphore(name)
-	await semA.create({ limit: 1 }, AbortSignal.timeout(5000))
+	await semA.create({ limit: 1 }, tc.signal)
 
 	// Session A fills the semaphore
-	let lease = await semA.acquire({ count: 1 }, AbortSignal.timeout(5000))
+	let lease = await semA.acquire({ count: 1 }, tc.signal)
 
 	// Session B tries to acquire — will block because A holds the only token
-	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await using sessionB = await client.createSession(testNodePath, {}, tc.signal)
 	let semB = sessionB.semaphore(name)
 
 	let userAC = new AbortController()
@@ -138,5 +138,5 @@ test('user signal cancels pending acquire without killing session', async () => 
 	expect(session.status).toBe('ready')
 	expect(sessionB.status).toBe('ready')
 
-	await lease.release(AbortSignal.timeout(5000))
+	await lease.release(tc.signal)
 })

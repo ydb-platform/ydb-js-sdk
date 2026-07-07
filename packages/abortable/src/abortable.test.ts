@@ -1,3 +1,5 @@
+import { getEventListeners } from 'node:events'
+
 import { expect, test } from 'vitest'
 
 import { abortable } from './index.ts'
@@ -50,7 +52,7 @@ test('aborts when signal aborted during promise execution', async () => {
 
 	let result = abortable(controller.signal, promise)
 
-	// Abort after a short delay
+	// 10ms abort fires well before the 100ms resolve, proving abort wins the race
 	setTimeout(() => controller.abort(), 10)
 
 	await expect(result).rejects.toThrow('aborted')
@@ -97,9 +99,7 @@ test('removes event listener after completion', async () => {
 
 	await abortable(controller.signal, promise)
 
-	// Check that listener was removed by verifying no memory leak
-	// This is indirect - we can't easily test listener removal directly
-	expect(controller.signal.aborted).eq(false)
+	expect(getEventListeners(controller.signal, 'abort').length).eq(0)
 })
 
 test('handles promise that never resolves with abort', async () => {
@@ -131,7 +131,7 @@ test('handles promise rejection after abort signal', async () => {
 	await expect(result).rejects.toThrow('aborted')
 })
 
-test('creates aborted when signal aborted with reason', async () => {
+test('rejects with reason when signal aborts during promise execution', async () => {
 	let controller = new AbortController()
 	let customReason = new Error('Custom cancellation')
 
@@ -155,7 +155,8 @@ test('handles concurrent abortable calls with same signal', async () => {
 	let result1 = abortable(controller.signal, promise1)
 	let result2 = abortable(controller.signal, promise2)
 
-	// Abort after starting both
+	// Abort must land while both calls are still in-flight, proving one shared
+	// signal cancels multiple concurrent abortable() calls
 	setTimeout(() => controller.abort(), 10)
 
 	await expect(result1).rejects.toThrow('aborted')

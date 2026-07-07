@@ -471,3 +471,41 @@ test('emits tracing:ydb:query.rollback when the transaction body throws', async 
 	expect(typeof rstart.sessionId).toBe('string')
 	expect(typeof rstart.txId).toBe('string')
 })
+
+// QueryClient.do() is a documented public method (src/index.ts) whose
+// implementation unconditionally throws — regression test so a change to
+// that stub is a deliberate decision, not a silent behavior change.
+test('throws because do() is not yet implemented', async () => {
+	await using sql = query(driver)
+
+	// doImpl throws synchronously rather than returning a rejected promise.
+	expect(() => sql.do(async () => {})).toThrow('Not implemented')
+})
+
+test('executes a query built from sql.identifier/fragment/unsafe/join against real YDB', async () => {
+	await using sql = query(driver)
+
+	let filter = sql.join(
+		[
+			sql.fragment`${sql.identifier('id')} = ${1}`,
+			sql.fragment`${sql.identifier('name')} = ${'Neo'}`,
+		],
+		' AND '
+	)
+
+	let resultSets = await sql`
+		SELECT * FROM AS_TABLE(${[{ id: 1, name: 'Neo' }]})
+		WHERE ${filter} ${sql.unsafe('ORDER BY id')}
+	`
+
+	expect(resultSets).toMatchInlineSnapshot(`
+		[
+		  [
+		    {
+		      "id": 1,
+		      "name": "Neo",
+		    },
+		  ],
+		]
+	`)
+})

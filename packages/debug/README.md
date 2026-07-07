@@ -1,6 +1,6 @@
 # @ydbjs/debug
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=debug)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=debug)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/debug/)
 
 Centralized debug logging for YDB JavaScript SDK, inspired by Playwright's debug architecture.
 

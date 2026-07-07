@@ -1,6 +1,6 @@
 # @ydbjs/query
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=query)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=query)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/query/)
 
 Read this in Russian: [README.ru.md](README.ru.md)
 

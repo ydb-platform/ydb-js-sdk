@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { eq, sql as yql } from 'drizzle-orm'
 import { YdbDriver, drizzle } from '../src/index.ts'
 import { createLiveContext } from './helpers/context.ts'
@@ -36,11 +35,11 @@ test('accepts every createDrizzle input shape on live YDB', async (t) => {
 			yql`select ${2} as ${yql.identifier('value')}`
 		)
 
-		assert.deepEqual(connectionRows, [{ value: 1 }])
-		assert.deepEqual(callbackRows, [{ value: 2 }])
-		assert.equal(callbackCalls.length, 1)
-		assert.equal(callbackCalls[0]?.method, 'execute')
-		assert.equal(callbackCalls[0]?.query, 'select $p0 as `value`')
+		expect(connectionRows).toEqual([{ value: 1 }])
+		expect(callbackRows).toEqual([{ value: 2 }])
+		expect(callbackCalls.length).toBe(1)
+		expect(callbackCalls[0]?.method).toBe('execute')
+		expect(callbackCalls[0]?.query).toBe('select $p0 as `value`')
 	} finally {
 		;(connectionDb.$client as YdbDriver).close()
 	}
@@ -74,7 +73,7 @@ test('runs builder CRUD against live YDB', async (t) => {
 			}>
 		)
 
-		assert.deepEqual(inserted, [
+		expect(inserted).toEqual([
 			{ id: firstId, name: 'rarity' },
 			{ id: secondId, name: 'applejack' },
 		])
@@ -90,7 +89,7 @@ test('runs builder CRUD against live YDB', async (t) => {
 			name: string
 		}>
 
-		assert.deepEqual(remaining, [{ id: firstId, name: 'rarity updated' }])
+		expect(remaining).toEqual([{ id: firstId, name: 'rarity updated' }])
 	} finally {
 		await live.deleteUserRows([firstId, secondId])
 	}
@@ -121,11 +120,11 @@ test('runs db helpers against live YDB', async (t) => {
 		let oneRow = await live.db.get<{ id: number; name: string }>(selectQuery)
 		let valueRows = await live.db.values<[number, string]>(selectQuery)
 
-		assert.deepEqual(selectedRows, [{ id, name: 'sunset shimmer' }])
-		assert.deepEqual(executeRows, [{ id, name: 'sunset shimmer' }])
-		assert.deepEqual(allRows, [{ id, name: 'sunset shimmer' }])
-		assert.deepEqual(oneRow, { id, name: 'sunset shimmer' })
-		assert.deepEqual(valueRows, [[id, 'sunset shimmer']])
+		expect(selectedRows).toEqual([{ id, name: 'sunset shimmer' }])
+		expect(executeRows).toEqual([{ id, name: 'sunset shimmer' }])
+		expect(allRows).toEqual([{ id, name: 'sunset shimmer' }])
+		expect(oneRow).toEqual({ id, name: 'sunset shimmer' })
+		expect(valueRows).toEqual([[id, 'sunset shimmer']])
 
 		await live.db.execute(
 			live.db.update(users).set({ name: 'sunset updated' }).where(eq(users.id, id))
@@ -133,14 +132,14 @@ test('runs db helpers against live YDB', async (t) => {
 		await live.db.execute(live.db.delete(users).where(eq(users.id, id)))
 
 		let remainingRows = await live.db.select().from(users).where(eq(users.id, id))
-		assert.deepEqual(remainingRows, [])
-		assert.ok(
+		expect(remainingRows).toEqual([])
+		expect(
 			live.liveQueryLog.some(({ query }) =>
 				query.includes(`insert into \`${usersTableName}\``)
 			)
-		)
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('update')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('delete from')))
+		).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('update'))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('delete from'))).toBe(true)
 	} finally {
 		await live.deleteUserRows([id])
 	}

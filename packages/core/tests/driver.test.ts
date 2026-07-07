@@ -8,15 +8,15 @@ import { ListEndpointsResultSchema } from '@ydbjs/api/discovery'
 import { Driver } from '../src/driver.js'
 import type { DiscoveryEvent } from '../src/hooks.js'
 
-test('awaits ready() successfully with discovery enabled', async () => {
+test('awaits ready() successfully with discovery enabled', async (tc) => {
 	using driver = new Driver(inject('connectionString'), {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
 
-	await expect(driver.ready()).resolves.toBeUndefined()
+	await expect(driver.ready(tc.signal)).resolves.toBeUndefined()
 })
 
-test('onDiscovery hook fires with endpoint data after ready', async () => {
+test('onDiscovery hook fires with endpoint data after ready', async (tc) => {
 	let discoveryEvents: DiscoveryEvent[] = []
 
 	using driver = new Driver(inject('connectionString'), {
@@ -28,7 +28,7 @@ test('onDiscovery hook fires with endpoint data after ready', async () => {
 		},
 	})
 
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	// At least one discovery round must have completed by the time ready() resolves
 	expect(discoveryEvents.length).toBeGreaterThan(0)
@@ -50,19 +50,19 @@ test('onDiscovery hook fires with endpoint data after ready', async () => {
 	expect(event.removed.length).toBe(0)
 })
 
-test('BalancedChannel routes real RPC through connection pool', async () => {
+test('BalancedChannel routes real RPC through connection pool', async (tc) => {
 	using driver = new Driver(inject('connectionString'), {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
 
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	// createClient() returns a nice-grpc client backed by BalancedChannel when
 	// discovery is enabled. Making a real RPC verifies the full path:
 	// BalancedChannel.createCall() → pool.acquire() → real grpc-js channel.
 	let client = driver.createClient(DiscoveryServiceDefinition)
 
-	let response = await client.listEndpoints({ database: driver.database })
+	let response = await client.listEndpoints({ database: driver.database }, { signal: tc.signal })
 
 	expect(response.operation).toBeDefined()
 	expect(response.operation!.status).toBe(StatusIds_StatusCode.SUCCESS)
@@ -72,7 +72,7 @@ test('BalancedChannel routes real RPC through connection pool', async () => {
 	expect(result!.endpoints.length).toBeGreaterThan(0)
 })
 
-test('onCall hook fires for each RPC dispatched through BalancedChannel', async () => {
+test('onCall hook fires for each RPC dispatched through BalancedChannel', async (tc) => {
 	let callEvents: { method: string; nodeId: bigint; preferred: boolean }[] = []
 
 	using driver = new Driver(inject('connectionString'), {
@@ -88,12 +88,12 @@ test('onCall hook fires for each RPC dispatched through BalancedChannel', async 
 		},
 	})
 
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	let callsBefore = callEvents.length
 
 	let client = driver.createClient(DiscoveryServiceDefinition)
-	await client.listEndpoints({ database: driver.database })
+	await client.listEndpoints({ database: driver.database }, { signal: tc.signal })
 
 	// At least one onCall event must have fired for the listEndpoints RPC
 	expect(callEvents.length).toBeGreaterThan(callsBefore)
@@ -103,7 +103,7 @@ test('onCall hook fires for each RPC dispatched through BalancedChannel', async 
 	expect(typeof rpcEvent!.nodeId).toBe('bigint')
 })
 
-test('onCall completion callback fires with status and duration', async () => {
+test('onCall completion callback fires with status and duration', async (tc) => {
 	let completions: { grpcStatusCode: number; duration: number }[] = []
 
 	using driver = new Driver(inject('connectionString'), {
@@ -120,12 +120,12 @@ test('onCall completion callback fires with status and duration', async () => {
 		},
 	})
 
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	let completionsBefore = completions.length
 
 	let client = driver.createClient(DiscoveryServiceDefinition)
-	await client.listEndpoints({ database: driver.database })
+	await client.listEndpoints({ database: driver.database }, { signal: tc.signal })
 
 	// Completion callback must have fired for the RPC
 	expect(completions.length).toBeGreaterThan(completionsBefore)

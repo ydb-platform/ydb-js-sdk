@@ -17,7 +17,7 @@ jobs:
       group: lint-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: npm run lint
 
@@ -28,7 +28,7 @@ jobs:
       group: build-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: npm run build
       - run: npm run attw
@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [20, 22, 24, 26]
 
     services:
       ydb:
@@ -72,25 +72,48 @@ jobs:
 
     steps:
       # Checkout the repository
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm run build
-
       - name: Test
-        if: matrix.node-version != 24
+        if: matrix.node-version != 26
         run: npm run test
 
       - name: Test with coverage
-        if: matrix.node-version == 24
-        run: npm run coverage
+        if: matrix.node-version == 26
+        run: npm run coverage -- --reporter=default --reporter=html --reporter=github-actions
 
       - name: Upload coverage to Codecov
-        if: matrix.node-version == 24
-        uses: codecov/codecov-action@v5
+        if: matrix.node-version == 26
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: ./coverage
           fail_ci_if_error: false
+
+      - name: Publish coverage report to Object Storage
+        if: matrix.node-version == 26
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ru-central1
+        run: |
+          bucket=ydb-appteam-sdk-reports
+          endpoint=https://storage.yandexcloud.net
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            path="ydb-js-sdk/pr-${{ github.event.pull_request.number }}/"
+          else
+            path="ydb-js-sdk/"
+          fi
+
+          aws --endpoint-url "$endpoint" s3 sync ./coverage "s3://$bucket/${path}coverage/" --delete
+          aws --endpoint-url "$endpoint" s3 sync ./html "s3://$bucket/${path}tests/" --delete
+
+          {
+            echo "### :bar_chart: [Coverage report](https://$bucket.website.yandexcloud.net/${path}coverage/)"
+            echo "### :test_tube: [Test report](https://$bucket.website.yandexcloud.net/${path}tests/)"
+          } >> "$GITHUB_STEP_SUMMARY"

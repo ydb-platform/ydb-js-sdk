@@ -104,6 +104,26 @@ const value = 42 // ❌
 - Prefer explicit types in public APIs
 - Enable strict mode
 
+### Resource Cleanup
+
+- Prefer `using`/`await using` over manual `afterEach`/shared-variable teardown
+- Check for `[Symbol.dispose]`/`[Symbol.asyncDispose]` on the type before writing manual cleanup
+
+```typescript
+// DO
+test('acquires and releases', async (tc) => {
+  await using pool = new SessionPool(driver, { maxSize: 2 })
+  let lease = await pool.acquire(tc.signal)
+})
+
+// DON'T
+let pool: SessionPool | undefined
+afterEach(async () => {
+  await pool?.close()
+  pool = undefined
+})
+```
+
 ### Comments
 
 - Write in English, always
@@ -177,6 +197,24 @@ test('stops when limit exceeded')
 test('should process correctly') // ❌ "should" + vague
 test('validates input properly') // ❌ vague adverb
 test('function with custom parameter') // ❌ redundant prefix
+test('leader() reflects the pre-created-but-vacant semaphore as no leader') // ❌ prefix repeats "leader"
+```
+
+### Cancellation and Timeouts
+
+- Use the test context's `tc.signal` (or hook's `ctx.signal`) for real operations, not ad-hoc `AbortSignal.timeout(N)`
+- Exception: cleanup (`onTestFinished`/`afterEach`) keeps its own short timeout — the test's own signal may already be aborted by then
+
+```typescript
+// DO
+test('creates a node', async (tc) => {
+  await client.createNode(path, {}, tc.signal)
+})
+
+// DON'T
+test('creates a node', async () => {
+  await client.createNode(path, {}, AbortSignal.timeout(5000)) // ❌ magic number, own budget
+})
 ```
 
 ### Test Types
@@ -184,6 +222,12 @@ test('function with custom parameter') // ❌ redundant prefix
 - **Unit tests** (`npm run test:uni`) - fast, no external dependencies, always run
 - **Integration tests** (`npm run test:int`) - require Docker + local YDB, run for core/driver changes
 - **E2E tests** (`npm run test:e2e`) - full system tests, run for breaking changes
+
+### Integration Tests Over Mocks
+
+- Every package's public entry point (`src/index.ts` exports) needs golden-path coverage under `tests/**` against real YDB — internal unit coverage doesn't substitute
+- Default to `tests/**` (real YDB) for CRUD, session/connection lifecycle, concurrent-actor scenarios
+- Reach for a fake driver / `nice-grpc` mock (`packages/*/src/**/*.test.ts`) only when the scenario is unreachable via real YDB deterministically (e.g. reconnect/retry-backoff races) — justify in a comment, and verify that claim against the implementation, not intuition
 
 ---
 

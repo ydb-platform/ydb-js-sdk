@@ -33,9 +33,18 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./budget": "./dist/budget.js",
-		"./strategy": "./dist/strategy.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./budget": {
+			"development": "./src/budget.ts",
+			"default": "./dist/budget.js"
+		},
+		"./strategy": {
+			"development": "./src/strategy.ts",
+			"default": "./dist/strategy.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

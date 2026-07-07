@@ -171,12 +171,10 @@ test('publishes ydb:auth.provider.failed when IAM API rejects the JWT', async ()
 
 	let provider = new ServiceAccountCredentialsProvider(mockKey)
 
-	await expect(provider.getToken(true, AbortSignal.timeout(200))).rejects.toThrow(
-		/IAM API error|aborted/i
-	)
+	await expect(provider.getToken(true)).rejects.toThrow('IAM API error')
 
 	expect(failed.payloads.length).toBeGreaterThanOrEqual(1)
 	let p = failed.payloads[0] as any
 	expect(p.provider).toBe('yc-service-account')
-	expect(p.error).toBeDefined()
+	expect(p.error).toBeInstanceOf(Error)
 })

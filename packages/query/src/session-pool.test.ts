@@ -12,8 +12,16 @@ import {
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 
-import { Session, SessionBusyError } from './session.ts'
-import { SessionLease, SessionPool, SessionPoolFullError } from './session-pool.ts'
+import { Session } from './session.ts'
+import { SessionLease, SessionPool } from './session-pool.ts'
+
+// This file is deliberately narrow: only scenarios that need server-side
+// fault injection (killing a session's attach stream mid-flight, holding
+// CreateSession open to race pool.close(), forcing a bad first attach
+// message) — none of that is triggerable on demand against a real YDB
+// instance. Golden-path SessionPool/Session/SessionLease behavior (LIFO
+// reuse, warm-up, claim lifecycle, wait-queue capacity) lives in
+// ../tests/session-pool.test.ts against real YDB instead.
 
 /**
  * Minimal in-memory QueryService. Tests get:
@@ -111,12 +119,12 @@ async function startQueryServer() {
 
 type Harness = Awaited<ReturnType<typeof startQueryServer>>
 
+// SessionPool is AsyncDisposable — each test declares its own `await using
+// pool`. Only the raw server harness (not disposable) needs shared afterEach
+// cleanup.
 let srv: Harness | undefined
-let pool: SessionPool | undefined
 
 afterEach(async () => {
-	await pool?.close().catch(() => {})
-	pool = undefined
 	await srv?.close()
 	srv = undefined
 })
@@ -132,43 +140,9 @@ async function until(cond: () => boolean, timeoutMs = 500): Promise<void> {
 	throw new Error(`timed out waiting for condition (${timeoutMs}ms)`)
 }
 
-test('reuses the most recently released session first (LIFO)', async () => {
-	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 2 })
-
-	let a = await pool.acquire()
-	let b = await pool.acquire()
-	let idA = a.id
-	let idB = b.id
-	expect(idA).not.toBe(idB)
-
-	a[Symbol.dispose]()
-	b[Symbol.dispose]() // top of the stack
-
-	let next = await pool.acquire()
-	expect(next.id).toBe(idB)
-})
-
-test('rejects new waiters once the wait queue hits the cap', async () => {
-	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 1, waitQueueFactor: 2 })
-
-	await pool.acquire() // hold the only session
-
-	let w1 = pool.acquire()
-	let w2 = pool.acquire()
-	expect(pool.stats.waiting).toBe(2)
-
-	await expect(pool.acquire()).rejects.toBeInstanceOf(SessionPoolFullError)
-
-	// Orphan the waiters — afterEach closes the pool, which rejects them.
-	w1.catch(() => {})
-	w2.catch(() => {})
-})
-
 test('eviction of a busy session pumps a fresh one to the oldest waiter', async () => {
 	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 1 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	let held = await pool.acquire()
 	let heldId = held.id
@@ -189,7 +163,7 @@ test('eviction of a busy session pumps a fresh one to the oldest waiter', async 
 test('close() during in-flight create does not hang and rejects the pending acquire', async () => {
 	srv = await startQueryServer()
 	let release = srv.holdCreateSession()
-	pool = new SessionPool(srv.driver, { maxSize: 1 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	// Pre-catch: close() will cancel the in-flight RPC via abort, and we
 	// don't want the racing rejection to surface as unhandled.
@@ -207,13 +181,11 @@ test('close() during in-flight create does not hang and rejects the pending acqu
 	await closing // must not hang
 	let result = await acquiring
 	expect(result.ok).toBe(false)
-
-	pool = undefined
 })
 
 test('lease.signal is lease-scoped — ghost subscribers do not accumulate', async () => {
 	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 1 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	let lease = await pool.acquire()
 	let capturedSignal = lease.signal
@@ -228,16 +200,6 @@ test('lease.signal is lease-scoped — ghost subscribers do not accumulate', asy
 	await new Promise((r) => setTimeout(r, 50))
 
 	expect(capturedSignal.aborted).toBe(false)
-})
-
-test('SessionLease exposes id and nodeId', async () => {
-	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 1 })
-
-	let lease = await pool.acquire()
-	expect(lease).toBeInstanceOf(SessionLease)
-	expect(lease.id).toMatch(/^svr-/)
-	expect(lease.nodeId).toBe(0n)
 })
 
 test('Session.open deletes the server-side session when attach first message is bad', async () => {
@@ -281,90 +243,11 @@ test('Session.open aborts the attach stream when the caller signal fires mid-wai
 	expect(srv.attachCalls).toHaveLength(1)
 })
 
-test('claim() throws SessionBusyError on a second concurrent caller', async () => {
-	srv = await startQueryServer()
-	let session = await Session.open(srv.driver)
-
-	let first = session.claim()
-	try {
-		expect(() => session.claim()).toThrow(SessionBusyError)
-	} finally {
-		first[Symbol.dispose]()
-		session.close('pool_close')
-	}
-})
-
-test('claim() releases on dispose so the next caller succeeds', async () => {
-	srv = await startQueryServer()
-	let session = await Session.open(srv.driver)
-
-	{
-		using _ = session.claim()
-		// scope holds the slot
-	}
-
-	// previous claim disposed — a fresh claim must succeed (would throw SessionBusyError otherwise)
-	expect(() => {
-		let again = session.claim()
-		again[Symbol.dispose]()
-	}).not.toThrow()
-	session.close('pool_close')
-})
-
-test('claim() dispose is idempotent', async () => {
-	srv = await startQueryServer()
-	let session = await Session.open(srv.driver)
-
-	let held = session.claim()
-	held[Symbol.dispose]()
-	expect(() => held[Symbol.dispose]()).not.toThrow() // second dispose is a no-op
-
-	// the slot must still be free
-	expect(() => {
-		let again = session.claim()
-		again[Symbol.dispose]()
-	}).not.toThrow()
-	session.close('pool_close')
-})
-
-// ── warm-up to minSize ─────────────────────────────────────────────────────
-
-test('warms the pool up to minSize on construction', async () => {
-	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 3 })
-
-	await until(() => pool!.stats.total === 3, 1000)
-
-	expect(pool.stats.total).toBe(3)
-	expect(pool.stats.idle).toBe(3)
-	expect(pool.stats.busy).toBe(0)
-	expect(srv.createCount).toBe(3)
-})
-
-test('does not warm any sessions when minSize defaults to 0', async () => {
-	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 5 })
-
-	// Give the event loop a chance — if warm-up were misfiring, creates
-	// would have started by now.
-	await new Promise((r) => setTimeout(r, 50))
-
-	expect(pool.stats.total).toBe(0)
-	expect(pool.stats.creating).toBe(0)
-	expect(srv.createCount).toBe(0)
-})
-
-test('throws RangeError when minSize exceeds maxSize', async () => {
-	srv = await startQueryServer()
-
-	expect(() => new SessionPool(srv!.driver, { maxSize: 2, minSize: 5 })).toThrow(RangeError)
-})
-
 test('refills to minSize after a session is evicted by the server', async () => {
 	srv = await startQueryServer()
-	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 2 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 2 })
 
-	await until(() => pool!.stats.total === 2, 1000)
+	await until(() => pool.stats.total === 2, 1000)
 	let createsBeforeEviction = srv.createCount
 	let killed = srv.attachCalls[0]
 
@@ -373,7 +256,7 @@ test('refills to minSize after a session is evicted by the server', async () => 
 	srv.breakSession(killed)
 
 	await until(() => srv!.createCount > createsBeforeEviction, 2000)
-	await until(() => pool!.stats.total === 2, 2000)
+	await until(() => pool.stats.total === 2, 2000)
 
 	expect(pool.stats.total).toBe(2)
 	expect(srv.createCount).toBe(createsBeforeEviction + 1)
@@ -383,12 +266,12 @@ test('hands a warming session to a waiter when warm-up holds all capacity', asyn
 	srv = await startQueryServer()
 	let release = srv.holdCreateSession()
 
-	pool = new SessionPool(srv.driver, { maxSize: 2, minSize: 2 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 2, minSize: 2 })
 
 	// Both create slots are taken by held warm-ups; acquire() must queue
 	// rather than spawn a third create.
 	let acquired = pool.acquire()
-	await until(() => pool!.stats.waiting === 1, 500)
+	await until(() => pool.stats.waiting === 1, 500)
 
 	release()
 
@@ -404,7 +287,7 @@ test('pool.close() during warm-up settles without hanging', async () => {
 	srv = await startQueryServer()
 	srv.holdCreateSession() // hold indefinitely; never released
 
-	pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 5 })
+	await using pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 5 })
 
 	// All five warm-up creates are blocked on the server. close() must
 	// abort them through the linked close signal and resolve quickly.

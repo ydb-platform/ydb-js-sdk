@@ -34,12 +34,30 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./access-token": "./dist/access-token.js",
-		"./anonymous": "./dist/anonymous.js",
-		"./metadata": "./dist/metadata.js",
-		"./static": "./dist/static.js",
-		"./environ": "./dist/environ.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./access-token": {
+			"development": "./src/access-token.ts",
+			"default": "./dist/access-token.js"
+		},
+		"./anonymous": {
+			"development": "./src/anonymous.ts",
+			"default": "./dist/anonymous.js"
+		},
+		"./metadata": {
+			"development": "./src/metadata.ts",
+			"default": "./dist/metadata.js"
+		},
+		"./static": {
+			"development": "./src/static.ts",
+			"default": "./dist/static.js"
+		},
+		"./environ": {
+			"development": "./src/environ.ts",
+			"default": "./dist/environ.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

@@ -1,6 +1,4 @@
-import * as assert from 'node:assert/strict'
-
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 
 import * as sql from './sql.ts'
 
@@ -58,5 +56,5 @@ let expectedSqlExports = [
 ] as const
 
 test('sql entrypoint exposes exactly the YQL-expression surface', () => {
-	assert.deepEqual(Object.keys(sql).sort(), [...expectedSqlExports])
+	expect(Object.keys(sql).sort()).toEqual([...expectedSqlExports])
 })

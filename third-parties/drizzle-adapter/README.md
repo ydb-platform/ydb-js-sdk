@@ -1,6 +1,6 @@
 # @ydbjs/drizzle-adapter
 
-[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=drizzle-adapter)](https://codecov.io/gh/ydb-platform/ydb-js-sdk)
+[![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=drizzle-adapter)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/third-parties/drizzle-adapter/)
 
 The `@ydbjs/drizzle-adapter` package wires [Drizzle ORM](https://orm.drizzle.team/) to YDB. It ships typed schema declarations with YDB-native column types, query builders that emit valid YQL, a relational `db.query.*` API, a migration runner with history and optional distributed locking, and ergonomic wrappers around YDB built-in functions and UDFs (Digest hashes, `CurrentUtc*`, `Knn::*`, set operators, pragmas, scripts).
 

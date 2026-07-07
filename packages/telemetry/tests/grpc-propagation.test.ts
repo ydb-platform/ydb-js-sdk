@@ -6,7 +6,9 @@ import {
 	InMemorySpanExporter,
 	SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base'
-import type { ClientMiddleware, MethodDescriptor } from 'nice-grpc'
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { Driver, addClientMiddleware } from '@ydbjs/core'
+import { createServer } from 'nice-grpc'
 import { afterEach, beforeAll, expect, test } from 'vitest'
 
 import { propagator } from '../src/propagation.ts'
@@ -24,30 +26,50 @@ beforeAll(() => {
 
 afterEach(() => exporter.reset())
 
-// Drive a middleware like nice-grpc does at runtime: pump the generator,
-// ignore yields, capture the options handed to call.next.
-async function drive(
-	mw: ClientMiddleware,
-	options: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-	let seen: Record<string, unknown> | undefined
-	let call = {
-		method: { path: '/test/method' } as unknown as MethodDescriptor,
-		request: undefined,
-		async *next(_req: unknown, opts: Record<string, unknown>) {
-			seen = opts
-			yield undefined
+// Real path only: `addClientMiddleware(propagator)` + a real `Driver` +
+// a real gRPC dispatch through a `nice-grpc` server on an ephemeral port
+// (no Docker/YDB needed, `whoAmI`/`listEndpoints` are stubbed). This
+// exercises nice-grpc's actual `composeClientMiddleware`/client-middleware
+// invocation contract, unlike a hand-rolled `call.next` fake, which would
+// keep passing even if nice-grpc changed how it drives client middleware.
+async function driveThroughRealDriver(): Promise<{ get(key: string): string | undefined }> {
+	using _ = addClientMiddleware(propagator)
+
+	let server = createServer()
+	let received: { get(key: string): string | undefined } | undefined
+	let discoveryService = {
+		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+		whoAmI: DiscoveryServiceDefinition.whoAmI,
+	}
+
+	server.add(discoveryService, {
+		async listEndpoints(_request, callContext) {
+			received = callContext.metadata
+			return {}
 		},
+		async whoAmI() {
+			return {}
+		},
+	})
+
+	let port = await server.listen('127.0.0.1:0')
+	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+
+	try {
+		let client = driver.createClient(discoveryService)
+		await client.listEndpoints({ database: driver.database })
+
+		if (!received) {
+			throw new Error('listEndpoints was not invoked')
+		}
+
+		return received
+	} finally {
+		driver.close()
+		await server.shutdown()
 	}
-
-	let gen = (mw as any)(call, options) as AsyncGenerator
-	for await (let chunk of gen) void chunk
-
-	if (!seen) {
-		throw new Error('call.next was not invoked')
-	}
-
-	return seen
 }
 
 test('injects traceparent into metadata when a span is active', async () => {
@@ -55,9 +77,8 @@ test('injects traceparent into metadata when a span is active', async () => {
 	let span = tracer.startSpan('outer')
 	let traceparent: string | undefined
 	await context.with(trace.setSpan(context.active(), span), async () => {
-		let opts = await drive(propagator, {})
-		let m = opts.metadata as { get(k: string): string | undefined }
-		traceparent = m.get('traceparent')
+		let received = await driveThroughRealDriver()
+		traceparent = received.get('traceparent')
 	})
 	span.end()
 
@@ -66,22 +87,23 @@ test('injects traceparent into metadata when a span is active', async () => {
 })
 
 test('skips traceparent when no span is active', async () => {
-	let opts = await drive(propagator, {})
-	let m = opts.metadata as { get(k: string): string | undefined }
-	expect(m.get('traceparent')).toBeUndefined()
+	let received = await driveThroughRealDriver()
+	expect(received.get('traceparent')).toBeUndefined()
 })
 
 test('preserves existing metadata entries alongside traceparent', async () => {
 	let tracer = trace.getTracer('test')
 	let span = tracer.startSpan('outer')
-	let pre = new Map<string, string>([['x-ydb-database', '/local']])
-	let m: { get(k: string): string | undefined } | undefined
+	let received: { get(key: string): string | undefined } | undefined
 	await context.with(trace.setSpan(context.active(), span), async () => {
-		let opts = await drive(propagator, { metadata: pre })
-		m = opts.metadata as { get(k: string): string | undefined }
+		received = await driveThroughRealDriver()
 	})
 	span.end()
 
-	expect(m!.get('x-ydb-database')).toBe('/local')
-	expect(m!.get('traceparent')).toBeDefined()
+	// `x-ydb-database` is stamped onto outgoing metadata by core's own
+	// `stamp` middleware (composed ahead of the propagator), so its
+	// presence alongside traceparent confirms the propagator ran inside
+	// the real chain rather than replacing prior entries.
+	expect(received!.get('x-ydb-database')).toBe('/local')
+	expect(received!.get('traceparent')).toBeDefined()
 })
