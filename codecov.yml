@@ -92,10 +92,11 @@ coverage:
   status:
     project:
       default:
-        informational: true
+        target: auto       # do not drop below the current level...
+        threshold: 1%      # ...by more than 1%
     patch:
       default:
-        informational: true
+        target: 80%        # new/changed code in the PR diff must be >= 80% covered
 
 # Coverage still uploads and status checks stay, but Codecov must not post
 # PR comments — status/components are enough, the comment is just noise.
