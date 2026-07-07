@@ -19,8 +19,6 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
-        with:
-          node-version: 24
 
       - name: Build Packages
         run: npm run build
