@@ -1,10 +1,7 @@
-/**
- * TEMPORARY coverage probe -- DO NOT MERGE.
- *
- * A large source module under packages/*/src that is NOT imported by anything and
- * has NO tests. Used to check whether Vitest v8 coverage counts untested source
- * files (as 0%, dragging total coverage down) or only files imported by tests.
- */
+// TEMPORARY coverage probe -- DO NOT MERGE.
+// A large source module under a package src dir that is NOT imported anywhere and
+// has NO tests. Used to check whether Vitest v8 coverage counts untested source
+// files (as 0%, dragging total coverage down) or only files imported by tests.
 
 export function probe1(value: number): number {
 	let acc = 1
