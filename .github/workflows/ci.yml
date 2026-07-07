@@ -83,7 +83,7 @@ jobs:
 
       - name: Test with coverage
         if: matrix.node-version == 'lts/*'
-        run: npm run coverage
+        run: npm run coverage -- --reporter=default --reporter=html --reporter=github-actions
 
       - name: Upload coverage to Codecov
         if: matrix.node-version == 'lts/*'
@@ -92,3 +92,28 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: ./coverage
           fail_ci_if_error: false
+
+      - name: Publish coverage report to Object Storage
+        if: matrix.node-version == 'lts/*'
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.YC_STORAGE_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.YC_STORAGE_SECRET_KEY }}
+          AWS_DEFAULT_REGION: ru-central1
+        run: |
+          bucket=ydb-appteam-sdk-reports
+          endpoint=https://storage.yandexcloud.net
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            path="ydb-js-sdk/pr-${{ github.event.pull_request.number }}/"
+          else
+            path="ydb-js-sdk/"
+          fi
+
+          aws --endpoint-url "$endpoint" s3 sync ./coverage "s3://$bucket/${path}coverage/" --delete
+          aws --endpoint-url "$endpoint" s3 sync ./html "s3://$bucket/${path}tests/" --delete
+
+          {
+            echo "### :bar_chart: [Coverage report](https://$bucket.website.yandexcloud.net/${path}coverage/)"
+            echo "### :test_tube: [Test report](https://$bucket.website.yandexcloud.net/${path}tests/)"
+          } >> "$GITHUB_STEP_SUMMARY"

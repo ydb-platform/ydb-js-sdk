@@ -82,7 +82,7 @@ export default defineConfig({
 		passWithNoTests: true,
 		coverage: {
 			provider: 'v8',
-			reporter: ['text', 'lcov', 'html'],
+			reporter: ['text', 'lcovonly', 'html'],
 			reportsDirectory: './coverage',
 			include: ['packages/*/src/**/*.ts', 'third-parties/*/src/**/*.ts'],
 			exclude: [
