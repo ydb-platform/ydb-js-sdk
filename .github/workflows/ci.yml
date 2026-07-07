@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24, 26]
+        node-version: ['latest', 'lts/*', 'lts/-1', 'lts/-2']
 
     services:
       ydb:
@@ -78,15 +78,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Test
-        if: matrix.node-version != 24
+        if: matrix.node-version != 'lts/*'
         run: npm run test
 
       - name: Test with coverage
-        if: matrix.node-version == 24
+        if: matrix.node-version == 'lts/*'
         run: npm run coverage
 
       - name: Upload coverage to Codecov
-        if: matrix.node-version == 24
+        if: matrix.node-version == 'lts/*'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
