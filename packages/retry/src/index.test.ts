@@ -73,20 +73,48 @@ test('accepts aborted signal', async () => {
 	expect(attempts).eq(0)
 })
 
-test('respects signal abort', async () => {
+test('aborts an in-flight attempt', async () => {
 	let attempts = 0
 	let controller = new AbortController()
 
-	// Abort immediately
-	controller.abort()
-
-	let result = retry({ retry: isError, signal: controller.signal, budget: 5 }, async () => {
+	let result = retry({ retry: isError, signal: controller.signal, budget: 5 }, async (signal) => {
 		attempts++
-		throw new Error('test error')
+		// fn only observes the abort via the signal it's given, so the wait
+		// must happen inside fn to exercise the abortable(signal, ...) path.
+		await new Promise((_resolve, reject) => {
+			signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+		})
+		return 'unreachable'
 	})
 
+	// Aborting after fn has started (not before retry() is called) exercises
+	// the abortable() race in the loop body, not the throwIfAborted() guard.
+	queueMicrotask(() => controller.abort())
+
 	await expect(result).rejects.toThrow('This operation was aborted')
-	expect(attempts).eq(0)
+	expect(attempts).eq(1)
+})
+
+test('aborts during the backoff wait', async () => {
+	let attempts = 0
+	let controller = new AbortController()
+
+	let result = retry(
+		{ retry: isError, signal: controller.signal, budget: 5, strategy: 1000 },
+		async () => {
+			attempts++
+			throw new Error('test error')
+		}
+	)
+
+	// Abort once the failing attempt has scheduled its backoff timer, so the
+	// setTimeout(remaining, void 0, { signal }) wait rejects instead of the
+	// pre-loop throwIfAborted() guard. node:timers/promises rejects with its
+	// own AbortError message, distinct from signal.throwIfAborted()'s.
+	setTimeout(() => controller.abort(), 10)
+
+	await expect(result).rejects.toThrow('The operation was aborted')
+	expect(attempts).eq(1)
 })
 
 test('expects AbortError is not retryable', async () => {

@@ -3,16 +3,24 @@ import { expect, test } from 'vitest'
 
 import { addClientMiddleware, getRegisteredClientMiddlewares } from './middleware.ts'
 
-test('appends middleware to the registry and removes it on dispose', () => {
+test('appends middleware to the registry', () => {
+	let before = getRegisteredClientMiddlewares().length
+	let mw: ClientMiddleware = async function* (call, options) {
+		return yield* call.next(call.request, options)
+	}
+
+	using _ = addClientMiddleware(mw)
+	expect(getRegisteredClientMiddlewares()).toContain(mw)
+	expect(getRegisteredClientMiddlewares().length).toBe(before + 1)
+})
+
+test('removes middleware from the registry on dispose', () => {
 	let before = getRegisteredClientMiddlewares().length
 	let mw: ClientMiddleware = async function* (call, options) {
 		return yield* call.next(call.request, options)
 	}
 
 	let handle = addClientMiddleware(mw)
-	expect(getRegisteredClientMiddlewares()).toContain(mw)
-	expect(getRegisteredClientMiddlewares().length).toBe(before + 1)
-
 	handle[Symbol.dispose]()
 	expect(getRegisteredClientMiddlewares()).not.toContain(mw)
 	expect(getRegisteredClientMiddlewares().length).toBe(before)

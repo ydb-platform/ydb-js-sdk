@@ -250,9 +250,23 @@ test('relational builder hydrates many/one relations through schema metadata', a
 			},
 		},
 	])
-	assert.ok(executedSql.some((query) => query.includes('from `posts` `users_posts`')))
-	assert.ok(executedSql.some((query) => query.includes('from `users` `posts_author`')))
-	assert.ok(executedSql.some((query) => query.includes('from `users` `users`')))
+	assert.equal(executedSql.length, 4)
+	assert.match(
+		executedSql[0] ?? '',
+		/^select `users`\.`id` as `__ydb_c0`, `users`\.`name` as `__ydb_c1` from `users` `users`$/
+	)
+	assert.match(
+		executedSql[1] ?? '',
+		/^select `users_posts`\.`id` as `__ydb_c0`, `users_posts`\.`title` as `__ydb_c1`, `users_posts`\.`user_id` as `__ydb_h0` from `posts` `users_posts` where `users_posts`\.`user_id` in \(\$p0, \$p1\)$/
+	)
+	assert.match(
+		executedSql[2] ?? '',
+		/^select `posts`\.`id` as `__ydb_c0`, `posts`\.`title` as `__ydb_c1`, `posts`\.`user_id` as `__ydb_h0` from `posts` `posts`$/
+	)
+	assert.match(
+		executedSql[3] ?? '',
+		/^select `posts_author`\.`id` as `__ydb_c0`, `posts_author`\.`name` as `__ydb_c1` from `users` `posts_author` where `posts_author`\.`id` = \$p0$/
+	)
 })
 
 test('relational builder chunks relation filters for large parent sets', async () => {
@@ -294,7 +308,6 @@ test('relational builder chunks relation filters for large parent sets', async (
 		posts: [{ id: 2600, title: 'Post 260' }],
 	})
 	assert.equal(relationQueries.length, 2)
-	assert.ok(relationQueries.every(({ params }) => params.length <= 256))
 	assert.deepEqual(
 		relationQueries.map(({ params }) => params.length),
 		[256, 4]

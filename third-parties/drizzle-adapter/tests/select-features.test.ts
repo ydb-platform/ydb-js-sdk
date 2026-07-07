@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { desc, eq, sql as yql } from 'drizzle-orm'
 import { createLiveContext } from './helpers/context.ts'
 import { posts, postsTableName, users, usersTableName } from './helpers/schema.ts'
@@ -70,22 +69,21 @@ test('runs advanced select clauses on live YDB', async (t) => {
 			.where(yql`${posts.id} in (${firstPostId}, ${secondPostId}, ${thirdPostId})`)
 			.orderBy(posts.userId, desc(posts.title))) as Array<{ userId: number; title: string }>
 
-		assert.deepEqual(distinctNames, [{ name: 'apple' }, { name: 'berry' }])
-		assert.deepEqual(groupedUsers, [{ userId: firstUserId }])
-		assert.deepEqual(pagedPosts, [
+		expect(distinctNames).toEqual([{ name: 'apple' }, { name: 'berry' }])
+		expect(groupedUsers).toEqual([{ userId: firstUserId }])
+		expect(pagedPosts).toEqual([
 			{ id: secondPostId, title: 'Zecora' },
 			{ id: thirdPostId, title: 'Rainbow Dash' },
 		])
-		assert.deepEqual(
-			[...distinctOnRows].sort((left, right) => left.userId - right.userId),
-			[
-				{ userId: firstUserId, title: 'Zecora' },
-				{ userId: secondUserId, title: 'Rainbow Dash' },
-			]
+		expect([...distinctOnRows].sort((left, right) => left.userId - right.userId)).toEqual([
+			{ userId: firstUserId, title: 'Zecora' },
+			{ userId: secondUserId, title: 'Rainbow Dash' },
+		])
+		expect(live.liveQueryLog.some(({ query }) => query.includes('select distinct'))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('group by'))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('row_number() over'))).toBe(
+			true
 		)
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('select distinct')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('group by')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('row_number() over')))
 	} finally {
 		await live.deletePostRows([firstPostId, secondPostId, thirdPostId])
 		await live.deleteUserRows([firstUserId, secondUserId, thirdUserId])
@@ -160,20 +158,20 @@ test('runs joins and set operators on live YDB', async (t) => {
 				live.db.select({ value: users.name }).from(users).where(eq(users.id, secondUserId))
 			)
 
-		assert.deepEqual(leftJoined, [
+		expect(leftJoined).toEqual([
 			{
 				[usersTableName]: { id: thirdUserId, name: 'berry' },
 				[postsTableName]: null,
 			},
 		])
-		assert.deepEqual(unionRows, [{ value: 'apple' }, { value: 'berry' }])
-		assert.deepEqual(unionAllRows, [{ value: 'apple' }, { value: 'apple' }])
-		assert.deepEqual(intersectRows, [{ value: 'apple' }])
-		assert.deepEqual(exceptRows, [{ value: 'berry' }])
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('left join')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes(' union ')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('union all')))
-		assert.ok(live.liveQueryLog.some(({ query }) => query.includes('__ydb_left')))
+		expect(unionRows).toEqual([{ value: 'apple' }, { value: 'berry' }])
+		expect(unionAllRows).toEqual([{ value: 'apple' }, { value: 'apple' }])
+		expect(intersectRows).toEqual([{ value: 'apple' }])
+		expect(exceptRows).toEqual([{ value: 'berry' }])
+		expect(live.liveQueryLog.some(({ query }) => query.includes('left join'))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes(' union '))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('union all'))).toBe(true)
+		expect(live.liveQueryLog.some(({ query }) => query.includes('__ydb_left'))).toBe(true)
 	} finally {
 		await live.deletePostRows([firstPostId, secondPostId])
 		await live.deleteUserRows([firstUserId, secondUserId, thirdUserId])

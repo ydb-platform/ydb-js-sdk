@@ -1,5 +1,4 @@
-import { test } from 'vitest'
-import * as assert from 'node:assert/strict'
+import { expect, test } from 'vitest'
 import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm/relations'
 import { eq, sql as yql } from 'drizzle-orm'
 import { WithSubquery } from 'drizzle-orm/subquery'
@@ -36,14 +35,14 @@ test('driver execute and transaction preserve direct result metadata on live YDB
 		{ accessMode: 'read only' }
 	)
 
-	assert.deepEqual(executeResult.rows, [{ value: 1 }])
-	assert.equal(executeResult.rowCount, 1)
-	assert.equal(executeResult.command, 'execute')
-	assert.deepEqual(executeResult.meta, {
+	expect(executeResult.rows).toEqual([{ value: 1 }])
+	expect(executeResult.rowCount).toBe(1)
+	expect(executeResult.command).toBe('execute')
+	expect(executeResult.meta).toEqual({
 		arrayMode: false,
 		typings: ['none'],
 	})
-	assert.deepEqual(txRows, [{ value: 1 }])
+	expect(txRows).toEqual([{ value: 1 }])
 })
 
 test('dialect helper queries execute on live YDB', async (t) => {
@@ -83,7 +82,7 @@ test('dialect helper queries execute on live YDB', async (t) => {
 			typings: cteQuery.typings,
 		})
 
-		assert.deepEqual(cteResult.rows, [{ id: userId, name: 'Starlight Glimmer' }])
+		expect(cteResult.rows).toEqual([{ id: userId, name: 'Starlight Glimmer' }])
 
 		let tablesConfig = extractTablesRelationalConfig(liveSchema, createTableRelationsHelpers)
 		let relationalQuery = dialect.buildRelationalQueryWithoutPK({
@@ -109,7 +108,7 @@ test('dialect helper queries execute on live YDB', async (t) => {
 			}
 		)
 
-		assert.deepEqual(relationalResult.rows, [{ id: userId, name: 'Starlight Glimmer' }])
+		expect(relationalResult.rows).toEqual([{ id: userId, name: 'Starlight Glimmer' }])
 
 		let updateQuery = dialect.sqlToQuery(
 			dialect.buildUpdateQuery({
@@ -123,7 +122,7 @@ test('dialect helper queries execute on live YDB', async (t) => {
 		})
 
 		let updatedRows = await live.db.select().from(users).where(eq(users.id, userId))
-		assert.deepEqual(updatedRows, [{ id: userId, name: 'Starlight Updated' }])
+		expect(updatedRows).toEqual([{ id: userId, name: 'Starlight Updated' }])
 
 		let deleteQuery = dialect.sqlToQuery(
 			dialect.buildDeleteQuery({
@@ -136,7 +135,7 @@ test('dialect helper queries execute on live YDB', async (t) => {
 		})
 
 		let remainingRows = await live.db.select().from(users).where(eq(users.id, userId))
-		assert.deepEqual(remainingRows, [])
+		expect(remainingRows).toEqual([])
 	} finally {
 		await live.deleteUserRows([userId])
 	}
@@ -188,7 +187,7 @@ test('direct dialect helper wrappers execute on live YDB', async (t) => {
 			typings: helperQuery.typings,
 		})
 
-		assert.deepEqual(helperResult.rows, [
+		expect(helperResult.rows).toEqual([
 			{
 				user_id_alias: firstUserId,
 				post_title_alias: 'Moonlight',
@@ -228,7 +227,7 @@ test('direct dialect helper wrappers execute on live YDB', async (t) => {
 			}
 		)
 
-		assert.deepEqual(singleSetResult.rows, [{ __ydb_f0: 'Celestia' }, { __ydb_f0: 'Luna' }])
+		expect(singleSetResult.rows).toEqual([{ __ydb_f0: 'Celestia' }, { __ydb_f0: 'Luna' }])
 
 		let chainedSetQuery = dialect.sqlToQuery(
 			dialect.buildSetOperations(leftSelect, setFields, setAliases, [
@@ -253,7 +252,7 @@ test('direct dialect helper wrappers execute on live YDB', async (t) => {
 			}
 		)
 
-		assert.deepEqual(chainedSetResult.rows, [{ __ydb_f0: 'Celestia' }])
+		expect(chainedSetResult.rows).toEqual([{ __ydb_f0: 'Celestia' }])
 	} finally {
 		await live.deletePostRows([postId])
 		await live.deleteUserRows([firstUserId, secondUserId])

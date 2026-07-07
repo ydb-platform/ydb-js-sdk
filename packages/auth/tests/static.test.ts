@@ -12,8 +12,8 @@ import { StaticCredentialsProvider } from '../src/static.js'
  */
 
 // Expiry thresholds from static.ts
-const SOFT_EXPIRY_THRESHOLD_SECONDS = 120
-const HARD_EXPIRY_THRESHOLD_SECONDS = 30
+let SOFT_EXPIRY_THRESHOLD_SECONDS = 120
+let HARD_EXPIRY_THRESHOLD_SECONDS = 30
 
 /**
  * Direct refresh observation. JWT byte-equality is unreliable as a proxy
@@ -91,7 +91,7 @@ test('returns cached token when fresh (outside soft expiry threshold)', async ()
 
 	let provider = new StaticCredentialsProvider({ username, password }, endpoint)
 
-	// Get initial token
+	// Baseline token to compare against after the clock jump below.
 	let token1 = await provider.getToken()
 	expect(token1).toBeDefined()
 

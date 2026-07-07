@@ -1,6 +1,4 @@
-import * as assert from 'node:assert/strict'
-
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 
 import * as schema from './schema.ts'
 
@@ -52,5 +50,5 @@ let expectedSchemaExports = [
 ] as const
 
 test('schema entrypoint exposes exactly the table-declaration surface', () => {
-	assert.deepEqual(Object.keys(schema).sort(), [...expectedSchemaExports])
+	expect(Object.keys(schema).sort()).toEqual([...expectedSchemaExports])
 })

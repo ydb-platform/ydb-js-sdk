@@ -22,13 +22,13 @@ let client = new CoordinationClient(driver)
 let testNodePath: string
 let sessionA: CoordinationSession
 
-beforeEach(async () => {
+beforeEach(async (ctx) => {
 	let suffix = `${Date.now()}-${Math.floor(Math.random() * 0xffff).toString(16)}`
 	testNodePath = `/local/test-coord-mtx-${suffix}`
 
-	await client.createNode(testNodePath, {}, AbortSignal.timeout(5000))
+	await client.createNode(testNodePath, {}, ctx.signal)
 
-	sessionA = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	sessionA = await client.createSession(testNodePath, {}, ctx.signal)
 
 	onTestFinished(async () => {
 		await sessionA.close(AbortSignal.timeout(5000)).catch(() => {})
@@ -40,24 +40,24 @@ beforeEach(async () => {
 // Helper: unique mutex name per call so tests never collide even within a file
 let mtxName = () => `mtx-${Date.now()}-${Math.floor(Math.random() * 0xffff).toString(16)}`
 
-test('lock acquires exclusive access', async () => {
+test('lock acquires exclusive access', async (tc) => {
 	let mutex = sessionA.mutex(mtxName())
 
-	let lock = await mutex.lock(AbortSignal.timeout(5000))
+	let lock = await mutex.lock(tc.signal)
 
 	expect(lock).toBeInstanceOf(Lease)
 	// Signal must be alive while the lock is held
 	expect(lock.signal.aborted).toBe(false)
 
-	await lock.release(AbortSignal.timeout(5000))
+	await lock.release(tc.signal)
 })
 
-test('async dispose releases the lock', async () => {
+test('async dispose releases the lock', async (tc) => {
 	let mutex = sessionA.mutex(mtxName())
 	let capturedSignal: AbortSignal
 
 	{
-		await using lock = await mutex.lock(AbortSignal.timeout(5000))
+		await using lock = await mutex.lock(tc.signal)
 		capturedSignal = lock.signal
 		expect(capturedSignal.aborted).toBe(false)
 	}
@@ -65,28 +65,27 @@ test('async dispose releases the lock', async () => {
 	// After dispose the session-level signal may or may not abort, but the test
 	// verifies that dispose does not throw — that is the core contract.
 	// A second lock attempt proves the mutex is free again.
-	let lock2 = await mutex.lock(AbortSignal.timeout(5000))
+	let lock2 = await mutex.lock(tc.signal)
 	expect(lock2).toBeInstanceOf(Lease)
-	await lock2.release(AbortSignal.timeout(5000))
+	await lock2.release(tc.signal)
 })
 
-test('second lock blocks until first is released', async () => {
+test('second lock blocks until first is released', async (tc) => {
 	let name = mtxName()
 	let mutexA = sessionA.mutex(name)
 
-	// Session A acquires the mutex
-	let lockA = await mutexA.lock(AbortSignal.timeout(5000))
+	let lockA = await mutexA.lock(tc.signal)
 
-	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await using sessionB = await client.createSession(testNodePath, {}, tc.signal)
 
 	let mutexB = sessionB.mutex(name)
 
 	// Session B starts waiting — pass an explicit waitTimeout so the server
 	// keeps the request open instead of returning a miss immediately.
-	let acquireB = mutexB.lock(AbortSignal.timeout(10000))
+	let acquireB = mutexB.lock(tc.signal)
 
 	// Release A's lock so B can proceed
-	await lockA.release(AbortSignal.timeout(5000))
+	await lockA.release(tc.signal)
 
 	await using lockB = await acquireB
 
@@ -94,36 +93,35 @@ test('second lock blocks until first is released', async () => {
 	expect(lockB.signal.aborted).toBe(false)
 })
 
-test('tryLock succeeds when mutex is free', async () => {
+test('tryLock succeeds when mutex is free', async (tc) => {
 	let mutex = sessionA.mutex(mtxName())
 
-	let lock = await mutex.tryLock(AbortSignal.timeout(5000))
+	let lock = await mutex.tryLock(tc.signal)
 
 	expect(lock).not.toBeNull()
 	expect(lock).toBeInstanceOf(Lease)
 
-	await lock!.release(AbortSignal.timeout(5000))
+	await lock!.release(tc.signal)
 })
 
-test('tryLock returns null when mutex is already locked', async () => {
+test('tryLock returns null when mutex is already locked', async (tc) => {
 	let name = mtxName()
 	let mutexA = sessionA.mutex(name)
 
-	// Session A holds the lock
-	let lockA = await mutexA.lock(AbortSignal.timeout(5000))
+	let lockA = await mutexA.lock(tc.signal)
 
-	await using sessionB = await client.createSession(testNodePath, {}, AbortSignal.timeout(5000))
+	await using sessionB = await client.createSession(testNodePath, {}, tc.signal)
 
 	let mutexB = sessionB.mutex(name)
 
-	let lock = await mutexB.tryLock(AbortSignal.timeout(5000))
+	let lock = await mutexB.tryLock(tc.signal)
 
 	expect(lock).toBeNull()
 
-	await lockA.release(AbortSignal.timeout(5000))
+	await lockA.release(tc.signal)
 })
 
-test('concurrent locks serialize execution', async () => {
+test('concurrent locks serialize execution', async (tc) => {
 	// N sessions race for the same mutex.  Each one increments a shared counter
 	// stored in a semaphore's data field while it holds the lock.  If the mutex
 	// provides true exclusion the final value equals N and no increment is lost.
@@ -133,12 +131,12 @@ test('concurrent locks serialize execution', async () => {
 
 	// Create a persistent semaphore to hold the counter in its data field
 	let counterSem = sessionA.semaphore(COUNTER_SEM)
-	await counterSem.create({ limit: 1, data: encodeCounter(0) }, AbortSignal.timeout(5000))
+	await counterSem.create({ limit: 1, data: encodeCounter(0) }, tc.signal)
 
 	let sessions: CoordinationSession[] = []
 	for (let i = 0; i < N; i++) {
 		// oxlint-disable-next-line no-await-in-loop
-		sessions.push(await client.createSession(testNodePath, {}, AbortSignal.timeout(5000)))
+		sessions.push(await client.createSession(testNodePath, {}, tc.signal))
 	}
 
 	try {
@@ -148,17 +146,17 @@ test('concurrent locks serialize execution', async () => {
 				let mutex = session.mutex(name)
 				let sem = session.semaphore(COUNTER_SEM)
 
-				await using _lock = await mutex.lock(AbortSignal.timeout(15000))
+				await using _lock = await mutex.lock(tc.signal)
 
 				// Read → increment → write while holding the exclusive lock
-				let description = await sem.describe({}, AbortSignal.timeout(5000))
+				let description = await sem.describe({}, tc.signal)
 				let current = decodeCounter(description.data)
-				await sem.update(encodeCounter(current + 1), AbortSignal.timeout(5000))
+				await sem.update(encodeCounter(current + 1), tc.signal)
 			})
 		)
 
 		// All N increments must have gone through without any being lost
-		let final = await counterSem.describe({}, AbortSignal.timeout(5000))
+		let final = await counterSem.describe({}, tc.signal)
 		expect(decodeCounter(final.data)).toBe(N)
 	} finally {
 		// Sessions are created outside the using scope because Promise.all needs
