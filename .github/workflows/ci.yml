@@ -77,8 +77,6 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm run build
-
       - name: Test
         if: matrix.node-version != 24
         run: npm run test
