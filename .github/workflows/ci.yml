@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['latest', 'lts/*', 'lts/-1', 'lts/-2']
+        node-version: [20, 22, 24, 26]
 
     services:
       ydb:
@@ -78,15 +78,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Test
-        if: matrix.node-version != 'lts/*'
+        if: matrix.node-version != 24
         run: npm run test
 
       - name: Test with coverage
-        if: matrix.node-version == 'lts/*'
+        if: matrix.node-version == 24
         run: npm run coverage -- --reporter=default --reporter=html --reporter=github-actions
 
       - name: Upload coverage to Codecov
-        if: matrix.node-version == 'lts/*'
+        if: matrix.node-version == 24
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -94,7 +94,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Publish coverage report to Object Storage
-        if: matrix.node-version == 'lts/*'
+        if: matrix.node-version == 24
         continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
