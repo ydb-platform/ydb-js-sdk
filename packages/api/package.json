@@ -34,22 +34,70 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		"./auth": "./dist/auth.js",
-		"./cms": "./dist/cms.js",
-		"./coordination": "./dist/coordination.js",
-		"./discovery": "./dist/discovery.js",
-		"./export": "./dist/export.js",
-		"./federation-discovery": "./dist/federation_discovery.js",
-		"./import": "./dist/import.js",
-		"./monitoring": "./dist/monitoring.js",
-		"./operation": "./dist/operation.js",
-		"./query": "./dist/query.js",
-		"./rate-limiter": "./dist/rate_limiter.js",
-		"./scheme": "./dist/scheme.js",
-		"./scripting": "./dist/scripting.js",
-		"./table": "./dist/table.js",
-		"./topic": "./dist/topic.js",
-		"./value": "./dist/value.js"
+		"./auth": {
+			"development": "./src/auth.ts",
+			"default": "./dist/auth.js"
+		},
+		"./cms": {
+			"development": "./src/cms.ts",
+			"default": "./dist/cms.js"
+		},
+		"./coordination": {
+			"development": "./src/coordination.ts",
+			"default": "./dist/coordination.js"
+		},
+		"./discovery": {
+			"development": "./src/discovery.ts",
+			"default": "./dist/discovery.js"
+		},
+		"./export": {
+			"development": "./src/export.ts",
+			"default": "./dist/export.js"
+		},
+		"./federation-discovery": {
+			"development": "./src/federation_discovery.ts",
+			"default": "./dist/federation_discovery.js"
+		},
+		"./import": {
+			"development": "./src/import.ts",
+			"default": "./dist/import.js"
+		},
+		"./monitoring": {
+			"development": "./src/monitoring.ts",
+			"default": "./dist/monitoring.js"
+		},
+		"./operation": {
+			"development": "./src/operation.ts",
+			"default": "./dist/operation.js"
+		},
+		"./query": {
+			"development": "./src/query.ts",
+			"default": "./dist/query.js"
+		},
+		"./rate-limiter": {
+			"development": "./src/rate_limiter.ts",
+			"default": "./dist/rate_limiter.js"
+		},
+		"./scheme": {
+			"development": "./src/scheme.ts",
+			"default": "./dist/scheme.js"
+		},
+		"./scripting": {
+			"development": "./src/scripting.ts",
+			"default": "./dist/scripting.js"
+		},
+		"./table": {
+			"development": "./src/table.ts",
+			"default": "./dist/table.js"
+		},
+		"./topic": {
+			"development": "./src/topic.ts",
+			"default": "./dist/topic.js"
+		},
+		"./value": {
+			"development": "./src/value.ts",
+			"default": "./dist/value.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

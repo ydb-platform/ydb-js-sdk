@@ -34,12 +34,30 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./codec": "./dist/codec.js",
-		"./reader": "./dist/reader/index.js",
-		"./writer": "./dist/writer/index.js",
-		"./writer2": "./dist/writer2/index.js",
-		"./message": "./dist/message.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./codec": {
+			"development": "./src/codec.ts",
+			"default": "./dist/codec.js"
+		},
+		"./reader": {
+			"development": "./src/reader/index.ts",
+			"default": "./dist/reader/index.js"
+		},
+		"./writer": {
+			"development": "./src/writer/index.ts",
+			"default": "./dist/writer/index.js"
+		},
+		"./writer2": {
+			"development": "./src/writer2/index.ts",
+			"default": "./dist/writer2/index.js"
+		},
+		"./message": {
+			"development": "./src/message.ts",
+			"default": "./dist/message.js"
+		}
 	},
 	"publishConfig": {
 		"access": "public",

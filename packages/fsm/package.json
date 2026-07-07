@@ -28,8 +28,14 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"exports": {
-		".": "./dist/index.js",
-		"./queue": "./dist/queue.js"
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		},
+		"./queue": {
+			"development": "./src/queue.ts",
+			"default": "./dist/queue.js"
+		}
 	},
 	"engines": {
 		"node": ">=20.19.0",
