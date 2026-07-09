@@ -46,6 +46,11 @@ class Runtime<
 	#closing = false
 	#closed = false
 	#destroyed = false
+	// Set when the machine is torn down by an internal error (a transition, effect,
+	// or ingest source threw) rather than a graceful close/destroy. Makes the output
+	// iterator throw the stop reason so consumers observe the failure instead of a
+	// silent end (which would strand a facade waiting on a terminal signal).
+	#faulted = false
 
 	#closeTask: Promise<void> | null = null
 	#destroyTask: Promise<void> | null = null
@@ -227,7 +232,16 @@ class Runtime<
 	}
 
 	[Symbol.asyncIterator](): AsyncIterator<O> {
-		return this.#outputQueue[Symbol.asyncIterator]()
+		return this.#iterateOutputs()
+	}
+
+	// Delegate to the output queue, then — if an internal error tore the machine
+	// down — rethrow the stop reason to the consumer instead of ending silently.
+	async *#iterateOutputs(): AsyncIterator<O> {
+		yield* this.#outputQueue
+		if (this.#faulted) {
+			throw this.#stopReason
+		}
 	}
 
 	// Graceful async disposal first, then hard finalization.
@@ -323,6 +337,7 @@ class Runtime<
 			return
 		}
 
+		this.#faulted = true
 		await this.destroy(error)
 	}
 }

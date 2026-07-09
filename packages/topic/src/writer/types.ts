@@ -33,16 +33,20 @@ export type TopicWriterOptions = {
 	tx?: TX
 	// Compression codec. Defaults to RAW.
 	codec?: CompressionCodec
+
 	// Pin writes to a single partition (mutually exclusive with messageGroupId).
 	partitionId?: bigint
 	// Route writes by message group (mutually exclusive with partitionId).
 	messageGroupId?: string
-	// Flush the buffer once it holds at least this many bytes. Default 256MiB.
+
+	// Hard cap on the un-acknowledged bytes held in memory; write() throws when a
+	// message would exceed it. Default 256MiB.
 	maxBufferBytes?: bigint
 	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number
 	// Background flush cadence in ms — bounds how long a small batch waits. Default 1000.
 	flushIntervalMs?: number
+
 	// How often to refresh the auth token on the stream. Default 60s.
 	updateTokenIntervalMs?: number
 	// Force-close deadline for graceful close() before pending messages are dropped.
@@ -51,12 +55,7 @@ export type TopicWriterOptions = {
 	// Terminal reconnect window: if no successful reconnect happens within this
 	// window the writer fails terminally instead of retrying forever. Default 60s.
 	recoveryWindowMs?: number
+
 	// Called for every acknowledged message. Errors thrown here are swallowed.
 	onAck?: (seqNo: bigint, status: AckStatus) => void
 }
-
-// The public writer is the `TopicWriter` class exported from ./writer.js.
-// write() is synchronous and fire-and-forget: it buffers the message and
-// returns. Invalid input (bad seqNo, over-size payload, closed writer) throws
-// synchronously. In auto mode the final seqNo is assigned only when the message
-// reaches the wire, so it is not returned — use flush() for the last acked seqNo.

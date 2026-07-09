@@ -19,9 +19,7 @@ import {
 
 let limits: WriterLimits = {
 	maxInflightCount: 1000,
-	maxBufferBytes: 256n * 1024n * 1024n,
 	maxBatchBytes: 48n * 1024n * 1024n,
-	maxPayloadBytes: 48n * 1024n * 1024n,
 }
 
 let ctxWith = function ctxWith(overrides: Partial<WriterCtx> = {}): WriterCtx {
@@ -114,7 +112,6 @@ test('records manual mode from a seqNo-carrying write', () => {
 	drive('idle', { type: 'writer.write', message: msg(1, 5n) }, ctx)
 
 	expect(ctx.seqNoMode).toBe('manual')
-	expect(ctx.highestUserSeqNo).toBe(5n)
 	expect(ctx.lastSeqNo).toBe(5n)
 })
 
@@ -137,7 +134,7 @@ test('recovers the server high-water mark on first init in auto mode', () => {
 })
 
 test('does not overwrite user seqNo with server value in manual mode', () => {
-	let ctx = ctxWith({ seqNoMode: 'manual', lastSeqNo: 5n, highestUserSeqNo: 5n })
+	let ctx = ctxWith({ seqNoMode: 'manual', lastSeqNo: 5n })
 	let d = drive(
 		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 100n },
@@ -224,6 +221,33 @@ test('moves acknowledged messages out of the inflight window', () => {
 	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
 		'written'
 	)
+	// Two 1-byte messages left the window — reported so the facade can free budget.
+	expect(acks && acks.type === 'writer.acknowledgments' && acks.freedBytes).toBe(2n)
+})
+
+test('acknowledges only the contiguous prefix on a non-prefix ack set', () => {
+	// Defensive: if the head is unacked, tail acks must not leave the window or fire
+	// callbacks early — nothing is emitted until the head is acked.
+	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
+	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
+	drive('ready', { type: 'writer.write', message: msg(3) }, ctx)
+	drive('ready', { type: 'writer.pump' }, ctx)
+
+	let d = drive(
+		'ready',
+		{
+			type: 'writer.stream.write_response',
+			acks: [
+				{ seqNo: 2n, status: 'written' },
+				{ seqNo: 3n, status: 'written' },
+			],
+		},
+		ctx
+	)
+
+	expect(d.ctx.inflightLength).toBe(3)
+	expect(d.emitted.find((o) => o.type === 'writer.acknowledgments')).toBeUndefined()
 })
 
 // ── flush ────────────────────────────────────────────────────────────────────────
@@ -292,6 +316,58 @@ test('reconnects without getLastSeqNo after backoff elapses', () => {
 	expect(d.ctx.attempts).toBe(1)
 })
 
+test('re-requests last_seq_no on retry when it was never recovered', () => {
+	// If the first connect never produced an init, a retry must still request
+	// last_seq_no — otherwise auto seqNos resume at 0 and collide with persisted ones.
+	let ctx = ctxWith({ hasEverConnected: false, retryScheduled: true })
+	let d = drive('reconnecting', { type: 'writer.timer.retry_backoff' }, ctx)
+
+	expect(d.state).toBe('connecting')
+	let connect = d.effects.find((e) => e.type === 'writer.effect.transport.connect')
+	expect(connect).toEqual({ type: 'writer.effect.transport.connect', getLastSeqNo: true })
+})
+
+test('recovers a late init that arrives in the reconnecting state', () => {
+	// start_timeout can fire just before a slow init is dequeued, leaving the writer
+	// in reconnecting with the stream still open — the init must still be honored.
+	let ctx = ctxWith({ retryScheduled: true })
+	let d = drive(
+		'reconnecting',
+		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 42n },
+		ctx
+	)
+
+	expect(d.state).toBe('ready')
+	expect(d.ctx.lastSeqNo).toBe(42n)
+	expect(d.ctx.hasEverConnected).toBe(true)
+})
+
+test('resolves a pending flush when a reconnect init drains the window via dedup', () => {
+	// Real reconnect path: YDB reports the persisted last_seq_no on init even when
+	// get_last_seq_no is false (see tests/writer-protocol.test.ts), so a reconnect
+	// whose init covers all inflight messages drains the window via dedup with NO
+	// write_response. A pending flush must be resolved from the init path — else it
+	// hangs forever, stalling any tx commit awaiting it.
+	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
+	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
+	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.flush' }, ctx)
+	expect(ctx.flushRequested).toBe(true)
+
+	let d = drive(
+		'connecting',
+		{ type: 'writer.stream.init_response', sessionId: 's2', lastSeqNo: 2n },
+		ctx
+	)
+
+	expect(d.emitted.find((o) => o.type === 'writer.flushed')).toEqual({
+		type: 'writer.flushed',
+		lastSeqNo: 2n,
+	})
+	expect(d.ctx.flushRequested).toBe(false)
+})
+
 test('fails terminally when the recovery window expires', () => {
 	let ctx = ctxWith({ hasEverConnected: true })
 	let d = drive('reconnecting', { type: 'writer.timer.recovery_window' }, ctx)
@@ -330,6 +406,10 @@ test('resends unacked inflight and drops server-acked on reconnect init', () => 
 			recovered.type === 'writer.acknowledgments' &&
 			recovered.acknowledgments.get(1n)
 	).toBe('skipped')
+	// The one server-acked message (1 byte) is reported as freed on recovery.
+	expect(recovered && recovered.type === 'writer.acknowledgments' && recovered.freedBytes).toBe(
+		1n
+	)
 })
 
 // ── close / destroy ──────────────────────────────────────────────────────────────
@@ -418,7 +498,6 @@ test('reclaims the message array as acknowledgments accumulate', () => {
 	}
 
 	expect(ctx.messages.length).toBeLessThan(16)
-	expect(ctx.garbageSize).toBe(0n)
 })
 
 test('releases the message buffer on destroy', () => {
@@ -433,8 +512,6 @@ test('releases the message buffer on destroy', () => {
 	expect(d.ctx.messages).toHaveLength(0)
 	expect(d.ctx.bufferLength).toBe(0)
 	expect(d.ctx.inflightLength).toBe(0)
-	expect(d.ctx.bufferSize).toBe(0n)
-	expect(d.ctx.inflightSize).toBe(0n)
 })
 
 test('releases the message buffer on a terminal error', () => {

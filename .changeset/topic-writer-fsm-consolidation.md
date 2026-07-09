@@ -16,5 +16,6 @@ Breaking changes:
 Fixes and additions:
 
 - Non‑RAW codecs (GZIP/ZSTD) are now actually applied to the payload (previously the codec was declared on the wire but the bytes were sent uncompressed).
+- `maxBufferBytes` is now enforced as a fail‑fast cap: `write()` throws synchronously when a message would push the un‑acknowledged buffer past the limit (default 256 MB), bounding writer memory.
 - New options: `recoveryWindowMs`, `gracefulShutdownTimeoutMs`, `partitionId` / `messageGroupId` (mutually exclusive), and `producer` is auto‑generated when omitted.
 - Structured lifecycle events on `node:diagnostics_channel` under `ydb:topic.writer.*`.

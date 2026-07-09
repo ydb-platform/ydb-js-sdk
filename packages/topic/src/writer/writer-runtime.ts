@@ -13,7 +13,6 @@ import type { TransportOutput } from './transport-state.js'
 import type { TopicWriterOptions } from './types.js'
 import {
 	MAX_BATCH_BYTES,
-	MAX_PAYLOAD_BYTES,
 	type TimerName,
 	type WriterCtx,
 	type WriterEffect,
@@ -25,20 +24,25 @@ import {
 } from './writer-state.js'
 
 // Watchdog for a connect that never produces an init response.
-const DEFAULT_START_TIMEOUT_MS = 30_000
-const BACKOFF_BASE_MS = 50
-const BACKOFF_MAX_MS = 30_000
+let DEFAULT_START_TIMEOUT_MS = 30_000
+let BACKOFF_BASE_MS = 50
+let BACKOFF_MAX_MS = 30_000
 
 // I/O handles and config — visible to effect handlers only, never to the transition.
 type WriterEnv = {
+	// I/O
 	transport: WriterTransport
 	codec: number
 	txIdentity?: { id: string; session: string }
+
+	// timer durations (ms)
 	startTimeoutMs: number
 	recoveryWindowMs: number
 	flushIntervalMs: number
 	updateTokenIntervalMs: number
 	gracefulShutdownTimeoutMs: number
+
+	// lifecycle
 	ac: AbortController
 	closedDeferred: PromiseWithResolvers<void>
 	isFinalized: boolean
@@ -49,9 +53,6 @@ type FullCtx = WriterCtx & WriterEnv
 
 export type WriterRuntime = {
 	machine: MachineRuntime<WriterState, WriterCtx, WriterEvent, WriterOutput>
-	transport: WriterTransport
-	signal: AbortSignal
-	closed: Promise<void>
 }
 
 let timerEvent = function timerEvent(which: TimerName): WriterEvent {
@@ -102,10 +103,14 @@ let clearTimerByName = function clearTimerByName(ctx: FullCtx, which: TimerName)
 	}
 }
 
+// `dbg` carries low-frequency lifecycle (connect, start); the per-event / per-batch
+// trace goes to `evdbg` so enabling `ydb:topic:writer` doesn't flood with the
+// per-message send/transition noise — opt into it with `ydb:topic:writer:event`.
 let dbg = loggers.topic.extend('writer')
+let evdbg = dbg.extend('event')
 
 let mapTransportOutput = function mapTransportOutput(output: TransportOutput): WriterEvent | null {
-	dbg.log('transport → writer: %s', output.type)
+	evdbg.log('transport → writer: %s', output.type)
 	switch (output.type) {
 		case 'transport.stream.init_response':
 			return {
@@ -128,11 +133,11 @@ let mapTransportOutput = function mapTransportOutput(output: TransportOutput): W
 	}
 }
 
-export function createWriterRuntime(
-	driver: Driver,
-	options: TopicWriterOptions,
-	outerSignal?: AbortSignal
-): WriterRuntime {
+// Builds the writer FSM and binds its effects to real I/O: transport connect/send,
+// timers with equal-jitter backoff, and transport-output → writer-event mapping.
+// The returned machine is the only handle the facade drives; every side effect
+// (sockets, timers, token refresh) fires from the effect handlers wired here.
+export function createWriterRuntime(driver: Driver, options: TopicWriterOptions): WriterRuntime {
 	let initParams: InitParams = {
 		path: options.topic,
 		producerId: options.producer!,
@@ -140,20 +145,24 @@ export function createWriterRuntime(
 		...(options.messageGroupId !== undefined && { messageGroupId: options.messageGroupId }),
 	}
 
-	let updateTokenIntervalMs = options.updateTokenIntervalMs ?? 60_000
-	let transport = new WriterTransport(driver, initParams, updateTokenIntervalMs)
+	let transport = new WriterTransport(driver, initParams)
 
 	let env: WriterEnv = {
+		// I/O
 		transport,
 		codec: options.codec?.codec ?? Codec.RAW,
 		...(options.tx && {
 			txIdentity: { id: options.tx.transactionId, session: options.tx.sessionId },
 		}),
+
+		// timer durations (ms)
 		startTimeoutMs: DEFAULT_START_TIMEOUT_MS,
 		recoveryWindowMs: options.recoveryWindowMs ?? 60_000,
 		flushIntervalMs: options.flushIntervalMs ?? 1000,
-		updateTokenIntervalMs,
+		updateTokenIntervalMs: options.updateTokenIntervalMs ?? 60_000,
 		gracefulShutdownTimeoutMs: options.gracefulShutdownTimeoutMs ?? 30_000,
+
+		// lifecycle
 		ac: new AbortController(),
 		closedDeferred: Promise.withResolvers<void>(),
 		isFinalized: false,
@@ -162,9 +171,7 @@ export function createWriterRuntime(
 
 	let ctx = createWriterCtx({
 		maxInflightCount: options.maxInflightCount ?? 1000,
-		maxBufferBytes: options.maxBufferBytes ?? 1024n * 1024n * 256n,
 		maxBatchBytes: MAX_BATCH_BYTES,
-		maxPayloadBytes: MAX_PAYLOAD_BYTES,
 	})
 
 	let machine = createMachineRuntime<
@@ -182,8 +189,8 @@ export function createWriterRuntime(
 		// putting side effects in the transition itself.
 		transition: (fullCtx, event, runtime) => {
 			let result = writerTransition(fullCtx, event, runtime)
-			if (dbg.enabled) {
-				dbg.log('%s: %s → %s', event.type, runtime.state, result?.state ?? runtime.state)
+			if (evdbg.enabled) {
+				evdbg.log('%s: %s → %s', event.type, runtime.state, result?.state ?? runtime.state)
 			}
 			return result
 		},
@@ -194,7 +201,7 @@ export function createWriterRuntime(
 			},
 
 			'writer.effect.transport.send_batch': (fullCtx, effect) => {
-				dbg.log(
+				evdbg.log(
 					'send_batch %d messages (seqNo %s..%s)',
 					effect.messages.length,
 					effect.messages[0]?.seqNo,
@@ -273,28 +280,11 @@ export function createWriterRuntime(
 	// Route transport lifecycle events into the writer FSM.
 	machine.ingest(transport.events, mapTransportOutput)
 
-	if (outerSignal) {
-		if (outerSignal.aborted) {
-			machine.dispatch({ type: 'writer.destroy', reason: outerSignal.reason })
-		} else {
-			outerSignal.addEventListener(
-				'abort',
-				() => machine.dispatch({ type: 'writer.destroy', reason: outerSignal.reason }),
-				{ once: true }
-			)
-		}
-	}
-
 	loggers.topic
 		.extend('writer')
 		.log('starting writer on %s (producer=%s)', options.topic, options.producer)
 
 	machine.dispatch({ type: 'writer.start' })
 
-	return {
-		machine,
-		transport,
-		signal: env.ac.signal,
-		closed: env.closedDeferred.promise,
-	}
+	return { machine }
 }

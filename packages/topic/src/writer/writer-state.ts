@@ -9,9 +9,15 @@ import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
 
 import type { AckStatus, WriteAck } from './types.js'
 
+// The pure half of the writer: states, context, and a synchronous transition
+// with no I/O. Everything here mutates `ctx` in place and returns the next
+// state + a list of effects for the runtime to execute — see writer-runtime.ts
+// for the I/O side. The buffer is a sliding window (see WriterCtx) and byte
+// budgeting lives in the facade, so the transition only counts messages.
+
 // Hard service limits (bytes).
-export const MAX_BATCH_BYTES = 48n * 1024n * 1024n // one WriteRequest frame stays under 48MiB
-export const MAX_PAYLOAD_BYTES = 48n * 1024n * 1024n // single message payload cap
+export let MAX_BATCH_BYTES = 48n * 1024n * 1024n // one WriteRequest frame stays under 48MiB
+export let MAX_PAYLOAD_BYTES = 48n * 1024n * 1024n // single message payload cap
 
 // ── State / context ─────────────────────────────────────────────────────────────
 
@@ -41,39 +47,35 @@ export type BufferedMessage = {
 
 export type WriterLimits = {
 	maxInflightCount: number
-	maxBufferBytes: bigint
 	maxBatchBytes: bigint
-	maxPayloadBytes: bigint
 }
 
 // Pure logical context — mutated synchronously inside the transition only.
 // The single message array is a sliding window: [garbage | inflight | buffer].
-//   garbage   = [0, inflightStart)
-//   inflight  = [inflightStart, bufferStart)   (sent, awaiting ack)
-//   buffer    = [bufferStart, messages.length) (not yet sent)
+//   garbage   = [0, inflightStart)              (acked, awaiting compaction)
+//   inflight  = [inflightStart, bufferStart)    (sent, awaiting ack)
+//   buffer    = [bufferStart, messages.length)  (not yet sent)
 export type WriterCtx = {
+	// seqNo bookkeeping
 	seqNoMode: 'auto' | 'manual' | null
 	lastSeqNo: bigint
-	highestUserSeqNo: bigint
 	hasEverConnected: boolean
 	sessionId: string
 
+	// reconnect bookkeeping
 	attempts: number
 	lastError: unknown
 	retryScheduled: boolean
-	recoveryScheduled: boolean
 	startTimeoutScheduled: boolean
 
 	flushRequested: boolean
 
+	// sliding-window buffer (see the diagram above)
 	messages: BufferedMessage[]
 	bufferStart: number
 	bufferLength: number
-	bufferSize: bigint
 	inflightStart: number
 	inflightLength: number
-	inflightSize: bigint
-	garbageSize: bigint
 
 	limits: WriterLimits
 }
@@ -127,7 +129,13 @@ export type WriterEffect =
 
 export type WriterOutput =
 	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint; nextSeqNo: bigint }
-	| { type: 'writer.acknowledgments'; acknowledgments: Map<bigint, AckStatus> }
+	// `freedBytes` = compressed bytes that left the window with this ack batch, so
+	// the facade can decrement its byte budget without re-tracking message sizes.
+	| {
+			type: 'writer.acknowledgments'
+			acknowledgments: Map<bigint, AckStatus>
+			freedBytes: bigint
+	  }
 	| { type: 'writer.flushed'; lastSeqNo: bigint }
 	| { type: 'writer.reconnecting'; attempt: number; error?: unknown }
 	| { type: 'writer.error'; error: unknown }
@@ -141,14 +149,12 @@ export let createWriterCtx = function createWriterCtx(limits: WriterLimits): Wri
 	return {
 		seqNoMode: null,
 		lastSeqNo: 0n,
-		highestUserSeqNo: 0n,
 		hasEverConnected: false,
 		sessionId: '',
 
 		attempts: 0,
 		lastError: undefined,
 		retryScheduled: false,
-		recoveryScheduled: false,
 		startTimeoutScheduled: false,
 
 		flushRequested: false,
@@ -156,11 +162,8 @@ export let createWriterCtx = function createWriterCtx(limits: WriterLimits): Wri
 		messages: [],
 		bufferStart: 0,
 		bufferLength: 0,
-		bufferSize: 0n,
 		inflightStart: 0,
 		inflightLength: 0,
-		inflightSize: 0n,
-		garbageSize: 0n,
 
 		limits,
 	}
@@ -197,16 +200,29 @@ let allDrained = function allDrained(ctx: WriterCtx): boolean {
 	return ctx.bufferLength === 0 && ctx.inflightLength === 0
 }
 
+// Resolve a pending flush the moment the window is empty. Every path that can
+// drain the buffer (a write_response ack, or a reconnect whose init dedups all
+// in-flight messages) must call this — otherwise a flush that drains via the
+// dedup path never emits writer.flushed and the caller hangs forever.
+let resolveFlushIfDrained = function resolveFlushIfDrained(
+	ctx: WriterCtx,
+	runtime: WriterRuntime
+): void {
+	if (ctx.flushRequested && allDrained(ctx)) {
+		ctx.flushRequested = false
+		runtime.emit({ type: 'writer.flushed', lastSeqNo: ctx.lastSeqNo })
+	}
+}
+
 // Record a flush request. Honored in every live state — a flush issued while the
 // writer is still connecting must resolve once messages drain after init, not be
 // dropped. Resolves immediately when there is nothing pending.
 let requestFlush = function requestFlush(ctx: WriterCtx, runtime: WriterRuntime): void {
+	ctx.flushRequested = true
 	if (allDrained(ctx)) {
-		ctx.flushRequested = false
-		runtime.emit({ type: 'writer.flushed', lastSeqNo: ctx.lastSeqNo })
+		resolveFlushIfDrained(ctx, runtime)
 		return
 	}
-	ctx.flushRequested = true
 	runtime.dispatch({ type: 'writer.pump' })
 }
 
@@ -260,15 +276,21 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 	let count = batch.length
 	ctx.bufferStart += count
 	ctx.bufferLength -= count
-	ctx.bufferSize -= batchBytes
 	ctx.inflightLength += count
-	ctx.inflightSize += batchBytes
 
 	return batch
 }
 
-// Apply a server init: recover the seqNo high-water mark once, then drop any
-// server-acknowledged in-flight messages and rewind the rest for resend.
+// Apply a server init: recover the seqNo high-water mark once (auto numbering),
+// then drop any server-persisted in-flight messages and rewind the rest for resend.
+//
+// The dedup runs on EVERY init, including reconnects: YDB reports last_seq_no even
+// when get_last_seq_no is false (proven in tests/writer-protocol.test.ts), so we
+// skip resending messages the server already has — like the Java SDK. We only
+// request get_last_seq_no on the first connect (like Go) to avoid its cost. If a
+// reconnect ever reported 0, dropAckedAndRewind drops nothing and we resend
+// everything; the server dedups by producerId+seqNo — correct either way, just
+// less efficient. So this is an optimization, not a correctness dependency.
 let applyInit = function applyInit(
 	ctx: WriterCtx,
 	sessionId: string,
@@ -286,9 +308,9 @@ let applyInit = function applyInit(
 		ctx.hasEverConnected = true
 	}
 
-	let recovered = dropAckedAndRewind(ctx, serverLastSeqNo)
+	let { recovered, freedBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
 	if (recovered.size > 0) {
-		runtime.emit({ type: 'writer.acknowledgments', acknowledgments: recovered })
+		runtime.emit({ type: 'writer.acknowledgments', acknowledgments: recovered, freedBytes })
 	}
 
 	runtime.emit({
@@ -306,19 +328,17 @@ let applyInit = function applyInit(
 let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx: WriterCtx,
 	serverLastSeqNo: bigint
-): Map<bigint, AckStatus> {
+): { recovered: Map<bigint, AckStatus>; freedBytes: bigint } {
 	let recovered = new Map<bigint, AckStatus>()
 	let inflightEnd = ctx.bufferStart
-	let ackedBytes = 0n
-	let resendBytes = 0n
+	let freedBytes = 0n
 	let firstUnacked = inflightEnd
 
 	for (let i = ctx.inflightStart; i < inflightEnd; i++) {
 		let message = ctx.messages[i]!
-		let size = BigInt(message.data.length)
 
 		if (message.seqNo !== 0n && message.seqNo <= serverLastSeqNo) {
-			ackedBytes += size
+			freedBytes += BigInt(message.data.length)
 			recovered.set(message.seqNo, 'skipped')
 			continue
 		}
@@ -326,47 +346,49 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 		if (firstUnacked === inflightEnd) {
 			firstUnacked = i
 		}
-		resendBytes += size
 	}
 
-	ctx.garbageSize += ackedBytes
 	ctx.bufferStart = firstUnacked
 	ctx.bufferLength = ctx.messages.length - firstUnacked
-	ctx.bufferSize += resendBytes
 	ctx.inflightStart = firstUnacked
 	ctx.inflightLength = 0
-	ctx.inflightSize = 0n
 
-	return recovered
+	return { recovered, freedBytes }
 }
 
 // Move server-acknowledged messages out of the in-flight window into garbage.
-// Acks are matched by seqNo (robust to any arrival order); the server guarantees
-// in-order delivery per session, so acked messages form a prefix of in-flight.
-let acknowledge = function acknowledge(ctx: WriterCtx, acks: WriteAck[]): Map<bigint, AckStatus> {
-	let byStatus = new Map<bigint, AckStatus>()
-	let acked = new Set<bigint>()
+// The server acks the in-flight prefix in order, so we walk from the head and
+// stop at the first unacked message. We report only the messages actually removed
+// from the window, so the emitted acks and the freed-byte total can never drift
+// from the window even if a stream ever delivered a non-prefix ack set.
+let acknowledge = function acknowledge(
+	ctx: WriterCtx,
+	acks: WriteAck[]
+): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint } {
+	let status = new Map<bigint, AckStatus>()
 	for (let ack of acks) {
-		byStatus.set(ack.seqNo, ack.status)
-		acked.add(ack.seqNo)
+		status.set(ack.seqNo, ack.status)
 	}
 
+	let acknowledgments = new Map<bigint, AckStatus>()
+	let freedBytes = 0n
 	let inflightEnd = ctx.bufferStart
 	while (ctx.inflightStart < inflightEnd) {
 		let message = ctx.messages[ctx.inflightStart]!
-		if (!acked.has(message.seqNo)) {
+		let messageStatus = status.get(message.seqNo)
+		if (messageStatus === undefined) {
 			break
 		}
 
-		ctx.inflightSize -= BigInt(message.data.length)
-		ctx.garbageSize += BigInt(message.data.length)
+		acknowledgments.set(message.seqNo, messageStatus)
+		freedBytes += BigInt(message.data.length)
 		ctx.inflightStart += 1
 		ctx.inflightLength -= 1
 	}
 
 	compactGarbage(ctx)
 
-	return byStatus
+	return { acknowledgments, freedBytes }
 }
 
 // Reclaim the garbage prefix by splicing it out and rebasing the window pointers.
@@ -379,13 +401,11 @@ let compactGarbage = function compactGarbage(ctx: WriterCtx): void {
 	ctx.messages.splice(0, garbageLength)
 	ctx.inflightStart = 0
 	ctx.bufferStart -= garbageLength
-	ctx.garbageSize = 0n
 }
 
 // Reset all reconnect scheduling flags.
 let clearScheduling = function clearScheduling(ctx: WriterCtx): void {
 	ctx.retryScheduled = false
-	ctx.recoveryScheduled = false
 	ctx.startTimeoutScheduled = false
 }
 
@@ -432,11 +452,8 @@ let releaseBuffer = function releaseBuffer(ctx: WriterCtx): void {
 	ctx.messages = []
 	ctx.bufferStart = 0
 	ctx.bufferLength = 0
-	ctx.bufferSize = 0n
 	ctx.inflightStart = 0
 	ctx.inflightLength = 0
-	ctx.inflightSize = 0n
-	ctx.garbageSize = 0n
 }
 
 // Append a message to the buffer. Total by design — seqNo-mode validation
@@ -451,18 +468,13 @@ let enqueue = function enqueue(ctx: WriterCtx, message: BufferedMessage): void {
 		ctx.seqNoMode = providedSeqNo ? 'manual' : 'auto'
 	}
 
-	if (providedSeqNo) {
-		if (message.seqNo > ctx.highestUserSeqNo) {
-			ctx.highestUserSeqNo = message.seqNo
-		}
-		if (message.seqNo > ctx.lastSeqNo) {
-			ctx.lastSeqNo = message.seqNo
-		}
+	// Manual mode: lastSeqNo tracks the user's high-water mark for resend/recovery.
+	if (providedSeqNo && message.seqNo > ctx.lastSeqNo) {
+		ctx.lastSeqNo = message.seqNo
 	}
 
 	ctx.messages.push(message)
 	ctx.bufferLength += 1
-	ctx.bufferSize += BigInt(message.data.length)
 }
 
 // ── Transition ──────────────────────────────────────────────────────────────────
@@ -516,23 +528,7 @@ export let writerTransition = function writerTransition(
 			}
 
 			if (event.type === 'writer.stream.init_response') {
-				ctx.attempts = 0
-				ctx.startTimeoutScheduled = false
-				clearScheduling(ctx)
-				applyInit(ctx, event.sessionId, event.lastSeqNo, runtime)
-
-				runtime.dispatch({ type: 'writer.pump' })
-
-				return {
-					state: 'ready',
-					effects: [
-						{ type: 'writer.effect.timer.clear', which: 'start_timeout' },
-						{ type: 'writer.effect.timer.clear', which: 'retry_backoff' },
-						{ type: 'writer.effect.timer.clear', which: 'recovery_window' },
-						{ type: 'writer.effect.timer.schedule', which: 'flush_tick' },
-						{ type: 'writer.effect.timer.schedule', which: 'update_token' },
-					],
-				}
+				return toReady(ctx, event, runtime)
 			}
 
 			if (
@@ -543,7 +539,7 @@ export let writerTransition = function writerTransition(
 				if (event.type === 'writer.stream.disconnected' && !isRetryableWriterError(error)) {
 					return terminate(ctx, 'errored', error, runtime)
 				}
-				return toReconnecting(ctx, runtime, error)
+				return toReconnecting(ctx, error, runtime)
 			}
 
 			// The recovery window is armed while reconnecting and can elapse during a
@@ -576,14 +572,11 @@ export let writerTransition = function writerTransition(
 			}
 
 			if (event.type === 'writer.stream.write_response') {
-				let byStatus = acknowledge(ctx, event.acks)
-				if (byStatus.size > 0) {
-					runtime.emit({ type: 'writer.acknowledgments', acknowledgments: byStatus })
+				let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+				if (acknowledgments.size > 0) {
+					runtime.emit({ type: 'writer.acknowledgments', acknowledgments, freedBytes })
 				}
-				if (ctx.flushRequested && allDrained(ctx)) {
-					ctx.flushRequested = false
-					runtime.emit({ type: 'writer.flushed', lastSeqNo: ctx.lastSeqNo })
-				}
+				resolveFlushIfDrained(ctx, runtime)
 				runtime.dispatch({ type: 'writer.pump' })
 				return
 			}
@@ -605,7 +598,7 @@ export let writerTransition = function writerTransition(
 				if (!isRetryableWriterError(event.error)) {
 					return terminate(ctx, 'errored', event.error, runtime)
 				}
-				return toReconnecting(ctx, runtime, event.error)
+				return toReconnecting(ctx, event.error, runtime)
 			}
 
 			if (event.type === 'writer.close') {
@@ -626,6 +619,13 @@ export let writerTransition = function writerTransition(
 				return
 			}
 
+			// A connect attempt whose init lands here (start_timeout fired just before
+			// the init was dequeued, so the stream is still open) is a live session —
+			// honor it rather than dropping it and forcing a wasted reconnect.
+			if (event.type === 'writer.stream.init_response') {
+				return toReady(ctx, event, runtime)
+			}
+
 			if (event.type === 'writer.timer.retry_backoff') {
 				ctx.retryScheduled = false
 				ctx.attempts += 1
@@ -633,8 +633,13 @@ export let writerTransition = function writerTransition(
 				return {
 					state: 'connecting',
 					effects: [
-						// Reconnects never re-request last_seq_no — it was recovered once already.
-						{ type: 'writer.effect.transport.connect', getLastSeqNo: false },
+						// Re-request last_seq_no only if it was never recovered — otherwise a
+						// retry that races the very first connect would resume at seqNo 0 and
+						// silently collide with already-persisted messages.
+						{
+							type: 'writer.effect.transport.connect',
+							getLastSeqNo: !ctx.hasEverConnected,
+						},
 						{ type: 'writer.effect.timer.schedule', which: 'start_timeout' },
 					],
 				}
@@ -693,7 +698,10 @@ export let writerTransition = function writerTransition(
 				ctx.startTimeoutScheduled = true
 				return {
 					effects: [
-						{ type: 'writer.effect.transport.connect', getLastSeqNo: false },
+						{
+							type: 'writer.effect.transport.connect',
+							getLastSeqNo: !ctx.hasEverConnected,
+						},
 						{ type: 'writer.effect.timer.schedule', which: 'start_timeout' },
 					],
 				}
@@ -769,13 +777,40 @@ let pump = function pump(
 	return { effects: [{ type: 'writer.effect.transport.send_batch', messages }] }
 }
 
+// Enter `ready` on a successful init — from `connecting`, or from `reconnecting`
+// when a slow init lands after start_timeout already moved us there. Recover the
+// seqNo state, resolve any pending flush the recovery just drained, and resume.
+let toReady = function toReady(
+	ctx: WriterCtx,
+	event: Extract<WriterEvent, { type: 'writer.stream.init_response' }>,
+	runtime: WriterRuntime
+): TransitionResult<WriterState, WriterEffect> {
+	ctx.attempts = 0
+	ctx.startTimeoutScheduled = false
+	clearScheduling(ctx)
+	applyInit(ctx, event.sessionId, event.lastSeqNo, runtime)
+	resolveFlushIfDrained(ctx, runtime)
+
+	runtime.dispatch({ type: 'writer.pump' })
+
+	return {
+		state: 'ready',
+		effects: [
+			{ type: 'writer.effect.timer.clear', which: 'start_timeout' },
+			{ type: 'writer.effect.timer.clear', which: 'retry_backoff' },
+			{ type: 'writer.effect.timer.clear', which: 'recovery_window' },
+			{ type: 'writer.effect.timer.schedule', which: 'flush_tick' },
+			{ type: 'writer.effect.timer.schedule', which: 'update_token' },
+		],
+	}
+}
+
 let toReconnecting = function toReconnecting(
 	ctx: WriterCtx,
-	runtime: WriterRuntime,
-	error: unknown
+	error: unknown,
+	runtime: WriterRuntime
 ): TransitionResult<WriterState, WriterEffect> {
 	ctx.retryScheduled = true
-	ctx.recoveryScheduled = true
 	ctx.startTimeoutScheduled = false
 	if (error !== undefined) {
 		ctx.lastError = error

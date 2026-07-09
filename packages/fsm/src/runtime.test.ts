@@ -187,6 +187,45 @@ test('runtime destroys itself when ingest source throws', async () => {
 	expect(machine.signal.aborted).toBe(true)
 })
 
+test('surfaces an internal effect error to the output iterator', async () => {
+	let machine = createMachineRuntime<TestState, TestCtx, {}, TestEvent, TestEffect, TestOutput>({
+		initialState: 'ready',
+		ctx: { sum: 0, recorded: [], errors: [] },
+		env: {},
+		transition(_ctx, event, runtime) {
+			if (event.type === 'add') {
+				return { state: runtime.state, effects: [{ type: 'record', value: event.value }] }
+			}
+			return undefined
+		},
+		effects: {
+			record(_ctx, effect) {
+				throw new Error(`effect boom ${effect.value}`)
+			},
+		},
+	})
+
+	// An internal error must reach the consumer: the output stream ends by throwing
+	// the stop reason, not by completing silently (which would strand a facade
+	// awaiting a terminal signal).
+	let caught: unknown
+	let reader = (async () => {
+		try {
+			for await (let _output of machine) {
+				// drain until the iterator throws
+			}
+		} catch (error) {
+			caught = error
+		}
+	})()
+
+	machine.dispatch({ type: 'add', value: 7 })
+	await reader
+
+	expect(machine.signal.aborted).toBe(true)
+	expect((caught as Error).message).toBe('effect boom 7')
+})
+
 test('destroy aborts signal and disposes active ingest resources', async () => {
 	let machine = createMachineRuntime<TestState, TestCtx, {}, TestEvent, never, TestOutput>({
 		initialState: 'ready',

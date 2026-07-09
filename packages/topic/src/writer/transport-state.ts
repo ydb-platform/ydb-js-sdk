@@ -9,14 +9,17 @@ import type { WriteAck } from './types.js'
 // classified server messages to the writer as outputs.
 export type TransportState = 'idle' | 'connecting' | 'ready' | 'disconnected' | 'closed'
 
+// The transport FSM keeps no ctx state — every fact rides on the event/output.
 export type TransportCtx = {}
 
 // Events are pre-classified by the ingest task, so the transition never touches
 // raw protobuf — it just maps stream facts to state and outputs.
 export type TransportEvent =
+	// lifecycle commands the owner dispatches inward
 	| { type: 'transport.connect' }
 	| { type: 'transport.close' }
 	| { type: 'transport.destroy'; reason?: unknown }
+	// classified stream facts the ingest task forwards
 	| { type: 'transport.init'; sessionId: string; lastSeqNo: bigint; partitionId?: bigint }
 	| { type: 'transport.write'; acks: WriteAck[] }
 	| { type: 'transport.token' }
@@ -42,7 +45,7 @@ export type TransportOutput =
 
 type TransportRuntime = TransitionRuntime<TransportState, TransportEvent, TransportOutput>
 
-let emitInit = function emitInit(
+let toInitResponse = function toInitResponse(
 	event: Extract<TransportEvent, { type: 'transport.init' }>
 ): TransportOutput {
 	let output: TransportOutput = {
@@ -114,7 +117,7 @@ export let transportTransition = function transportTransition(
 				return { state: 'connecting', effects: [{ type: 'transport.effect.open_stream' }] }
 			}
 			if (event.type === 'transport.init') {
-				runtime.emit(emitInit(event))
+				runtime.emit(toInitResponse(event))
 				return state === 'ready' ? undefined : { state: 'ready' }
 			}
 			if (event.type === 'transport.write') {
