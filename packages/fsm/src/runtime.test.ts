@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { expect, test } from 'vitest'
 
+import { AsyncQueue } from './queue.js'
 import { createMachineRuntime } from './runtime.js'
 
 type TestState = 'ready' | 'error'
@@ -446,4 +447,58 @@ test('close delivers outputs for events dispatched during an in-flight drain', a
 	await consume
 
 	expect(outputs).toEqual(['a', 'b'])
+})
+
+test('output iterator adds no microtask latency over the raw queue', async () => {
+	// Regression guard for the coordination createSession race. The reader migration
+	// wrapped this iterator in an extra `async *` (to rethrow the stop reason on an
+	// internal fault); `yield*` through it costs one extra microtask per emitted
+	// output, which delayed a downstream ingest just enough to lose a waitReady timing
+	// race (createSession resolved before the session FSM reached 'ready'). The fault
+	// path now goes through AsyncQueue.fail(), so the iterator stays a direct queue
+	// passthrough. Assert that: an item read through the runtime settles in the same
+	// number of microtask turns as one read straight from an AsyncQueue. A wrapper
+	// generator makes the runtime strictly slower and fails this.
+	let turnsToSettle = async (p: Promise<unknown>): Promise<number> => {
+		let settled = false
+		p.then(
+			() => (settled = true),
+			() => (settled = true)
+		)
+
+		let turns = 0
+		while (!settled && turns < 100) {
+			await Promise.resolve()
+			turns += 1
+		}
+
+		return turns
+	}
+
+	// Baseline: one buffered item read straight from an AsyncQueue.
+	let baseline = new AsyncQueue<TestOutput>()
+	baseline.push({ type: 'emitted', value: 1 })
+	let baselineTurns = await turnsToSettle(baseline[Symbol.asyncIterator]().next())
+
+	// Runtime whose transition emits one output synchronously on dispatch.
+	let machine = createMachineRuntime<TestState, TestCtx, {}, TestEvent, never, TestOutput>({
+		initialState: 'ready',
+		ctx: { sum: 0, recorded: [], errors: [] },
+		env: {},
+		transition(_ctx, event, runtime) {
+			if (event.type === 'add') {
+				runtime.emit({ type: 'emitted', value: event.value })
+			}
+			return { state: runtime.state }
+		},
+		effects: {},
+	})
+
+	let iterator = machine[Symbol.asyncIterator]()
+	machine.dispatch({ type: 'add', value: 1 })
+	let runtimeTurns = await turnsToSettle(iterator.next())
+
+	expect(runtimeTurns).toBe(baselineTurns)
+
+	await machine.close()
 })
