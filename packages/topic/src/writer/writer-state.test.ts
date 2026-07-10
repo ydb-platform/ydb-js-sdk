@@ -83,6 +83,12 @@ test('classifies SCHEME_ERROR as fatal', () => {
 	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []))).toBe(false)
 })
 
+test('classifies SCHEME_ERROR as retryable when retryOnSchemeError is set', () => {
+	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
+		true
+	)
+})
+
 test('classifies an over-size complaint as fatal', () => {
 	expect(isRetryableWriterError(new Error('message is larger than max allowed'))).toBe(false)
 })
@@ -437,6 +443,58 @@ test('drains before closing when messages are pending', () => {
 		d.ctx
 	)
 	expect(done.state).toBe('closed')
+})
+
+test('does not arm the recovery window when reconnect is unbounded', () => {
+	let ctx = ctxWith({ hasEverConnected: true }) // recoveryWindowMs defaults to Infinity
+	let d = drive(
+		'ready',
+		{
+			type: 'writer.stream.disconnected',
+			error: new YDBError(StatusIds_StatusCode.UNAVAILABLE, []),
+		},
+		ctx
+	)
+	expect(d.state).toBe('reconnecting')
+	expect(d.effects).not.toContainEqual({
+		type: 'writer.effect.timer.schedule',
+		which: 'recovery_window',
+	})
+})
+
+test('arms the recovery window when reconnect is bounded', () => {
+	let ctx = ctxWith({ hasEverConnected: true, recoveryWindowMs: 5000 })
+	let d = drive(
+		'ready',
+		{
+			type: 'writer.stream.disconnected',
+			error: new YDBError(StatusIds_StatusCode.UNAVAILABLE, []),
+		},
+		ctx
+	)
+	expect(d.state).toBe('reconnecting')
+	expect(d.effects).toContainEqual({
+		type: 'writer.effect.timer.schedule',
+		which: 'recovery_window',
+	})
+})
+
+test('close during reconnect clears the stale recovery_window timer', () => {
+	// A finite recoveryWindowMs armed the terminal deadline while reconnecting; entering
+	// close must cancel it so it cannot cut the graceful drain short — close is bounded by
+	// graceful_timeout, not recoveryWindowMs (mirrors the reader).
+	let ctx = ctxWith({
+		seqNoMode: 'auto',
+		hasEverConnected: true,
+		bufferLength: 1,
+		messages: [msg(1)],
+	})
+	let d = drive('reconnecting', { type: 'writer.close' }, ctx)
+	expect(d.state).toBe('closing')
+	expect(d.effects).toContainEqual({
+		type: 'writer.effect.timer.clear',
+		which: 'recovery_window',
+	})
 })
 
 test('fails when the graceful timeout fires with undelivered messages', () => {

@@ -4,7 +4,7 @@ import { loggers } from '@ydbjs/debug'
 
 import { type CompressionCodec, RAW_CODEC } from '../codec.js'
 import type { TX } from '../tx.js'
-import { generateProducerId } from './_gen_producer_id.js'
+import { generateProducerId } from './producer-id.js'
 import {
 	type WriterScope,
 	ackBreakdown,
@@ -103,7 +103,8 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			flushIntervalMs: options.flushIntervalMs ?? 1000,
 			updateTokenIntervalMs: options.updateTokenIntervalMs ?? 60_000,
 			gracefulShutdownTimeoutMs: options.gracefulShutdownTimeoutMs ?? 30_000,
-			recoveryWindowMs: options.recoveryWindowMs ?? 60_000,
+			recoveryWindowMs: options.recoveryWindowMs ?? Infinity,
+			retryOnSchemeError: options.retryOnSchemeError ?? false,
 			...(options.partitionId !== undefined && { partitionId: options.partitionId }),
 			...(options.messageGroupId !== undefined && { messageGroupId: options.messageGroupId }),
 		})

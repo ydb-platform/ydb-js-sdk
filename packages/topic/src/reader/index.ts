@@ -1,344 +1,583 @@
-import type { StreamReadMessage_FromClient } from '@ydbjs/api/topic'
+import { timestampDate } from '@bufbuild/protobuf/wkt'
+import type { Codec } from '@ydbjs/api/topic'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 
-import { AsyncPriorityQueue } from '../queue.js'
-import { defaultCodecMap } from '../codec.js'
-
-import type {
-	TopicReader,
-	TopicReaderOptions,
-	TopicReaderState,
-	TopicTxReader,
-	TopicTxReaderState,
-} from './types.js'
-import { _send_update_token_request } from './_update_token.js'
-import { _parse_topics_read_settings } from './_topics_config.js'
-import { _consume_stream } from './_consume_stream.js'
-import { _consume_stream_tx } from './_consume_stream_tx.js'
-import { _read } from './_read.js'
-import { _commit } from './_commit.js'
-import { _update_offsets_in_transaction } from './_update_offsets_in_transaction.js'
-import {
-	_create_disposal_functions,
-	_initialize_codecs,
-	_start_background_token_refresher,
-} from './_shared.js'
+import { type CodecMap, defaultCodecMap, getCodec } from '../codec.js'
+import { TopicMessage } from '../message.js'
+import type { TopicPartitionSession } from '../partition-session.js'
 import type { TX } from '../tx.js'
+import { updateOffsetsInTransaction } from './tx-offsets.js'
+import {
+	type ReaderScope,
+	publishClosed,
+	publishCommitted,
+	publishErrored,
+	publishOpened,
+	publishPartitionStarted,
+	publishPartitionStopped,
+	publishReconnecting,
+	traceCommit,
+} from './diagnostics.js'
+import { type ReaderRuntime, createReaderRuntime } from './reader-runtime.js'
+import type { ReaderMessage } from './reader-state.js'
+import type { TopicReaderOptions, TopicTxReader } from './types.js'
+
+let DEFAULT_MAX_BUFFER_BYTES = 8n * 1024n * 1024n
+
+// Re-export the public types for consumers importing from the reader entry point.
+// (`TopicReader` itself is the exported class below, mirroring `TopicWriter`.)
+export type {
+	TopicReaderOptions,
+	TopicReaderSource,
+	TopicTxReader,
+	onCommittedOffsetCallback,
+	onPartitionSessionStartCallback,
+	onPartitionSessionStopCallback,
+} from './types.js'
 
 let dbg = loggers.topic.extend('reader')
 
-// Timeout for graceful shutdown waiting for pending commits
-let GRACEFUL_SHUTDOWN_TIMEOUT_MS = 30_000
+// A decoded ReadResponse: the consumer takes the messages, then the reader releases
+// the response's flow-control credit (backpressure — credit is granted only as the
+// consumer keeps up).
+type Chunk = { messages: TopicMessage[]; releaseBytes: bigint }
 
-export const createTopicReader = function createTopicReader(
-	driver: Driver,
-	options: TopicReaderOptions
-): TopicReader {
-	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
+// The public topic reader. read() is a pull async-iterator over decoded batches;
+// commit() acknowledges offsets and resolves once the server's committed high-water
+// mark reaches them — surviving transparent reconnects (never rejected by one).
+export class TopicReader implements AsyncDisposable, Disposable {
+	#options: TopicReaderOptions
+	#codecs: CodecMap
+	#runtime: ReaderRuntime
 
-	let state: TopicReaderState = {
-		driver,
-		options,
-		topicsReadSettings: _parse_topics_read_settings(options.topic),
+	#chunks = new AsyncQueue<Chunk>()
+	#chunkIterator: AsyncIterator<Chunk>
+	#pendingNext: Promise<IteratorResult<Chunk>> | null = null
 
-		// Control
-		controller: new AbortController(),
-		disposed: false,
+	// waiterId -> commit() promise; the FSM only carries the id, never the callback.
+	#waiters = new Map<number, PromiseWithResolvers<void>>()
+	#nextWaiterId = 1
 
-		// Data structures
-		outgoingQueue: new AsyncPriorityQueue<StreamReadMessage_FromClient>(),
-		buffer: [],
-		partitionSessions: new Map(),
-		pendingCommits: new Map(),
-		codecs: new Map(defaultCodecMap),
+	// partitionId -> current session, for the committed/stopped callbacks and tx hook.
+	#sessions = new Map<bigint, TopicPartitionSession>()
 
-		// Buffer management
-		maxBufferSize: options.maxBufferBytes ?? 4n * 1024n * 1024n, // Reduced to 4MB for faster parsing
-		freeBufferSize: options.maxBufferBytes ?? 4n * 1024n * 1024n, // Reduced to 4MB for faster parsing
+	// tx read offsets: first/last delivered offset per partitionId. The FSM is
+	// tx-agnostic — the facade tracks these itself from delivered messages (only for a
+	// tx reader) and commits them in the tx.onCommit hook. Undefined for a non-tx reader.
+	#txReadOffsets?: Map<bigint, { firstOffset: bigint; lastOffset: bigint }>
+
+	// Shadow of the FSM's terminal error: set by the #consume drain on `reader.error`
+	// (or a machine fault), then consulted synchronously by read()/commit()/close() to
+	// surface it to the caller — the FSM cannot reject an already-running read() promise.
+	#lastError: unknown = undefined
+	#closed = false
+	#closing = false
+	#reading = false // read() is single-consumer
+	#isTx: boolean
+	#scope: ReaderScope
+	#closedDeferred = Promise.withResolvers<void>()
+
+	constructor(driver: Driver, options: TopicReaderOptions, runtimeOptions?: { tx?: TX }) {
+		this.#options = options
+		this.#isTx = runtimeOptions?.tx !== undefined
+		if (this.#isTx) {
+			this.#txReadOffsets = new Map()
+		}
+		this.#codecs = options.codecMap ?? defaultCodecMap
+		this.#scope = { driver: driver.identity, consumer: options.consumer }
+		publishOpened(this.#scope, {
+			maxBufferBytes: options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
+			updateTokenIntervalMs: options.updateTokenIntervalMs ?? 60_000,
+			recoveryWindowMs: options.recoveryWindowMs ?? Infinity,
+			retryOnSchemeError: options.retryOnSchemeError ?? false,
+		})
+		this.#runtime = createReaderRuntime(driver, options)
+		this.#chunkIterator = this.#chunks[Symbol.asyncIterator]()
+		// Fire-and-forget drain; an internal machine fault rethrows and is funneled to
+		// the terminal path (never an unhandled rejection).
+		this.#consume().catch((error) => this.#fail(error))
 	}
-	// Initialize custom codecs if provided
-	_initialize_codecs(state.codecs, options.codecMap)
 
-	// Start consuming the stream immediately.
-	;(async function stream() {
+	async *read(options?: {
+		limit?: number
+		// Max time to accumulate a batch before yielding (possibly empty, so an idle
+		// topic never hangs the consumer). Omit to block for one chunk.
+		batchWindowMs?: number
+		/** @deprecated renamed to `batchWindowMs`. */
+		waitMs?: number
+		signal?: AbortSignal
+	}): AsyncIterable<TopicMessage[]> {
+		// Single-consumer: two concurrent read() loops would race the shared chunk
+		// iterator and double-release flow-control credit.
+		if (this.#reading) {
+			throw new Error('read() is already in progress — the reader is single-consumer')
+		}
+		this.#reading = true
+		let limit = options?.limit
+		// `waitMs` is the deprecated alias for `batchWindowMs`.
+		let batchWindowMs = options?.batchWindowMs ?? options?.waitMs
+		let signal = options?.signal
+
 		try {
-			await _consume_stream(state)
-		} catch (error) {
-			if (!state.controller.signal.aborted) {
-				dbg.log('error occurred while streaming: %O', error)
-				// Stream died unexpectedly (retry budget exhausted or non-retryable
-				// error). Destroy the reader so that any pending read() calls are
-				// unblocked rather than polling forever.
-				destroy(error)
+			for (;;) {
+				if (this.#lastError) {
+					throw this.#lastError
+				}
+
+				// Accumulate a batch of up to `limit` messages, waiting at most
+				// `batchWindowMs` (a batch is yielded — possibly empty — once the window
+				// elapses so an idle topic never hangs the consumer). With no
+				// `batchWindowMs`, block for one chunk.
+				let batch: TopicMessage[] = []
+				let releases: bigint[] = []
+				let deadline =
+					batchWindowMs !== undefined ? performance.now() + batchWindowMs : undefined
+				let closed = false
+
+				for (;;) {
+					let remaining =
+						deadline !== undefined
+							? Math.max(0, deadline - performance.now())
+							: undefined
+					// oxlint-disable-next-line no-await-in-loop
+					let chunk = await this.#nextChunk(signal, remaining)
+					if (chunk === 'closed') {
+						closed = true
+						break
+					}
+					if (chunk === 'timeout') {
+						break
+					}
+					batch.push(...chunk.messages)
+					releases.push(chunk.releaseBytes)
+					if (
+						(limit !== undefined && batch.length >= limit) ||
+						batchWindowMs === undefined
+					) {
+						break
+					}
+				}
+
+				if (batch.length > 0) {
+					if (limit !== undefined && batch.length > limit) {
+						for (let i = 0; i < batch.length; i += limit) {
+							yield batch.slice(i, i + limit)
+						}
+					} else {
+						yield batch
+					}
+				} else if (batchWindowMs !== undefined && !closed) {
+					// Idle-window tick: yield an empty batch so the consumer can act.
+					yield batch
+				}
+
+				// Release each consumed response's credit now that the consumer has it.
+				for (let bytes of releases) {
+					this.#runtime.machine.dispatch({ type: 'reader.read_release', bytes })
+				}
+
+				if (closed) {
+					// A terminal error surfaces to the consumer — it must not look like a
+					// clean end-of-stream. Any buffered batch above was delivered first, then
+					// we throw. The reader is already torn down (markClosed + FSM finalize):
+					// it is not reusable, and every further read()/commit() throws this too.
+					if (this.#lastError) {
+						throw this.#lastError
+					}
+					return
+				}
 			}
 		} finally {
-			dbg.log('stream closed')
+			this.#reading = false
 		}
-	})()
+	}
 
-	// Update the token periodically to ensure that the reader has a valid token.
-	// This is useful to avoid token expiration and to ensure that the reader can continue to read messages from the topic.
-	// The update token interval is configurable and defaults to 60 seconds.
-	_start_background_token_refresher(
-		state.driver,
-		state.outgoingQueue,
-		options.updateTokenIntervalMs,
-		state.controller.signal
-	)
+	commit(input: TopicMessage | TopicMessage[]): Promise<void> {
+		// One span per commit covers batching, the server ack, and any reconnect in between.
+		return traceCommit(this.#scope, () => this.#commitOffsets(input))
+	}
 
-	async function close() {
-		if (state.disposed) return
+	async #commitOffsets(input: TopicMessage | TopicMessage[]): Promise<void> {
+		if (this.#lastError) {
+			throw this.#lastError
+		}
+		if (this.#closed || this.#closing) {
+			throw new Error('Reader is closed, cannot commit')
+		}
 
-		// Stop accepting new messages and requests
-		state.outgoingQueue.close()
+		let messages = Array.isArray(input) ? input : [input]
+		let byPartition = new Map<bigint, bigint[]>()
 
-		// Wait for all pending commits to resolve with a timeout
-		let pendingCommitPromises: Promise<void>[] = []
-		for (let commits of state.pendingCommits.values()) {
-			for (let commit of commits) {
-				pendingCommitPromises.push(
-					new Promise<void>((resolve) => {
-						let originalResolve = commit.resolve
-						let originalReject = commit.reject
-
-						commit.resolve = () => {
-							originalResolve()
-							resolve()
-						}
-
-						commit.reject = (reason) => {
-							originalReject(reason)
-							resolve() // Still resolve our promise even if commit was rejected
-						}
-					})
+		for (let message of messages) {
+			let session = message.partitionSession.deref()
+			if (!session || session.isStopped) {
+				throw new Error(
+					'Cannot commit a message from a stopped or expired partition session'
 				)
 			}
-		}
-
-		if (pendingCommitPromises.length > 0) {
-			try {
-				// Wait for all pending commits or timeout after 30 seconds
-				await Promise.race([
-					Promise.all(pendingCommitPromises),
-					new Promise<void>((resolve) =>
-						setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS)
-					),
-				])
-			} catch (err) {
-				dbg.log('error during close: %O', err)
-				throw err
+			if (message.offset === undefined) {
+				throw new Error('Cannot commit a message without an offset')
+			}
+			let offsets = byPartition.get(session.partitionId)
+			if (offsets === undefined) {
+				byPartition.set(session.partitionId, [message.offset])
+			} else {
+				offsets.push(message.offset)
 			}
 		}
 
-		dbg.log('reader closed gracefully')
+		// One waiter per partition; the call resolves only when every partition's
+		// offsets are acknowledged.
+		let promises: Promise<void>[] = []
+		for (let [partitionId, offsets] of byPartition) {
+			offsets.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+			let waiterId = this.#nextWaiterId++
+			let waiter = Promise.withResolvers<void>()
+			this.#waiters.set(waiterId, waiter)
+			this.#runtime.machine.dispatch({
+				type: 'reader.commit',
+				partitionId,
+				offsets,
+				waiterId,
+			})
+			promises.push(waiter.promise)
+		}
 
-		// Now safely dispose - this will stop the token refresher via AbortSignal
-		destroy(new Error('TopicReader closed'))
+		await Promise.all(promises)
 	}
 
-	function destroy(reason: unknown) {
-		if (state.disposed) return
+	async close(): Promise<void> {
+		if (this.#closed) {
+			if (this.#lastError) {
+				throw this.#lastError
+			}
+			return
+		}
+		this.#closing = true
+		this.#runtime.machine.dispatch({ type: 'reader.close' })
+		await this.#closedDeferred.promise
+		if (this.#lastError) {
+			throw this.#lastError
+		}
+	}
 
-		// Immediate shutdown - reject all pending commits
-		for (let commits of state.pendingCommits.values()) {
-			for (let commit of commits) {
-				commit.reject(reason || new Error('TopicReader destroyed'))
+	destroy(reason?: Error): void {
+		if (this.#closed) {
+			return
+		}
+		this.#closing = true
+		let error = reason ?? new Error('Reader destroyed')
+		this.#lastError = error
+		this.#runtime.machine.dispatch({ type: 'reader.destroy', reason: error })
+	}
+
+	[Symbol.dispose](): void {
+		this.destroy()
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		try {
+			await this.close()
+		} catch (error) {
+			this.destroy(error instanceof Error ? error : new Error(String(error)))
+			throw error
+		}
+	}
+
+	// Snapshot of the tx read offsets (tx reader only), mapped to the sessions the tx
+	// commit hook needs. Read synchronously in the hook.
+	txReadOffsetUpdates(): Array<{
+		partitionSession: TopicPartitionSession
+		offsetRange: { firstOffset: bigint; lastOffset: bigint }
+	}> {
+		if (!this.#txReadOffsets) {
+			return []
+		}
+		let updates: Array<{
+			partitionSession: TopicPartitionSession
+			offsetRange: { firstOffset: bigint; lastOffset: bigint }
+		}> = []
+		for (let [partitionId, offsetRange] of this.#txReadOffsets) {
+			let partitionSession = this.#sessions.get(partitionId)
+			if (partitionSession) {
+				updates.push({ partitionSession, offsetRange })
+			}
+		}
+		return updates
+	}
+
+	// ── internals ────────────────────────────────────────────────────────────────
+
+	async #consume(): Promise<void> {
+		for await (let output of this.#runtime.machine) {
+			switch (output.type) {
+				case 'reader.messages': {
+					// tx read-offset tracking (before decode, keyed by the stable partitionId
+					// so it survives a reconnect — the map is never cleared mid-tx).
+					if (this.#txReadOffsets) {
+						for (let group of output.groups) {
+							for (let message of group.messages) {
+								let existing = this.#txReadOffsets.get(group.session.partitionId)
+								if (existing === undefined) {
+									this.#txReadOffsets.set(group.session.partitionId, {
+										firstOffset: message.offset,
+										lastOffset: message.offset,
+									})
+								} else {
+									existing.lastOffset = message.offset
+								}
+							}
+						}
+					}
+					try {
+						let messages: TopicMessage[] = []
+						for (let group of output.groups) {
+							for (let message of group.messages) {
+								messages.push(this.#toMessage(group.session, message))
+							}
+						}
+						this.#chunks.push({ messages, releaseBytes: output.releaseBytes })
+					} catch (error) {
+						// An undecodable message (corrupt payload / unsupported codec)
+						// faults the reader — tear the machine down cleanly rather than
+						// crash the drain loop into an unhandled rejection.
+						this.#lastError ??= error
+						this.#runtime.machine.dispatch({ type: 'reader.destroy', reason: error })
+					}
+					break
+				}
+
+				case 'reader.partition.started':
+					this.#sessions.set(output.partitionId, output.session)
+					publishPartitionStarted(
+						this.#scope,
+						output.partitionId,
+						output.partitionSessionId,
+						output.committedOffset
+					)
+					break
+
+				case 'reader.partition.stopped': {
+					let session = this.#sessions.get(output.partitionId)
+					if (session && this.#options.onPartitionSessionStop) {
+						try {
+							void this.#options.onPartitionSessionStop(
+								session,
+								session.partitionCommittedOffset
+							)
+						} catch (error) {
+							dbg.log('onPartitionSessionStop threw: %O', error)
+						}
+					}
+					publishPartitionStopped(this.#scope, output.partitionId, output.reason)
+					// Drop the stopped partition's session to keep the map bounded. The tx
+					// reader keeps it (its offsets are committed at tx commit) and clears
+					// everything on terminal; a re-Started partition re-registers anyway.
+					if (!this.#isTx) {
+						this.#sessions.delete(output.partitionId)
+					}
+					break
+				}
+
+				case 'reader.committed': {
+					let session = this.#sessions.get(output.partitionId)
+					if (session && this.#options.onCommittedOffset) {
+						try {
+							this.#options.onCommittedOffset(session, output.committedOffset)
+						} catch (error) {
+							dbg.log('onCommittedOffset threw: %O', error)
+						}
+					}
+					publishCommitted(this.#scope, output.partitionId, output.committedOffset)
+					break
+				}
+
+				case 'reader.commit.resolved': {
+					let waiter = this.#waiters.get(output.waiterId)
+					if (waiter) {
+						this.#waiters.delete(output.waiterId)
+						waiter.resolve()
+					}
+					break
+				}
+
+				case 'reader.commit.rejected': {
+					let waiter = this.#waiters.get(output.waiterId)
+					if (waiter) {
+						this.#waiters.delete(output.waiterId)
+						waiter.reject(output.reason)
+					}
+					break
+				}
+
+				case 'reader.reconnecting':
+					dbg.log('reconnecting (attempt %d): %O', output.attempt, output.error)
+					publishReconnecting(this.#scope, output.attempt, output.error)
+					break
+
+				case 'reader.error':
+					dbg.log('errored: %O', output.error)
+					this.#lastError = output.error
+					publishErrored(this.#scope, output.error)
+					break
+
+				case 'reader.closed':
+					dbg.log('closed')
+					publishClosed(this.#scope)
+					this.#markClosed()
+					break
+
+				case 'reader.session':
+					dbg.log('session started (id=%s)', output.sessionId)
+					break
 			}
 		}
 
-		state.disposed = true
-		state.outgoingQueue.dispose()
-		state.pendingCommits.clear()
-		state.partitionSessions.clear()
-		state.buffer.length = 0
-		state.controller.abort(reason)
-	}
-
-	return {
-		read(options = {}) {
-			return _read(
-				{
-					disposed: state.disposed,
-					controller: state.controller,
-					buffer: state.buffer,
-					partitionSessions: state.partitionSessions,
-					codecs: state.codecs,
-					outgoingQueue: state.outgoingQueue,
-					maxBufferSize: state.maxBufferSize,
-					freeBufferSize: state.freeBufferSize,
-					updateFreeBufferSize: (releasedBytes: bigint) => {
-						state.freeBufferSize += releasedBytes
-					},
-				},
-				options
+		// Stream ended; if no reader.closed arrived, the machine faulted — surface it.
+		if (!this.#closed) {
+			this.#fail(
+				this.#runtime.machine.signal.reason ?? new Error('Reader stopped unexpectedly')
 			)
-		},
+		}
+	}
 
-		commit(input) {
-			return _commit(state, input)
-		},
+	#toMessage(session: TopicPartitionSession, message: ReaderMessage): TopicMessage {
+		let codec = this.#codecs.get(message.codec) ?? getCodec(message.codec as Codec)
+		return new TopicMessage({
+			partitionSession: session,
+			producer: message.producer,
+			payload: codec.decompress(message.data),
+			codec: message.codec as Codec,
+			seqNo: message.seqNo,
+			offset: message.offset,
+			uncompressedSize: message.uncompressedSize,
+			...(message.createdAt && { createdAt: timestampDate(message.createdAt).getTime() }),
+			...(message.writtenAt && { writtenAt: timestampDate(message.writtenAt).getTime() }),
+			...(message.metadataItems.length > 0 && {
+				metadataItems: Object.fromEntries(
+					message.metadataItems.map((item) => [item.key, item.value])
+				),
+			}),
+		})
+	}
 
-		close,
-		destroy,
+	// Await the next decoded response, honoring a signal and a wait budget without
+	// dropping a chunk: a timed-out `next()` promise is kept for the next call.
+	async #nextChunk(
+		signal?: AbortSignal,
+		timeoutMs?: number
+	): Promise<Chunk | 'timeout' | 'closed'> {
+		if (signal?.aborted) {
+			throw signal.reason
+		}
+		if (!this.#pendingNext) {
+			this.#pendingNext = this.#chunkIterator.next()
+		}
+		let pending = this.#pendingNext
 
-		[Symbol.dispose]() {
-			destroy(new Error('TopicReader disposed'))
-		},
+		if (timeoutMs === undefined && !signal) {
+			this.#pendingNext = null
+			let result = await pending
+			return result.done ? 'closed' : result.value
+		}
 
-		async [Symbol.asyncDispose]() {
-			// Graceful async disposal: close and wait for stream to finish
-			try {
-				await close()
-			} catch (error) {
-				dbg.log('error during async dispose close: %O', error)
-			}
-		},
+		let timer: ReturnType<typeof setTimeout> | undefined
+		let onAbort: (() => void) | undefined
+		let racers: Promise<'next' | 'timeout' | 'abort'>[] = [pending.then(() => 'next' as const)]
+		if (timeoutMs !== undefined) {
+			racers.push(
+				new Promise((resolve) => {
+					timer = setTimeout(() => resolve('timeout'), timeoutMs)
+				})
+			)
+		}
+		if (signal) {
+			racers.push(
+				new Promise((resolve) => {
+					onAbort = () => resolve('abort')
+					signal.addEventListener('abort', onAbort, { once: true })
+				})
+			)
+		}
+
+		let winner = await Promise.race(racers)
+		if (timer) {
+			clearTimeout(timer)
+		}
+		if (signal && onAbort) {
+			signal.removeEventListener('abort', onAbort)
+		}
+
+		if (winner === 'abort') {
+			throw signal!.reason
+		}
+		if (winner === 'timeout') {
+			return 'timeout' // pendingNext preserved
+		}
+		this.#pendingNext = null
+		let result = await pending
+		return result.done ? 'closed' : result.value
+	}
+
+	#markClosed(): void {
+		if (this.#closed) {
+			return
+		}
+		this.#closed = true
+		this.#chunks.close()
+		this.#sessions.clear()
+		this.#txReadOffsets?.clear()
+		// The FSM's terminate() already rejects outstanding commits via
+		// reader.commit.rejected; this settles any that slipped through, avoiding leaks.
+		for (let waiter of this.#waiters.values()) {
+			waiter.reject(this.#lastError ?? new Error('Reader closed'))
+		}
+		this.#waiters.clear()
+		this.#closedDeferred.resolve()
+	}
+
+	#fail(error: unknown): void {
+		if (this.#closed) {
+			return
+		}
+		this.#lastError ??= error
+		this.#markClosed()
 	}
 }
 
-export const createTopicTxReader = function createTopicTxReader(
+export function createTopicReader(driver: Driver, options: TopicReaderOptions): TopicReader {
+	return new TopicReader(driver, options)
+}
+
+export function createTopicTxReader(
 	tx: TX,
 	driver: Driver,
 	options: TopicReaderOptions
 ): TopicTxReader {
-	options.updateTokenIntervalMs ??= 60_000 // Default is 60 seconds.
+	let reader = new TopicReader(driver, options, { tx })
 
-	let state: TopicTxReaderState = {
-		tx,
-		driver,
-		options,
-		topicsReadSettings: _parse_topics_read_settings(options.topic),
-
-		// Control
-		controller: new AbortController(),
-		disposed: false,
-
-		// Data structures
-		outgoingQueue: new AsyncPriorityQueue<StreamReadMessage_FromClient>(),
-		buffer: [],
-		partitionSessions: new Map(),
-		codecs: new Map(defaultCodecMap),
-
-		// Buffer management
-		maxBufferSize: options.maxBufferBytes ?? 4n * 1024n * 1024n, // Reduced to 4MB for faster parsing
-		freeBufferSize: options.maxBufferBytes ?? 4n * 1024n * 1024n, // Reduced to 4MB for faster parsing
-
-		// Transaction support - track read offsets for commit hook
-		readOffsets: new Map(),
-	}
-
-	// Initialize custom codecs if provided
-	_initialize_codecs(state.codecs, options.codecMap)
-
-	// Register precommit hook to send updateOffsetsInTransaction
+	// Commit the read offsets atomically with the transaction; on failure the tx (and
+	// thus the offsets) roll back, and the reader is torn down.
 	tx.onCommit(async () => {
-		let updates = []
-
-		for (let [partitionSessionId, offsetRange] of state.readOffsets) {
-			let partitionSession = state.partitionSessions.get(partitionSessionId)
-			if (partitionSession) {
-				updates.push({
-					partitionSession,
-					offsetRange,
-				})
-			}
+		await updateOffsetsInTransaction(tx, driver, options.consumer, reader.txReadOffsetUpdates())
+	})
+	tx.onRollback(() => {
+		reader.destroy(new Error('Transaction rolled back'))
+	})
+	tx.onClose((committed) => {
+		if (!committed) {
+			reader.destroy(new Error('Transaction closed without commit'))
 		}
-
-		dbg.log('Updating offsets in transaction for %d partitions', updates.length)
-
-		if (updates.length > 0) {
-			await _update_offsets_in_transaction(tx, state.driver, state.options.consumer, updates)
-		}
-
-		closeWithReason('Transaction committed')
 	})
 
-	tx.onRollback((error) => {
-		dbg.log('transaction rollback detected, closing tx reader: %O', error)
-		closeWithReason('Transaction rolled back', error)
-	})
-
-	tx.onClose(() => {
-		if (state.disposed) {
-			return
-		}
-
-		dbg.log('transaction closed, disposing tx reader')
-		closeWithReason('Transaction closed')
-	})
-
-	// Start consuming the stream immediately.
-	void (async function stream() {
-		try {
-			await _consume_stream_tx(state)
-		} catch (error) {
-			if (!state.controller.signal.aborted) {
-				dbg.log('error occurred while streaming: %O', error)
-			}
-		} finally {
-			dbg.log('tx stream closed')
-			destroy(new Error('Stream closed'))
-		}
-	})()
-
-	// Update the token periodically to ensure that the reader has a valid token.
-	_start_background_token_refresher(
-		state.driver,
-		state.outgoingQueue,
-		options.updateTokenIntervalMs,
-		state.controller.signal
-	)
-
-	function closeWithReason(reason: string, error?: unknown) {
-		if (state.disposed) {
-			return
-		}
-
-		dbg.log('tx reader closing (%s)', reason)
-		destroy(error ?? new Error(reason))
-	}
-
-	async function close() {
-		closeWithReason('TopicTxReader closed')
-	}
-
-	function destroy(reason: unknown) {
-		if (state.disposed) return
-
-		state.disposed = true
-		state.outgoingQueue.dispose()
-		state.readOffsets.clear()
-		state.partitionSessions.clear()
-		state.buffer.length = 0
-		state.controller.abort(reason)
-	}
-
+	// A tx reader tracks offsets automatically — explicit commit() is not exposed.
 	return {
-		read(readOptions = {}) {
-			return _read(
-				{
-					disposed: state.disposed,
-					controller: state.controller,
-					buffer: state.buffer,
-					partitionSessions: state.partitionSessions,
-					codecs: state.codecs,
-					outgoingQueue: state.outgoingQueue,
-					maxBufferSize: state.maxBufferSize,
-					freeBufferSize: state.freeBufferSize,
-					readOffsets: state.readOffsets,
-					updateFreeBufferSize: (releasedBytes: bigint) => {
-						state.freeBufferSize += releasedBytes
-					},
-				},
-				readOptions
-			)
-		},
-
-		close,
-		destroy,
+		read: (readOptions) => reader.read(readOptions),
+		close: () => reader.close(),
+		destroy: (reason) => reader.destroy(reason),
+		[Symbol.dispose]: () => reader[Symbol.dispose](),
+		[Symbol.asyncDispose]: () => reader[Symbol.asyncDispose](),
 	}
 }
-
-// Re-export types for compatibility
-export type { TopicReaderOptions, TopicReader, TopicTxReader } from './types.js'

@@ -28,6 +28,7 @@ export type WriterConfig = {
 	updateTokenIntervalMs: number
 	gracefulShutdownTimeoutMs: number
 	recoveryWindowMs: number
+	retryOnSchemeError: boolean
 	partitionId?: bigint
 	messageGroupId?: string
 }

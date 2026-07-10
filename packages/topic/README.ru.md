@@ -88,6 +88,8 @@ await using writer = createTopicWriter(driver, {
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки
 - `maxBufferBytes?`: `bigint` — лимит внутреннего буфера (по умолчанию ~4 МБ)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
+- `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
+- `retryOnSchemeError?`: `boolean` — ретраить SCHEME_ERROR (например, топик ещё не создан); по умолчанию выключено, включите, чтобы ждать создания топика
 - `onPartitionSessionStart?` — настройка оффсетов при старте сессии
 - `onPartitionSessionStop?` — хук на остановку сессии
 - `onCommittedOffset?` — уведомление об ack коммита оффсетов
@@ -137,7 +139,8 @@ for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
 - `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()` (по умолчанию 30000)
-- `recoveryWindowMs?`: `number` — окно реконнекта, после которого writer завершается ошибкой (по умолчанию 60000)
+- `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
+- `retryOnSchemeError?`: `boolean` — ретраить SCHEME_ERROR (например, топик ещё не создан); по умолчанию выключено, включите, чтобы ждать создания топика
 - `partitionId?` / `messageGroupId?` — привязка/маршрутизация записи (взаимоисключающие)
 - `onAck?(seqNo, status)` — колбэк подтверждений
 

@@ -64,7 +64,7 @@ test('writes messages and reads them back in order', async () => {
 
 	let contents: string[] = []
 	let seqNos: bigint[] = []
-	for await (let batch of reader.read({ limit: 10, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 10, batchWindowMs: 2000 })) {
 		for (let message of batch) {
 			contents.push(new TextDecoder().decode(message.payload))
 			seqNos.push(message.seqNo)
@@ -98,7 +98,7 @@ test('assigns correct seqNos to messages written before initialization', async (
 	})
 
 	let count = 0
-	for await (let batch of reader.read({ limit: 10, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 10, batchWindowMs: 2000 })) {
 		count += batch.length
 		await reader.commit(batch)
 		if (count >= 2) {
@@ -151,7 +151,7 @@ test('writes GZIP-compressed messages that read back decompressed', async () => 
 	})
 
 	let received: string | null = null
-	for await (let batch of reader.read({ limit: 1, waitMs: 3000 })) {
+	for await (let batch of reader.read({ limit: 1, batchWindowMs: 3000 })) {
 		received = new TextDecoder().decode(batch[0]!.payload)
 		await reader.commit(batch)
 		break
@@ -188,7 +188,7 @@ test('flushes pending messages on graceful close', async () => {
 	})
 
 	let found = false
-	for await (let batch of reader.read({ limit: 1, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 1, batchWindowMs: 2000 })) {
 		for (let message of batch) {
 			if (new TextDecoder().decode(message.payload) === 'Buffered before close') {
 				found = true
@@ -269,7 +269,7 @@ test('writes many messages preserving order', async () => {
 	})
 
 	let received: string[] = []
-	for await (let batch of reader.read({ limit: total, waitMs: 3000 })) {
+	for await (let batch of reader.read({ limit: total, batchWindowMs: 3000 })) {
 		for (let message of batch) {
 			received.push(new TextDecoder().decode(message.payload))
 		}

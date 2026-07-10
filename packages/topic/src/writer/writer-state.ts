@@ -1,9 +1,11 @@
 import { create } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	type StreamWriteMessage_WriteRequest_MessageData,
 	StreamWriteMessage_WriteRequest_MessageDataSchema,
 } from '@ydbjs/api/topic'
+import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
 import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
 
@@ -67,6 +69,12 @@ export type WriterCtx = {
 	lastError: unknown
 	retryScheduled: boolean
 	startTimeoutScheduled: boolean
+	// When set, a SCHEME_ERROR (e.g. the topic does not exist yet) is retried instead
+	// of being fatal — the writer waits until the topic is created.
+	retryOnSchemeError: boolean
+	// Terminal reconnect deadline (ms). Infinity = unbounded (reconnect forever); the
+	// transition owns whether to arm the `recovery_window` timer based on this.
+	recoveryWindowMs: number
 
 	flushRequested: boolean
 
@@ -145,7 +153,11 @@ type WriterRuntime = TransitionRuntime<WriterState, WriterEvent, WriterOutput>
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
-export let createWriterCtx = function createWriterCtx(limits: WriterLimits): WriterCtx {
+export let createWriterCtx = function createWriterCtx(
+	limits: WriterLimits,
+	retryOnSchemeError = false,
+	recoveryWindowMs = Infinity
+): WriterCtx {
 	return {
 		seqNoMode: null,
 		lastSeqNo: 0n,
@@ -156,6 +168,8 @@ export let createWriterCtx = function createWriterCtx(limits: WriterLimits): Wri
 		lastError: undefined,
 		retryScheduled: false,
 		startTimeoutScheduled: false,
+		retryOnSchemeError,
+		recoveryWindowMs,
 
 		flushRequested: false,
 
@@ -174,13 +188,25 @@ export let createWriterCtx = function createWriterCtx(limits: WriterLimits): Wri
 // idempotent classification — unlike the plain stream classifier, this retries
 // the "conditionally" YDB statuses (SESSION_EXPIRED, UNDETERMINED, TIMEOUT).
 // A clean stream end with no error object is also retryable (server-side reconnect).
-export let isRetryableWriterError = function isRetryableWriterError(error: unknown): boolean {
+// SCHEME_ERROR is fatal unless `retryOnSchemeError` is set (wait for topic creation).
+export let isRetryableWriterError = function isRetryableWriterError(
+	error: unknown,
+	retryOnSchemeError = false
+): boolean {
 	if (error === undefined || error === null) {
 		return true
 	}
 
 	if (isPayloadTooLargeError(error)) {
 		return false
+	}
+
+	if (
+		retryOnSchemeError &&
+		error instanceof YDBError &&
+		error.code === StatusIds_StatusCode.SCHEME_ERROR
+	) {
+		return true
 	}
 
 	return isRetryableStreamError(error) || isRetryableError(error, true)
@@ -536,7 +562,10 @@ export let writerTransition = function writerTransition(
 				event.type === 'writer.timer.start_timeout'
 			) {
 				let error = event.type === 'writer.stream.disconnected' ? event.error : undefined
-				if (event.type === 'writer.stream.disconnected' && !isRetryableWriterError(error)) {
+				if (
+					event.type === 'writer.stream.disconnected' &&
+					!isRetryableWriterError(error, ctx.retryOnSchemeError)
+				) {
 					return terminate(ctx, 'errored', error, runtime)
 				}
 				return toReconnecting(ctx, error, runtime)
@@ -595,7 +624,7 @@ export let writerTransition = function writerTransition(
 			}
 
 			if (event.type === 'writer.stream.disconnected') {
-				if (!isRetryableWriterError(event.error)) {
+				if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
 					return terminate(ctx, 'errored', event.error, runtime)
 				}
 				return toReconnecting(ctx, event.error, runtime)
@@ -707,10 +736,7 @@ export let writerTransition = function writerTransition(
 				}
 			}
 
-			if (
-				event.type === 'writer.timer.graceful_timeout' ||
-				event.type === 'writer.timer.recovery_window'
-			) {
+			if (event.type === 'writer.timer.graceful_timeout') {
 				// Forced shutdown with messages still pending is a failure to flush —
 				// surface it (as `errored`) so close() rejects instead of silently
 				// dropping undelivered writes (critical for tx commit integrity).
@@ -732,7 +758,7 @@ export let writerTransition = function writerTransition(
 				let error = event.type === 'writer.stream.disconnected' ? event.error : undefined
 				// Retry the drain over a fresh stream (bounded by graceful_timeout);
 				// give up terminally on a fatal error.
-				if (!isRetryableWriterError(error)) {
+				if (!isRetryableWriterError(error, ctx.retryOnSchemeError)) {
 					return terminate(ctx, 'errored', error, runtime)
 				}
 				ctx.retryScheduled = true
@@ -822,16 +848,19 @@ let toReconnecting = function toReconnecting(
 	})
 	// No transport.close here — the transport already closed its own stream on
 	// disconnect, and the reconnect happens via transport.connect (which reopens).
-	return {
-		state: 'reconnecting',
-		effects: [
-			{ type: 'writer.effect.timer.clear', which: 'start_timeout' },
-			{ type: 'writer.effect.timer.clear', which: 'flush_tick' },
-			{ type: 'writer.effect.timer.clear', which: 'update_token' },
-			{ type: 'writer.effect.timer.schedule', which: 'retry_backoff' },
-			{ type: 'writer.effect.timer.schedule', which: 'recovery_window' },
-		],
+	let effects: WriterEffect[] = [
+		{ type: 'writer.effect.timer.clear', which: 'start_timeout' },
+		{ type: 'writer.effect.timer.clear', which: 'flush_tick' },
+		{ type: 'writer.effect.timer.clear', which: 'update_token' },
+		{ type: 'writer.effect.timer.schedule', which: 'retry_backoff' },
+	]
+	// Arm the terminal deadline only when recovery is bounded. Unbounded (Infinity)
+	// means reconnect forever — the transition owns that policy so the emitted effects
+	// reflect it (model-testable), instead of the runtime silently dropping the timer.
+	if (Number.isFinite(ctx.recoveryWindowMs)) {
+		effects.push({ type: 'writer.effect.timer.schedule', which: 'recovery_window' })
 	}
+	return { state: 'reconnecting', effects }
 }
 
 // Enter graceful shutdown. If nothing is pending, finalize now; otherwise drain
@@ -853,6 +882,11 @@ let toClosing = function toClosing(
 	return {
 		state: 'closing',
 		effects: [
+			// Closing may be entered while reconnecting — cancel a stale recovery_window
+			// so it cannot cut the graceful drain short (close is bounded by
+			// graceful_timeout, like the reader). start_timeout / retry_backoff are left
+			// armed: the closing state uses them to keep reconnecting to finish the drain.
+			{ type: 'writer.effect.timer.clear', which: 'recovery_window' },
 			{ type: 'writer.effect.timer.clear', which: 'flush_tick' },
 			{ type: 'writer.effect.timer.clear', which: 'update_token' },
 			{ type: 'writer.effect.timer.schedule', which: 'graceful_timeout' },

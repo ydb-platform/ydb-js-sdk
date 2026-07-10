@@ -14,7 +14,7 @@ services:
         - linux/amd64
     image: ${WORKLOAD_CURRENT_IMAGE:-ydb-app-current}
     # Opt-in diagnostics, both empty by default:
-    #   DEBUG='ydb:*'                         → @ydbjs/debug logs (wraps `debug`)
+    #   DEBUG='ydbjs:*'                       → @ydbjs/debug logs (wraps `debug`)
     #   NODE_OPTIONS='--import ./instrument.js' → attach the DC subscriber preload,
     #     out-of-band so the workload code stays clean (like OpenTelemetry). It runs
     #     in every worker thread and prints writer session/reconnect/error events.

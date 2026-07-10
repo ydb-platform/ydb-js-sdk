@@ -95,7 +95,7 @@ test(
 		// ── Reader loop ────────────────────────────────────────────────────────
 		let readerTask = (async () => {
 			for await (let batch of reader.read({
-				waitMs: 5_000,
+				batchWindowMs: 5_000,
 				signal: readerAc.signal,
 			})) {
 				for (let msg of batch) {

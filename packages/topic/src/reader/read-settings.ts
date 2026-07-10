@@ -13,7 +13,7 @@ import type { StringValue } from 'ms'
 import ms from 'ms'
 import type { TopicReaderSource } from './types.js'
 
-export let _parse_topics_read_settings = function parse_topics_read_settings(
+export let parseReadSettings = function parseReadSettings(
 	topic: string | TopicReaderSource | TopicReaderSource[]
 ): StreamReadMessage_InitRequest_TopicReadSettings[] {
 	let settings: StreamReadMessage_InitRequest_TopicReadSettings[] = []

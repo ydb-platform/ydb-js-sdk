@@ -56,7 +56,7 @@ test('writes and reads a message end to end through the facade', async () => {
 		consumer: testConsumerName,
 	})
 
-	for await (let batch of reader.read({ limit: 1, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 1, batchWindowMs: 2000 })) {
 		expect(batch).toHaveLength(1)
 		expect(batch[0]!.seqNo).toBe(seqNo)
 		await reader.commit(batch)

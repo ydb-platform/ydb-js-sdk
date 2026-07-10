@@ -49,7 +49,7 @@ await retry(
 
 ## Topic streaming
 
-Topic readers/writers reconnect on failures and rebuild command queues. The writer reconnects automatically (exponential backoff + jitter, bounded by `recoveryWindowMs`); keep producers idempotent with `producer + seqNo`.
+Topic readers/writers reconnect on failures and rebuild command queues. They reconnect automatically (exponential backoff + jitter) and, by default, indefinitely — waiting for the server/topic; pass `recoveryWindowMs` to impose a terminal deadline, and `retryOnSchemeError` to wait for a not-yet-created topic. Keep producers idempotent with `producer + seqNo`.
 
 ## Best practices
 

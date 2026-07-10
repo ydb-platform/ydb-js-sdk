@@ -37,7 +37,6 @@ type WriterEnv = {
 
 	// timer durations (ms)
 	startTimeoutMs: number
-	recoveryWindowMs: number
 	flushIntervalMs: number
 	updateTokenIntervalMs: number
 	gracefulShutdownTimeoutMs: number
@@ -157,7 +156,6 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 
 		// timer durations (ms)
 		startTimeoutMs: DEFAULT_START_TIMEOUT_MS,
-		recoveryWindowMs: options.recoveryWindowMs ?? 60_000,
 		flushIntervalMs: options.flushIntervalMs ?? 1000,
 		updateTokenIntervalMs: options.updateTokenIntervalMs ?? 60_000,
 		gracefulShutdownTimeoutMs: options.gracefulShutdownTimeoutMs ?? 30_000,
@@ -169,10 +167,14 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 		timers: new Map(),
 	}
 
-	let ctx = createWriterCtx({
-		maxInflightCount: options.maxInflightCount ?? 1000,
-		maxBatchBytes: MAX_BATCH_BYTES,
-	})
+	let ctx = createWriterCtx(
+		{
+			maxInflightCount: options.maxInflightCount ?? 1000,
+			maxBatchBytes: MAX_BATCH_BYTES,
+		},
+		options.retryOnSchemeError ?? false,
+		options.recoveryWindowMs ?? Infinity
+	)
 
 	let machine = createMachineRuntime<
 		WriterState,

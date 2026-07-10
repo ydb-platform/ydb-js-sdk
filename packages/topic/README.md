@@ -90,6 +90,8 @@ await using writer = createTopicWriter(driver, {
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression
 - `maxBufferBytes?`: `bigint` — internal buffer cap (default ~4 MiB)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `onPartitionSessionStart?`: hook to adjust read/commit offsets per session
 - `onPartitionSessionStop?`: hook on session stop (cleanup/commit)
 - `onCommittedOffset?`: observe commit acknowledgments from server
@@ -142,7 +144,8 @@ Performance note: awaiting `commit()` in the hot path reduces throughput. For hi
 - `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` (default 30000)
-- `recoveryWindowMs?`: `number` — terminal reconnect window before the writer fails (default 60000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
 - `onAck?(seqNo, status)`: callback on message acknowledgment
 

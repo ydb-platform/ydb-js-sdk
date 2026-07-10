@@ -7,9 +7,9 @@ title: Topic — Semantics
 ## Reader
 
 - Streaming model: the server sends message batches over active partition sessions.
-- `read({ limit, waitMs, signal })` — async iterator of batches;
+- `read({ limit, batchWindowMs, signal })` — async iterator of batches;
   - `limit` — max messages per iteration (no limit by default).
-  - `waitMs` — max wait before returning an empty batch.
+  - `batchWindowMs` — max time to accumulate a batch before yielding; empty batch on an idle topic.
   - `signal` — cancel waiting/reading.
 - Commits: `commit(batch|msg)` — acknowledge processing on the server.
 - Hooks:
@@ -28,7 +28,7 @@ Buffering:
 - `flush()` — send the buffer to the server; returns last `seqNo`.
 - `onAck(seqNo, status)` — write acknowledgement notifications.
 - Limits: `maxBufferBytes`, `maxInflightCount`, `flushIntervalMs`.
-- Stream‑level transparent reconnect (exponential backoff + jitter), bounded by `recoveryWindowMs`.
+- Stream‑level transparent reconnect (exponential backoff + jitter); unbounded by default (retries forever, waiting for the server/topic), bounded by `recoveryWindowMs` when set. A running reader whose topic is dropped idles until the server closes the stale stream (~1 min), then transparently reconnects and resumes automatically if the topic exists again.
 
 ## Transactions
 

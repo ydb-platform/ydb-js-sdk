@@ -52,9 +52,13 @@ export type TopicWriterOptions = {
 	// Force-close deadline for graceful close() before pending messages are dropped.
 	// JS-specific safety net; other SDKs bound this by the caller's signal only. Default 30s.
 	gracefulShutdownTimeoutMs?: number
-	// Terminal reconnect window: if no successful reconnect happens within this
-	// window the writer fails terminally instead of retrying forever. Default 60s.
+	// Terminal reconnect window in ms. Unbounded by default (the writer reconnects
+	// forever, waiting for the server / topic); pass a finite value to fail terminally
+	// if no successful reconnect happens within it.
 	recoveryWindowMs?: number
+	// Retry on SCHEME_ERROR (e.g. the topic does not exist yet). Off by default: a
+	// missing / mistyped topic fails fast. Enable to wait until the topic is created.
+	retryOnSchemeError?: boolean
 
 	// Called for every acknowledged message. Errors thrown here are swallowed.
 	onAck?: (seqNo: bigint, status: AckStatus) => void

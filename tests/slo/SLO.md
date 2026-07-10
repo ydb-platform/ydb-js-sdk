@@ -81,20 +81,20 @@ Select the runtime with `IMAGE=oven/bun` to exercise the Bun build instead of No
 
 Two opt-in knobs, both forwarded into the workload container (empty by default):
 
-- `DEBUG='ydb:*'` — full `@ydbjs/debug` output (driver, grpc, retry, topic). Narrow
-  it (`ydb:topic:*`) or drop the per-message noise (`ydb:*,-ydb:topic:writer:event`)
-  to keep the log readable.
+- `DEBUG='ydbjs:*'` — full `@ydbjs/debug` output (driver, grpc, retry, topic). Note the
+  `ydbjs:` prefix (not `ydb:`). Narrow it (`ydbjs:topic:*`) or drop the per-message noise
+  (`ydbjs:*,-ydbjs:topic:writer:event,-ydbjs:topic:reader:event`) to keep the log readable.
 - `NODE_OPTIONS='--import ./instrument.js'` — attaches `instrument.ts`, a preload that
-  subscribes to the writer's `diagnostics_channel` events and prints session /
-  reconnect / terminal-error payloads. It is loaded out-of-band (never imported by a
-  worker) so the workload code stays clean, exactly like an OpenTelemetry agent. The
+  subscribes to the writer's and reader's `diagnostics_channel` events and prints session /
+  partition / reconnect / terminal-error payloads. It is loaded out-of-band (never imported
+  by a worker) so the workload code stays clean, exactly like an OpenTelemetry agent. The
   preload runs in every worker thread, which is required — `diagnostics_channel` is
-  thread-local, so the subscriber must live in the same thread as the writer.
+  thread-local, so the subscriber must live in the same thread as the writer/reader.
 
 ```bash
 cd tests/slo
 
-DEBUG='ydb:*,-ydb:topic:writer:event' \
+DEBUG='ydbjs:*,-ydbjs:topic:writer:event,-ydbjs:topic:reader:event' \
 NODE_OPTIONS='--import ./instrument.js' \
 WORKLOAD_DURATION=600 \
 WORKLOAD_CURRENT_COMMAND="--setup=topic.setup --topic.setup.partitions=10 --worker=topic.write --topic.write.rps=100 --topic.write.partitions=10 --worker=topic.read --teardown=topic.teardown" \

@@ -18,8 +18,8 @@ title: Topic — Options
 
 Methods and behavior:
 
-- `read({ limit?, waitMs?, signal? })`: `AsyncIterable<TopicMessage[]>`
-  - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `waitMs` sets maximum wait for data; on timeout, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
+- `read({ limit?, batchWindowMs?, signal? })`: `AsyncIterable<TopicMessage[]>`
+  - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `batchWindowMs` sets the max time to accumulate a batch before yielding; on an idle topic, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
   - Rationale: long blocking reads hurt cooperative multitasking; time‑based empty yields simplify scheduling without busy‑wait.
 - `commit(messages | message)`: `Promise<void>`
   - Confirms processing up to the corresponding offset per affected partition (idempotent). Ensures subsequent reads start after the committed offset. Accepts one message or an array (a batch).
@@ -41,7 +41,8 @@ Methods and behavior:
 - `flushIntervalMs?`: `number` — default 1000 ms
 - `updateTokenIntervalMs?`: `number` — default 60000
 - `gracefulShutdownTimeoutMs?`: `number` — default 30000
-- `recoveryWindowMs?`: `number` — default 60000
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
 - `onAck?(seqNo, status)`: `(seqNo: bigint, status: 'skipped' | 'written' | 'writtenInTx') => void`
 
@@ -64,7 +65,7 @@ Acknowledgements:
 
 Retries and resilience:
 
-- The connection to TopicService is streaming; it transparently reconnects on failures with exponential backoff + jitter, bounded by `recoveryWindowMs`. In‑flight messages are resent; pending writes are not failed by a transparent reconnect.
+- The connection to TopicService is streaming; it transparently reconnects on failures with exponential backoff + jitter. By default it reconnects indefinitely (waiting for the server/topic); pass `recoveryWindowMs` to impose a terminal deadline. Enable `retryOnSchemeError` to also retry SCHEME_ERROR and wait until the topic is created. In‑flight messages are resent; pending writes are not failed by a transparent reconnect.
 
 Transactional variants:
 
