@@ -169,6 +169,58 @@ test('close drains buffered fifo items and then completes iteration', async () =
 	expect(done.done).toBe(true)
 })
 
+test('fail delivers buffered fifo items then throws the failure', async () => {
+	let queue = new AsyncQueue<number>()
+
+	queue.push(10)
+	queue.push(20)
+	queue.fail(new Error('boom'))
+
+	let iterator = queue[Symbol.asyncIterator]()
+	let first = await iterator.next()
+	let second = await iterator.next()
+
+	expect(first.value).toBe(10)
+	expect(second.value).toBe(20)
+	await expect(iterator.next()).rejects.toThrow('boom')
+})
+
+test('fail rejects a pending next with the failure', async () => {
+	let queue = new AsyncQueue<number>()
+
+	let iterator = queue[Symbol.asyncIterator]()
+	let pending = iterator.next()
+	queue.fail(new Error('late boom'))
+
+	await expect(pending).rejects.toThrow('late boom')
+})
+
+test('fail after close is a no-op and iteration still ends cleanly', async () => {
+	let queue = new AsyncQueue<number>()
+
+	queue.close()
+	queue.fail(new Error('ignored'))
+
+	let done = await queue[Symbol.asyncIterator]().next()
+	expect(done.done).toBe(true)
+})
+
+test('reset clears failure and allows clean fifo reuse', async () => {
+	let queue = new AsyncQueue<number>()
+
+	queue.fail(new Error('boom'))
+	queue.reset()
+	queue.push(1)
+	queue.close()
+
+	let iterator = queue[Symbol.asyncIterator]()
+	let first = await iterator.next()
+	let done = await iterator.next()
+
+	expect(first.value).toBe(1)
+	expect(done.done).toBe(true)
+})
+
 test('close rejects fifo push and preserves buffered size', () => {
 	let queue = new AsyncQueue<number>()
 	queue.push(1)

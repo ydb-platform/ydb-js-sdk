@@ -15,6 +15,11 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	private closed = false
 	private destroyed = false
 
+	// Set by fail() so the iterator throws this error once the buffer drains,
+	// instead of ending silently. Lets a producer terminate the stream with a
+	// reason without wrapping the iterator (which would tax every happy-path item).
+	private failure: { error: unknown } | null = null
+
 	private pendingShift: ShiftResolver<T>[] = []
 	private pendingResume: ResumeResolver[] = []
 
@@ -74,6 +79,21 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 		this.resolvePendingDoneIfNeeded()
 	}
 
+	// Seal the queue like close(), but make the iterator throw `error` after the
+	// buffered items drain. Buffered values are still delivered first.
+	fail(error: unknown): void {
+		if (this.closed || this.destroyed) {
+			return
+		}
+
+		this.failure = { error }
+		this.closed = true
+		this.paused = false
+		this.resolvePendingResume()
+		this.resolvePendingShift()
+		this.resolvePendingDoneIfNeeded()
+	}
+
 	destroy(): void {
 		if (this.destroyed) {
 			return
@@ -91,6 +111,7 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 		this.paused = false
 		this.closed = false
 		this.destroyed = false
+		this.failure = null
 		this.clearBuffer()
 		this.resolvePendingResume()
 		this.resolvePendingDone()
@@ -105,6 +126,10 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 			// eslint-disable-next-line no-await-in-loop
 			let next = await this.next()
 			if (next.done) {
+				if (this.failure) {
+					throw this.failure.error
+				}
+
 				return
 			}
 

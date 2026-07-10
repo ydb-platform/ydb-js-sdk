@@ -47,9 +47,10 @@ class Runtime<
 	#closed = false
 	#destroyed = false
 	// Set when the machine is torn down by an internal error (a transition, effect,
-	// or ingest source threw) rather than a graceful close/destroy. Makes the output
-	// iterator throw the stop reason so consumers observe the failure instead of a
-	// silent end (which would strand a facade waiting on a terminal signal).
+	// or ingest source threw) rather than a graceful close/destroy. destroy() then
+	// fails the output queue instead of closing it, so the iterator throws the stop
+	// reason and consumers observe the failure instead of a silent end (which would
+	// strand a facade waiting on a terminal signal).
 	#faulted = false
 
 	#closeTask: Promise<void> | null = null
@@ -224,24 +225,21 @@ class Runtime<
 			// Hard shutdown: drop queued events immediately.
 			this.#eventQueue.length = 0
 
-			// Close output iterable and release pending iterators.
-			this.#outputQueue.close()
+			// Release pending iterators. An internal fault makes the output iterator
+			// throw the stop reason (so consumers observe the failure instead of a
+			// silent end); a graceful teardown just ends the stream.
+			if (this.#faulted) {
+				this.#outputQueue.fail(this.#stopReason)
+			} else {
+				this.#outputQueue.close()
+			}
 		})()
 
 		await this.#destroyTask
 	}
 
 	[Symbol.asyncIterator](): AsyncIterator<O> {
-		return this.#iterateOutputs()
-	}
-
-	// Delegate to the output queue, then — if an internal error tore the machine
-	// down — rethrow the stop reason to the consumer instead of ending silently.
-	async *#iterateOutputs(): AsyncIterator<O> {
-		yield* this.#outputQueue
-		if (this.#faulted) {
-			throw this.#stopReason
-		}
+		return this.#outputQueue[Symbol.asyncIterator]()
 	}
 
 	// Graceful async disposal first, then hard finalization.
