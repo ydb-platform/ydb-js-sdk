@@ -562,6 +562,10 @@ export function createTopicTxReader(
 	// thus the offsets) roll back, and the reader is torn down.
 	tx.onCommit(async () => {
 		await updateOffsetsInTransaction(tx, driver, options.consumer, reader.txReadOffsetUpdates())
+		// Release the partition once offsets are committed. A tx reader left open keeps
+		// the consumer's partition assigned server-side, so a later reader on the same
+		// consumer never gets a partition session — it hangs until its read deadline.
+		await reader.close()
 	})
 	tx.onRollback(() => {
 		reader.destroy(new Error('Transaction rolled back'))

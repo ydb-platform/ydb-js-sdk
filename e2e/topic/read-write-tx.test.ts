@@ -63,7 +63,7 @@ afterEach(async () => {
 })
 // #endregion
 
-test('writes and reads in tx', async () => {
+test('writes and reads in tx', async (tc) => {
 	await using yql = query(driver)
 
 	await using writer = createTopicWriter(driver, {
@@ -96,7 +96,7 @@ test('writes and reads in tx', async () => {
 		// Expect to see the message written outside the transaction (1).
 		// Expect NOT to see the message written in the transaction (2).
 		for await (let batch of readerTx.read({
-			signal: AbortSignal.timeout(5000),
+			signal: tc.signal,
 		})) {
 			batchInsideTx = batch
 			break
@@ -121,7 +121,7 @@ test('writes and reads in tx', async () => {
 	// Expect NOT to see the message written outside the transaction (1).
 	let batchOutsideTx: TopicMessage[] | undefined
 	for await (let batch of reader.read({
-		signal: AbortSignal.timeout(5000),
+		signal: tc.signal,
 	})) {
 		batchOutsideTx = batch
 		await reader.commit(batch)
