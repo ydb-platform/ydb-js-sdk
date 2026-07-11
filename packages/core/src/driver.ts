@@ -459,7 +459,13 @@ export class Driver implements Disposable {
 
 		this.#rediscoverTimer = setInterval(() => {
 			if (this.#closed) return
-			void this.#discovery(this.#discoverySignal(timeout))
+			// A failed background round must not escalate to an unhandledRejection
+			// (which kills the process): the pool keeps serving last-known
+			// endpoints and the next tick retries. Subscribers still observe the
+			// failure via the tracing:ydb:driver.discovery error event.
+			this.#discovery(this.#discoverySignal(timeout)).catch((error) => {
+				dbg.log('background rediscovery failed: %O', error)
+			})
 		}, interval)
 
 		// Don't keep the process alive solely for rediscovery.
