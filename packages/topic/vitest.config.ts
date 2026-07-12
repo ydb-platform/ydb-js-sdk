@@ -11,6 +11,9 @@ export default defineProject({
 					},
 					include: ['./src/**/*.test.ts'],
 					environment: 'node',
+					// The reader/writer lifecycle tests assert gc-reclaim via globalThis.gc —
+					// mirror the root config so package-level runs do not fail spuriously.
+					execArgv: ['--expose-gc'],
 					benchmark: {
 						include: ['./src/**/*.bench.ts'],
 					},
@@ -24,6 +27,7 @@ export default defineProject({
 					},
 					include: ['./tests/**/*.test.ts'],
 					environment: 'node',
+					execArgv: ['--expose-gc'],
 					testTimeout: 15000,
 					globalSetup: '../../vitest.setup.ydb.ts',
 					benchmark: {

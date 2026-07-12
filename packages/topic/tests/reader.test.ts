@@ -53,7 +53,7 @@ test('reads single message from topic', async () => {
 		consumer: testConsumerName,
 	})
 
-	for await (let batch of reader.read({ limit: 1, waitMs: 100 })) {
+	for await (let batch of reader.read({ limit: 1, batchWindowMs: 100 })) {
 		await reader.commit(batch)
 
 		// Process each batch of messages

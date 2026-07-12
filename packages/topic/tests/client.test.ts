@@ -47,15 +47,16 @@ test('writes and reads a message end to end through the facade', async () => {
 	let client = topic(driver)
 
 	await using writer = client.createWriter({ topic: testTopicName })
-	let seqNo = writer.write(new TextEncoder().encode('Hello via facade'))
-	await writer.flush()
+	writer.write(new TextEncoder().encode('Hello via facade'))
+	// write() is void; flush() returns the last acknowledged seqNo.
+	let seqNo = await writer.flush()
 
 	await using reader = client.createReader({
 		topic: testTopicName,
 		consumer: testConsumerName,
 	})
 
-	for await (let batch of reader.read({ limit: 1, waitMs: 2000 })) {
+	for await (let batch of reader.read({ limit: 1, batchWindowMs: 2000 })) {
 		expect(batch).toHaveLength(1)
 		expect(batch[0]!.seqNo).toBe(seqNo)
 		await reader.commit(batch)

@@ -1,0 +1,23 @@
+# Builds the workload image from this checkout and plugs it into the stack
+# defined by compose.yaml. Merged automatically by `docker compose`.
+#
+# The Dockerfile bundles `dist/` (built by `npm run build` here), so build the
+# workload first. IMAGE selects the base runtime: `node` (default) or `oven/bun`.
+services:
+  workload-current:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        image: ${IMAGE:-node}
+      platforms:
+        - linux/amd64
+    image: ${WORKLOAD_CURRENT_IMAGE:-ydb-app-current}
+    # Opt-in diagnostics, both empty by default:
+    #   DEBUG='ydbjs:*'                       → @ydbjs/debug logs (wraps `debug`)
+    #   NODE_OPTIONS='--import ./instrument.js' → attach the DC subscriber preload,
+    #     out-of-band so the workload code stays clean (like OpenTelemetry). It runs
+    #     in every worker thread and prints writer session/reconnect/error events.
+    environment:
+      - DEBUG=${DEBUG:-}
+      - NODE_OPTIONS=${NODE_OPTIONS:-}
