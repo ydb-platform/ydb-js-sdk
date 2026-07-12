@@ -30,41 +30,35 @@ export interface TransitionRuntime<S, E extends MachineEvent, O> {
 }
 
 /**
- * Full runtime handle passed to {@link EffectHandler}.
+ * Runtime handle passed to {@link EffectHandler}.
  *
- * Extends {@link TransitionRuntime} with lifecycle operations that effects may need,
- * such as closing or destroying the machine in response to an unrecoverable error.
+ * Identical to {@link TransitionRuntime}: hooks have no lifecycle access by design.
+ * A machine terminates by returning {@link TransitionResult.final} from a transition;
+ * an effect that hits an unrecoverable error `throw`s, which destroys the machine and
+ * fails the output iterator with that error.
  */
-export interface EffectRuntime<S, E extends MachineEvent, O> extends TransitionRuntime<S, E, O> {
-	/** Gracefully drains pending events then shuts down the machine. */
-	close(reason?: unknown): Promise<void>
-	/** Immediately halts the machine, dropping any pending events. */
-	destroy(reason?: unknown): Promise<void>
-	/**
-	 * Ingests an async iterable source, mapping each item to an event (or `null` to skip).
-	 * Stops automatically when the machine closes, the source ends, or the returned handle is disposed.
-	 *
-	 * Available in effect handlers so that effects can start stream ingestion without
-	 * needing a direct reference to the full {@link MachineRuntime}.
-	 *
-	 * @throws If the machine is already closed or destroyed.
-	 */
-	ingest<T>(
-		source: AsyncIterable<T>,
-		map: (input: T) => E | null,
-		signal?: AbortSignal
-	): IngestHandle
-}
+export interface EffectRuntime<S, E extends MachineEvent, O> extends TransitionRuntime<S, E, O> {}
 
 /**
  * Value returned by a {@link TransitionFn} to describe what should happen next.
  *
- * Both fields are optional: omitting `state` keeps the current state,
- * omitting `effects` produces no side effects.
+ * All fields are optional: omitting `state` keeps the current state,
+ * omitting `effects` produces no side effects, omitting `final` keeps running.
  */
 export type TransitionResult<S, FX extends MachineEffect> = {
 	/** Next state to transition to. Omit to stay in the current state. */
 	state?: S
+	/**
+	 * Declares this transition terminal. No further events are accepted, and the
+	 * machine seals its output stream right after this transition's effects complete
+	 * (events already queued still drain first — a terminal state ignores them).
+	 * `reason` lands on {@link MachineRuntime.signal}'s abort reason.
+	 *
+	 * Termination is a property of the state machine, so it is declared here — hooks
+	 * have no lifecycle access; an effect that hits an unrecoverable error `throw`s,
+	 * which destroys the machine and fails the output iterator with that error.
+	 */
+	final?: { reason?: unknown }
 	/** List of effects to execute after the state is updated. */
 	effects?: FX[]
 }
@@ -101,7 +95,7 @@ export type TransitionFn<
  *
  * @param ctx - Merged context: logical flags (`LC`) and runtime resources (`RC`) combined.
  * @param effect - The effect descriptor returned by the transition.
- * @param runtime - Full runtime handle, including lifecycle operations.
+ * @param runtime - Restricted handle for reading state, emitting outputs, and dispatching events.
  */
 export type EffectHandler<
 	S,
@@ -182,7 +176,7 @@ export type RuntimeOptions<
 	effects: EffectHandlers<S, LC, RC, E, FX, O>
 }
 
-/** Handle returned by {@link MachineRuntime.ingest} and {@link EffectRuntime.ingest} — dispose to stop ingestion. */
+/** Handle returned by {@link MachineRuntime.ingest} — dispose to stop ingestion. */
 export interface IngestHandle extends AsyncDisposable {}
 
 /**
@@ -205,7 +199,7 @@ export interface MachineRuntime<S, LC, E extends MachineEvent, O>
 	/** Aborted when the machine is closed or destroyed. */
 	readonly signal: AbortSignal
 
-	/** Enqueues an event for processing. Ignored if the machine is closed or destroyed. */
+	/** Enqueues an event for processing. Ignored once the machine is closing, closed, or destroyed. */
 	dispatch(event: E): void
 	/**
 	 * Ingests an async iterable source, mapping each item to an event (or `null` to skip).
