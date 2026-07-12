@@ -23,6 +23,7 @@ export default defineConfig({
 					},
 					include: ['packages/*/src/**/*.test.ts', 'third-parties/*/src/**/*.test.ts'],
 					environment: 'node',
+					setupFiles: ['./vitest.setup.polyfills.ts'],
 					execArgv: ['--expose-gc'],
 					benchmark: {
 						include: [
@@ -46,6 +47,7 @@ export default defineConfig({
 						'third-parties/*/tests/**/*.test.ts',
 					],
 					environment: 'node',
+					setupFiles: ['./vitest.setup.polyfills.ts'],
 					execArgv: ['--expose-gc'],
 					globalSetup: './vitest.setup.ydb.ts',
 					testTimeout: 60000,
@@ -69,6 +71,7 @@ export default defineConfig({
 					},
 					include: ['e2e/**/*.test.ts'],
 					environment: 'node',
+					setupFiles: ['./vitest.setup.polyfills.ts'],
 					globalSetup: './vitest.setup.ydb.ts',
 					testTimeout: 60000,
 					hookTimeout: 30000,
