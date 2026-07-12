@@ -50,10 +50,6 @@
 			"development": "./src/writer/index.ts",
 			"default": "./dist/writer/index.js"
 		},
-		"./writer2": {
-			"development": "./src/writer2/index.ts",
-			"default": "./dist/writer2/index.js"
-		},
 		"./message": {
 			"development": "./src/message.ts",
 			"default": "./dist/message.js"
@@ -71,15 +67,16 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",
+		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/api": "^6.0.7",
 		"@ydbjs/core": "^6.3.1",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.6",
+		"@ydbjs/fsm": "^6.1.1",
 		"@ydbjs/retry": "^6.3.0",
 		"@ydbjs/value": "^6.0.8",
 		"ms": "^2.1.3",
-		"nice-grpc": "^2.1.13",
-		"xstate": "^5.24.0"
+		"nice-grpc": "^2.1.13"
 	},
 	"devDependencies": {
 		"@types/ms": "^2.1.0"
