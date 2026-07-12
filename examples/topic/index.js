@@ -36,17 +36,17 @@ console.log('Connected to', cs)
 	let sql = query(driver)
 
 	await sql.begin(async (tx) => {
-		let reader = t.createTxReader(tx, driver, {
+		let reader = t.createTxReader(tx, {
 			topic: '/Root/demo-topic',
 			consumer: 'demo-consumer',
 		})
 
-		for await (let batch of reader.read({ waitMs: 100 })) {
+		for await (let batch of reader.read({ batchWindowMs: 100 })) {
 			console.log('read batch size:', batch.length)
 			break
 		}
 
-		let writer = t.createTxWriter(tx, driver, {
+		let writer = t.createTxWriter(tx, {
 			topic: '/Root/demo-topic',
 			producer: 'tx-producer',
 		})

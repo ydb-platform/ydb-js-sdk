@@ -1,5 +1,6 @@
 import { afterEach, assert, beforeEach, inject, test } from 'vitest'
 import { Driver } from '@ydbjs/core'
+import { linkSignals } from '@ydbjs/abortable'
 import { createTopicReader } from '@ydbjs/topic/reader'
 import { createTopicWriter } from '@ydbjs/topic/writer'
 import {
@@ -70,19 +71,13 @@ test('writes and reads messages from a topic', async () => {
 		consumer: testConsumerName,
 	})
 
-	// Write a message to the topic
 	writer.write(Buffer.from('Hello, world!', 'utf-8'))
-
 	await writer.flush()
 
-	// Read the message from the topic
 	for await (let batch of reader.read()) {
 		assert.equal(batch.length, 1, 'Expected one message in batch')
-		let message = batch[0]!
-		assert.equal(Buffer.from(message.payload).toString('utf-8'), 'Hello, world!')
-
+		assert.equal(Buffer.from(batch[0]!.payload).toString('utf-8'), 'Hello, world!')
 		await reader.commit(batch)
-
 		break
 	}
 })
@@ -109,9 +104,11 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	let wb = 0
 	let rb = 0
 	let ctrl = new AbortController()
-	let signal = AbortSignal.any([tc.signal, ctrl.signal, AbortSignal.timeout(25_000)])
+	// linkSignals, not AbortSignal.any (composite signals accumulate listeners).
+	using combined = linkSignals(tc.signal, ctrl.signal, AbortSignal.timeout(25_000))
+	let signal = combined.signal
 
-	// Write messages to the topic
+	// Producer.
 	void (async () => {
 		while (wb < TOTAL_TRAFFIC) {
 			if (signal.aborted) break
@@ -125,31 +122,23 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 
 		let start = performance.now()
 		await writer.flush()
-		console.log(`Write took ${performance.now() - start} ms`)
-		console.log(
-			`Throughput: ${((wb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`
-		)
+		console.log(`write took ${performance.now() - start} ms`)
 	})()
 
-	// Read messages from the topic
+	// Consumer.
 	void (async () => {
-		let start = performance.now()
-
 		for await (let batch of reader.read({ signal })) {
 			let promise = reader.commit(batch)
-
 			rb += MESSAGE_SIZE * batch.length
 
-			if (rb === TOTAL_TRAFFIC) {
+			// >=, not ==: at-least-once redelivery can overshoot the total, and an
+			// exact-equality trigger would then never fire and hang the test.
+			if (rb >= TOTAL_TRAFFIC) {
 				await promise
 				ctrl.abort()
+				break
 			}
 		}
-
-		console.log(`Read took ${performance.now() - start} ms`)
-		console.log(
-			`Throughput: ${((rb / (performance.now() - start)) * 1000) / 1024 / 1024} MiB/s`
-		)
 	})()
 
 	let start = Date.now()
@@ -157,6 +146,6 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	await writer.close()
 	await reader.close()
 
-	console.log(`Wrote ${wb} bytes and read ${rb} bytes in ${Date.now() - start} ms.`)
-	console.log(`Throughput: ${((rb / (Date.now() - start)) * 1000) / 1024 / 1024} MiB/s`)
+	assert.ok(rb >= TOTAL_TRAFFIC, 'read at least all written traffic')
+	console.log(`wrote ${wb} bytes and read ${rb} bytes in ${Date.now() - start} ms.`)
 })

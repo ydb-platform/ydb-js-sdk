@@ -14,7 +14,7 @@ import path from 'node:path'
 
 let slo = path.resolve(import.meta.dir, '..')
 
-let entrypoints: string[] = [path.join(slo, 'index.ts')]
+let entrypoints: string[] = [path.join(slo, 'index.ts'), path.join(slo, 'instrument.ts')]
 for await (let file of new Glob('workloads/*/*.ts').scan({ cwd: slo })) {
 	entrypoints.push(path.join(slo, file))
 }
