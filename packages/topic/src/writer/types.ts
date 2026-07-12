@@ -1,82 +1,71 @@
-import type { RetryConfig } from '@ydbjs/retry'
 import type { CompressionCodec } from '../codec.js'
 import type { TX } from '../tx.js'
 
-export type ThroughputSettings = {
-	maxBufferBytes: bigint
-	flushIntervalMs: number
-	maxInflightCount: number
+// Status of a single message acknowledged by the server.
+export type AckStatus = 'written' | 'skipped' | 'writtenInTx'
+
+// A single server acknowledgement, flattened from StreamWriteMessage.WriteResponse.acks.
+export type WriteAck = {
+	seqNo: bigint
+	status: AckStatus
+	// Present only for 'written' acks — the partition offset the message landed at.
+	offset?: bigint
+}
+
+// Per-message acknowledgment hook (see TopicWriterOptions.onAck).
+export type OnAckCallback = (seqNo: bigint, status: AckStatus) => void
+
+// Optional per-message metadata accepted by write().
+export type WriteExtra = {
+	// User-provided sequence number. Providing it once switches the writer to
+	// manual mode: every subsequent message must then also provide a seqNo.
+	seqNo?: bigint
+	createdAt?: Date
+	metadataItems?: Record<string, Uint8Array>
 }
 
 export type TopicWriterOptions = {
-	// Transaction identity.
-	// If provided, the writer will use the transaction for writing messages.
-	tx?: TX
-	// Path to the topic to write to.
-	// Example: "/Root/my-topic"
+	// Path to the topic to write to, e.g. "/Root/my-topic".
 	topic: string
-	// Compression codec to use for writing messages.
-	// If not provided, the RAW codec will be used by default.
-	// Default supported codecs: RAW_CODEC, GZIP_CODEC, ZSTD_CODEC.
-	codec?: CompressionCodec
-	// The producer name to use for writing messages.
-	// If not provided, a random producer name will be generated.
+	// Producer identity. Together with seqNo it gives the server-side
+	// deduplication key (producer + seqNo), which makes reconnect resends safe.
+	// A unique id is generated if omitted.
 	producer?: string
-	// How often to update the token for the writer.
-	// Default is 60 seconds.
-	updateTokenIntervalMs?: number
-	// Maximum size of the buffer in bytes.
-	// If the buffer exceeds this size, the writer will flush the buffer and send the messages to the topic.
-	// This is useful to avoid memory leaks and to ensure that the writer does not hold too many messages in memory.
-	// If not provided, the default buffer size is 256MiB.
+	// Transaction identity. When set, every write is tagged with the tx. Stream
+	// errors still reconnect transparently — resends are safe inside a tx too
+	// (server-side dedup by producer + seqNo); only a failed graceful drain at
+	// commit time surfaces to the transaction layer (close() rejects).
+	tx?: TX
+	// Compression codec. Default RAW.
+	codec?: CompressionCodec
+
+	// Pin writes to a single partition (mutually exclusive with messageGroupId).
+	partitionId?: bigint
+	// Route writes by message group (mutually exclusive with partitionId).
+	messageGroupId?: string
+
+	// Hard cap on the un-acknowledged bytes held in memory; write() throws when a
+	// message would exceed it. Default 256MiB.
 	maxBufferBytes?: bigint
-	// Maximum number of messages that can be in flight at the same time.
-	// If the number of messages in flight exceeds this number, the writer will wait for some messages to be acknowledged before sending new messages.
-	// This is useful to avoid overwhelming the topic with too many messages at once.
-	// Default is 1000 messages.
+	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number
-	// The Interval in milliseconds to flush the buffer automatically.
-	// If not provided, the writer will not flush the buffer automatically.
-	// This is useful to ensure that the writer does not hold too many messages in memory.
-	// Default is 10ms.
+	// Background flush cadence in ms — bounds how long a small batch waits. Default 1000.
 	flushIntervalMs?: number
-	// Retry configuration for the writer.
-	retryConfig?(signal: AbortSignal): RetryConfig
-	// Callback that is called when writer receives an acknowledgment for a message.
-	onAck?: (seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void
-}
 
-export interface TopicWriter extends AsyncDisposable {
-	// Write a message to the topic.
-	// Returns a promise that resolves to the sequence number of the message that was written to the topic.
-	write(
-		payload: Uint8Array,
-		extra?: {
-			seqNo?: bigint
-			createdAt?: Date
-			metadataItems?: Record<string, Uint8Array>
-		}
-	): bigint
-	// Flush the buffer and send all messages to the topic.
-	// Returns a promise that resolves to the last sequence number of the topic after flushing.
-	flush(): Promise<bigint | undefined>
-	// Gracefully close the writer. Stop accepting new messages and wait for existing ones to be sent.
-	close(): Promise<void>
-	// Immediately destroy the writer and release all resources.
-	// This will stop all operations immediately without waiting for pending messages.
-	destroy(reason?: Error): void
-}
+	// How often to refresh the auth token on the stream. Default 60s.
+	updateTokenIntervalMs?: number
+	// Force-close deadline for graceful close() before pending messages are dropped.
+	// JS-specific safety net; other SDKs bound this by the caller's signal only. Default 30s.
+	gracefulShutdownTimeoutMs?: number
+	// Terminal reconnect window in ms. Unbounded by default (the writer reconnects
+	// forever, waiting for the server / topic); pass a finite value to fail terminally
+	// if no successful reconnect happens within it.
+	recoveryWindowMs?: number
+	// Retry on SCHEME_ERROR (e.g. the topic does not exist yet). Off by default: a
+	// missing / mistyped topic fails fast. Enable to wait until the topic is created.
+	retryOnSchemeError?: boolean
 
-export interface TopicTxWriter {
-	write(
-		payload: Uint8Array,
-		extra?: {
-			seqNo?: bigint
-			createdAt?: Date
-			metadataItems?: Record<string, Uint8Array>
-		}
-	): bigint
-	flush(): Promise<bigint | undefined>
-	close(): Promise<void>
-	destroy(): void
+	// Called for every acknowledged message. Errors thrown here are logged and
+	// ignored — a throwing callback must never break the writer.
+	onAck?: OnAckCallback
 }
