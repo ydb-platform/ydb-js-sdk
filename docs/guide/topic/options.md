@@ -9,17 +9,20 @@ title: Topic — Options
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]`
   - `TopicReaderSource`: `{ path: string; partitionIds?: bigint[]; maxLag?: number | string | Duration; readFrom?: Date | Timestamp }`
 - `consumer`: `string`
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — additional decompression codecs
-- `maxBufferBytes?`: `bigint` — internal buffer limit (default ~4 MB)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — additional decompression codecs (built-in ZSTD needs Node.js 22.15+ / 23.8+)
+- `maxBufferBytes?`: `bigint` — internal buffer limit (default 8 MiB)
 - `updateTokenIntervalMs?`: `number` — token refresh interval (default 60000)
+- `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `onPartitionSessionStart?`: `(session, committedOffset, { start, end }) => Promise<void | { readOffset?, commitOffset? }>`
 - `onPartitionSessionStop?`: `(session, committedOffset) => Promise<void>`
 - `onCommittedOffset?`: `(session, committedOffset) => void`
 
 Methods and behavior:
 
-- `read({ limit?, waitMs?, signal? })`: `AsyncIterable<TopicMessage[]>`
-  - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `waitMs` sets maximum wait for data; on timeout, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
+- `read({ limit?, batchWindowMs?, signal? })`: `AsyncIterable<TopicMessage[]>`
+  - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `batchWindowMs` sets the max time to accumulate a batch before yielding; on an idle topic, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
   - Rationale: long blocking reads hurt cooperative multitasking; time‑based empty yields simplify scheduling without busy‑wait.
 - `commit(messages | message)`: `Promise<void>`
   - Confirms processing up to the corresponding offset per affected partition (idempotent). Ensures subsequent reads start after the committed offset. Accepts one message or an array (a batch).
@@ -38,19 +41,22 @@ Methods and behavior:
 - `codec?`: `CompressionCodec`
 - `maxBufferBytes?`: `bigint` — default 256 MB
 - `maxInflightCount?`: `number` — default 1000
-- `flushIntervalMs?`: `number` — default 10 ms
+- `flushIntervalMs?`: `number` — default 1000 ms
 - `updateTokenIntervalMs?`: `number` — default 60000
-- `retryConfig?(signal)`: `RetryConfig`
-- `onAck?(seqNo, status?)`: `(seqNo: bigint, status?: 'skipped' | 'written' | 'writtenInTx') => void`
+- `gracefulShutdownTimeoutMs?`: `number` — default 30000
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
+- `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
+- `onAck?(seqNo, status)`: `(seqNo: bigint, status: 'skipped' | 'written' | 'writtenInTx') => void`
 
 Methods and behavior:
 
-- `write(payload: Uint8Array, extra?)`: `bigint`
-  - Buffers a message and returns assigned `seqNo`. You may provide `seqNo`, `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher.
-  - Why `seqNo`: `producerId + seqNo` on the producer ensures idempotency, deterministic acks, and per‑partition order.
-- `flush()`: `Promise<bigint | undefined>`
-  - Flushes buffered messages, waits for inflight confirmations, and returns the last `seqNo`. Use at checkpoints (e.g., service shutdown).
-- `close()`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources).
+- `write(payload: Uint8Array, extra?)`: `void`
+  - Buffers a message. You may provide `seqNo` (manual mode), `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher. The final `seqNo` is obtained via `flush()` or `onAck`.
+  - Why `seqNo`: `producer + seqNo` ensures idempotency, deterministic acks, and per‑partition order.
+- `flush()`: `Promise<bigint>`
+  - Flushes buffered messages, waits for inflight confirmations, and returns the last acknowledged `seqNo`. Use at checkpoints (e.g., service shutdown).
+- `close()`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources). Rejects if the drain fails.
 - `destroy()`: `void` — immediate stop without delivery guarantees.
 
 Acknowledgements:
@@ -62,11 +68,11 @@ Acknowledgements:
 
 Retries and resilience:
 
-- The connection to TopicService is streaming; it reestablishes on failures per `retryConfig`. Command queue is recreated.
+- The connection to TopicService is streaming; it transparently reconnects on failures with exponential backoff + jitter. By default it reconnects indefinitely (waiting for the server/topic); pass `recoveryWindowMs` to impose a terminal deadline. Enable `retryOnSchemeError` to also retry SCHEME_ERROR and wait until the topic is created. In‑flight messages are resent; pending writes are not failed by a transparent reconnect.
 
 Transactional variants:
 
 - `createTopicTxReader(tx, ...)` and `createTopicTxWriter(tx, ...)` are bound to a Query transaction.
   - TxReader tracks read offsets and sends `updateOffsetsInTransaction` on `tx.onCommit`.
   - TxWriter triggers `flush` on `tx.onCommit` and shuts down correctly on `tx.onRollback/onClose`.
-  - These do not implement `AsyncDisposable`; no `using` needed — the transaction controls lifecycle.
+  - Both implement `AsyncDisposable`/`Disposable`, but `using` is optional — the transaction controls their lifecycle.

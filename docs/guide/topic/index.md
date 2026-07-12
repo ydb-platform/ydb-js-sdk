@@ -40,7 +40,7 @@ await using reader = t.createReader({
   consumer: 'svc-a',
 })
 
-for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
+for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
   if (!batch.length) continue // periodic tick without blocking the loop
   // process batch
   void reader.commit(batch) // fire-and-forget with onCommittedOffset hook
@@ -116,7 +116,7 @@ await using reader = t.createReader({
   consumer: 'svc-a',
 })
 
-for await (const batch of reader.read({ waitMs: 500 })) {
+for await (const batch of reader.read({ batchWindowMs: 500 })) {
   // process messages from both topics, filtered partitions
 }
 ```
@@ -152,7 +152,7 @@ await using reader = t.createReader({
   },
   consumer: 'svc-a',
 })
-for await (const batch of reader.read({ waitMs: 500 })) {
+for await (const batch of reader.read({ batchWindowMs: 500 })) {
   // process recent events only
 }
 ```

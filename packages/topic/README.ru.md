@@ -22,6 +22,8 @@ npm install @ydbjs/topic
 
 Требуется Node.js >= 20.19.
 
+Контрибьюторам: карты внутренних конечных автоматов — в [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Быстрый старт
 
 Два варианта использования:
@@ -85,9 +87,12 @@ await using writer = createTopicWriter(driver, {
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — путь или источники с фильтрами
 - `consumer`: `string` — имя консюмера
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки
-- `maxBufferBytes?`: `bigint` — лимит внутреннего буфера (по умолчанию ~4 МБ)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки (встроенный ZSTD требует Node.js 22.15+ / 23.8+; для рантаймов без zlib zstd зарегистрируйте свой)
+- `maxBufferBytes?`: `bigint` — лимит внутреннего буфера (по умолчанию 8 МиБ)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
+- `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()`, после него ожидающие коммиты отбрасываются (по умолчанию 30000)
+- `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
+- `retryOnSchemeError?`: `boolean` — ретраить SCHEME_ERROR (например, топик ещё не создан); по умолчанию выключено, включите, чтобы ждать создания топика
 - `onPartitionSessionStart?` — настройка оффсетов при старте сессии
 - `onPartitionSessionStop?` — хук на остановку сессии
 - `onCommittedOffset?` — уведомление об ack коммита оффсетов
@@ -109,7 +114,7 @@ const source = {
 const t = topic(driver)
 await using reader = t.createReader({ topic: source, consumer: 'svc-a' })
 
-for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
+for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
   if (!batch.length) continue
 
   for (const m of batch) doSomething(m)
@@ -131,12 +136,15 @@ for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
 - `topic`: `string`
 - `tx?`: `TX` — транзакция для записи
 - `producer?`: `string` — id продюсера (по умолчанию генерируется)
-- `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
+- `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё; встроенный ZSTD требует Node.js 22.15+ / 23.8+)
 - `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
-- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 10 мс)
+- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
-- `retryConfig?(signal)` — настройка ретраев соединения
+- `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()` (по умолчанию 30000)
+- `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
+- `retryOnSchemeError?`: `boolean` — ретраить SCHEME_ERROR (например, топик ещё не создан); по умолчанию выключено, включите, чтобы ждать создания топика
+- `partitionId?` / `messageGroupId?` — привязка/маршрутизация записи (взаимоисключающие)
 - `onAck?(seqNo, status)` — колбэк подтверждений
 
 ### Запись
@@ -149,8 +157,9 @@ await using writer = t.createWriter({
 })
 
 const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-const seqNo = writer.write(payload)
-await writer.flush()
+writer.write(payload) // fire-and-forget (void)
+// flush() возвращает последний подтверждённый seqNo
+const lastSeqNo = await writer.flush()
 ```
 
 `write()` принимает только `Uint8Array` — строки/объекты кодируйте самостоятельно.
@@ -221,7 +230,6 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
-- `@ydbjs/topic/writer2`: экспериментальный state‑machine writer
 
 ## Лицензия
 

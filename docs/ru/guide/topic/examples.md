@@ -12,7 +12,7 @@ import { topic } from '@ydbjs/topic'
 const t = topic(driver)
 await using reader = t.createReader({ topic: '/Root/my-topic', consumer: 'c1' })
 
-for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
+for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
   if (!batch.length) continue
   // обработка
   await reader.commit(batch)
