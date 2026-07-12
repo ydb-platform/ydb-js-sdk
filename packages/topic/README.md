@@ -22,6 +22,8 @@ npm install @ydbjs/topic
 
 Requires Node.js >= 20.19.
 
+Contributing? The internal state machines are mapped in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Getting Started
 
 Two ways to use the client:
@@ -87,9 +89,12 @@ await using writer = createTopicWriter(driver, {
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — topic path or detailed sources
 - `consumer`: `string` — consumer name
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression
-- `maxBufferBytes?`: `bigint` — internal buffer cap (default ~4 MiB)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built‑in ZSTD needs Node.js 22.15+ / 23.8+; register your own for runtimes without zlib zstd)
+- `maxBufferBytes?`: `bigint` — internal buffer cap (default 8 MiB)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
+- `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `onPartitionSessionStart?`: hook to adjust read/commit offsets per session
 - `onPartitionSessionStop?`: hook on session stop (cleanup/commit)
 - `onCommittedOffset?`: observe commit acknowledgments from server
@@ -113,7 +118,7 @@ const source = {
 const t = topic(driver)
 await using reader = t.createReader({ topic: source, consumer: 'svc-a' })
 
-for await (const batch of reader.read({ limit: 100, waitMs: 1000 })) {
+for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
   if (!batch.length) continue // periodic empty batches when no data
 
   // Handle messages
@@ -136,12 +141,15 @@ Performance note: awaiting `commit()` in the hot path reduces throughput. For hi
 - `topic`: `string`
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
-- `codec?`: `CompressionCodec` — compression (default RAW; built‑ins: RAW, GZIP, ZSTD)
+- `codec?`: `CompressionCodec` — compression (default RAW; built‑ins: RAW, GZIP, ZSTD — built‑in ZSTD needs Node.js 22.15+ / 23.8+)
 - `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
-- `flushIntervalMs?`: `number` — periodic flush tick (default 10ms)
+- `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
-- `retryConfig?(signal)`: tune connection retry strategy
+- `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` (default 30000)
+- `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
+- `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
+- `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
 - `onAck?(seqNo, status)`: callback on message acknowledgment
 
 ### Writing messages
@@ -161,8 +169,9 @@ await using writer = t.createWriter({
 })
 
 const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-const seqNo = writer.write(payload)
-await writer.flush()
+writer.write(payload) // fire-and-forget (void)
+// flush() returns the last acknowledged seqNo
+const lastSeqNo = await writer.flush()
 ```
 
 `write()` accepts `Uint8Array` only. Encode your own objects/strings as needed.
@@ -233,7 +242,6 @@ await using writer = createTopicWriter(driver, {
 - `@ydbjs/topic`: `topic(driver)` and types
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types
-- `@ydbjs/topic/writer2`: experimental state‑machine writer
 
 ## License
 
