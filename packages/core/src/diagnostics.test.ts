@@ -1,38 +1,23 @@
-import { expect, test } from 'vitest'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
-import { credentials } from '@grpc/grpc-js'
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { create } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
-import { ServerError, Status, createServer } from 'nice-grpc'
 import {
 	DiscoveryServiceDefinition,
 	EndpointInfoSchema,
 	ListEndpointsResultSchema,
 } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { ServerError, Status, createServer } from 'nice-grpc'
+import { expect, test } from 'vitest'
 
 import { Driver } from './driver.js'
-import { ConnectionPool, POOL_GET_ACTIVE_FOR_TESTING } from './pool.js'
 
-function makeProtoEndpoint(nodeId: number, port = 2136) {
-	return {
-		nodeId,
-		address: `node-${nodeId}`,
-		port,
-		location: 'dc1',
-		sslTargetNameOverride: '',
-	} as any
-}
-
-function makePool(opts: { pessimizationTimeout?: number } = {}) {
-	return new ConnectionPool({
-		channelCredentials: credentials.createInsecure(),
-		idleTimeout: 0,
-		idleInterval: 0,
-		pessimizationTimeout: opts.pessimizationTimeout ?? 60_000,
-		identity: { database: '/local', address: '127.0.0.1' },
-	})
-}
+// The connection-pool diagnostics (ydb:driver.connection.added/retired/removed/
+// pessimized/unpessimized) are covered against the endpoints engine in
+// packages/core/src/endpoints/*. This file covers the Driver-lifecycle channels
+// end-to-end against a fake DiscoveryService.
 
 /**
  * Subscribe to a DC channel and collect deep-cloned payloads.
@@ -50,154 +35,11 @@ function collect(name: string): { payloads: unknown[] } & Disposable {
 	}
 }
 
-// ── added / removed via discovery ────────────────────────────────────────────
-
-test('publishes ydb:driver.connection.added when sync introduces a new endpoint', () => {
-	using pool = makePool()
-	using added = collect('ydb:driver.connection.added')
-
-	pool.sync([makeProtoEndpoint(1)])
-
-	expect(added.payloads).toHaveLength(1)
-	expect(added.payloads[0]).toMatchObject({
-		nodeId: 1n,
-		address: 'node-1:2136',
-		location: 'dc1',
-	})
-})
-
-test('publishes ydb:driver.connection.retired when an active endpoint disappears from discovery', () => {
-	using pool = makePool()
-	pool.sync([makeProtoEndpoint(1)])
-
-	using retired = collect('ydb:driver.connection.retired')
-	using removed = collect('ydb:driver.connection.removed')
-
-	pool.sync([]) // node 1 is no longer in discovery
-
-	// channel stays open until idle sweep → no `removed` yet
-	expect(removed.payloads).toHaveLength(0)
-	expect(retired.payloads).toHaveLength(1)
-	expect(retired.payloads[0]).toMatchObject({
-		nodeId: 1n,
-		address: 'node-1:2136',
-		location: 'dc1',
-		reason: 'stale_active',
-	})
-})
-
-test('publishes ydb:driver.connection.retired when a pessimized endpoint disappears from discovery', () => {
-	using pool = makePool()
-	pool.sync([makeProtoEndpoint(3)])
-	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
-	pool.pessimize(conn!)
-
-	using retired = collect('ydb:driver.connection.retired')
-
-	pool.sync([])
-
-	expect(retired.payloads).toHaveLength(1)
-	expect(retired.payloads[0]).toMatchObject({
-		nodeId: 3n,
-		reason: 'stale_pessimized',
-	})
-})
-
-// ── pessimize / unpessimize ──────────────────────────────────────────────────
-
-test('publishes ydb:driver.connection.pessimized with deadline when pessimize() is called', () => {
-	let before = Date.now()
-	using pool = makePool({ pessimizationTimeout: 60_000 })
-	pool.sync([makeProtoEndpoint(2)])
-	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
-
-	using pessimized = collect('ydb:driver.connection.pessimized')
-
-	pool.pessimize(conn!)
-
-	expect(pessimized.payloads).toHaveLength(1)
-	let p = pessimized.payloads[0] as any
-	expect(p).toMatchObject({
-		nodeId: 2n,
-		address: 'node-2:2136',
-		location: 'dc1',
-	})
-	expect(p.until).toBeGreaterThanOrEqual(before + 60_000)
-})
-
-test('does not re-publish ydb:driver.connection.pessimized when pessimize() refreshes an already-pessimized conn', () => {
-	using pool = makePool({ pessimizationTimeout: 60_000 })
-	pool.sync([makeProtoEndpoint(20)])
-	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
-
-	using pessimized = collect('ydb:driver.connection.pessimized')
-
-	pool.pessimize(conn!) // active → pessimized: fires
-	pool.pessimize(conn!) // already pessimized: timeout refresh, must not fire
-	pool.pessimize(conn!)
-
-	expect(pessimized.payloads).toHaveLength(1)
-})
-
-test('publishes ydb:driver.connection.unpessimized after the pessimization timeout elapses', async () => {
-	// 1ms timeout + a small wait so `until < Date.now()` holds inside
-	// #refreshPessimized when acquire() runs.
-	using pool = makePool({ pessimizationTimeout: 1 })
-	pool.sync([makeProtoEndpoint(4)])
-	let [conn] = pool[POOL_GET_ACTIVE_FOR_TESTING]()
-	pool.pessimize(conn!)
-
-	await new Promise((r) => setTimeout(r, 5))
-
-	using unpessimized = collect('ydb:driver.connection.unpessimized')
-
-	pool.acquire() // calls #refreshPessimized() — restores node 4
-
-	expect(unpessimized.payloads).toHaveLength(1)
-	expect(unpessimized.payloads[0]).toMatchObject({
-		nodeId: 4n,
-		address: 'node-4:2136',
-		location: 'dc1',
-	})
-})
-
-// ── removed (physical close) by reason ───────────────────────────────────────
-
-test('publishes ydb:driver.connection.removed with reason=replaced on add() of an existing nodeId', () => {
-	using pool = makePool()
-	pool.sync([makeProtoEndpoint(5)])
-
-	using removed = collect('ydb:driver.connection.removed')
-
-	pool.add(makeProtoEndpoint(5)) // re-add — old channel must be replaced
-
-	expect(removed.payloads).toHaveLength(1)
-	expect(removed.payloads[0]).toMatchObject({
-		nodeId: 5n,
-		reason: 'replaced',
-	})
-})
-
-test('publishes ydb:driver.connection.removed with reason=pool_close on close()', () => {
-	let pool = makePool()
-	pool.sync([makeProtoEndpoint(6), makeProtoEndpoint(7)])
-
-	using removed = collect('ydb:driver.connection.removed')
-
-	pool.close()
-
-	expect(removed.payloads).toHaveLength(2)
-	for (let p of removed.payloads) {
-		expect(p).toMatchObject({ reason: 'pool_close' })
-	}
-})
-
-// ── driver lifecycle ────────────────────────────────────────────────────────
-
 /**
- * Stand up a fake DiscoveryService that returns a single endpoint pointing
- * back at the test server. Returned object is `AsyncDisposable` so callers can
- * use `await using`.
+ * Stand up a fake DiscoveryService that returns a single endpoint pointing back
+ * at the test server. `fail: true` rejects with a NON-retryable status so the
+ * driver's discovery goes terminal (`ydb:driver.failed`); a retryable failure
+ * would instead keep retrying until the ready timeout.
  */
 async function startDiscoveryServer(opts: { fail?: boolean } = {}) {
 	let server = createServer()
@@ -211,7 +53,7 @@ async function startDiscoveryServer(opts: { fail?: boolean } = {}) {
 		{
 			async listEndpoints() {
 				if (opts.fail) {
-					throw new ServerError(Status.INTERNAL, 'discovery boom')
+					throw new ServerError(Status.PERMISSION_DENIED, 'discovery boom')
 				}
 				let result = create(ListEndpointsResultSchema, {
 					endpoints: [
@@ -303,18 +145,17 @@ test('publishes ydb:driver.ready synchronously when discovery is disabled', () =
 	expect(ready.payloads[0]).toMatchObject({ driver: { database: '/local' } })
 })
 
-test('publishes ydb:driver.failed with error and duration when initial discovery fails', async () => {
+test('publishes ydb:driver.failed with error and duration when initial discovery fails non-retryably', async () => {
 	await using server = await startDiscoveryServer({ fail: true })
 	using failed = collect('ydb:driver.failed')
 
 	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
-		// shrink timings so the test does not hang on the default 30s ready timeout
 		'ydb.sdk.discovery_timeout_ms': 200,
 		'ydb.sdk.discovery_interval_ms': 1_000,
 		'ydb.sdk.ready_timeout_ms': 1_000,
 	})
 
-	await expect(driver.ready()).rejects.toThrow(/discovery boom|aborted|timed out/i)
+	await expect(driver.ready()).rejects.toThrow(/discovery boom|permission|aborted|timed out/i)
 	driver.close()
 
 	expect(failed.payloads.length).toBeGreaterThanOrEqual(1)
@@ -334,6 +175,8 @@ test('publishes ydb:driver.closed with uptime on close()', async () => {
 
 	using closed = collect('ydb:driver.closed')
 	driver.close()
+	// The endpoints pool tears down and publishes `closed` on a later turn.
+	await sleep(50)
 
 	expect(closed.payloads).toHaveLength(1)
 	let p = closed.payloads[0] as any
@@ -378,8 +221,8 @@ test('traces tracing:ydb:driver.discovery start and asyncEnd around a successful
 })
 
 test('close() during in-flight initial discovery suppresses ydb:driver.ready / .failed', async () => {
-	// Discovery server that hangs forever — the only way out is the per-round
-	// timeout (driver close should kick in first).
+	// Discovery server that hangs until released — close() must terminate the
+	// engine before the round can resolve.
 	let release: () => void = () => {}
 	let server = createServer()
 	let port = 0
@@ -426,13 +269,12 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 	})
 
 	// Give the RPC time to land on the server.
-	await new Promise((r) => setTimeout(r, 50))
+	await sleep(50)
 	driver.close()
 
-	// Let the listEndpoints handler resolve so the (now-cancelled) discovery
-	// callbacks have a chance to run #markReady on a closed driver.
+	// Let the handler resolve so a (now-cancelled) round has a chance to fire.
 	release()
-	await new Promise((r) => setTimeout(r, 50))
+	await sleep(50)
 
 	expect(closed.payloads).toHaveLength(1)
 	expect(ready.payloads).toHaveLength(0)
@@ -451,7 +293,7 @@ test('traces tracing:ydb:driver.discovery error when listEndpoints fails', async
 		'ydb.sdk.ready_timeout_ms': 1_000,
 	})
 
-	await expect(driver.ready()).rejects.toThrow(/discovery boom|aborted|timed out/i)
+	await expect(driver.ready()).rejects.toThrow(/discovery boom|permission|aborted|timed out/i)
 	driver.close()
 
 	expect(trace.start.length).toBeGreaterThanOrEqual(1)

@@ -3,9 +3,11 @@
 ## Endpoints engine (`src/endpoints/`)
 
 A reference-grade state machine for endpoint management — discovery, routing, and
-the connection pool — built on `@ydbjs/fsm`. It is intended to replace the ad-hoc
-`pool.ts` / discovery loop in a later step; today it is a standalone, fully-tested
-module not yet wired into `Driver`.
+the connection pool — built on `@ydbjs/fsm`. It replaces the legacy `ConnectionPool`
+and the Driver's ad-hoc discovery loop: `Driver` owns a bootstrap connection + the
+middleware chain and hands the engine a `listEndpoints` seam (see `driver.ts`); the
+`BalancedChannel` (see `channel.ts`) routes each RPC through `EndpointPool.acquire()`
+and reports outcomes via `EndpointPool.report()`.
 
 ### Files
 
