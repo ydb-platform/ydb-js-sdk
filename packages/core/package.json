@@ -57,6 +57,7 @@
 		"@ydbjs/auth": "^6.3.1",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.6",
+		"@ydbjs/fsm": "^6.1.1",
 		"@ydbjs/retry": "^6.3.0",
 		"nice-grpc": "^2.1.13"
 	},

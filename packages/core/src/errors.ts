@@ -53,3 +53,10 @@ export class DriverResponseError extends Error {
 		this.name = 'DriverResponseError'
 	}
 }
+
+export class EndpointsUnavailableError extends Error {
+	constructor(msg = 'No endpoint available') {
+		super(msg)
+		this.name = 'EndpointsUnavailableError'
+	}
+}
