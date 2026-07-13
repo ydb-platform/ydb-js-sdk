@@ -117,14 +117,14 @@ function collectTrace(name: string): {
 	}
 }
 
-test('publishes ydb:driver.ready with duration after successful initial discovery', async () => {
+test('publishes ydb:driver.ready with duration after successful initial discovery', async (tc) => {
 	await using server = await startDiscoveryServer()
 	using ready = collect('ydb:driver.ready')
 
 	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	expect(ready.payloads).toHaveLength(1)
 	let p = ready.payloads[0] as any
@@ -165,13 +165,13 @@ test('publishes ydb:driver.failed with error and duration when initial discovery
 	expect(p.error).toBeDefined()
 })
 
-test('publishes ydb:driver.closed with uptime on close()', async () => {
+test('publishes ydb:driver.closed with uptime on close()', async (tc) => {
 	await using server = await startDiscoveryServer()
 
 	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	using closed = collect('ydb:driver.closed')
 	driver.close()
@@ -185,14 +185,31 @@ test('publishes ydb:driver.closed with uptime on close()', async () => {
 	expect(p.uptime).toBeGreaterThanOrEqual(0)
 })
 
-test('publishes ydb:driver.discovery.completed with added/removed/total counts', async () => {
+test('await using driver publishes ydb:driver.closed once via asyncDispose', async (tc) => {
+	await using server = await startDiscoveryServer()
+	using closed = collect('ydb:driver.closed')
+
+	{
+		await using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+			'ydb.sdk.discovery_timeout_ms': 5_000,
+		})
+		await driver.ready(tc.signal)
+	}
+	// asyncDispose drains and awaits the graceful close; closed is already published.
+	expect(closed.payloads).toHaveLength(1)
+	let p = closed.payloads[0] as any
+	expect(p.driver.database).toBe('/local')
+	expect(typeof p.uptime).toBe('number')
+})
+
+test('publishes ydb:driver.discovery.completed with added/removed/total counts', async (tc) => {
 	await using server = await startDiscoveryServer()
 	using completed = collect('ydb:driver.discovery.completed')
 
 	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	expect(completed.payloads.length).toBeGreaterThanOrEqual(1)
 	let p = completed.payloads[0] as any
@@ -205,14 +222,14 @@ test('publishes ydb:driver.discovery.completed with added/removed/total counts',
 	expect(typeof p.duration).toBe('number')
 })
 
-test('traces tracing:ydb:driver.discovery start and asyncEnd around a successful round', async () => {
+test('traces tracing:ydb:driver.discovery start and asyncEnd around a successful round', async (tc) => {
 	await using server = await startDiscoveryServer()
 	using trace = collectTrace('tracing:ydb:driver.discovery')
 
 	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
-	await driver.ready()
+	await driver.ready(tc.signal)
 
 	expect(trace.start.length).toBeGreaterThanOrEqual(1)
 	expect(trace.asyncEnd.length).toBeGreaterThanOrEqual(1)
@@ -222,8 +239,10 @@ test('traces tracing:ydb:driver.discovery start and asyncEnd around a successful
 
 test('close() during in-flight initial discovery suppresses ydb:driver.ready / .failed', async () => {
 	// Discovery server that hangs until released — close() must terminate the
-	// engine before the round can resolve.
-	let release: () => void = () => {}
+	// engine before the round can resolve. A deterministic entry latch (not a
+	// sleep) guarantees the RPC has actually landed before we close.
+	let entered = Promise.withResolvers<void>()
+	let release = Promise.withResolvers<void>()
 	let server = createServer()
 	let port = 0
 	server.add(
@@ -233,7 +252,8 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 		},
 		{
 			async listEndpoints() {
-				await new Promise<void>((r) => (release = r))
+				entered.resolve()
+				await release.promise
 				let result = create(ListEndpointsResultSchema, {
 					endpoints: [
 						create(EndpointInfoSchema, {
@@ -268,12 +288,11 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 		'ydb.sdk.ready_timeout_ms': 5_000,
 	})
 
-	// Give the RPC time to land on the server.
-	await sleep(50)
+	await entered.promise // the RPC has landed on the server
 	driver.close()
 
 	// Let the handler resolve so a (now-cancelled) round has a chance to fire.
-	release()
+	release.resolve()
 	await sleep(50)
 
 	expect(closed.payloads).toHaveLength(1)

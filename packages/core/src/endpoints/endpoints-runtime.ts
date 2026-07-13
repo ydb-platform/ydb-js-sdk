@@ -12,7 +12,7 @@ import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { connectivityState } from '@grpc/grpc-js'
-import { abortable } from '@ydbjs/abortable'
+import { abortable, linkSignals } from '@ydbjs/abortable'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { EndpointInfoSchema } from '@ydbjs/api/discovery'
 import type { ListEndpointsResult, EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
@@ -25,6 +25,7 @@ import { type Connection, GrpcConnection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
 import { EndpointsUnavailableError } from '../errors.js'
 import type { DriverHooks, EndpointInfo } from '../hooks.js'
+import { safeHook } from '../hooks.js'
 import {
 	type DiscoveredEndpoint,
 	type EndpointsCtx,
@@ -67,6 +68,7 @@ export type ListEndpoints = (signal: AbortSignal) => Promise<DiscoveryResult>
 // POOL_*_FOR_TESTING symbols.
 export type ConnectionFactory = (ref: EndpointRef) => Connection
 
+export const DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000
 export const DEFAULT_DISCOVERY_INTERVAL_MS = 60_000
 export const DEFAULT_IDLE_INTERVAL_MS = 60_000
 // Retired-connection idle grace: kept this long (absorbing flaps) before it is
@@ -88,10 +90,19 @@ type EndpointsEnv = {
 	channels: Map<bigint, Connection>
 	retiredChannels: Map<bigint, Connection>
 	pinnedChannels: Map<bigint, Connection>
-	lastUsed: Map<bigint, number>
 	banStart: Map<bigint, number>
 	retiredAt: Map<bigint, number>
+	// When a retired channel was first seen in TRANSIENT_FAILURE — used to require
+	// a SUSTAINED failure (not one blip) before reaping it.
+	transientSince: Map<bigint, number>
+	// Per-node in-flight RPC count, maintained by BalancedChannel around each call.
+	// Lets graceful close finalize as soon as a channel's streams have drained.
+	inflight: Map<bigint, number>
+	// While closing: the nodeIds whose channels are still busy and must drain
+	// before finalize. Undefined outside the closing drain.
+	draining: Set<bigint> | undefined
 
+	discoveryTimeoutMs: number
 	discoveryIntervalMs: number
 	idleIntervalMs: number
 	retiredGraceMs: number
@@ -127,9 +138,25 @@ let clearTimerByKey = function clearTimerByKey(env: EndpointsEnv, key: string): 
 	}
 }
 
-// Physically close a materialized channel (any store). No diagnostics here —
-// the FSM emits the `removed` output and the facade republishes it.
-let dropChannel = function dropChannel(env: EndpointsEnv, nodeId: bigint): void {
+// Physically close a materialized channel. `store: 'pinned'` closes only the pin
+// (leaving a discovered channel that shares the nodeId intact); otherwise the
+// channel is dropped from whichever store holds it. No diagnostics here — the FSM
+// emits the `removed` output and the facade republishes it.
+let dropChannel = function dropChannel(
+	env: EndpointsEnv,
+	nodeId: bigint,
+	store: 'any' | 'pinned' = 'any'
+): void {
+	if (store === 'pinned') {
+		let pinned = env.pinnedChannels.get(nodeId)
+		env.pinnedChannels.delete(nodeId)
+		if (pinned !== undefined) {
+			dbg.log('close pinned channel to node %d', nodeId)
+			pinned.close()
+		}
+		return
+	}
+
 	let conn =
 		env.channels.get(nodeId) ??
 		env.retiredChannels.get(nodeId) ??
@@ -137,13 +164,62 @@ let dropChannel = function dropChannel(env: EndpointsEnv, nodeId: bigint): void 
 	env.channels.delete(nodeId)
 	env.retiredChannels.delete(nodeId)
 	env.pinnedChannels.delete(nodeId)
-	env.lastUsed.delete(nodeId)
 	env.banStart.delete(nodeId)
 	env.retiredAt.delete(nodeId)
+	env.transientSince.delete(nodeId)
+	env.inflight.delete(nodeId)
+	env.draining?.delete(nodeId)
 	if (conn !== undefined) {
 		dbg.log('close channel to node %d', nodeId)
 		conn.close()
 	}
+}
+
+// Publish the round-derived connection diagnostics + discovery.completed from
+// the diff between the current registry and the fresh result. Called INSIDE the
+// discovery tracePromise so @ydbjs/telemetry attaches these to the discovery
+// span. The diff mirrors `applyRound` in endpoints-state.ts (new-or-revived →
+// added, vanished-non-retired → retired) — the two must stay in agreement.
+let publishRoundDiagnostics = function publishRoundDiagnostics(
+	ctx: FullCtx,
+	result: DiscoveryResult
+): void {
+	let discovered = new Set<bigint>()
+	let addedCount = 0
+	for (let ep of result.endpoints) {
+		discovered.add(ep.nodeId)
+		let existing = ctx.byNodeId.get(ep.nodeId)
+		if (existing === undefined || existing.subState === 'retired') {
+			addedCount++
+			dc('ydb:driver.connection.added').publish({
+				driver: ctx.identity,
+				nodeId: ep.nodeId,
+				address: `${ep.host}:${ep.port}`,
+				location: ep.location,
+			})
+		}
+	}
+
+	let removedCount = 0
+	for (let entry of ctx.byNodeId.values()) {
+		if (discovered.has(entry.nodeId) || entry.subState === 'retired') continue
+		removedCount++
+		dc('ydb:driver.connection.retired').publish({
+			driver: ctx.identity,
+			nodeId: entry.nodeId,
+			address: entry.address,
+			location: entry.location,
+			reason: entry.subState === 'pessimized' ? 'stale_pessimized' : 'stale_active',
+		})
+	}
+
+	dc('ydb:driver.discovery.completed').publish({
+		driver: ctx.identity,
+		addedCount,
+		removedCount,
+		totalCount: result.endpoints.length,
+		duration: Date.now() - ctx.roundStart,
+	})
 }
 
 // ── Effect handlers ─────────────────────────────────────────────────────────
@@ -151,12 +227,33 @@ let dropChannel = function dropChannel(env: EndpointsEnv, nodeId: bigint): void 
 let effects = {
 	// Discovery is unary-per-round (not a stream) — a timer/effect loop, not
 	// ingest. tracePromise preserves the tracing:ydb:driver.discovery contract.
+	// The round-derived diagnostics (connection.added/retired + discovery.completed)
+	// are published INSIDE the tracePromise callback so @ydbjs/telemetry attaches
+	// them to the discovery span — the async #consume loop has no active span, so
+	// publishing them there would silently drop them from traces.
 	'endpoints.effect.run_discovery_round': (ctx: FullCtx, _effect, runtime) => {
 		ctx.roundStart = Date.now()
+		// Bound each round independently: a single hung listEndpoints must not
+		// wedge the single-flight discovery forever (a timeout is retryable). A
+		// clearable timer (not AbortSignal.timeout, whose timer can't be cancelled)
+		// so a fast round doesn't leave a live timeout pending until it fires.
+		let timeoutAc = new AbortController()
+		let timer = setTimeout(
+			() => timeoutAc.abort(new Error('discovery round timed out')),
+			ctx.discoveryTimeoutMs
+		)
+		timer.unref?.()
+		// linkSignals (not AbortSignal.any) so the listeners are removed on dispose
+		// — a churn of short-lived pools must not accumulate signal listeners.
+		let link = linkSignals(ctx.ac.signal, timeoutAc.signal)
 		void (async () => {
 			try {
 				let result = await discoveryCh.tracePromise(
-					() => ctx.listEndpoints(ctx.ac.signal),
+					async () => {
+						let r = await ctx.listEndpoints(link.signal)
+						if (!ctx.ac.signal.aborted) publishRoundDiagnostics(ctx, r)
+						return r
+					},
 					{ driver: ctx.identity }
 				)
 				if (ctx.ac.signal.aborted) return
@@ -168,11 +265,17 @@ let effects = {
 				})
 			} catch (error) {
 				if (ctx.ac.signal.aborted) return
+				// A per-round timeout (not the pool abort) is retryable — keep the
+				// interval/backoff cadence rather than treating it as terminal.
+				let timedOut = timeoutAc.signal.aborted
 				runtime.dispatch({
 					type: 'endpoints.discovery.round_failed',
 					error,
-					retryable: isRetryableError(error, true),
+					retryable: timedOut || isRetryableError(error, true),
 				})
+			} finally {
+				clearTimeout(timer)
+				link[Symbol.dispose]()
 			}
 		})()
 	},
@@ -214,42 +317,79 @@ let effects = {
 		clearTimerByKey(ctx, effect.which)
 	},
 
-	// Retire-to-drain: keep the channel open, move it to the drain-watch set.
-	'endpoints.effect.retire_channel': (ctx: FullCtx, effect) => {
+	// Retire-to-drain: keep the channel open, move it to the drain-watch set. If
+	// the node was never dialed there is nothing to drain — tell the FSM it is
+	// closeable now so the registry entry is reaped instead of leaking forever
+	// (idle_sweep only scans materialized retired channels).
+	'endpoints.effect.retire_channel': (ctx: FullCtx, effect, runtime) => {
 		let conn = ctx.channels.get(effect.nodeId)
-		if (conn === undefined) return
+		if (conn === undefined) {
+			runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId: effect.nodeId })
+			return
+		}
 		ctx.channels.delete(effect.nodeId)
 		ctx.retiredChannels.set(effect.nodeId, conn)
 		ctx.retiredAt.set(effect.nodeId, Date.now())
 	},
 
 	'endpoints.effect.close_channel': (ctx: FullCtx, effect) => {
-		dropChannel(ctx, effect.nodeId)
+		dropChannel(ctx, effect.nodeId, effect.store ?? 'any')
+	},
+
+	// Graceful close: an idle channel is closeable now; a busy one is registered
+	// so it becomes closeable as soon as its in-flight streams finish (`callEnded`
+	// dispatches `channel_closeable`). Dropping the last channel finalizes the
+	// FSM; `close_deadline` is the hard cap. This is what keeps `await using
+	// driver` from always waiting the full deadline.
+	'endpoints.effect.begin_close_drain': (ctx: FullCtx, _effect, runtime) => {
+		ctx.draining = new Set()
+		let watch = (nodeId: bigint, hasChannel: boolean) => {
+			let busy = hasChannel && (ctx.inflight.get(nodeId) ?? 0) > 0
+			if (busy) ctx.draining!.add(nodeId)
+			else runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
+		}
+		for (let nodeId of ctx.byNodeId.keys()) {
+			watch(nodeId, ctx.channels.has(nodeId) || ctx.retiredChannels.has(nodeId))
+		}
+		for (let nodeId of ctx.pinned.keys()) {
+			watch(nodeId, ctx.pinnedChannels.has(nodeId))
+		}
 	},
 
 	// Reap retired channels that are genuinely gone. A working (READY / idle-but-
 	// reconnectable) channel is KEPT so a returning node reuses it — no churn.
-	// Close only on breakage (SHUTDOWN / sustained TRANSIENT_FAILURE) or once idle
-	// past the grace window with no reappearance.
+	// SHUTDOWN is closed at once; a TRANSIENT_FAILURE must be SUSTAINED past the
+	// grace window (one blip is absorbed), same as any other non-READY idle state.
 	'endpoints.effect.idle_sweep': (ctx: FullCtx, _effect, runtime) => {
 		let now = Date.now()
 		for (let [nodeId, conn] of ctx.retiredChannels) {
 			let state = conn.channel.getConnectivityState(false)
-			let broken =
-				state === connectivityState.SHUTDOWN ||
-				state === connectivityState.TRANSIENT_FAILURE
-			let idlePastGrace =
-				state !== connectivityState.READY &&
-				now - (ctx.retiredAt.get(nodeId) ?? now) > ctx.retiredGraceMs
-			if (broken || idlePastGrace) {
+			if (state === connectivityState.READY) {
+				ctx.transientSince.delete(nodeId)
+				continue
+			}
+			if (state === connectivityState.SHUTDOWN) {
+				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
+				continue
+			}
+			if (state === connectivityState.TRANSIENT_FAILURE && !ctx.transientSince.has(nodeId)) {
+				ctx.transientSince.set(nodeId, now)
+			}
+			// Non-READY (incl. sustained TRANSIENT_FAILURE) at/past the grace window
+			// (>= so a zero grace reaps a non-READY channel on the first sweep).
+			if (now - (ctx.retiredAt.get(nodeId) ?? now) >= ctx.retiredGraceMs) {
 				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 			}
 		}
 	},
 
+	// closedDeferred is resolved by #consume when it publishes the `closed` output,
+	// so `await close()` returns only after ydb:driver.closed is published (and as
+	// a fault backstop in #consume's finally) — not here.
 	'endpoints.effect.finalize': (ctx: FullCtx) => {
 		if (ctx.isFinalized) return
 		ctx.isFinalized = true
+		ctx.draining = undefined
 		for (let handle of ctx.timers.values()) clearTimeout(handle)
 		ctx.timers.clear()
 		for (let nodeId of [
@@ -259,8 +399,7 @@ let effects = {
 		]) {
 			dropChannel(ctx, nodeId)
 		}
-		ctx.ac.abort(new Error('Endpoints finalized'))
-		ctx.closedDeferred.resolve()
+		if (!ctx.ac.signal.aborted) ctx.ac.abort(new Error('Endpoints finalized'))
 	},
 } satisfies {
 	[K in EndpointsEffect['type']]: (
@@ -284,11 +423,15 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	#snapshot: RoutingSnapshot = EMPTY_SNAPSHOT
 
 	constructor(
-		machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>,
-		env: EndpointsEnv
+		machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>
 	) {
 		this.#machine = machine
-		this.#env = env
+		// The machine merges env into ctx once (Object.assign(ctx, env)); effects
+		// mutate THAT object. Read the same merged object here so scalar writes made
+		// inside effects (isFinalized, draining, roundStart, readyAt) are visible —
+		// a separate `env` reference would only share the Map/object fields, not the
+		// reassigned scalars.
+		this.#env = machine.ctx as unknown as EndpointsEnv
 		void this.#consume().catch((error) => dbg.log('consume loop ended: %O', error))
 	}
 
@@ -298,6 +441,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 
 	// ── SYNCHRONOUS hot path — one Map.get or one random index + lazy materialize ──
 	acquire(preferNodeId?: bigint): Connection {
+		if (this.#env.isFinalized) throw new EndpointsUnavailableError('Endpoints closed')
 		let ref = selectEndpoint(this.#snapshot, preferNodeId !== undefined ? { preferNodeId } : {})
 		if (ref === undefined) throw new EndpointsUnavailableError()
 		return this.#materialize(ref)
@@ -306,6 +450,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	// Direct-IO: exact node. `hard` never substitutes (throws on miss) — for a
 	// server-named node_id outside ListEndpoints.
 	acquireNode(nodeId: bigint, opts: { hard?: boolean } = {}): Connection {
+		if (this.#env.isFinalized) throw new EndpointsUnavailableError('Endpoints closed')
 		let ref = selectEndpoint(this.#snapshot, { preferNodeId: nodeId, hard: opts.hard ?? false })
 		if (ref === undefined) throw new EndpointsUnavailableError(`No endpoint for node ${nodeId}`)
 		return this.#materialize(ref)
@@ -319,16 +464,38 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		)
 	}
 
+	// Call-lifecycle bookkeeping used by BalancedChannel to keep a per-node
+	// in-flight count. Graceful close consults it to finalize as soon as a
+	// channel's streams have drained instead of waiting the full close deadline.
+	callStarted(nodeId: bigint): void {
+		this.#env.inflight.set(nodeId, (this.#env.inflight.get(nodeId) ?? 0) + 1)
+	}
+
+	callEnded(nodeId: bigint): void {
+		let n = (this.#env.inflight.get(nodeId) ?? 0) - 1
+		if (n > 0) {
+			this.#env.inflight.set(nodeId, n)
+			return
+		}
+		this.#env.inflight.delete(nodeId)
+		// If this channel was the last thing a close() was waiting to drain, tell
+		// the FSM it is now closeable.
+		if (this.#env.draining?.has(nodeId)) {
+			this.#env.draining.delete(nodeId)
+			this.#machine.dispatch({ type: 'endpoints.channel_closeable', nodeId })
+		}
+	}
+
 	pin(
 		nodeId: bigint,
 		host: string,
 		port: number,
 		opts: {
-			location?: string
-			sslTargetNameOverride?: string
-			ipV4?: string[]
-			ipV6?: string[]
-			generation?: number
+			location?: string | undefined
+			sslTargetNameOverride?: string | undefined
+			ipV4?: string[] | undefined
+			ipV6?: string[] | undefined
+			generation?: number | undefined
 		} = {}
 	): void {
 		this.#machine.dispatch({
@@ -376,21 +543,61 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 
 	#materialize(ref: EndpointRef): Connection {
 		let nodeId = ref.nodeId
-		this.#env.lastUsed.set(nodeId, Date.now())
 		let existing =
 			this.#env.channels.get(nodeId) ??
 			this.#env.retiredChannels.get(nodeId) ??
 			this.#env.pinnedChannels.get(nodeId)
 		if (existing !== undefined) return existing
 		let conn = this.#env.connectionFactory(ref)
-		if (ref.state === 'pinned') this.#env.pinnedChannels.set(nodeId, conn)
-		else this.#env.channels.set(nodeId, conn)
+		if (ref.state === 'pinned') {
+			this.#env.pinnedChannels.set(nodeId, conn)
+		} else if (ref.state === 'retired') {
+			// A channel first dialed after the node was retired must land in the
+			// retired store so idle_sweep governs it — otherwise it escapes reaping.
+			this.#env.retiredChannels.set(nodeId, conn)
+			this.#env.retiredAt.set(nodeId, Date.now())
+		} else {
+			this.#env.channels.set(nodeId, conn)
+		}
 		return conn
 	}
 
 	// RCU swap + diagnostics republish — consumes the machine's output stream
-	// (the reader.ts pattern), NOT ingest.
+	// (the reader.ts pattern), NOT ingest. The round-derived events
+	// (connection.added/retired + discovery.completed) are published by the
+	// discovery effect inside the tracing span, not here — see
+	// publishRoundDiagnostics. The try/finally is a backstop: if the machine
+	// faults (a transition/effect throws, the iterator rethrows), close()/ready()
+	// awaiters are still released and channels/timers are still torn down.
 	async #consume(): Promise<void> {
+		let env = this.#env
+		try {
+			await this.#drain()
+		} catch (error) {
+			dbg.log('endpoints machine faulted: %O', error)
+			env.readyDeferred.reject(error)
+		} finally {
+			if (!env.isFinalized) {
+				env.isFinalized = true
+				env.draining = undefined
+				for (let handle of env.timers.values()) clearTimeout(handle)
+				env.timers.clear()
+				for (let nodeId of [
+					...env.channels.keys(),
+					...env.retiredChannels.keys(),
+					...env.pinnedChannels.keys(),
+				]) {
+					dropChannel(env, nodeId)
+				}
+				if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
+			}
+			// No-ops if already settled; guarantees no awaiter hangs on a fault.
+			env.readyDeferred.reject(new Error('Endpoints closed'))
+			env.closedDeferred.resolve()
+		}
+	}
+
+	async #drain(): Promise<void> {
 		let env = this.#env
 		for await (let out of this.#machine) {
 			switch (out.type) {
@@ -398,21 +605,8 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					this.#snapshot = out.snapshot
 					break
 				case 'endpoints.added':
-					dc('ydb:driver.connection.added').publish({
-						driver: env.identity,
-						nodeId: out.nodeId,
-						address: out.address,
-						location: out.location,
-					})
-					break
 				case 'endpoints.retired':
-					dc('ydb:driver.connection.retired').publish({
-						driver: env.identity,
-						nodeId: out.nodeId,
-						address: out.address,
-						location: out.location,
-						reason: out.reason,
-					})
+					// Published within the discovery span by publishRoundDiagnostics.
 					break
 				case 'endpoints.removed':
 					dc('ydb:driver.connection.removed').publish({
@@ -425,7 +619,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					break
 				case 'endpoints.pessimized':
 					env.banStart.set(out.nodeId, Date.now())
-					this.#hook('onPessimize', () =>
+					safeHook('onPessimize', () =>
 						env.hooks?.onPessimize?.({
 							endpoint: {
 								nodeId: out.nodeId,
@@ -444,7 +638,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 				case 'endpoints.unpessimized': {
 					let duration = Date.now() - (env.banStart.get(out.nodeId) ?? Date.now())
 					env.banStart.delete(out.nodeId)
-					this.#hook('onUnpessimize', () =>
+					safeHook('onUnpessimize', () =>
 						env.hooks?.onUnpessimize?.({
 							endpoint: {
 								nodeId: out.nodeId,
@@ -463,8 +657,10 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					break
 				}
 				case 'endpoints.discovery_completed': {
+					// ydb:driver.discovery.completed is published within the discovery
+					// span by publishRoundDiagnostics; here we only fire the hook.
 					let duration = Date.now() - env.roundStart
-					this.#hook('onDiscovery', () =>
+					safeHook('onDiscovery', () =>
 						env.hooks?.onDiscovery?.({
 							added: out.added.map(toEndpointInfo),
 							removed: out.removed.map(toEndpointInfo),
@@ -472,17 +668,10 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 							endpoints: this.#snapshotEndpoints(),
 						})
 					)
-					dc('ydb:driver.discovery.completed').publish({
-						driver: env.identity,
-						addedCount: out.added.length,
-						removedCount: out.removed.length,
-						totalCount: out.total,
-						duration,
-					})
 					break
 				}
 				case 'endpoints.discovery_failed':
-					this.#hook('onDiscoveryError', () =>
+					safeHook('onDiscoveryError', () =>
 						env.hooks?.onDiscoveryError?.({
 							error: out.error,
 							attempt: out.attempt,
@@ -512,6 +701,8 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 						driver: env.identity,
 						uptime: env.readyAt !== undefined ? Date.now() - env.readyAt : 0,
 					})
+					// Resolve AFTER the publish so `await close()` observes it.
+					env.closedDeferred.resolve()
 					break
 			}
 		}
@@ -529,14 +720,6 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			)
 		}
 		return out
-	}
-
-	#hook(name: string, fn: () => void): void {
-		try {
-			fn()
-		} catch (error) {
-			dbg.log('hook %s threw an error (swallowed): %O', name, error)
-		}
 	}
 }
 
@@ -563,6 +746,7 @@ export type EndpointsRuntimeConfig = {
 	hooks?: DriverHooks | undefined
 	localityEnabled?: boolean | undefined
 	degradedThreshold?: number | undefined
+	discoveryTimeoutMs?: number | undefined
 	discoveryIntervalMs?: number | undefined
 	idleIntervalMs?: number | undefined
 	retiredGraceMs?: number | undefined
@@ -587,9 +771,12 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		channels: new Map(),
 		retiredChannels: new Map(),
 		pinnedChannels: new Map(),
-		lastUsed: new Map(),
 		banStart: new Map(),
 		retiredAt: new Map(),
+		transientSince: new Map(),
+		inflight: new Map(),
+		draining: undefined,
+		discoveryTimeoutMs: config.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS,
 		discoveryIntervalMs: config.discoveryIntervalMs ?? DEFAULT_DISCOVERY_INTERVAL_MS,
 		idleIntervalMs: config.idleIntervalMs ?? DEFAULT_IDLE_INTERVAL_MS,
 		retiredGraceMs: config.retiredGraceMs ?? DEFAULT_RETIRED_GRACE_MS,
@@ -628,7 +815,7 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		effects,
 	})
 
-	let pool = new EndpointPool(machine, env)
+	let pool = new EndpointPool(machine)
 
 	// No ingest — discovery is unary-per-round. Kick the initial round.
 	machine.dispatch({ type: 'endpoints.discovery.start' })

@@ -47,6 +47,13 @@ export class DriverDiscoveryOptionsError extends DriverOptionsError {
 	}
 }
 
+export class DriverDegradedThresholdError extends DriverOptionsError {
+	constructor(actual: number) {
+		super(`discovery_degraded_threshold must be in the range (0, 1]. Received: ${actual}`)
+		this.name = 'DriverDegradedThresholdError'
+	}
+}
+
 export class DriverResponseError extends Error {
 	constructor(msg: string) {
 		super(`Invalid response. ${msg}`)

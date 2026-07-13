@@ -12,33 +12,20 @@ export type {
 } from './hooks.js'
 export { addClientMiddleware } from './middleware.js'
 export {
-	EndpointPool,
-	createEndpointsRuntime,
-	mapDiscoveryResult,
-	DEFAULT_DISCOVERY_INTERVAL_MS,
-	DEFAULT_IDLE_INTERVAL_MS,
-	DEFAULT_RETIRED_GRACE_MS,
-	DEFAULT_CLOSE_DEADLINE_MS,
-} from './endpoints/endpoints-runtime.js'
-export type {
-	ConnectionFactory,
-	DiscoveryResult,
-	EndpointsRuntime,
-	EndpointsRuntimeConfig,
-	ListEndpoints,
-} from './endpoints/endpoints-runtime.js'
-export type {
-	DiscoveredEndpoint,
-	EndpointEntry,
-	EndpointsCtx,
-	EndpointsState,
-	PileState,
-	PileStatus,
-} from './endpoints/endpoints-state.js'
-export {
-	EMPTY_SNAPSHOT,
-	USABLE_PILE_STATUSES,
-	buildSnapshot,
-	selectEndpoint,
-} from './endpoints/snapshot.js'
-export type { EndpointRef, RoutingSnapshot, SelectOptions } from './endpoints/snapshot.js'
+	DriverCSError,
+	DriverCSProtocolError,
+	DriverCSDatabaseError,
+	DriverOptionsError,
+	DriverDiscoveryTimeoutError,
+	DriverDiscoveryIntervalError,
+	DriverDiscoveryOptionsError,
+	DriverDegradedThresholdError,
+	DriverResponseError,
+	EndpointsUnavailableError,
+} from './errors.js'
+
+// The endpoints engine (src/endpoints/*) is an internal implementation detail of
+// Driver. Consumers only ever hold a Driver — direct-IO is reached through
+// `Driver.createClient(service, { nodeId, endpoint, hard })`, not by touching the
+// pool. So EndpointPool / createEndpointsRuntime / selectEndpoint / buildSnapshot
+// and their types are intentionally NOT exported.

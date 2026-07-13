@@ -10,22 +10,49 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { ServerError, Status, createServer } from 'nice-grpc'
 
 import { Driver, kRegisterLibrary } from './driver.ts'
+import { DriverDegradedThresholdError } from './errors.ts'
 import pkg from '../package.json' with { type: 'json' }
 
-test('database in pathname', async () => {
-	let driver = new Driver('grpc://ydb:2136/local', {
+test('parses database from the pathname', () => {
+	using driver = new Driver('grpc://ydb:2136/local', {
 		'ydb.sdk.enable_discovery': false,
 	})
 
 	expect(driver.database).toBe('/local')
 })
 
-test('database in querystring', async () => {
-	let driver = new Driver('grpc://ydb:2136/?database=/local', {
+test('parses database from the querystring', () => {
+	using driver = new Driver('grpc://ydb:2136/?database=/local', {
 		'ydb.sdk.enable_discovery': false,
 	})
 
 	expect(driver.database).toBe('/local')
+})
+
+test('rejects a discovery_degraded_threshold outside (0, 1]', () => {
+	expect(
+		() =>
+			new Driver('grpc://ydb:2136/local', {
+				'ydb.sdk.enable_discovery': false,
+				'ydb.sdk.discovery_degraded_threshold': 50,
+			})
+	).toThrow(DriverDegradedThresholdError)
+
+	expect(
+		() =>
+			new Driver('grpc://ydb:2136/local', {
+				'ydb.sdk.enable_discovery': false,
+				'ydb.sdk.discovery_degraded_threshold': 0,
+			})
+	).toThrow(DriverDegradedThresholdError)
+})
+
+test('accepts a discovery_degraded_threshold within (0, 1]', () => {
+	using driver = new Driver('grpc://ydb:2136/local', {
+		'ydb.sdk.enable_discovery': false,
+		'ydb.sdk.discovery_degraded_threshold': 0.75,
+	})
+	expect(driver.options['ydb.sdk.discovery_degraded_threshold']).toBe(0.75)
 })
 
 test('validates default channel options for long-lived streams', () => {
@@ -142,6 +169,65 @@ test('appends registered libraries to x-ydb-sdk-build-info after the native sdk 
 		)
 	} finally {
 		driver.close()
+		await server.shutdown()
+	}
+})
+
+test('createClient with a direct-IO target hard-routes and disposes cleanly', async (tc) => {
+	// A discovery server that reports itself as node 1; the direct client then
+	// hard-routes there and its whoAmI succeeds.
+	let server = createServer()
+	let port = 0
+	let discoveryService = {
+		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+		whoAmI: DiscoveryServiceDefinition.whoAmI,
+	}
+	server.add(discoveryService, {
+		async listEndpoints() {
+			let result = create(ListEndpointsResultSchema, {
+				endpoints: [
+					create(EndpointInfoSchema, {
+						nodeId: 1,
+						address: '127.0.0.1',
+						port,
+						location: 'dc1',
+					}),
+				],
+			})
+			return {
+				operation: {
+					status: StatusIds_StatusCode.SUCCESS,
+					ready: true,
+					result: anyPack(ListEndpointsResultSchema, result),
+				},
+			} as any
+		},
+		async whoAmI() {
+			return {} as any
+		},
+	})
+	port = await server.listen('127.0.0.1:0')
+
+	try {
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.discovery_timeout_ms': 5_000,
+		})
+		await driver.ready(tc.signal)
+
+		{
+			using client = driver.createClient(discoveryService, {
+				nodeId: 1n,
+				endpoint: { host: '127.0.0.1', port, generation: 3 },
+				hard: true,
+			})
+			// The client is Disposable and hard-routes to the pinned node.
+			expect(typeof (client as unknown as Disposable)[Symbol.dispose]).toBe('function')
+			await client.whoAmI({}, { signal: tc.signal })
+		}
+		// After dispose the pin is released — a fresh soft client still works.
+		let soft = driver.createClient(discoveryService)
+		await soft.whoAmI({}, { signal: tc.signal })
+	} finally {
 		await server.shutdown()
 	}
 })

@@ -172,7 +172,10 @@ test('a reappearing retired node is revived in place, never closed', () => {
 	step(h, round([ep(1)])) // node 2 retired
 	step(h, round([ep(1), ep(2)])) // node 2 back
 	expect(h.ctx.byNodeId.get(2n)!.subState).toBe('active')
-	expect(outputs(h, 'endpoints.added')).toHaveLength(0) // revived, not re-added
+	// Revived in place (channel kept) but re-emits `added` so add/remove streams
+	// balance — the earlier retire counted as a removal.
+	expect(outputs(h, 'endpoints.added')).toHaveLength(1)
+	expect(outputs(h, 'endpoints.added')[0]!.nodeId).toBe(2n)
 	expect(effectTypes(h)).not.toContain('endpoints.effect.close_channel')
 })
 
@@ -317,4 +320,119 @@ test('idle close (no channels) finalizes immediately', () => {
 	step(h, { type: 'endpoints.close' })
 	expect(h.state).toBe('closed')
 	expect(h.final).toBe(true)
+})
+
+test('close with a registered node enters closing and freezes routing', () => {
+	let h = toReady([ep(1)])
+	step(h, { type: 'endpoints.close' })
+	expect(h.state).toBe('closing')
+	// Routing is frozen so a late acquire() throws instead of vending a channel.
+	let snap = outputs(h, 'endpoints.snapshot').at(-1)!
+	expect(snap.snapshot.byNodeId.size).toBe(0)
+	expect(effectTypes(h)).toContain('endpoints.effect.begin_close_drain')
+})
+
+test('closing drops the last channel and finalizes on channel_closeable', () => {
+	let h = toReady([ep(1)])
+	step(h, { type: 'endpoints.close' })
+	step(h, { type: 'endpoints.channel_closeable', nodeId: 1n })
+	expect(h.state).toBe('closed')
+	expect(h.final).toBe(true)
+	let removed = outputs(h, 'endpoints.removed')
+	expect(removed.at(-1)!.reason).toBe('pool_close')
+	expect(effectTypes(h)).toContain('endpoints.effect.close_channel')
+})
+
+// ── empty discovery round ─────────────────────────────────────────────────────
+
+test('an empty initial round stays discovering and arms backoff instead of ready', () => {
+	let h = harness()
+	step(h, { type: 'endpoints.discovery.start' })
+	step(h, round([]))
+	expect(h.state).toBe('discovering')
+	expect(outputs(h, 'endpoints.ready')).toHaveLength(0)
+	expect(outputs(h, 'endpoints.discovery_failed')).toHaveLength(1)
+	expect(effectTypes(h)).toContain('endpoints.effect.timer.schedule')
+})
+
+// ── dial-field refresh + address change ───────────────────────────────────────
+
+test('a round refreshes the entry dial fields and snapshot ref', () => {
+	let h = toReady([ep(1)])
+	step(h, round([ep(1, { host: 'n1b', port: 2137, location: 'B' })]))
+	let entry = h.ctx.byNodeId.get(1n)!
+	expect(entry.address).toBe('n1b:2137')
+	expect(entry.location).toBe('B')
+	let snap = outputs(h, 'endpoints.snapshot').at(-1)!
+	expect(snap.snapshot.byNodeId.get(1n)!.address).toBe('n1b:2137')
+})
+
+test('a node re-registering at a new address recreates its channel', () => {
+	let h = toReady([ep(1)])
+	step(h, round([ep(1, { host: 'n1b', port: 2137 })]))
+	// The stale channel to the old address must be dropped so the next acquire dials anew.
+	expect(effectTypes(h)).toContain('endpoints.effect.close_channel')
+})
+
+test('a same-address round keeps the channel (absorbed flap)', () => {
+	let h = toReady([ep(1)])
+	step(h, round([ep(1)]))
+	expect(effectTypes(h)).not.toContain('endpoints.effect.close_channel')
+})
+
+// ── degraded exit + single-flight guard ───────────────────────────────────────
+
+test('rpc_ok on the last pessimized node returns degraded to ready', () => {
+	let h = toReady([ep(1), ep(2)])
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 1n })
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 2n })
+	expect(h.state).toBe('degraded')
+	step(h, { type: 'endpoints.rpc_ok', nodeId: 1n })
+	expect(h.state).toBe('ready')
+})
+
+test('a clean round returns degraded to ready', () => {
+	let h = toReady([ep(1), ep(2)])
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 1n })
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 2n })
+	expect(h.state).toBe('degraded')
+	step(h, round([ep(1), ep(2)]))
+	expect(h.state).toBe('ready')
+})
+
+test('force is dropped while a round is already in flight', () => {
+	let h = toReady([ep(1)])
+	h.ctx.roundInFlight = true
+	step(h, { type: 'endpoints.discovery.force' })
+	expect(effectTypes(h)).not.toContain('endpoints.effect.run_discovery_round')
+})
+
+test('force runs a round when idle', () => {
+	let h = toReady([ep(1)])
+	step(h, { type: 'endpoints.discovery.force' })
+	expect(effectTypes(h)).toContain('endpoints.effect.run_discovery_round')
+	expect(h.ctx.roundInFlight).toBe(true)
+})
+
+// ── re-pin ─────────────────────────────────────────────────────────────────
+
+test('re-pinning a node to a new address drops the old pinned channel', () => {
+	let h = toReady([ep(1)])
+	let pinEvent = (host: string, generation: number): EndpointsEvent => ({
+		type: 'endpoints.pin',
+		nodeId: 9n,
+		host,
+		port: 2136,
+		location: '',
+		sslTargetNameOverride: '',
+		ipV4: [],
+		ipV6: [],
+		generation,
+	})
+	step(h, pinEvent('node-9a', 1))
+	expect(effectTypes(h)).not.toContain('endpoints.effect.close_channel')
+	step(h, pinEvent('node-9b', 2))
+	let close = h.effects.find((e) => e.type === 'endpoints.effect.close_channel')
+	expect(close).toBeDefined()
+	expect((close as { store?: string }).store).toBe('pinned')
 })

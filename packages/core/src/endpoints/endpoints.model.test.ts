@@ -122,6 +122,14 @@ let checkInvariants = function checkInvariants(sim: Sim, seed: number, stepIndex
 			).toBe(nodeId)
 		}
 	}
+
+	// Health state tracks the pessimized fraction: degraded iff ratio > threshold.
+	if (sim.state === 'ready' || sim.state === 'degraded') {
+		let total = activeCount + pessimizedCount
+		let ratio = total === 0 ? 0 : pessimizedCount / total
+		let expected = ratio > ctx.config.degradedThreshold ? 'degraded' : 'ready'
+		expect(sim.state, `${label} health ratio=${ratio}`).toBe(expected)
+	}
 }
 
 let runOne = function runOne(seed: number, steps: number): void {
@@ -171,7 +179,7 @@ let runOne = function runOne(seed: number, steps: number): void {
 		} else if (roll < 0.94) {
 			let id = pick(rng, pinnedIds)
 			if (id !== undefined) apply(sim, { type: 'endpoints.invalidate', nodeId: id })
-		} else {
+		} else if (roll < 0.97) {
 			// A background round can succeed or fail.
 			if (rng() < 0.5) apply(sim, randomRound(rng))
 			else
@@ -180,9 +188,18 @@ let runOne = function runOne(seed: number, steps: number): void {
 					error: new Error('transient'),
 					retryable: true,
 				})
+		} else if (roll < 0.985) {
+			// Occasionally close/destroy — the walk ends; assert terminal invariants.
+			apply(sim, rng() < 0.5 ? { type: 'endpoints.close' } : { type: 'endpoints.destroy' })
 		}
 
-		if (!sim.closed) checkInvariants(sim, seed, stepIndex)
+		if (sim.closed) {
+			// A closed machine ignores every further event and never routes.
+			apply(sim, { type: 'endpoints.rpc_failed', nodeId: 1n })
+			expect(sim.state, `seed=${seed} step=${stepIndex} closed`).toBe('closed')
+			break
+		}
+		checkInvariants(sim, seed, stepIndex)
 	}
 }
 

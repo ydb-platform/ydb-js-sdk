@@ -34,6 +34,7 @@ import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
 	type DiscoveryResult,
+	type EndpointPool,
 	type EndpointsRuntime,
 	type ListEndpoints,
 	createEndpointsRuntime,
@@ -42,6 +43,7 @@ import {
 import {
 	DriverCSDatabaseError,
 	DriverCSProtocolError,
+	DriverDegradedThresholdError,
 	DriverDiscoveryIntervalError,
 	DriverDiscoveryOptionsError,
 	DriverDiscoveryTimeoutError,
@@ -52,6 +54,36 @@ import { debug, getRegisteredClientMiddlewares } from './middleware.js'
 import { detectRuntime } from './runtime.js'
 
 export type { DriverHooks, EndpointInfo }
+
+/**
+ * Direct-IO target for `createClient` — route a client to an exact node.
+ *
+ * For topic direct read/write: the server hands out a `PartitionLocation`
+ * (`node_id` + `generation`) per partition; pass it here to reach that exact
+ * node. When `endpoint` is given the node is pinned on create (so it is
+ * reachable even before the next discovery round) and unpinned on the returned
+ * client's `[Symbol.dispose]` — use `using`/`await using`.
+ */
+export type ClientTarget = {
+	/** Exact node to route to (a discovery nodeId, or a PartitionLocation node_id). */
+	nodeId: bigint
+	/**
+	 * Pin this endpoint for `nodeId` — for a server-named node that may not be in
+	 * the current discovery snapshot. Unpinned when the client is disposed.
+	 */
+	endpoint?: {
+		host: string
+		port: number
+		location?: string
+		sslTargetNameOverride?: string
+		generation?: number
+	}
+	/**
+	 * Never substitute another node — every RPC goes to `nodeId` or fails.
+	 * @default false (soft affinity: prefer this node, fall back if unavailable)
+	 */
+	hard?: boolean
+}
 
 export type DriverOptions = {
 	/**
@@ -85,15 +117,21 @@ export type DriverOptions = {
 	 * recovers on the next successful RPC or discovery round. Ignored.
 	 */
 	'ydb.sdk.connection_pessimization_timeout_ms'?: number
-	/** Prefer local-DC endpoints (opt-in, soft). Off by default. */
+	/**
+	 * Prefer local-DC endpoints (opt-in, soft — only reorders tiers, never pins).
+	 * @default false
+	 */
 	'ydb.sdk.locality_enabled'?: boolean
-	/** Fraction of pessimized nodes that forces an early rediscovery (0..1). */
+	/**
+	 * Fraction of pessimized nodes (0..1) that forces an early rediscovery round.
+	 * @default 0.5
+	 */
 	'ydb.sdk.discovery_degraded_threshold'?: number
 }
 
 let dbg = loggers.driver
 
-function databaseFromUrl(url: URL): string {
+let databaseFromUrl = function databaseFromUrl(url: URL): string {
 	if (url.pathname && url.pathname !== '/') {
 		return url.pathname
 	}
@@ -223,8 +261,12 @@ export class Driver implements Disposable, AsyncDisposable {
 				hooks: this.options.hooks,
 				localityEnabled: this.options['ydb.sdk.locality_enabled'],
 				degradedThreshold: this.options['ydb.sdk.discovery_degraded_threshold'],
+				discoveryTimeoutMs: this.options['ydb.sdk.discovery_timeout_ms'],
 				discoveryIntervalMs: this.options['ydb.sdk.discovery_interval_ms'],
 				idleIntervalMs: this.options['ydb.sdk.connection_idle_interval_ms'],
+				// `connection_idle_timeout_ms` now bounds the grace a retired (dropped
+				// from discovery) channel is kept before reaping — the endpoints engine
+				// has no separate idle-active teardown.
 				retiredGraceMs: this.options['ydb.sdk.connection_idle_timeout_ms'],
 			})
 		}
@@ -286,19 +328,9 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	close(): void {
-		if (this.#closed) return
-		this.#closed = true
-
-		if (this.#endpoints) {
-			// Synchronous teardown — dispatch destroy; the pool closes channels and
-			// publishes ydb:driver.closed on a later turn.
-			this.#endpoints.pool[Symbol.dispose]()
-		} else {
-			this.#markClosedDisabled()
-		}
-
-		this.#connection.close()
-		dbg.log('closing driver')
+		// Synchronous teardown — dispatch destroy; the pool closes channels and
+		// publishes ydb:driver.closed on a later turn.
+		this.#teardown((pool) => pool[Symbol.dispose]())
 	}
 
 	/**
@@ -308,27 +340,64 @@ export class Driver implements Disposable, AsyncDisposable {
 	 * selects a connection from the endpoints pool. When disabled, the single
 	 * bootstrap connection is used directly.
 	 *
-	 * @param preferNodeId  Optional nodeId hint — route RPCs to this node when possible.
+	 * @param target  Routing hint:
+	 *   - omitted → balanced across all healthy nodes.
+	 *   - `bigint` → soft affinity to that nodeId (node-bound query sessions).
+	 *   - `ClientTarget` → direct-IO: hard/soft routing to an exact node, with
+	 *     optional endpoint pinning. The returned client is `Disposable`; dispose
+	 *     it (`using`) to unpin.
 	 */
 	createClient<Service extends CompatServiceDefinition>(
 		service: Service,
 		preferNodeId?: bigint
+	): Client<Service>
+	createClient<Service extends CompatServiceDefinition>(
+		service: Service,
+		target: ClientTarget
+	): Client<Service> & Disposable
+	createClient<Service extends CompatServiceDefinition>(
+		service: Service,
+		target?: bigint | ClientTarget
 	): Client<Service> {
-		dbg.log(`creating client for %s with preferNodeId %d`, service.fullName, preferNodeId)
+		let nodeId = typeof target === 'bigint' ? target : target?.nodeId
+		let hard = typeof target === 'object' ? (target.hard ?? false) : false
+		dbg.log('creating client for %s (node %o, hard %o)', service.fullName, nodeId, hard)
+
+		// Pin a server-named endpoint so a hard client can reach it before the next
+		// discovery round; the pin is released on the client's dispose.
+		let pinned = false
+		if (typeof target === 'object' && target.endpoint !== undefined && this.#endpoints) {
+			this.#endpoints.pool.pin(target.nodeId, target.endpoint.host, target.endpoint.port, {
+				location: target.endpoint.location,
+				sslTargetNameOverride: target.endpoint.sslTargetNameOverride,
+				generation: target.endpoint.generation,
+			})
+			pinned = true
+		}
 
 		let channel = this.#connection.channel
-
 		if (this.#endpoints) {
 			channel = new BalancedChannel(
 				this.#endpoints.pool,
 				this.options.hooks,
-				preferNodeId
+				nodeId,
+				hard
 			) as unknown as Channel
 		}
 
-		return createClientFactory().use(this.#middleware).create(service, channel, {
+		let client = createClientFactory().use(this.#middleware).create(service, channel, {
 			'*': this.options.channelOptions,
 		})
+
+		if (typeof target !== 'object') return client
+
+		// Object targets are Disposable — unpin on dispose (no-op if not pinned).
+		let endpoints = this.#endpoints
+		return Object.assign(client as object, {
+			[Symbol.dispose]: () => {
+				if (pinned) endpoints?.pool.invalidate(target.nodeId)
+			},
+		}) as Client<Service>
 	}
 
 	[Symbol.dispose](): void {
@@ -336,17 +405,23 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
+		// Graceful teardown — drain in-flight streams before closing channels.
+		await this.#teardown((pool) => pool.close())
+	}
+
+	// The single teardown path. `closePool` is the only sync/async fork:
+	// `close()` destroys synchronously, `asyncDispose` awaits a graceful drain.
+	#teardown(closePool: (pool: EndpointPool) => void | Promise<void>): void | Promise<void> {
 		if (this.#closed) return
 		this.#closed = true
 
-		if (this.#endpoints) {
-			await this.#endpoints.pool.close()
-		} else {
-			this.#markClosedDisabled()
-		}
-
-		this.#connection.close()
 		dbg.log('closing driver')
+		let closed = this.#endpoints ? closePool(this.#endpoints.pool) : this.#markClosedDisabled()
+
+		if (closed instanceof Promise) {
+			return closed.finally(() => this.#connection.close())
+		}
+		this.#connection.close()
 	}
 
 	#markReadyDisabled(): void {
@@ -402,6 +477,11 @@ export class Driver implements Disposable, AsyncDisposable {
 		assert.ok(timeout > 0, new DriverDiscoveryTimeoutError(timeout))
 		assert.ok(interval > 0, new DriverDiscoveryIntervalError(interval))
 		assert.ok(timeout < interval, new DriverDiscoveryOptionsError())
+
+		let threshold = this.options['ydb.sdk.discovery_degraded_threshold']
+		if (threshold !== undefined) {
+			assert.ok(threshold > 0 && threshold <= 1, new DriverDegradedThresholdError(threshold))
+		}
 	}
 
 	#initialEndpoint() {

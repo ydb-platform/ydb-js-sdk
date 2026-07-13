@@ -86,12 +86,14 @@ All payloads share the same identity envelope, so multi-driver consumers can dis
 
 ```ts
 type DriverIdentity = {
-  address: string // host:port the driver was constructed with
-  port: number | undefined
   database: string // YDB database path
-  registeredAt: number // Date.now() at Driver construction
+  address: string // host the driver was constructed with
+  port?: number // port the driver was constructed with, if any
 }
 ```
+
+The identity object reference is stable for the driver's lifetime, so subscribers
+can use it directly as a `Map` / `WeakMap` key to attribute events per driver.
 
 Time values follow Node.js conventions:
 
@@ -122,16 +124,18 @@ All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, ad
 
 | Channel                              | Type    | Extra fields                                                      |
 | ------------------------------------ | ------- | ----------------------------------------------------------------- |
-| `ydb:driver.connection.added`        | publish | (none)                                                            |
-| `ydb:driver.connection.pessimized`   | publish | `until: number` — epoch ms when the pessimization window ends     |
+| `ydb:driver.connection.added`        | publish | (none) — also fired when a retired node reappears (revived)       |
+| `ydb:driver.connection.pessimized`   | publish | (none) — pessimization has no fixed timer                         |
 | `ydb:driver.connection.unpessimized` | publish | `duration: number` — ms the connection actually stayed pessimized |
 | `ydb:driver.connection.retired`      | publish | `reason: 'stale_active' \| 'stale_pessimized'`                    |
-| `ydb:driver.connection.removed`      | publish | `reason: 'replaced' \| 'idle' \| 'pool_close'`                    |
+| `ydb:driver.connection.removed`      | publish | `reason: 'idle' \| 'pool_close'`                                  |
 
 The pool exposes two distinct teardown events for connections:
 
-- `retired` — the connection was removed from active routing (e.g. its endpoint disappeared from discovery), but its gRPC channel is left open so in-flight streams can drain.
-- `removed` — the gRPC channel was physically closed. The `reason` field distinguishes whether it was a replacement, an idle teardown, or a pool shutdown.
+- `retired` — the connection was removed from active routing (its endpoint disappeared from discovery), but its gRPC channel is left open so in-flight streams can drain. A reappearing node revives the same channel and re-emits `connection.added`. An address change surfaces as a retire of the old connection plus an add of the new one (not a `removed`).
+- `removed` — the gRPC channel was physically closed. The `reason` field distinguishes an idle teardown (`idle`) from a pool shutdown (`pool_close`).
+
+`connection.added`/`retired`/`discovery.completed` for a discovery round are published inside the `tracing:ydb:driver.discovery` span, so trace subscribers see them as span events/attributes.
 
 A gauge of "alive channels" can be reconstructed from the delta between `connection.added` and `connection.removed`. A gauge of "routable connections" should also subtract `retired`. `@ydbjs/telemetry` does this with an in-memory `Map<DriverIdentity, ConnectionState>`.
 
