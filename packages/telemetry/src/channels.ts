@@ -13,7 +13,6 @@ import {
 	ATTR_YDB_DISCOVERY_REMOVED_COUNT,
 	ATTR_YDB_DISCOVERY_TOTAL_COUNT,
 	ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION,
-	ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL,
 	ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON,
 	ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON,
 	ATTR_YDB_IDEMPOTENT,
@@ -225,15 +224,13 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	},
 	{
 		channel: 'ydb:driver.connection.pessimized',
-		apply: (
-			msg: { nodeId: bigint; address: string; location: string; until: number },
-			span
-		) => {
+		// The endpoints engine has no fixed pessimization timer, so the payload no
+		// longer carries `until` (recovery is optimistic un-ban / discovery reset).
+		apply: (msg: { nodeId: bigint; address: string; location: string }, span) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_PESSIMIZED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-				[ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL]: msg.until / 1000,
 			})
 		},
 	},

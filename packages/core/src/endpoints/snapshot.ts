@@ -2,7 +2,12 @@
 // No FSM, no gRPC — this is the module the synchronous facade reads on every
 // RPC, and the one that carries the heaviest unit coverage.
 
-import type { EndpointEntry, EndpointsCtx, PileStatus } from './endpoints-state.js'
+import type {
+	EndpointEntry,
+	EndpointSubState,
+	EndpointsCtx,
+	PileStatus,
+} from './endpoints-state.js'
 
 // Piles a client may route to. Others are excluded before locality/load.
 export const USABLE_PILE_STATUSES: ReadonlySet<PileStatus> = new Set<PileStatus>([
@@ -11,7 +16,9 @@ export const USABLE_PILE_STATUSES: ReadonlySet<PileStatus> = new Set<PileStatus>
 	'SYNCHRONIZED',
 ])
 
-export type EndpointRefState = 'active' | 'pessimized' | 'retired' | 'pinned'
+// The ref state is exactly the registry sub-state — aliased (not re-declared) so
+// the two unions can never drift and the `ref()` builder needs no cast.
+export type EndpointRefState = EndpointSubState
 
 // Frozen routing + dial metadata. Carries everything the facade needs to
 // lazily materialize a channel on first selection, so the sync hot path never
@@ -73,7 +80,7 @@ let ref = function ref(entry: EndpointEntry): EndpointRef {
 		ipV6: Object.freeze(entry.ipV6.slice()),
 		location: entry.location,
 		pile: entry.bridgePileName,
-		state: entry.subState as EndpointRefState,
+		state: entry.subState,
 	})
 }
 

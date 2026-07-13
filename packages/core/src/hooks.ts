@@ -1,3 +1,27 @@
+import { loggers } from '@ydbjs/debug'
+
+let dbg = loggers.driver.extend('hooks')
+
+/**
+ * Invoke a user hook, swallowing and logging any throw. A hook must never break
+ * the request path or the driver's internal loops, so both `BalancedChannel` and
+ * the `EndpointPool` route their hook calls through here. Returns the hook's
+ * value (or `undefined` if it is unset or threw).
+ */
+export let safeHook = function safeHook<A, R>(
+	name: string,
+	fn: ((arg: A) => R) | undefined,
+	arg?: A
+): R | undefined {
+	if (fn === undefined) return undefined
+	try {
+		return fn(arg as A)
+	} catch (error) {
+		dbg.log('hook %s threw an error (swallowed): %O', name, error)
+		return undefined
+	}
+}
+
 /**
  * Read-only snapshot of endpoint metadata from discovery.
  */
@@ -11,6 +35,7 @@ export interface EndpointInfo {
 
 /**
  * Fired synchronously inside BalancedChannel.createCall(), in the caller's
+ * async context, when an RPC is dispatched to a selected endpoint.
  */
 export interface CallStartEvent {
 	/** Full gRPC method path, e.g. '/Ydb.Query.V1.QueryService/ExecuteQuery' */
@@ -51,8 +76,9 @@ export interface PessimizeEvent {
 }
 
 /**
- * Fired when a previously pessimized connection is restored to active rotation
- * after the pessimization timeout elapsed.
+ * Fired when a previously pessimized connection is restored to active rotation —
+ * on the next successful RPC to it, or a blanket un-ban on any successful
+ * discovery round (there is no fixed pessimization timer).
  */
 export interface UnpessimizeEvent {
 	endpoint: EndpointInfo
@@ -62,14 +88,13 @@ export interface UnpessimizeEvent {
  * Fired when a discovery round completed successfully.
  */
 export interface DiscoveryEvent {
-	/**
-	 * Datacenter where the discovery endpoint itself is located
-	 * (from ListEndpointsResult.selfLocation). Together with
-	 * EndpointInfo.location, allows detecting cross-DC routing.
-	 */
+	/** Endpoints that entered routing this round (newly discovered or revived). */
 	added: ReadonlyArray<EndpointInfo>
+	/** Endpoints that left routing this round (retired — dropped from discovery). */
 	removed: ReadonlyArray<EndpointInfo>
+	/** Round duration in milliseconds. */
 	duration: number
+	/** The full routable endpoint set after this round. */
 	endpoints: ReadonlyArray<EndpointInfo>
 }
 
@@ -130,8 +155,9 @@ export interface DriverHooks {
 	onPessimize?(event: PessimizeEvent): void
 
 	/**
-	 * A previously pessimized connection was restored to active rotation
-	 * after the pessimization timeout elapsed.
+	 * A previously pessimized connection was restored to active rotation — on the
+	 * next successful RPC to it, or a blanket un-ban on a successful discovery
+	 * round.
 	 */
 	onUnpessimize?(event: UnpessimizeEvent): void
 

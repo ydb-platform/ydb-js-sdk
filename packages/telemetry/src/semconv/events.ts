@@ -8,7 +8,13 @@ export let EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED = 'ydb.driver.connection.unp
 export let EVENT_YDB_DRIVER_CONNECTION_RETIRED = 'ydb.driver.connection.retired'
 export let EVENT_YDB_DRIVER_CONNECTION_REMOVED = 'ydb.driver.connection.removed'
 
-/** unix seconds */
+/**
+ * @deprecated The endpoints engine has no fixed pessimization timer, so
+ * `ydb:driver.connection.pessimized` no longer carries `until`. This attribute
+ * is no longer emitted; kept only so existing dashboards don't fail to resolve
+ * the symbol.
+ * unix seconds
+ */
 export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL =
 	'ydb.driver.connection.pessimization.until'
 /** seconds */

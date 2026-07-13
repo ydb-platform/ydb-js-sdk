@@ -56,8 +56,8 @@ test('ready(signal) leaves no abort listeners on a shared signal', async (tc) =>
 		await h.pool.close()
 	}
 
-	// linkSignals + abortableReady must each remove their listener — a shared
-	// signal reused across lifecycles must not accumulate abort handlers.
+	// abortable() in pool.ready() must remove its abort listener — a shared signal
+	// reused across lifecycles must not accumulate abort handlers.
 	expect(getEventListeners(signal, 'abort')).toHaveLength(0)
 })
 
@@ -77,12 +77,16 @@ test('close closes every materialized channel and leaves none behind', async (tc
 	expect(connections.materialized.every((c) => c.closed)).toBe(true)
 })
 
-test('destroy aborts an in-flight discovery round without leaking', async () => {
+test('destroy aborts an in-flight discovery round and refuses to route', async () => {
 	let discovery = makeFakeDiscovery()
-	// No result pushed — the first round is in flight when we destroy.
+	discovery.hang() // the first round blocks until its signal aborts
 	let h = makeEndpointPool({ discovery })
+	await discovery.waitForRound(1) // the round is genuinely in flight
+
 	h.pool[Symbol.dispose]()
 	await settle()
-	// A destroyed pool refuses to route.
+
+	// The round's signal was aborted by the destroy, and a destroyed pool throws.
+	expect(discovery.lastSignal()!.aborted).toBe(true)
 	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
 })

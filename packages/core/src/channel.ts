@@ -7,6 +7,7 @@ import { loggers } from '@ydbjs/debug'
 import type { Connection } from './conn.js'
 import type { EndpointPool } from './endpoints/endpoints-runtime.js'
 import type { CallCompleteEvent, CallStartEvent, DriverHooks } from './hooks.js'
+import { safeHook } from './hooks.js'
 
 let dbg = loggers.driver.extend('channel')
 
@@ -14,7 +15,7 @@ let dbg = loggers.driver.extend('channel')
 // UNAVAILABLE: the node is unreachable. DEADLINE_EXCEEDED: the node hung.
 // Cluster-wide codes (INTERNAL / RESOURCE_EXHAUSTED) are intentionally excluded
 // so a global spike does not pessimize every node at once.
-let PESSIMIZING_CODES: ReadonlySet<number> = new Set<number>([
+const PESSIMIZING_CODES: ReadonlySet<number> = new Set<number>([
 	Status.UNAVAILABLE,
 	Status.DEADLINE_EXCEEDED,
 ])
@@ -43,17 +44,24 @@ export class BalancedChannel implements Channel {
 	#pool: EndpointPool
 	#hooks: DriverHooks
 	#nodeId: bigint | undefined
+	// Hard routing: every RPC goes to #nodeId or fails (never substitutes). Used
+	// for direct topic read/write, where landing on the wrong node is incorrect.
+	#hard: boolean
 
-	constructor(pool: EndpointPool, hooks?: DriverHooks, nodeId?: bigint) {
+	constructor(pool: EndpointPool, hooks?: DriverHooks, nodeId?: bigint, hard = false) {
 		this.#pool = pool
 		this.#hooks = hooks || {}
 		this.#nodeId = nodeId
+		this.#hard = hard
 	}
 
 	createCall(...args: Parameters<Channel['createCall']>): ReturnType<Channel['createCall']> {
 		let [method, deadline, host, parentCall, propagateFlags] = args
 
-		let conn = this.#pool.acquire(this.#nodeId)
+		let conn =
+			this.#hard && this.#nodeId !== undefined
+				? this.#pool.acquireNode(this.#nodeId, { hard: true })
+				: this.#pool.acquire(this.#nodeId)
 		let start = performance.now()
 
 		// The onCall hook (and its ALS restore) is the only reason to snapshot the
@@ -62,13 +70,14 @@ export class BalancedChannel implements Channel {
 		let hasOnCall = this.#hooks.onCall !== undefined
 		let restoreContext = hasOnCall ? AsyncLocalStorage.snapshot() : null
 		let onComplete = hasOnCall
-			? (this.#safeHook('onCall', this.#hooks.onCall, this.#buildStartEvent(conn, method)) ??
-				null)
+			? (safeHook('onCall', this.#hooks.onCall, this.#buildStartEvent(conn, method)) ?? null)
 			: null
 
 		dbg.log('createCall %s → node %d %s', method, conn.endpoint.nodeId, conn.endpoint.address)
 
 		let call = conn.channel.createCall(method, deadline, host, parentCall, propagateFlags)
+		// Count the RPC as in-flight so a graceful close can wait for it to drain.
+		this.#pool.callStarted(conn.endpoint.nodeId)
 
 		return this.#wrapCall(call, conn, start, restoreContext, onComplete)
 	}
@@ -85,14 +94,14 @@ export class BalancedChannel implements Channel {
 	}
 
 	/** READY while the pool knows of any endpoint; TRANSIENT_FAILURE otherwise. */
-	getConnectivityState(_tryToConnect: boolean): any {
+	getConnectivityState(_tryToConnect: boolean): connectivityState {
 		return this.#pool.snapshot.byNodeId.size > 0
 			? connectivityState.READY
 			: connectivityState.TRANSIENT_FAILURE
 	}
 
 	watchConnectivityState(
-		_currentState: any,
+		_currentState: connectivityState,
 		_deadline: Date | number,
 		callback: (error?: Error) => void
 	): void {
@@ -115,7 +124,6 @@ export class BalancedChannel implements Channel {
 		onComplete: ((event: CallCompleteEvent) => void) | null
 	): ReturnType<Channel['createCall']> {
 		let pool = this.#pool
-		let safeHook = this.#safeHook.bind(this)
 
 		return new Proxy(call, {
 			get(target, prop, receiver) {
@@ -127,8 +135,14 @@ export class BalancedChannel implements Channel {
 					let onReceiveStatus: InterceptingListener['onReceiveStatus'] = (status) => {
 						let nodeId = conn.endpoint.nodeId
 
-						// Report the outcome BEFORE propagating, so a retry's next
-						// acquire() already sees the pessimized node.
+						// The call has ended — release its in-flight slot (drives the
+						// graceful-close drain).
+						pool.callEnded(nodeId)
+
+						// Report the outcome before propagating. The report is
+						// enqueue-only and the RoutingSnapshot swap is async, so this
+						// is best-effort: a zero-backoff retry may still observe the
+						// pre-pessimization snapshot for one more attempt.
 						if (PESSIMIZING_CODES.has(status.code)) {
 							pool.report(nodeId, false)
 						} else if (
@@ -174,16 +188,6 @@ export class BalancedChannel implements Channel {
 				activeCount: snapshot.prefer.length + snapshot.fallback.length,
 				pessimizedCount,
 			},
-		}
-	}
-
-	#safeHook<A, R>(name: string, fn: ((arg: A) => R) | undefined, arg: A): R | undefined {
-		if (fn === undefined) return undefined
-		try {
-			return fn(arg)
-		} catch (error) {
-			dbg.log('hook %s threw an error (swallowed): %O', name, error)
-			return undefined
 		}
 	}
 }

@@ -8,7 +8,7 @@ import { connectivityState, credentials } from '@grpc/grpc-js'
 
 import type { Connection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
-import type { EndpointInfo } from '../hooks.js'
+import type { DriverHooks, EndpointInfo } from '../hooks.js'
 import {
 	type DiscoveryResult,
 	type EndpointsRuntime,
@@ -18,7 +18,7 @@ import {
 import type { DiscoveredEndpoint, PileState, PileStatus } from './endpoints-state.js'
 import type { EndpointRef } from './snapshot.js'
 
-export let TEST_IDENTITY: DriverIdentity = Object.freeze({
+export const TEST_IDENTITY: DriverIdentity = Object.freeze({
 	database: '/local',
 	address: 'localhost',
 	port: 2136,
@@ -62,16 +62,22 @@ export type FakeDiscovery = {
 	listEndpoints: ListEndpoints
 	push: (result: DiscoveryResult) => void
 	fail: (error: unknown) => void
+	/** Make the next round hang until its signal aborts (a genuinely in-flight round). */
+	hang: () => void
 	callCount: () => number
+	/** The AbortSignal handed to the most recent round (observe cancellation). */
+	lastSignal: () => AbortSignal | undefined
 	waitForRound: (n?: number) => Promise<void>
 }
 
 export let makeFakeDiscovery = function makeFakeDiscovery(): FakeDiscovery {
-	let queue: Array<DiscoveryResult | { throw: unknown }> = []
+	let queue: Array<DiscoveryResult | { throw: unknown } | { hang: true }> = []
 	let calls = 0
 	let waiters: Array<{ at: number; resolve: () => void }> = []
+	let lastSignal: AbortSignal | undefined
 
-	let listEndpoints: ListEndpoints = async (_signal) => {
+	let listEndpoints: ListEndpoints = async (signal) => {
+		lastSignal = signal
 		let i = calls
 		calls++
 		for (let w of waiters.splice(0)) {
@@ -81,6 +87,13 @@ export let makeFakeDiscovery = function makeFakeDiscovery(): FakeDiscovery {
 		// Advance through pushed results by call index, repeating the last.
 		if (queue.length === 0) return { endpoints: [], selfLocation: '', pileStates: [] }
 		let next = queue[Math.min(i, queue.length - 1)]!
+		if ('hang' in next) {
+			await new Promise<never>((_resolve, reject) => {
+				if (signal.aborted) reject(signal.reason)
+				else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+			})
+			throw signal.reason // unreachable: the promise above always rejects first
+		}
 		if ('throw' in next) throw next.throw
 		return next
 	}
@@ -89,7 +102,9 @@ export let makeFakeDiscovery = function makeFakeDiscovery(): FakeDiscovery {
 		listEndpoints,
 		push: (result) => queue.push(result),
 		fail: (error) => queue.push({ throw: error }),
+		hang: () => queue.push({ hang: true }),
 		callCount: () => calls,
+		lastSignal: () => lastSignal,
 		waitForRound: (n = 1) =>
 			new Promise<void>((resolve) => {
 				if (calls >= n) resolve()
@@ -188,8 +203,10 @@ export let makeEndpointPool = function makeEndpointPool(
 	over: {
 		discovery?: FakeDiscovery
 		connections?: FakeConnectionFactory
+		hooks?: DriverHooks
 		localityEnabled?: boolean
 		degradedThreshold?: number
+		discoveryTimeoutMs?: number
 		discoveryIntervalMs?: number
 		idleIntervalMs?: number
 		retiredGraceMs?: number
@@ -204,8 +221,10 @@ export let makeEndpointPool = function makeEndpointPool(
 		listEndpoints: discovery.listEndpoints,
 		channelCredentials: credentials.createInsecure(),
 		connectionFactory: connections.factory,
+		hooks: over.hooks,
 		localityEnabled: over.localityEnabled,
 		degradedThreshold: over.degradedThreshold,
+		discoveryTimeoutMs: over.discoveryTimeoutMs ?? 5_000,
 		discoveryIntervalMs: over.discoveryIntervalMs ?? 60_000,
 		idleIntervalMs: over.idleIntervalMs ?? 60_000,
 		retiredGraceMs: over.retiredGraceMs ?? 300_000,

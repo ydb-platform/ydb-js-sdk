@@ -60,10 +60,18 @@ Global guard: `endpoints.destroy` from any non-terminal state → `closed` (imme
 | ready/degraded | timer.idle_sweep                                 | —                | emit idle_sweep effect                                          |
 | ready/degraded | channel_closeable                                | —                | drop a retired channel, emit `removed{idle}`                    |
 | ready/degraded | pin / invalidate                                 | —                | update pins, rebuild snapshot                                   |
-| ready/degraded | close                                            | closing/closed   | graceful drain                                                  |
-| closing        | channel_closeable                                | closing/closed   | close a drained channel; finalize when empty                    |
+| ready/degraded | close                                            | closing/closed   | freeze routing, begin drain (immediate if nothing registered)   |
+| closing        | channel_closeable                                | closing/closed   | close a drained channel; finalize when the last one goes        |
 | closing        | timer.close_deadline                             | closed           | force-close the rest                                            |
 | closed         | \*                                               | closed           | ignored                                                         |
+
+On `close`, routing is frozen (an empty snapshot is emitted so `acquire()` throws
+rather than vending a channel), then the runtime's `begin_close_drain` effect
+closes every idle channel at once and registers the busy ones. A busy channel is
+finalized as soon as its in-flight RPCs drain (`BalancedChannel` tracks an
+in-flight count per node); `close_deadline` is the hard cap. So `await using
+driver` returns immediately when nothing is in flight instead of always waiting
+the deadline.
 
 **Snapshot rebuild** fires only when the routable set changes (add / remove / ban /
 un-ban / retire / pin) — never on `rpc_ok` of an already-active node — so RCU emission
@@ -106,15 +114,31 @@ are never proactively closed — grpc-js manages their idle socket.
 
 ### Direct topic IO
 
-Three primitives: `pin(nodeId, host, port)`, `acquireNode(nodeId, {hard})`, and
-`invalidate(nodeId)`, over a `#pinned` map **outside** the balanced tiers. Generation
-tracking and the two-stream ordered-ack protocol live in the topic-reader FSM, not
-here.
+The engine is **internal** — consumers only ever hold a `Driver`. Direct-IO is
+reached through `Driver.createClient(service, target)`:
+
+- `createClient(service)` — balanced across all healthy nodes.
+- `createClient(service, nodeId)` — soft affinity (node-bound query sessions).
+- `createClient(service, { nodeId, endpoint?, hard? })` — direct-IO. With
+  `hard: true` every RPC goes to `nodeId` or fails (never substitutes). With
+  `endpoint` the node is **pinned** (reachable before the next discovery round,
+  for a server-named node from a topic `PartitionLocation`); the returned client
+  is `Disposable` and unpins on dispose.
+
+Internally these map to the pool primitives `pin(nodeId, host, port, {generation})`,
+`acquireNode(nodeId, {hard})`, and `invalidate(nodeId)`, over a `#pinned` map
+**outside** the balanced tiers. Generation tracking and the two-stream ordered-ack
+protocol live in the topic-reader FSM, not here.
 
 ### Diagnostics
 
 The FSM is diagnostics-agnostic — it emits typed outputs. The facade republishes them
 to `ydb:driver.connection.added/removed/pessimized/unpessimized/retired`,
 `ydb:driver.discovery.completed`, `ydb:driver.ready/failed/closed`,
-`tracing:ydb:driver.discovery`, and the `DriverHooks`. Because pessimization dropped
-the fixed timer, `ydb:driver.connection.pessimized` no longer carries an `until` field.
+`tracing:ydb:driver.discovery`, and the `DriverHooks`. The round-derived events
+(`connection.added` / `connection.retired` / `discovery.completed`) are published from
+inside the discovery `tracePromise` callback — the async output-consumer loop has no
+active span, so publishing them there would drop them from traces. A reappearing
+(revived) retired node re-emits `connection.added` so add/remove event streams stay
+balanced. Because pessimization dropped the fixed timer, `ydb:driver.connection.pessimized`
+no longer carries an `until` field.

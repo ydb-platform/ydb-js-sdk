@@ -1,6 +1,8 @@
 import { create } from '@bufbuild/protobuf'
+import { connectivityState } from '@grpc/grpc-js'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { ListEndpointsResultSchema } from '@ydbjs/api/discovery'
+import { ClientError, Status } from 'nice-grpc'
 import { expect, test } from 'vitest'
 
 import { EndpointsUnavailableError } from '../errors.ts'
@@ -160,6 +162,155 @@ test('close closes every materialized channel', async (tc) => {
 
 	await h.pool.close()
 	expect(connections.materialized.every((c) => c.closed)).toBe(true)
+})
+
+// ── graceful close drain (no full-deadline stall) ────────────────────────────
+
+test('close finalizes promptly without waiting the close deadline', async (tc) => {
+	// A 30s deadline: if close() stalled on it, the 5s test timeout would fire.
+	await using h = setup([endpoint(1), endpoint(2)], { closeDeadlineMs: 30_000 })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.acquire(2n)
+
+	await h.pool.close()
+	expect(h.connections.materialized.every((c) => c.closed)).toBe(true)
+})
+
+test('close waits for an in-flight call to drain, then finalizes', async (tc) => {
+	let closed = false
+	let h = setup([endpoint(1)], { closeDeadlineMs: 30_000 })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.callStarted(1n) // simulate an in-flight RPC on node 1
+
+	let closing = h.pool.close().then(() => {
+		closed = true
+	})
+	await settle()
+	// The busy channel keeps close() pending.
+	expect(closed).toBe(false)
+	expect(h.connections.byNode(1n)!.closed).toBe(false)
+
+	h.pool.callEnded(1n) // the RPC finishes → channel drains → finalize
+	await closing
+	expect(closed).toBe(true)
+	expect(h.connections.byNode(1n)!.closed).toBe(true)
+})
+
+test('acquire after close throws EndpointsUnavailableError', async (tc) => {
+	let h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	await h.pool.close()
+	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
+	expect(() => h.pool.acquire(1n)).toThrow(EndpointsUnavailableError)
+})
+
+// ── retired-channel reaping (idle_sweep runtime branches) ─────────────────────
+
+let retireNode2 = async function retireNode2(
+	h: EndpointPoolHarness,
+	discovery: ReturnType<typeof makeFakeDiscovery>
+): Promise<void> {
+	h.pool.acquire(1n)
+	h.pool.acquire(2n)
+	discovery.push(discoveryResult([endpoint(1)])) // node 2 drops out
+	h.pool.forceRediscovery()
+	await settle()
+}
+
+test('idle_sweep closes a retired channel in SHUTDOWN', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	let connections = makeFakeConnectionFactory()
+	await using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
+	await h.pool.ready(tc.signal)
+	await retireNode2(h, discovery)
+
+	connections.byNode(2n)!.driveState(connectivityState.SHUTDOWN)
+	h.machine.dispatch({ type: 'endpoints.timer.idle_sweep' })
+	await settle()
+
+	expect(connections.byNode(2n)!.closed).toBe(true)
+	expect(h.pool.snapshot.byNodeId.has(2n)).toBe(false)
+})
+
+test('idle_sweep keeps a retired channel that is READY', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	let connections = makeFakeConnectionFactory()
+	await using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
+	await h.pool.ready(tc.signal)
+	await retireNode2(h, discovery)
+
+	connections.byNode(2n)!.driveState(connectivityState.READY)
+	h.machine.dispatch({ type: 'endpoints.timer.idle_sweep' })
+	await settle()
+
+	// A working retired channel is kept so a returning node reuses it (no churn).
+	expect(connections.byNode(2n)!.closed).toBe(false)
+})
+
+test('idle_sweep reaps a retired channel idle past the grace window', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	let connections = makeFakeConnectionFactory()
+	await using h = setup([endpoint(1), endpoint(2)], {
+		discovery,
+		connections,
+		retiredGraceMs: 0, // any non-READY state is immediately past grace
+	})
+	await h.pool.ready(tc.signal)
+	await retireNode2(h, discovery)
+
+	connections.byNode(2n)!.driveState(connectivityState.TRANSIENT_FAILURE)
+	h.machine.dispatch({ type: 'endpoints.timer.idle_sweep' })
+	await settle()
+
+	expect(connections.byNode(2n)!.closed).toBe(true)
+})
+
+// ── discovery recovery + throwing hooks ───────────────────────────────────────
+
+test('a retryable initial failure recovers on the next successful round', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	// A client-side UNAVAILABLE is retryable for an idempotent call (discovery is).
+	discovery.fail(new ClientError('/Discovery/ListEndpoints', Status.UNAVAILABLE, 'transient'))
+	discovery.push(discoveryResult([endpoint(1)])) // backoff retry succeeds
+	await using h = makeEndpointPool({ discovery })
+
+	await h.pool.ready(tc.signal)
+	expect(discovery.callCount()).toBeGreaterThanOrEqual(2)
+	expect(h.pool.acquire().endpoint.nodeId).toBe(1n)
+})
+
+test('a non-retryable initial failure rejects ready with the cause', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	let boom = new TypeError('access denied')
+	discovery.fail(boom)
+	await using h = makeEndpointPool({ discovery })
+
+	// A non-retryable failure is terminal; ready() rejects with the real cause,
+	// not a generic 'Endpoints closed'/'finalized'.
+	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
+})
+
+test('a throwing onDiscovery hook does not break the pool', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	// Two nodes so pessimizing one stays under the degraded threshold (no forced
+	// round that would blanket-un-ban it).
+	discovery.push(discoveryResult([endpoint(1), endpoint(2)]))
+	await using h = makeEndpointPool({
+		discovery,
+		hooks: {
+			onDiscovery() {
+				throw new Error('hook boom')
+			},
+		},
+	})
+
+	await h.pool.ready(tc.signal)
+	// The output loop survived the throw — a later report still swaps the snapshot.
+	h.pool.report(1n, false)
+	await settle()
+	expect(h.pool.snapshot.byNodeId.get(1n)!.state).toBe('pessimized')
 })
 
 // ── proto → domain adapter (bridge wire-real) ────────────────────────────────
