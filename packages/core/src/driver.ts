@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict'
-import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+import { channel as dc } from 'node:diagnostics_channel'
 import * as tls from 'node:tls'
 
 import { create } from '@bufbuild/protobuf'
@@ -16,7 +16,6 @@ import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type RetryConfig, defaultRetryConfig, retry } from '@ydbjs/retry'
 import {
 	type Channel,
 	type ChannelOptions,
@@ -34,6 +33,13 @@ import { BalancedChannel } from './channel.js'
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
+	type DiscoveryResult,
+	type EndpointsRuntime,
+	type ListEndpoints,
+	createEndpointsRuntime,
+	mapDiscoveryResult,
+} from './endpoints/endpoints-runtime.js'
+import {
 	DriverCSDatabaseError,
 	DriverCSProtocolError,
 	DriverDiscoveryIntervalError,
@@ -43,10 +49,7 @@ import {
 } from './errors.js'
 import type { DriverHooks, EndpointInfo } from './hooks.js'
 import { debug, getRegisteredClientMiddlewares } from './middleware.js'
-import { ConnectionPool } from './pool.js'
 import { detectRuntime } from './runtime.js'
-
-let discoveryCh = tracingChannel<{ driver: DriverIdentity }>('tracing:ydb:driver.discovery')
 
 export type { DriverHooks, EndpointInfo }
 
@@ -66,19 +69,6 @@ export type DriverOptions = {
 	 *
 	 * Hooks are synchronous, zero-cost when unused, and fire in the caller's
 	 * AsyncLocalStorage context so OpenTelemetry trace.getActiveSpan() works.
-	 *
-	 * @example
-	 * ```ts
-	 * hooks: {
-	 *   onCall(event) {
-	 *     let span = tracer.startSpan('ydb.rpc')
-	 *     return (complete) => { span.end() }
-	 *   },
-	 *   onPessimize(event) {
-	 *     console.warn('node pessimized', event.endpoint.address)
-	 *   },
-	 * }
-	 * ```
 	 */
 	hooks?: DriverHooks
 
@@ -90,7 +80,15 @@ export type DriverOptions = {
 	'ydb.sdk.discovery_interval_ms'?: number
 	'ydb.sdk.connection_idle_timeout_ms'?: number
 	'ydb.sdk.connection_idle_interval_ms'?: number
+	/**
+	 * @deprecated The endpoints engine has no fixed pessimization timer; a node
+	 * recovers on the next successful RPC or discovery round. Ignored.
+	 */
 	'ydb.sdk.connection_pessimization_timeout_ms'?: number
+	/** Prefer local-DC endpoints (opt-in, soft). Off by default. */
+	'ydb.sdk.locality_enabled'?: boolean
+	/** Fraction of pessimized nodes that forces an early rediscovery (0..1). */
+	'ydb.sdk.discovery_degraded_threshold'?: number
 }
 
 let dbg = loggers.driver
@@ -117,7 +115,6 @@ let defaultOptions: DriverOptions = {
 	'ydb.sdk.discovery_interval_ms': 60_000,
 	'ydb.sdk.connection_idle_timeout_ms': 300_000,
 	'ydb.sdk.connection_idle_interval_ms': 60_000,
-	'ydb.sdk.connection_pessimization_timeout_ms': 60_000,
 } as const satisfies DriverOptions
 
 let defaultChannelOptions: ChannelOptions = {
@@ -151,38 +148,36 @@ if (!Promise.withResolvers) {
 	}
 }
 
-export class Driver implements Disposable {
+export class Driver implements Disposable, AsyncDisposable {
 	readonly cs: URL
 	readonly options: DriverOptions = {}
 
-	#pool: ConnectionPool
-	#ready: PromiseWithResolvers<void> = Promise.withResolvers<void>()
+	// The endpoints engine — owns discovery, balancing, pessimization, and all
+	// ydb:driver.* diagnostics. Undefined when discovery is disabled (the sole
+	// bootstrap connection is used directly).
+	#endpoints: EndpointsRuntime | undefined
 
-	// Single connection used when discovery is disabled or for the discovery
-	// client itself (always contacts the initial endpoint directly).
+	// Single connection: always the bootstrap endpoint from the connection
+	// string. Used for the discovery client, and as the sole transport when
+	// discovery is disabled. GrpcConnection creates the channel eagerly but
+	// grpc-js starts it IDLE — no TCP/TLS until the first RPC.
 	#connection: Connection
 	#middleware: ClientMiddleware
+	#discoveryClient: Client<typeof DiscoveryServiceDefinition> | undefined
 
-	#discoveryClient!: Client<typeof DiscoveryServiceDefinition>
-	#rediscoverTimer?: NodeJS.Timeout
-	// Aborted by close(); links into discovery signals so in-flight rounds
-	// stop ASAP and don't publish ready/failed after driver.closed.
-	#shutdown = new AbortController()
+	// Ready latch for the discovery-DISABLED path only (resolved immediately at
+	// construction, rejected on close). The enabled path delegates to the pool.
+	#ready: PromiseWithResolvers<void> = Promise.withResolvers<void>()
 
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
 
 	#libraries: Set<string> = new Set()
 	#buildInfo: string = `ydb-js-sdk/${pkg.version}`
 
-	// Construction time, used for `driver.ready.duration` and `driver.closed.uptime`.
 	#initAt: number
 	#readyAt: number | undefined
 	#closed = false
 
-	// Referentially stable per driver instance — subscribers (telemetry
-	// registries, metric callbacks) key per-driver state by this reference.
-	// A new object per `get identity()` would shatter those keys and split
-	// every observable metric into one-shot series.
 	#identity!: DriverIdentity
 
 	constructor(connectionString: string, userOptions: Readonly<DriverOptions> = defaultOptions) {
@@ -202,10 +197,6 @@ export class Driver implements Disposable {
 
 		let channelCredentials = this.#createChannelCredentials()
 
-		// The initial connection is always to the endpoint from the connection
-		// string. It is used for discovery and as the sole connection when
-		// discovery is disabled. GrpcConnection creates the channel eagerly but
-		// grpc-js starts it in IDLE — no TCP/TLS until the first RPC.
 		this.#connection = new GrpcConnection(
 			this.#initialEndpoint(),
 			channelCredentials,
@@ -218,21 +209,24 @@ export class Driver implements Disposable {
 
 		this.#middleware = this.#buildMiddleware()
 
-		this.#pool = new ConnectionPool({
-			hooks: this.options.hooks,
-			identity: this.identity,
-			channelOptions: this.options.channelOptions,
-			channelCredentials: channelCredentials,
-			idleTimeout: this.options['ydb.sdk.connection_idle_timeout_ms']!,
-			idleInterval: this.options['ydb.sdk.connection_idle_interval_ms']!,
-			pessimizationTimeout: this.options['ydb.sdk.connection_pessimization_timeout_ms']!,
-		})
-
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
-			this.#markReady()
+			this.#markReadyDisabled()
 		} else {
-			this.#startDiscoveryLoop()
+			// The endpoints runtime kicks the first discovery round itself and owns
+			// the rediscovery loop + all ydb:driver.* diagnostics.
+			this.#endpoints = createEndpointsRuntime({
+				identity: this.identity,
+				listEndpoints: this.#fetchEndpoints,
+				channelCredentials,
+				channelOptions: this.options.channelOptions,
+				hooks: this.options.hooks,
+				localityEnabled: this.options['ydb.sdk.locality_enabled'],
+				degradedThreshold: this.options['ydb.sdk.discovery_degraded_threshold'],
+				discoveryIntervalMs: this.options['ydb.sdk.discovery_interval_ms'],
+				idleIntervalMs: this.options['ydb.sdk.connection_idle_interval_ms'],
+				retiredGraceMs: this.options['ydb.sdk.connection_idle_timeout_ms'],
+			})
 		}
 	}
 
@@ -264,11 +258,8 @@ export class Driver implements Disposable {
 
 	/**
 	 * Stable identity stamped onto every `diagnostics_channel` payload so
-	 * subscribers can attribute events to a specific Driver instance without
-	 * any AsyncLocalStorage cooperation from the publisher.
-	 *
-	 * Returns the same frozen object for the lifetime of the driver —
-	 * subscribers may use it as a Map key for per-driver state.
+	 * subscribers can attribute events to a specific Driver instance. Returns the
+	 * same frozen object for the driver's lifetime — safe as a Map key.
 	 */
 	get identity(): DriverIdentity {
 		return this.#identity
@@ -281,7 +272,11 @@ export class Driver implements Disposable {
 		using linkedSignal = linkSignals(signal, AbortSignal.timeout(timeout))
 
 		try {
-			await abortable(linkedSignal.signal, this.#ready.promise)
+			if (this.#endpoints) {
+				await this.#endpoints.pool.ready(linkedSignal.signal)
+			} else {
+				await abortable(linkedSignal.signal, this.#ready.promise)
+			}
 
 			dbg.log('driver is ready')
 		} catch (error) {
@@ -291,42 +286,28 @@ export class Driver implements Disposable {
 	}
 
 	close(): void {
-		// Idempotent — mixing an explicit `driver.close()` with `using` /
-		// `Symbol.dispose` must not double-tear-down resources or double-fire
-		// lifecycle events.
 		if (this.#closed) return
 		this.#closed = true
 
-		clearInterval(this.#rediscoverTimer)
+		if (this.#endpoints) {
+			// Synchronous teardown — dispatch destroy; the pool closes channels and
+			// publishes ydb:driver.closed on a later turn.
+			this.#endpoints.pool[Symbol.dispose]()
+		} else {
+			this.#markClosedDisabled()
+		}
 
-		// Cancel any in-flight discovery so its callbacks bail out instead of
-		// publishing `ydb:driver.ready` / `ydb:driver.failed` after this point.
-		this.#shutdown.abort(new Error('driver closed'))
-
-		// Unblock anyone waiting on ready() — markReady/markFailed are now
-		// guarded by #closed and won't settle the latch.
-		this.#ready.reject(new Error('driver closed'))
-
-		this.#pool.close()
 		this.#connection.close()
-
-		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
-
-		dc('ydb:driver.closed').publish({ driver: this.identity, uptime })
-
-		dbg.log('closing driver (uptime %d ms)', uptime)
+		dbg.log('closing driver')
 	}
 
 	/**
 	 * Create a nice-grpc client for the given service.
 	 *
-	 * When discovery is enabled, each RPC is routed through a BalancedChannel
-	 * that acquires a connection from the pool exactly once per RPC.
+	 * When discovery is enabled, each RPC is routed through a BalancedChannel that
+	 * selects a connection from the endpoints pool. When disabled, the single
+	 * bootstrap connection is used directly.
 	 *
-	 * When discovery is disabled, the single initial connection is used directly
-	 * (no pool, no balancing).
-	 *
-	 * @param service   gRPC service definition
 	 * @param preferNodeId  Optional nodeId hint — route RPCs to this node when possible.
 	 */
 	createClient<Service extends CompatServiceDefinition>(
@@ -337,9 +318,9 @@ export class Driver implements Disposable {
 
 		let channel = this.#connection.channel
 
-		if (this.options['ydb.sdk.enable_discovery'] === true) {
+		if (this.#endpoints) {
 			channel = new BalancedChannel(
-				this.#pool,
+				this.#endpoints.pool,
 				this.options.hooks,
 				preferNodeId
 			) as unknown as Channel
@@ -354,13 +335,40 @@ export class Driver implements Disposable {
 		this.close()
 	}
 
-	[Symbol.asyncDispose](): PromiseLike<void> {
-		return Promise.resolve(this.close())
+	async [Symbol.asyncDispose](): Promise<void> {
+		if (this.#closed) return
+		this.#closed = true
+
+		if (this.#endpoints) {
+			await this.#endpoints.pool.close()
+		} else {
+			this.#markClosedDisabled()
+		}
+
+		this.#connection.close()
+		dbg.log('closing driver')
+	}
+
+	#markReadyDisabled(): void {
+		this.#ready.resolve()
+		this.#readyAt = performance.now()
+
+		let duration = this.#readyAt - this.#initAt
+		dc('ydb:driver.ready').publish({ driver: this.identity, duration })
+
+		dbg.log('driver ready (discovery disabled) in %d ms', duration)
+	}
+
+	#markClosedDisabled(): void {
+		this.#ready.reject(new Error('driver closed'))
+
+		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
+		dc('ydb:driver.closed').publish({ driver: this.identity, uptime })
+
+		dbg.log('closing driver (uptime %d ms)', uptime)
 	}
 
 	#buildIdentity(): DriverIdentity {
-		// Drop `port` when the connection string has none rather than inventing
-		// a default — leaks fewer wrong values into telemetry.
 		let port = this.cs.port ? parseInt(this.cs.port, 10) : undefined
 		return Object.freeze({
 			database: this.database,
@@ -432,13 +440,11 @@ export class Driver implements Disposable {
 		}
 
 		// Order: debug (logging) → stamp (SDK / db / app headers) → any
-		// externally-registered middleware (e.g. @ydbjs/telemetry's W3C
-		// propagator) → auth (x-ydb-auth-ticket). Auth runs last so a token
-		// refresh that fires from inside another middleware still wins the
-		// final header set.
+		// externally-registered middleware → auth (x-ydb-auth-ticket). Auth runs
+		// last so a token refresh from inside another middleware still wins.
 		//
-		// The registry snapshot is taken at construction time — call
-		// `addClientMiddleware()` BEFORE `new Driver(...)` for it to apply.
+		// The registry snapshot is taken at construction — call
+		// addClientMiddleware() BEFORE new Driver(...) for it to apply.
 		let chain = composeClientMiddleware(debug, stamp)
 		for (let mw of getRegisteredClientMiddlewares()) {
 			chain = composeClientMiddleware(chain, mw)
@@ -446,123 +452,10 @@ export class Driver implements Disposable {
 		return composeClientMiddleware(chain, this.#credentialsProvider.middleware)
 	}
 
-	#startDiscoveryLoop(): void {
-		let timeout = this.options['ydb.sdk.discovery_timeout_ms']!
-		let interval = this.options['ydb.sdk.discovery_interval_ms']!
-
-		dbg.log('discovery enabled, initial timeout %d ms, interval %d ms', timeout, interval)
-
-		this.#discovery(this.#discoverySignal(timeout)).then(
-			() => this.#markReady(),
-			(error) => this.#markFailed(error)
-		)
-
-		this.#rediscoverTimer = setInterval(() => {
-			if (this.#closed) return
-			// A failed background round must not escalate to an unhandledRejection
-			// (which kills the process): the pool keeps serving last-known
-			// endpoints and the next tick retries. Subscribers still observe the
-			// failure via the tracing:ydb:driver.discovery error event.
-			this.#discovery(this.#discoverySignal(timeout)).catch((error) => {
-				dbg.log('background rediscovery failed: %O', error)
-			})
-		}, interval)
-
-		// Don't keep the process alive solely for rediscovery.
-		this.#rediscoverTimer.unref()
-	}
-
-	#discoverySignal(timeoutMs: number): AbortSignal {
-		// AbortSignal.any: closes when either the per-round timeout fires or
-		// the driver shuts down — whichever comes first.
-		return AbortSignal.any([this.#shutdown.signal, AbortSignal.timeout(timeoutMs)])
-	}
-
-	#markReady(): void {
-		// Discovery resolved after close() — drop the event so subscribers don't
-		// see `ready` after `closed`. ready() already rejected via shutdown signal.
-		if (this.#closed) return
-
-		this.#ready.resolve()
-
-		let duration = performance.now() - this.#initAt
-		dc('ydb:driver.ready').publish({ driver: this.identity, duration })
-
-		dbg.log('driver ready in %d ms', duration)
-	}
-
-	#markFailed(error: unknown): void {
-		// Same reason as #markReady — don't publish failure after `closed`.
-		if (this.#closed) return
-
-		this.#ready.reject(error)
-
-		let duration = performance.now() - this.#initAt
-		dc('ydb:driver.failed').publish({ driver: this.identity, duration, error })
-
-		dbg.log('driver init failed after %d ms: %O', duration, error)
-	}
-
-	async #discovery(signal: AbortSignal): Promise<void> {
-		await discoveryCh.tracePromise(() => this.#runDiscoveryRound(signal), {
-			driver: this.identity,
-		})
-	}
-
-	async #runDiscoveryRound(signal: AbortSignal): Promise<void> {
-		let started = performance.now()
-		let retryConfig: RetryConfig = {
-			...defaultRetryConfig,
-			signal,
-			onRetry: (ctx) => {
-				dbg.log('retrying discovery, attempt %d, error: %O', ctx.attempt, ctx.error)
-				this.#safeHook('onDiscoveryError', () =>
-					this.options.hooks?.onDiscoveryError?.({
-						error: ctx.error,
-						attempt: ctx.attempt,
-						duration: performance.now() - started,
-					})
-				)
-			},
-		}
-
-		let result = await retry(retryConfig, (s) => this.#fetchEndpoints(s))
-		let { added, removed } = this.#pool.sync(result.endpoints)
-		let duration = performance.now() - started
-
-		this.#safeHook('onDiscovery', () =>
-			this.options.hooks?.onDiscovery?.({
-				added,
-				removed,
-				duration,
-				endpoints: result.endpoints.map((ep) =>
-					Object.freeze<EndpointInfo>({
-						nodeId: BigInt(ep.nodeId),
-						address: `${ep.address}:${ep.port}`,
-						location: ep.location,
-					})
-				),
-			})
-		)
-
-		dc('ydb:driver.discovery.completed').publish({
-			driver: this.identity,
-			addedCount: added.length,
-			totalCount: result.endpoints.length,
-			removedCount: removed.length,
-			duration,
-		})
-
-		dbg.log(
-			'discovered %d endpoints (+%d / -%d) in %d ms',
-			result.endpoints.length,
-			added.length,
-			removed.length,
-			duration
-		)
-	}
-
-	async #fetchEndpoints(signal: AbortSignal) {
+	// The listEndpoints seam handed to the endpoints runtime. One plain RPC — the
+	// FSM owns retry/backoff, and the run_discovery_round effect owns the
+	// tracing:ydb:driver.discovery span; this closure must not add either.
+	#fetchEndpoints: ListEndpoints = async (signal: AbortSignal): Promise<DiscoveryResult> => {
 		let client = (this.#discoveryClient ??= createClientFactory()
 			.use(this.#middleware)
 			.create(DiscoveryServiceDefinition, this.#connection.channel))
@@ -577,14 +470,6 @@ export class Driver implements Disposable {
 		let res = anyUnpack(response.operation.result!, ListEndpointsResultSchema)
 		assert.ok(res, new DriverResponseError('Missing result in operation data.'))
 
-		return res
-	}
-
-	#safeHook(name: string, fn: () => void): void {
-		try {
-			fn()
-		} catch (error) {
-			dbg.log('hook %s threw an error (swallowed): %O', name, error)
-		}
+		return mapDiscoveryResult(res)
 	}
 }

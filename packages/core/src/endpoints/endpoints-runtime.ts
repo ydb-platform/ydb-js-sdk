@@ -12,10 +12,10 @@ import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { connectivityState } from '@grpc/grpc-js'
+import { abortable } from '@ydbjs/abortable'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { EndpointInfoSchema } from '@ydbjs/api/discovery'
 import type { ListEndpointsResult, EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
-import { linkSignals } from '@ydbjs/abortable'
 import { loggers } from '@ydbjs/debug'
 import { isRetryableError } from '@ydbjs/retry'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
@@ -353,8 +353,12 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	}
 
 	async ready(signal?: AbortSignal): Promise<void> {
-		using linked = linkSignals(signal, this.#env.ac.signal)
-		await abortableReady(this.#env.readyDeferred.promise, linked.signal)
+		// readyDeferred is the authoritative latch: #consume resolves it on
+		// `ready` and rejects it with the real cause on `failed`/`closed`. We do
+		// NOT link the pool's own ac.signal here — its abort reason ('Endpoints
+		// finalized') would otherwise race ahead of the true discovery error.
+		let promise = this.#env.readyDeferred.promise
+		await (signal !== undefined ? abortable(signal, promise) : promise)
 	}
 
 	async close(): Promise<void> {
@@ -548,26 +552,13 @@ let toEndpointInfo = function toEndpointInfo(e: {
 	})
 }
 
-// Resolve `promise` or reject when `signal` aborts, without leaking a listener.
-let abortableReady = function abortableReady(
-	promise: Promise<void>,
-	signal: AbortSignal
-): Promise<void> {
-	if (signal.aborted) return Promise.reject(signal.reason)
-	let { promise: gate, resolve, reject } = Promise.withResolvers<void>()
-	let onAbort = () => reject(signal.reason)
-	signal.addEventListener('abort', onAbort, { once: true })
-	void promise.then(resolve, reject)
-	return gate.finally(() => signal.removeEventListener('abort', onAbort))
-}
-
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 export type EndpointsRuntimeConfig = {
 	identity: DriverIdentity
 	listEndpoints: ListEndpoints
 	channelCredentials: ChannelCredentials
-	channelOptions?: ChannelOptions
+	channelOptions?: ChannelOptions | undefined
 	connectionFactory?: ConnectionFactory | undefined
 	hooks?: DriverHooks | undefined
 	localityEnabled?: boolean | undefined
