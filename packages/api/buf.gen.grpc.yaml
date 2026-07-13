@@ -5,7 +5,7 @@ plugins:
     out: ./src/gen
 inputs:
   - git_repo: https://github.com/ydb-platform/ydb-api-protos.git
-    branch: master
+    branch: claude/protospecs-ydb-piles-08eda7
     depth: 1
     exclude_paths:
       - draft

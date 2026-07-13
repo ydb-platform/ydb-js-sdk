@@ -83,13 +83,15 @@ export type PartitionReadData = {
 	batches: {
 		producerId: string
 		codec: number
-		writtenAt?: Timestamp
+		// Optional protobuf message fields are `T | undefined` (protoc-gen-es honours
+		// exactOptionalPropertyTypes): present-but-unset must be assignable here.
+		writtenAt?: Timestamp | undefined
 		messageData: {
 			offset: bigint
 			seqNo: bigint
 			data: Uint8Array
 			uncompressedSize: bigint
-			createdAt?: Timestamp
+			createdAt?: Timestamp | undefined
 			metadataItems: { key: string; value: Uint8Array }[]
 		}[]
 	}[]
