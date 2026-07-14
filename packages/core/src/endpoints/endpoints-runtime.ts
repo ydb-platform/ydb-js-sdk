@@ -175,6 +175,25 @@ let dropChannel = function dropChannel(
 	}
 }
 
+// Idempotent teardown of all I/O: clear timers, drop every channel, abort the
+// pool signal. Called by the `finalize` effect on a clean close and by #consume's
+// finally as a fault backstop — one owner so the two paths can't drift.
+let finalizeEnv = function finalizeEnv(env: EndpointsEnv): void {
+	if (env.isFinalized) return
+	env.isFinalized = true
+	env.draining = undefined
+	for (let handle of env.timers.values()) clearTimeout(handle)
+	env.timers.clear()
+	for (let nodeId of [
+		...env.channels.keys(),
+		...env.retiredChannels.keys(),
+		...env.pinnedChannels.keys(),
+	]) {
+		dropChannel(env, nodeId)
+	}
+	if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
+}
+
 // Publish the round-derived connection diagnostics + discovery.completed from
 // the diff between the current registry and the fresh result. Called INSIDE the
 // discovery tracePromise so @ydbjs/telemetry attaches these to the discovery
@@ -387,19 +406,7 @@ let effects = {
 	// so `await close()` returns only after ydb:driver.closed is published (and as
 	// a fault backstop in #consume's finally) — not here.
 	'endpoints.effect.finalize': (ctx: FullCtx) => {
-		if (ctx.isFinalized) return
-		ctx.isFinalized = true
-		ctx.draining = undefined
-		for (let handle of ctx.timers.values()) clearTimeout(handle)
-		ctx.timers.clear()
-		for (let nodeId of [
-			...ctx.channels.keys(),
-			...ctx.retiredChannels.keys(),
-			...ctx.pinnedChannels.keys(),
-		]) {
-			dropChannel(ctx, nodeId)
-		}
-		if (!ctx.ac.signal.aborted) ctx.ac.abort(new Error('Endpoints finalized'))
+		finalizeEnv(ctx)
 	},
 } satisfies {
 	[K in EndpointsEffect['type']]: (
@@ -582,20 +589,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			dbg.log('endpoints machine faulted: %O', error)
 			env.readyDeferred.reject(error)
 		} finally {
-			if (!env.isFinalized) {
-				env.isFinalized = true
-				env.draining = undefined
-				for (let handle of env.timers.values()) clearTimeout(handle)
-				env.timers.clear()
-				for (let nodeId of [
-					...env.channels.keys(),
-					...env.retiredChannels.keys(),
-					...env.pinnedChannels.keys(),
-				]) {
-					dropChannel(env, nodeId)
-				}
-				if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
-			}
+			finalizeEnv(env)
 			// No-ops if already settled; guarantees no awaiter hangs on a fault.
 			env.readyDeferred.reject(new Error('Endpoints closed'))
 			env.closedDeferred.resolve()
@@ -714,17 +708,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	}
 
 	#snapshotEndpoints(): EndpointInfo[] {
-		let out: EndpointInfo[] = []
-		for (let ref of this.#snapshot.byNodeId.values()) {
-			out.push(
-				Object.freeze<EndpointInfo>({
-					nodeId: ref.nodeId,
-					address: ref.address,
-					location: ref.location,
-				})
-			)
-		}
-		return out
+		return Array.from(this.#snapshot.byNodeId.values(), toEndpointInfo)
 	}
 }
 
