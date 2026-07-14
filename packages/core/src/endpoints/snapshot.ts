@@ -50,6 +50,10 @@ export type RoutingSnapshot = Readonly<{
 	selfLocation: string
 	// false ⇒ the pile filter was identity (non-bridge cluster).
 	pileStatesPresent: boolean
+	// Count of pessimized discovered nodes — precomputed here (buildSnapshot
+	// already visits every entry) so the per-RPC onCall event reads it in O(1)
+	// instead of rescanning byNodeId.
+	pessimizedCount: number
 }>
 
 export type SelectOptions = {
@@ -67,6 +71,7 @@ export const EMPTY_SNAPSHOT: RoutingSnapshot = Object.freeze({
 	pinned: new Map<bigint, EndpointRef>(),
 	selfLocation: '',
 	pileStatesPresent: false,
+	pessimizedCount: 0,
 })
 
 let ref = function ref(entry: EndpointEntry): EndpointRef {
@@ -99,10 +104,12 @@ export let buildSnapshot = function buildSnapshot(ctx: EndpointsCtx): RoutingSna
 	let byNodeId = new Map<bigint, EndpointRef>()
 	let prefer: EndpointRef[] = []
 	let fallback: EndpointRef[] = []
+	let pessimizedCount = 0
 
 	for (let entry of ctx.byNodeId.values()) {
 		let r = ref(entry)
 		byNodeId.set(entry.nodeId, r)
+		if (entry.subState === 'pessimized') pessimizedCount++
 
 		let routable = entry.subState === 'active' && pileHealthy(entry.bridgePileName)
 		if (!routable) continue
@@ -131,6 +138,7 @@ export let buildSnapshot = function buildSnapshot(ctx: EndpointsCtx): RoutingSna
 		pinned,
 		selfLocation: ctx.selfLocation,
 		pileStatesPresent: present,
+		pessimizedCount,
 	})
 }
 

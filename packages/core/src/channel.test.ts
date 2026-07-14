@@ -13,7 +13,6 @@ let makeFakePool = function makeFakePool(state: EndpointRef['state'] = 'active')
 	let started: bigint[] = []
 	let ended: bigint[] = []
 	let reported: Array<{ nodeId: bigint; ok: boolean }> = []
-	let events: string[] = []
 
 	let ref = { nodeId: 7n, address: 'h:1', location: 'A', state } as EndpointRef
 	let byNodeId = new Map<bigint, EndpointRef>([[7n, ref]])
@@ -24,6 +23,7 @@ let makeFakePool = function makeFakePool(state: EndpointRef['state'] = 'active')
 		pinned: new Map(),
 		selfLocation: '',
 		pileStatesPresent: false,
+		pessimizedCount: state === 'pessimized' ? 1 : 0,
 	} as unknown as RoutingSnapshot
 
 	let installedListener: InterceptingListener | undefined
@@ -46,22 +46,10 @@ let makeFakePool = function makeFakePool(state: EndpointRef['state'] = 'active')
 			if (opts?.hard) acquiredHard.push(nodeId)
 			return conn
 		},
-		callStarted: (nodeId: bigint) => {
-			started.push(nodeId)
-			events.push('started')
-		},
-		callEnded: (nodeId: bigint) => {
-			ended.push(nodeId)
-			events.push('ended')
-		},
-		penalize: (nodeId: bigint) => {
-			reported.push({ nodeId, ok: false })
-			events.push('report')
-		},
-		recover: (nodeId: bigint) => {
-			reported.push({ nodeId, ok: true })
-			events.push('report')
-		},
+		callStarted: (nodeId: bigint) => started.push(nodeId),
+		callEnded: (nodeId: bigint) => ended.push(nodeId),
+		penalize: (nodeId: bigint) => reported.push({ nodeId, ok: false }),
+		recover: (nodeId: bigint) => reported.push({ nodeId, ok: true }),
 	} as unknown as EndpointPool
 
 	return {
@@ -69,7 +57,6 @@ let makeFakePool = function makeFakePool(state: EndpointRef['state'] = 'active')
 		started,
 		ended,
 		reported,
-		events,
 		acquiredHard,
 		getListener: () => installedListener!,
 	}

@@ -62,12 +62,12 @@ export class BalancedChannel implements Channel {
 			this.#hard && this.#nodeId !== undefined
 				? this.#pool.acquireNode(this.#nodeId, { hard: true })
 				: this.#pool.acquire(this.#nodeId)
-		let start = performance.now()
 
-		// The onCall hook (and its ALS restore) is the only reason to snapshot the
-		// async context — skip both when no hook is registered so the common path
-		// stays allocation-light.
+		// The onCall hook (and its ALS restore + start timestamp) is the only reason
+		// to snapshot the async context or read the clock — skip all three when no
+		// hook is registered so the common path stays allocation-light.
 		let hasOnCall = this.#hooks.onCall !== undefined
+		let start = hasOnCall ? performance.now() : 0
 		let restoreContext = hasOnCall ? AsyncLocalStorage.snapshot() : null
 		let onComplete = hasOnCall
 			? (safeHook('onCall', this.#hooks.onCall, this.#buildStartEvent(conn, method)) ?? null)
@@ -175,18 +175,13 @@ export class BalancedChannel implements Channel {
 
 	#buildStartEvent(conn: Connection, method: string): CallStartEvent {
 		let snapshot = this.#pool.snapshot
-		let pessimizedCount = 0
-		for (let ref of snapshot.byNodeId.values()) {
-			if (ref.state === 'pessimized') pessimizedCount++
-		}
-
 		return {
 			method,
 			endpoint: conn.endpoint,
 			preferred: this.#nodeId !== undefined && conn.endpoint.nodeId === this.#nodeId,
 			pool: {
 				activeCount: snapshot.prefer.length + snapshot.fallback.length,
-				pessimizedCount,
+				pessimizedCount: snapshot.pessimizedCount,
 			},
 		}
 	}
