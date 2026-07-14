@@ -139,19 +139,19 @@ export class BalancedChannel implements Channel {
 						// graceful-close drain).
 						pool.callEnded(nodeId)
 
-						// Report the outcome before propagating. The report is
+						// Feed the outcome back before propagating. The dispatch is
 						// enqueue-only and the RoutingSnapshot swap is async, so this
 						// is best-effort: a zero-backoff retry may still observe the
 						// pre-pessimization snapshot for one more attempt.
 						if (PESSIMIZING_CODES.has(status.code)) {
-							pool.report(nodeId, false)
+							pool.penalize(nodeId)
 						} else if (
 							status.code === Status.OK &&
 							pool.snapshot.byNodeId.get(nodeId)?.state === 'pessimized'
 						) {
-							// Optimistic un-ban — only dispatch when the node is
+							// Optimistic recovery — only dispatch when the node is
 							// actually pessimized (avoid a per-RPC event for healthy nodes).
-							pool.report(nodeId, true)
+							pool.recover(nodeId)
 						}
 
 						if (onComplete !== null) {

@@ -7,7 +7,7 @@ the connection pool — built on `@ydbjs/fsm`. It replaces the legacy `Connectio
 and the Driver's ad-hoc discovery loop: `Driver` owns a bootstrap connection + the
 middleware chain and hands the engine a `listEndpoints` seam (see `driver.ts`); the
 `BalancedChannel` (see `channel.ts`) routes each RPC through `EndpointPool.acquire()`
-and reports outcomes via `EndpointPool.report()`.
+and feeds outcomes back via `EndpointPool.penalize()` / `recover()`.
 
 ### Files
 
@@ -25,8 +25,8 @@ registry, and health. On any change to the routable set it rebuilds an **immutab
 `RoutingSnapshot`** and emits it. The **data plane** — the synchronous `acquire()` /
 `acquireNode()` — reads the latest snapshot reference (swapped by `#consume`),
 selects a `RoutingSnapshot` ref (pure), and lazily materializes a channel. The only
-per-RPC dispatch is a fire-and-forget `report()` (enqueue only; handled off the hot
-path). Reads never dispatch; writes never happen inline. `#channels` / `#retired` /
+per-RPC dispatch is a fire-and-forget `penalize()` / `recover()` (enqueue only;
+handled off the hot path). Reads never dispatch; writes never happen inline. `#channels` / `#retired` /
 `#pinned` are facade-owned I/O the transition never touches — that is what makes the
 sync hot path race-free against the async FSM.
 

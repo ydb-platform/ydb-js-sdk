@@ -52,7 +52,7 @@ test('a pessimized node is skipped on the next acquire', async (tc) => {
 	await using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 
-	h.pool.report(1n, false)
+	h.pool.penalize(1n)
 	await settle()
 
 	// node 1 is pessimized → prefer is [node 2].
@@ -63,11 +63,11 @@ test('a successful RPC optimistically un-bans a node', async (tc) => {
 	await using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 
-	h.pool.report(1n, false)
+	h.pool.penalize(1n)
 	await settle()
 	expect(h.pool.snapshot.byNodeId.get(1n)!.state).toBe('pessimized')
 
-	h.pool.report(1n, true)
+	h.pool.recover(1n)
 	await settle()
 	expect(h.pool.snapshot.byNodeId.get(1n)!.state).toBe('active')
 })
@@ -130,7 +130,7 @@ test('publishes ydb:driver.connection.pessimized when a node is reported failed'
 	await h.pool.ready(tc.signal)
 
 	using pessimized = capture('ydb:driver.connection.pessimized')
-	h.pool.report(1n, false)
+	h.pool.penalize(1n)
 	await settle()
 
 	let event = pessimized.events.at(-1) as { nodeId: bigint; address: string }
@@ -308,7 +308,7 @@ test('a throwing onDiscovery hook does not break the pool', async (tc) => {
 
 	await h.pool.ready(tc.signal)
 	// The output loop survived the throw — a later report still swaps the snapshot.
-	h.pool.report(1n, false)
+	h.pool.penalize(1n)
 	await settle()
 	expect(h.pool.snapshot.byNodeId.get(1n)!.state).toBe('pessimized')
 })
