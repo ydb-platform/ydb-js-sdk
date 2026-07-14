@@ -456,12 +456,17 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		return this.#materialize(ref)
 	}
 
-	// Fire-and-forget RPC outcome. Enqueue-only; handling is async, off hot-path.
-	// Callers report ok=false only for pessimizable (non-cancel transport) errors.
-	report(nodeId: bigint, ok: boolean): void {
-		this.#machine.dispatch(
-			ok ? { type: 'endpoints.rpc_ok', nodeId } : { type: 'endpoints.rpc_failed', nodeId }
-		)
+	// Move a node out of active rotation after a transport failure. Fire-and-forget:
+	// enqueue-only, handled async off the hot path. Callers penalize only on
+	// pessimizable (non-cancel transport) errors.
+	penalize(nodeId: bigint): void {
+		this.#machine.dispatch({ type: 'endpoints.rpc_failed', nodeId })
+	}
+
+	// Restore a node to active rotation after a successful RPC (no-op unless it is
+	// currently pessimized). Fire-and-forget, same as penalize().
+	recover(nodeId: bigint): void {
+		this.#machine.dispatch({ type: 'endpoints.rpc_ok', nodeId })
 	}
 
 	// Call-lifecycle bookkeeping used by BalancedChannel to keep a per-node

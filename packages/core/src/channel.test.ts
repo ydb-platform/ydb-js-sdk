@@ -54,8 +54,12 @@ let makeFakePool = function makeFakePool(state: EndpointRef['state'] = 'active')
 			ended.push(nodeId)
 			events.push('ended')
 		},
-		report: (nodeId: bigint, ok: boolean) => {
-			reported.push({ nodeId, ok })
+		penalize: (nodeId: bigint) => {
+			reported.push({ nodeId, ok: false })
+			events.push('report')
+		},
+		recover: (nodeId: bigint) => {
+			reported.push({ nodeId, ok: true })
 			events.push('report')
 		},
 	} as unknown as EndpointPool
@@ -144,11 +148,11 @@ test('reports the outcome before propagating the status downstream', () => {
 			order.push('propagate')
 		},
 	} as unknown as InterceptingListener
-	// Wrap report to record ordering relative to propagation.
-	let origReport = fake.pool.report.bind(fake.pool)
-	;(fake.pool as { report: EndpointPool['report'] }).report = (nodeId, ok) => {
+	// Wrap penalize to record ordering relative to propagation (UNAVAILABLE below).
+	let origPenalize = fake.pool.penalize.bind(fake.pool)
+	;(fake.pool as { penalize: EndpointPool['penalize'] }).penalize = (nodeId) => {
 		order.push('report')
-		origReport(nodeId, ok)
+		origPenalize(nodeId)
 	}
 	call.start({}, downstream)
 	fake.getListener().onReceiveStatus({ code: Status.UNAVAILABLE } as never)
