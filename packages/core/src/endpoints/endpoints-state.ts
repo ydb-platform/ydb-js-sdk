@@ -244,10 +244,6 @@ type Result = TransitionResult<EndpointsState, EndpointsEffect>
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
-let info = function info(entry: EndpointEntry): EndpointInfoLite {
-	return { nodeId: entry.nodeId, address: entry.address, location: entry.location }
-}
-
 let entryFrom = function entryFrom(
 	ep: DiscoveredEndpoint,
 	subState: EndpointSubState,
@@ -295,9 +291,57 @@ let ignored = function ignored(): void {
 	// Unhandled (state, event) pair — no-op. Kept explicit for the table.
 }
 
+export type RetiredInfo = EndpointInfoLite & { reason: 'stale_active' | 'stale_pessimized' }
+
+export type RoundDiff = {
+	// New OR revived (a retired node reappearing) — both reported as `added` so
+	// the add/remove event streams stay balanced.
+	added: EndpointInfoLite[]
+	// Vanished from discovery while still active/pessimized — reported as `retired`.
+	retired: RetiredInfo[]
+}
+
+// The single source of the round-diff rule. Shared by `applyRound` (which emits
+// the FSM's per-node outputs) and the runtime's `publishRoundDiagnostics` (which
+// publishes the same events inside the discovery span; it runs before applyRound,
+// so it cannot reuse applyRound's result). Pure — computed against the PRE-round
+// registry, mutates nothing.
+export let computeRoundDiff = function computeRoundDiff(
+	byNodeId: ReadonlyMap<bigint, EndpointEntry>,
+	endpoints: DiscoveredEndpoint[]
+): RoundDiff {
+	let discovered = new Set<bigint>()
+	let added: EndpointInfoLite[] = []
+	for (let ep of endpoints) {
+		discovered.add(ep.nodeId)
+		let existing = byNodeId.get(ep.nodeId)
+		if (existing === undefined || existing.subState === 'retired') {
+			added.push({
+				nodeId: ep.nodeId,
+				address: `${ep.host}:${ep.port}`,
+				location: ep.location,
+			})
+		}
+	}
+
+	let retired: RetiredInfo[] = []
+	for (let entry of byNodeId.values()) {
+		if (discovered.has(entry.nodeId) || entry.subState === 'retired') continue
+		retired.push({
+			nodeId: entry.nodeId,
+			address: entry.address,
+			location: entry.location,
+			reason: entry.subState === 'pessimized' ? 'stale_pessimized' : 'stale_active',
+		})
+	}
+
+	return { added, retired }
+}
+
 // Apply a fresh discovery result to the registry. Returns the effects to run
 // (retire_channel for newly-stale nodes) and emits per-node outputs. Subsumes
-// pool.sync() with the retire-reappear fix.
+// pool.sync() with the retire-reappear fix. The add/retire classification comes
+// from `computeRoundDiff`; the loop below only mutates the registry.
 let applyRound = function applyRound(
 	ctx: EndpointsCtx,
 	endpoints: DiscoveredEndpoint[],
@@ -305,25 +349,14 @@ let applyRound = function applyRound(
 	pileStates: PileState[],
 	runtime: EndpointsTransitionRuntime
 ): EndpointsEffect[] {
+	let { added, retired } = computeRoundDiff(ctx.byNodeId, endpoints)
 	let effects: EndpointsEffect[] = []
-	let added: EndpointInfoLite[] = []
-	let removed: EndpointInfoLite[] = []
-	let discovered = new Set<bigint>()
 
+	// Mutate: add new entries, revive retired, un-ban pessimized, refresh dial info.
 	for (let ep of endpoints) {
-		discovered.add(ep.nodeId)
 		let existing = ctx.byNodeId.get(ep.nodeId)
-
 		if (existing === undefined) {
-			let entry = entryFrom(ep, 'active', 0)
-			ctx.byNodeId.set(ep.nodeId, entry)
-			added.push(info(entry))
-			runtime.emit({
-				type: 'endpoints.added',
-				nodeId: entry.nodeId,
-				address: entry.address,
-				location: entry.location,
-			})
+			ctx.byNodeId.set(ep.nodeId, entryFrom(ep, 'active', 0))
 			continue
 		}
 
@@ -348,20 +381,11 @@ let applyRound = function applyRound(
 		existing.services = ep.services
 
 		if (existing.subState === 'retired') {
-			// RETIRE-REAPPEAR FIX: revive in place, keep the draining channel.
-			// Never close+recreate (that would kill live streams). Re-emit `added`
-			// so the add/remove event streams balance — the earlier retire counted
-			// as a removal, so a subscriber's live gauge would otherwise undercount.
+			// Revive in place — keep the draining channel (never close+recreate,
+			// that would kill live streams). Reported as `added` by the diff.
 			existing.subState = 'active'
-			added.push(info(existing))
-			runtime.emit({
-				type: 'endpoints.added',
-				nodeId: existing.nodeId,
-				address: existing.address,
-				location: existing.location,
-			})
 		} else if (existing.subState === 'pessimized') {
-			// Blanket un-ban on discovery (authoritative recovery).
+			// Blanket un-ban on discovery (authoritative recovery). Not an `added`.
 			existing.subState = 'active'
 			runtime.emit({
 				type: 'endpoints.unpessimized',
@@ -372,23 +396,29 @@ let applyRound = function applyRound(
 		}
 	}
 
-	// Retire endpoints that vanished from discovery. Channel stays open to drain.
-	for (let entry of ctx.byNodeId.values()) {
-		if (discovered.has(entry.nodeId)) continue
-		if (entry.subState === 'retired') continue
+	// Retire the vanished endpoints from the diff. Channel stays open to drain.
+	for (let r of retired) {
+		ctx.byNodeId.get(r.nodeId)!.subState = 'retired'
+		effects.push({ type: 'endpoints.effect.retire_channel', nodeId: r.nodeId })
+	}
 
-		let reason: 'stale_active' | 'stale_pessimized' =
-			entry.subState === 'pessimized' ? 'stale_pessimized' : 'stale_active'
-		entry.subState = 'retired'
-		effects.push({ type: 'endpoints.effect.retire_channel', nodeId: entry.nodeId })
+	// Emit the add/retire outputs from the single-sourced diff.
+	for (let a of added) {
+		runtime.emit({
+			type: 'endpoints.added',
+			nodeId: a.nodeId,
+			address: a.address,
+			location: a.location,
+		})
+	}
+	for (let r of retired) {
 		runtime.emit({
 			type: 'endpoints.retired',
-			nodeId: entry.nodeId,
-			address: entry.address,
-			location: entry.location,
-			reason,
+			nodeId: r.nodeId,
+			address: r.address,
+			location: r.location,
+			reason: r.reason,
 		})
-		removed.push(info(entry))
 	}
 
 	ctx.selfLocation = selfLocation
@@ -401,7 +431,11 @@ let applyRound = function applyRound(
 	runtime.emit({
 		type: 'endpoints.discovery_completed',
 		added,
-		removed,
+		removed: retired.map((r) => ({
+			nodeId: r.nodeId,
+			address: r.address,
+			location: r.location,
+		})),
 		total: endpoints.length,
 		selfLocation,
 	})

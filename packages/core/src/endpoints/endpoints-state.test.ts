@@ -2,11 +2,14 @@ import { expect, test } from 'vitest'
 
 import {
 	type DiscoveredEndpoint,
+	type EndpointEntry,
+	type EndpointSubState,
 	type EndpointsCtx,
 	type EndpointsEffect,
 	type EndpointsEvent,
 	type EndpointsOutput,
 	type EndpointsState,
+	computeRoundDiff,
 	createEndpointsCtx,
 	endpointsTransition,
 } from './endpoints-state.ts'
@@ -435,4 +438,67 @@ test('re-pinning a node to a new address drops the old pinned channel', () => {
 	let close = h.effects.find((e) => e.type === 'endpoints.effect.close_channel')
 	expect(close).toBeDefined()
 	expect((close as { store?: string }).store).toBe('pinned')
+})
+
+// ── computeRoundDiff (the shared add/retire rule) ─────────────────────────────
+
+let entry = function entry(nodeId: number, subState: EndpointSubState): EndpointEntry {
+	return {
+		nodeId: BigInt(nodeId),
+		host: `n${nodeId}`,
+		port: 2136,
+		address: `n${nodeId}:2136`,
+		location: 'A',
+		loadFactor: 0,
+		sslTargetNameOverride: '',
+		ipV4: [],
+		ipV6: [],
+		bridgePileName: '',
+		services: [],
+		subState,
+		generation: 0,
+	}
+}
+
+let registry = function registry(...entries: EndpointEntry[]): Map<bigint, EndpointEntry> {
+	return new Map(entries.map((e) => [e.nodeId, e]))
+}
+
+test('computeRoundDiff reports a brand-new node as added', () => {
+	let diff = computeRoundDiff(registry(), [ep(1)])
+	expect(diff.added.map((a) => a.nodeId)).toEqual([1n])
+	expect(diff.retired).toHaveLength(0)
+})
+
+test('computeRoundDiff reports a reappearing retired node as added', () => {
+	let diff = computeRoundDiff(registry(entry(1, 'retired')), [ep(1)])
+	expect(diff.added.map((a) => a.nodeId)).toEqual([1n])
+})
+
+test('computeRoundDiff leaves an unchanged active node out of the diff', () => {
+	let diff = computeRoundDiff(registry(entry(1, 'active')), [ep(1)])
+	expect(diff.added).toHaveLength(0)
+	expect(diff.retired).toHaveLength(0)
+})
+
+test('computeRoundDiff retires a vanished active node as stale_active', () => {
+	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'active')), [ep(1)])
+	expect(diff.retired).toEqual([
+		{ nodeId: 2n, address: 'n2:2136', location: 'A', reason: 'stale_active' },
+	])
+})
+
+test('computeRoundDiff retires a vanished pessimized node as stale_pessimized', () => {
+	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'pessimized')), [ep(1)])
+	expect(diff.retired[0]!.reason).toBe('stale_pessimized')
+})
+
+test('computeRoundDiff ignores an already-retired node that stays gone', () => {
+	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'retired')), [ep(1)])
+	expect(diff.retired).toHaveLength(0)
+})
+
+test('computeRoundDiff uses the fresh address for a revived node', () => {
+	let diff = computeRoundDiff(registry(entry(2, 'retired')), [ep(2, { host: 'n2b', port: 2137 })])
+	expect(diff.added).toEqual([{ nodeId: 2n, address: 'n2b:2137', location: 'A' }])
 })
