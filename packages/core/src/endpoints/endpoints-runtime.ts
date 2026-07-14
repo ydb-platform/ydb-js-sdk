@@ -35,6 +35,7 @@ import {
 	type EndpointsState,
 	type PileState,
 	type PileStatus,
+	computeRoundDiff,
 	createEndpointsCtx,
 	endpointsTransition,
 } from './endpoints-state.js'
@@ -194,48 +195,39 @@ let finalizeEnv = function finalizeEnv(env: EndpointsEnv): void {
 	if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
 }
 
-// Publish the round-derived connection diagnostics + discovery.completed from
-// the diff between the current registry and the fresh result. Called INSIDE the
-// discovery tracePromise so @ydbjs/telemetry attaches these to the discovery
-// span. The diff mirrors `applyRound` in endpoints-state.ts (new-or-revived →
-// added, vanished-non-retired → retired) — the two must stay in agreement.
+// Publish the round-derived connection diagnostics + discovery.completed. Called
+// INSIDE the discovery tracePromise (before the round is dispatched, so it runs
+// against the pre-round registry) so @ydbjs/telemetry attaches these to the
+// discovery span — the async #consume loop has no active span. Uses the same
+// `computeRoundDiff` rule the FSM's applyRound uses, so the two can't drift.
 let publishRoundDiagnostics = function publishRoundDiagnostics(
 	ctx: FullCtx,
 	result: DiscoveryResult
 ): void {
-	let discovered = new Set<bigint>()
-	let addedCount = 0
-	for (let ep of result.endpoints) {
-		discovered.add(ep.nodeId)
-		let existing = ctx.byNodeId.get(ep.nodeId)
-		if (existing === undefined || existing.subState === 'retired') {
-			addedCount++
-			dc('ydb:driver.connection.added').publish({
-				driver: ctx.identity,
-				nodeId: ep.nodeId,
-				address: `${ep.host}:${ep.port}`,
-				location: ep.location,
-			})
-		}
-	}
+	let { added, retired } = computeRoundDiff(ctx.byNodeId, result.endpoints)
 
-	let removedCount = 0
-	for (let entry of ctx.byNodeId.values()) {
-		if (discovered.has(entry.nodeId) || entry.subState === 'retired') continue
-		removedCount++
+	for (let a of added) {
+		dc('ydb:driver.connection.added').publish({
+			driver: ctx.identity,
+			nodeId: a.nodeId,
+			address: a.address,
+			location: a.location,
+		})
+	}
+	for (let r of retired) {
 		dc('ydb:driver.connection.retired').publish({
 			driver: ctx.identity,
-			nodeId: entry.nodeId,
-			address: entry.address,
-			location: entry.location,
-			reason: entry.subState === 'pessimized' ? 'stale_pessimized' : 'stale_active',
+			nodeId: r.nodeId,
+			address: r.address,
+			location: r.location,
+			reason: r.reason,
 		})
 	}
 
 	dc('ydb:driver.discovery.completed').publish({
 		driver: ctx.identity,
-		addedCount,
-		removedCount,
+		addedCount: added.length,
+		removedCount: retired.length,
 		totalCount: result.endpoints.length,
 		duration: Date.now() - ctx.roundStart,
 	})
