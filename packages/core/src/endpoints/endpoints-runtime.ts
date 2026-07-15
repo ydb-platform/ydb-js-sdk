@@ -262,7 +262,12 @@ let effects = {
 				let result = await discoveryCh.tracePromise(
 					async () => {
 						let r = await ctx.listEndpoints(link.signal)
-						if (!ctx.ac.signal.aborted) publishRoundDiagnostics(ctx, r)
+						// An empty result is rejected by the FSM (retryable failure)
+						// in every state — publishing added/retired/completed for a
+						// round that never applies would lie to subscribers.
+						if (!ctx.ac.signal.aborted && r.endpoints.length > 0) {
+							publishRoundDiagnostics(ctx, r)
+						}
 						return r
 					},
 					{ driver: ctx.identity }
@@ -814,8 +819,9 @@ let defaultProtoEndpoint = function defaultProtoEndpoint(ref: EndpointRef): Prot
 	})
 }
 
-// Map a raw proto ListEndpointsResult to the domain DiscoveryResult. Used by the
-// future Driver wiring. pile_states is empty on non-bridge clusters ⇒ identity.
+// Map a raw proto ListEndpointsResult to the domain DiscoveryResult. Used by
+// Driver's listEndpoints seam (#fetchEndpoints). pile_states is empty on
+// non-bridge clusters ⇒ identity.
 export let mapDiscoveryResult = function mapDiscoveryResult(
 	result: ListEndpointsResult
 ): DiscoveryResult {

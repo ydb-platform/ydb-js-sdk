@@ -307,7 +307,7 @@ test('a throwing onDiscovery hook does not break the pool', async (tc) => {
 	})
 
 	await h.pool.ready(tc.signal)
-	// The output loop survived the throw — a later report still swaps the snapshot.
+	// The output loop survived the throw — a later penalize still swaps the snapshot.
 	h.pool.penalize(1n)
 	await settle()
 	expect(h.pool.snapshot.byNodeId.get(1n)!.state).toBe('pessimized')

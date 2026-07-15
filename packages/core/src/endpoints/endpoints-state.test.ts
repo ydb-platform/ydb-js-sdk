@@ -358,6 +358,31 @@ test('an empty initial round stays discovering and arms backoff instead of ready
 	expect(effectTypes(h)).toContain('endpoints.effect.timer.schedule')
 })
 
+test('an empty round in ready is rejected without touching routing', () => {
+	let h = toReady([ep(1), ep(2)])
+	step(h, round([]))
+	// A one-round LB/proxy glitch must not retire the fleet — keep serving the
+	// last snapshot and retry via backoff.
+	expect(h.state).toBe('ready')
+	expect(h.ctx.byNodeId.get(1n)!.subState).toBe('active')
+	expect(h.ctx.byNodeId.get(2n)!.subState).toBe('active')
+	expect(outputs(h, 'endpoints.retired')).toHaveLength(0)
+	expect(outputs(h, 'endpoints.snapshot')).toHaveLength(0)
+	expect(outputs(h, 'endpoints.discovery_failed')).toHaveLength(1)
+	expect(effectTypes(h)).toContain('endpoints.effect.timer.schedule')
+})
+
+test('an empty round in degraded keeps the pessimized registry intact', () => {
+	let h = toReady([ep(1), ep(2)])
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 1n })
+	step(h, { type: 'endpoints.rpc_failed', nodeId: 2n })
+	expect(h.state).toBe('degraded')
+	step(h, round([]))
+	expect(h.state).toBe('degraded')
+	expect(h.ctx.byNodeId.size).toBe(2)
+	expect(outputs(h, 'endpoints.retired')).toHaveLength(0)
+})
+
 // ── dial-field refresh + address change ───────────────────────────────────────
 
 test('a round refreshes the entry dial fields and snapshot ref', () => {
@@ -464,41 +489,49 @@ let registry = function registry(...entries: EndpointEntry[]): Map<bigint, Endpo
 	return new Map(entries.map((e) => [e.nodeId, e]))
 }
 
-test('computeRoundDiff reports a brand-new node as added', () => {
+test('reports a brand-new node as added', () => {
 	let diff = computeRoundDiff(registry(), [ep(1)])
 	expect(diff.added.map((a) => a.nodeId)).toEqual([1n])
 	expect(diff.retired).toHaveLength(0)
 })
 
-test('computeRoundDiff reports a reappearing retired node as added', () => {
+test('reports a reappearing retired node as added', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'retired')), [ep(1)])
 	expect(diff.added.map((a) => a.nodeId)).toEqual([1n])
 })
 
-test('computeRoundDiff leaves an unchanged active node out of the diff', () => {
+test('leaves an unchanged active node out of the diff', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'active')), [ep(1)])
 	expect(diff.added).toHaveLength(0)
 	expect(diff.retired).toHaveLength(0)
 })
 
-test('computeRoundDiff retires a vanished active node as stale_active', () => {
+test('retires a vanished active node as stale_active', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'active')), [ep(1)])
 	expect(diff.retired).toEqual([
 		{ nodeId: 2n, address: 'n2:2136', location: 'A', reason: 'stale_active' },
 	])
 })
 
-test('computeRoundDiff retires a vanished pessimized node as stale_pessimized', () => {
+test('retires a vanished pessimized node as stale_pessimized', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'pessimized')), [ep(1)])
 	expect(diff.retired[0]!.reason).toBe('stale_pessimized')
 })
 
-test('computeRoundDiff ignores an already-retired node that stays gone', () => {
+test('ignores an already-retired node that stays gone', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'retired')), [ep(1)])
 	expect(diff.retired).toHaveLength(0)
 })
 
-test('computeRoundDiff uses the fresh address for a revived node', () => {
+test('uses the fresh address for a revived node', () => {
 	let diff = computeRoundDiff(registry(entry(2, 'retired')), [ep(2, { host: 'n2b', port: 2137 })])
 	expect(diff.added).toEqual([{ nodeId: 2n, address: 'n2b:2137', location: 'A' }])
+})
+
+test('counts a nodeId duplicated in one response once', () => {
+	// A degenerate response repeating a node must not double-count it in `added`
+	// — a gauge built from added-minus-removed would drift permanently.
+	let diff = computeRoundDiff(registry(), [ep(1), ep(1, { host: 'n1b' })])
+	expect(diff.added).toHaveLength(1)
+	expect(diff.added[0]!.address).toBe('n1:2136')
 })

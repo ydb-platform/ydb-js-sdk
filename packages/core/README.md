@@ -132,7 +132,7 @@ All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, ad
 
 The pool exposes two distinct teardown events for connections:
 
-- `retired` — the connection was removed from active routing (its endpoint disappeared from discovery), but its gRPC channel is left open so in-flight streams can drain. A reappearing node revives the same channel and re-emits `connection.added`. An address change surfaces as a retire of the old connection plus an add of the new one (not a `removed`).
+- `retired` — the connection was removed from active routing (its endpoint disappeared from discovery), but its gRPC channel is left open so in-flight streams can drain. A reappearing node revives the same channel and re-emits `connection.added`. A same-node address change re-dials silently: the old channel is dropped and the next RPC dials the new address — no `retired`/`removed` events fire, since the node identity is unchanged.
 - `removed` — the gRPC channel was physically closed. The `reason` field distinguishes an idle teardown (`idle`) from a pool shutdown (`pool_close`).
 
 `connection.added`/`retired`/`discovery.completed` for a discovery round are published inside the `tracing:ydb:driver.discovery` span, so trace subscribers see them as span events/attributes.

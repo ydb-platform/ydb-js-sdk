@@ -313,6 +313,9 @@ export let computeRoundDiff = function computeRoundDiff(
 	let discovered = new Set<bigint>()
 	let added: EndpointInfoLite[] = []
 	for (let ep of endpoints) {
+		// A degenerate response may repeat a nodeId — classify the first
+		// occurrence only, so `added` never double-counts a node.
+		if (discovered.has(ep.nodeId)) continue
 		discovered.add(ep.nodeId)
 		let existing = byNodeId.get(ep.nodeId)
 		if (existing === undefined || existing.subState === 'retired') {
@@ -336,6 +339,28 @@ export let computeRoundDiff = function computeRoundDiff(
 	}
 
 	return { added, retired }
+}
+
+// An empty endpoint list is never a usable cluster view — applying it would wipe
+// routing (initially: ready() resolves with nothing routable; in steady state:
+// every node retires and balanced acquire() throws until the next interval).
+// Reject it as a retryable round failure in EVERY state: keep the last snapshot
+// and registry untouched, arm the backoff.
+let rejectEmptyRound = function rejectEmptyRound(
+	ctx: EndpointsCtx,
+	runtime: EndpointsTransitionRuntime
+): Result {
+	ctx.attempts += 1
+	ctx.roundInFlight = false
+	runtime.emit({
+		type: 'endpoints.discovery_failed',
+		error: new Error('discovery returned no endpoints'),
+		attempt: ctx.attempts,
+		retryable: true,
+	})
+	return {
+		effects: [{ type: 'endpoints.effect.timer.schedule', which: 'discovery_backoff' }],
+	}
 }
 
 // Apply a fresh discovery result to the registry. Returns the effects to run
@@ -600,28 +625,7 @@ export let endpointsTransition = function endpointsTransition(
 		case 'discovering':
 			switch (event.type) {
 				case 'endpoints.discovery.round_succeeded': {
-					// An empty endpoint list is not a usable cluster view — going
-					// `ready` with an empty routing table would resolve ready() while
-					// every RPC throws until the next interval. Treat it as a retryable
-					// round and stay `discovering` with a backoff instead.
-					if (event.endpoints.length === 0) {
-						ctx.attempts += 1
-						ctx.roundInFlight = false
-						runtime.emit({
-							type: 'endpoints.discovery_failed',
-							error: new Error('discovery returned no endpoints'),
-							attempt: ctx.attempts,
-							retryable: true,
-						})
-						return {
-							effects: [
-								{
-									type: 'endpoints.effect.timer.schedule',
-									which: 'discovery_backoff',
-								},
-							],
-						}
-					}
+					if (event.endpoints.length === 0) return rejectEmptyRound(ctx, runtime)
 					let firstReady = !ctx.hasEverDiscovered
 					ctx.hasEverDiscovered = true
 					let effects = applyRound(
@@ -675,6 +679,10 @@ export let endpointsTransition = function endpointsTransition(
 		case 'degraded':
 			switch (event.type) {
 				case 'endpoints.discovery.round_succeeded': {
+					// Same guard as in `discovering`: applying an empty round here
+					// would retire every node and black-hole balanced RPCs until the
+					// next interval while the state still reads 'ready'.
+					if (event.endpoints.length === 0) return rejectEmptyRound(ctx, runtime)
 					let effects = applyRound(
 						ctx,
 						event.endpoints,

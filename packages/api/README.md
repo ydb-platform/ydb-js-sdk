@@ -24,6 +24,7 @@ npm install @ydbjs/api
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { CmsServiceDefinition } from '@ydbjs/api/cms'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
+import { PileState, PileState_State } from '@ydbjs/api/bridge' // bridge / multi-pile (2-DC) clusters
 ```
 
 ### Example: Using a Service

@@ -5,6 +5,7 @@ import { expect, test, vi } from 'vitest'
 import { BalancedChannel } from './channel.ts'
 import type { Connection } from './conn.ts'
 import type { EndpointPool } from './endpoints/endpoints-runtime.ts'
+import { EMPTY_SNAPSHOT } from './endpoints/snapshot.ts'
 import type { EndpointRef, RoutingSnapshot } from './endpoints/snapshot.ts'
 
 // A drivable fake EndpointPool + Connection. The fake call records the wrapped
@@ -152,14 +153,7 @@ test('getConnectivityState is READY with endpoints and TRANSIENT_FAILURE without
 	expect(bc.getConnectivityState(false)).toBe(connectivityState.READY)
 
 	let empty = makeFakePool()
-	;(empty.pool as { snapshot: RoutingSnapshot }).snapshot = {
-		byNodeId: new Map(),
-		prefer: [],
-		fallback: [],
-		pinned: new Map(),
-		selfLocation: '',
-		pileStatesPresent: false,
-	} as unknown as RoutingSnapshot
+	;(empty.pool as { snapshot: RoutingSnapshot }).snapshot = EMPTY_SNAPSHOT
 	let bc2 = new BalancedChannel(empty.pool)
 	expect(bc2.getConnectivityState(false)).toBe(connectivityState.TRANSIENT_FAILURE)
 })

@@ -48,11 +48,13 @@ Global guard: `endpoints.destroy` from any non-terminal state → `closed` (imme
 | idle           | pin / invalidate                                 | idle             | rebuild snapshot                                                |
 | idle           | close                                            | closed           | close-before-start                                              |
 | discovering    | round_succeeded                                  | ready / degraded | apply round, ready-latch, arm interval+idle_sweep               |
+| discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                     |
 | discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                               |
 | discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                      |
 | discovering    | timer.discovery_backoff                          | discovering      | run round                                                       |
 | discovering    | close                                            | closing/closed   | graceful drain                                                  |
 | ready/degraded | round_succeeded                                  | ready / degraded | apply round (revive/add/retire + blanket un-ban)                |
+| ready/degraded | round_succeeded (0 endpoints)                    | —                | rejected — keep last snapshot/registry, arm backoff             |
 | ready/degraded | round_failed                                     | ready/degraded   | background failure is **never** terminal; arm backoff           |
 | ready/degraded | discovery.force / timer.interval / timer.backoff | —                | single-flight (dropped while a round is in flight)              |
 | ready/degraded | rpc_failed                                       | ready / degraded | ban active→pessimized; force a round if `>threshold` pessimized |
