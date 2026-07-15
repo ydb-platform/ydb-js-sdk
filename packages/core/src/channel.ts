@@ -189,7 +189,7 @@ export class BalancedChannel implements Channel {
 								})
 							// restoreContext is non-null whenever onComplete is (both gated
 							// on hasOnCall), so the else is defensive only.
-							/* v8 ignore else -- restoreContext is set whenever onComplete is */
+							/* node:coverage ignore else -- restoreContext is set whenever onComplete is */
 							if (restoreContext !== null) restoreContext(run)
 							else run()
 						}

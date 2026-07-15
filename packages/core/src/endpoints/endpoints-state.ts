@@ -831,9 +831,9 @@ export let endpointsTransition = function endpointsTransition(
 		case 'closed':
 			return ignored()
 
-		/* v8 ignore start -- EndpointsState is exhaustive; default unreachable */
+		/* node:coverage ignore start -- EndpointsState is exhaustive; default unreachable */
 		default:
 			return ignored()
-		/* v8 ignore stop */
+		/* node:coverage ignore stop */
 	}
 }
