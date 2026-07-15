@@ -109,7 +109,7 @@ test('discovery fails when the operation status is not SUCCESS', async (tc) => {
 		status: StatusIds_StatusCode.BAD_REQUEST,
 		ready: true,
 	})
-	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 200,
 		'ydb.sdk.discovery_interval_ms': 1_000,
 		'ydb.sdk.ready_timeout_ms': 1_000,
@@ -119,18 +119,16 @@ test('discovery fails when the operation status is not SUCCESS', async (tc) => {
 		(e) => e
 	)
 	expect(error).toBeInstanceOf(Error)
-	driver.close()
 })
 
 test('discovery fails when the response has no operation', async (tc) => {
 	await using server = await startBadDiscovery(undefined)
-	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 		'ydb.sdk.discovery_timeout_ms': 200,
 		'ydb.sdk.discovery_interval_ms': 1_000,
 		'ydb.sdk.ready_timeout_ms': 1_000,
 	})
 	await expect(driver.ready(tc.signal)).rejects.toThrow(DriverResponseError)
-	driver.close()
 })
 
 test('validates default channel options for long-lived streams', () => {
