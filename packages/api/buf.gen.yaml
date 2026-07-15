@@ -7,12 +7,8 @@ plugins:
     include_imports: true
     include_wkt: true
 inputs:
-  # TEMPORARY: pinned to the bridge/piles work branch until those protos land on
-  # `master` upstream. This branch is mutable/deletable — restore `branch: master`
-  # once bridge is merged. Generated sources are committed, so builds are unaffected;
-  # only `buf generate` depends on this pin.
   - git_repo: https://github.com/ydb-platform/ydb-api-protos.git
-    branch: claude/protospecs-ydb-piles-08eda7
+    branch: master
     depth: 1
     paths:
       - protos

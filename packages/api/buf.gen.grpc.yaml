@@ -4,10 +4,8 @@ plugins:
     opt: target=ts,import_extension=js
     out: ./src/gen
 inputs:
-  # TEMPORARY: pinned to the bridge/piles work branch until those protos land on
-  # `master` upstream (see buf.gen.yaml). Restore `branch: master` once merged.
   - git_repo: https://github.com/ydb-platform/ydb-api-protos.git
-    branch: claude/protospecs-ydb-piles-08eda7
+    branch: master
     depth: 1
     exclude_paths:
       - draft
