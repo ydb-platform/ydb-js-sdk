@@ -114,11 +114,7 @@ test('discovery fails when the operation status is not SUCCESS', async (tc) => {
 		'ydb.sdk.discovery_interval_ms': 1_000,
 		'ydb.sdk.ready_timeout_ms': 1_000,
 	})
-	let error = await driver.ready(tc.signal).then(
-		() => undefined,
-		(e) => e
-	)
-	expect(error).toBeInstanceOf(Error)
+	await expect(driver.ready(tc.signal)).rejects.toBeInstanceOf(Error)
 })
 
 test('discovery fails when the response has no operation', async (tc) => {
