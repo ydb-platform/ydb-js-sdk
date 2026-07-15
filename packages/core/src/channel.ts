@@ -187,8 +187,12 @@ export class BalancedChannel implements Channel {
 									grpcStatusCode: status.code,
 									duration: performance.now() - startTime,
 								})
+							// restoreContext is non-null whenever onComplete is (both gated
+							// on hasOnCall), so the else is defensive only.
+							/* v8 ignore start */
 							if (restoreContext !== null) restoreContext(run)
 							else run()
+							/* v8 ignore stop */
 						}
 
 						listener.onReceiveStatus(status)

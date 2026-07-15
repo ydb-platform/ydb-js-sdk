@@ -528,6 +528,59 @@ test('uses the fresh address for a revived node', () => {
 	expect(diff.added).toEqual([{ nodeId: 2n, address: 'n2b:2137', location: 'A' }])
 })
 
+// ── unhandled events / direct-IO while discovering ───────────────────────────
+
+let pinEv = function pinEv(nodeId: bigint): EndpointsEvent {
+	return {
+		type: 'endpoints.pin',
+		nodeId,
+		host: `p${nodeId}`,
+		port: 2136,
+		location: '',
+		sslTargetNameOverride: '',
+		ipV4: [],
+		ipV6: [],
+		generation: 1,
+	}
+}
+
+test('pin and invalidate are handled while discovering', () => {
+	let h = harness()
+	step(h, { type: 'endpoints.discovery.start' })
+	step(h, pinEv(9n))
+	expect(h.ctx.pinned.has(9n)).toBe(true)
+	step(h, { type: 'endpoints.invalidate', nodeId: 9n })
+	expect(h.ctx.pinned.has(9n)).toBe(false)
+})
+
+test('close while discovering with no nodes finalizes', () => {
+	let h = harness()
+	step(h, { type: 'endpoints.discovery.start' })
+	step(h, { type: 'endpoints.close' })
+	expect(h.state).toBe('closed')
+	expect(h.final).toBe(true)
+})
+
+test('an unhandled event is ignored in each live state', () => {
+	// discovering: rpc_ok is not a discovering event.
+	let d = harness()
+	step(d, { type: 'endpoints.discovery.start' })
+	step(d, { type: 'endpoints.rpc_ok', nodeId: 1n })
+	expect(d.effects).toHaveLength(0)
+
+	// ready: discovery.start is not a ready event.
+	let r = toReady([ep(1)])
+	step(r, { type: 'endpoints.discovery.start' })
+	expect(r.effects).toHaveLength(0)
+
+	// closing: rpc_ok is not a closing event.
+	let c = toReady([ep(1)])
+	step(c, { type: 'endpoints.close' })
+	expect(c.state).toBe('closing')
+	step(c, { type: 'endpoints.rpc_ok', nodeId: 1n })
+	expect(c.effects).toHaveLength(0)
+})
+
 test('counts a nodeId duplicated in one response once', () => {
 	// A degenerate response repeating a node must not double-count it in `added`
 	// — a gauge built from added-minus-removed would drift permanently.

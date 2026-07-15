@@ -96,6 +96,8 @@ export default defineConfig({
 				'**/vitest.*',
 				'**/*.test.ts',
 				'**/*.bench.ts',
+				// Test scaffolding — fakes/harnesses, not product code.
+				'**/*.fixtures.ts',
 			],
 		},
 	},

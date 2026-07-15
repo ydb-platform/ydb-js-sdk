@@ -350,6 +350,56 @@ test('mapDiscoveryResult maps proto endpoints, self_location, and bridge pile st
 	])
 })
 
+test('mapDiscoveryResult maps every PileState_State to its status', () => {
+	let result = create(ListEndpointsResultSchema, {
+		endpoints: [{ address: 'h1', port: 2136, nodeId: 1 }],
+		pileStates: [
+			{ pileName: 'a', state: PileState_State.PRIMARY },
+			{ pileName: 'b', state: PileState_State.PROMOTED },
+			{ pileName: 'c', state: PileState_State.SYNCHRONIZED },
+			{ pileName: 'd', state: PileState_State.NOT_SYNCHRONIZED },
+			{ pileName: 'e', state: PileState_State.SUSPENDED },
+			{ pileName: 'f', state: PileState_State.DISCONNECTED },
+			{ pileName: 'g', state: PileState_State.UNSPECIFIED },
+		],
+	})
+	expect(mapDiscoveryResult(result).pileStates.map((p) => p.status)).toEqual([
+		'PRIMARY',
+		'PROMOTED',
+		'SYNCHRONIZED',
+		'NOT_SYNCHRONIZED',
+		'SUSPENDED',
+		'DISCONNECTED',
+		'UNSPECIFIED',
+	])
+})
+
+test('invalidate closes a materialized pinned channel', async (tc) => {
+	let connections = makeFakeConnectionFactory()
+	await using h = setup([endpoint(1)], { connections })
+	await h.pool.ready(tc.signal)
+
+	h.pool.pin(9n, 'node-9', 2136)
+	await settle()
+	h.pool.acquireNode(9n) // materialize the pinned channel
+	expect(connections.byNode(9n)!.closed).toBe(false)
+
+	h.pool.invalidate(9n)
+	await settle()
+	expect(connections.byNode(9n)!.closed).toBe(true)
+})
+
+test('a hung round times out and recovers on the retry', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.hang() // first round never resolves — the per-round timeout must fire
+	discovery.push(discoveryResult([endpoint(1)])) // the retry succeeds
+	await using h = makeEndpointPool({ discovery, discoveryTimeoutMs: 10 })
+
+	await h.pool.ready(tc.signal)
+	expect(discovery.callCount()).toBeGreaterThanOrEqual(2)
+	expect(h.pool.acquire().endpoint.nodeId).toBe(1n)
+})
+
 test('mapDiscoveryResult leaves pile states empty for a non-bridge cluster', () => {
 	let result = create(ListEndpointsResultSchema, {
 		selfLocation: 'A',

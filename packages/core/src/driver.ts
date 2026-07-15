@@ -170,6 +170,7 @@ let defaultChannelOptions: ChannelOptions = {
 	'grpc.initial_reconnect_backoff_ms': 50,
 }
 
+/* v8 ignore start -- polyfill for Node < 20.19; dead on supported runtimes */
 if (!Promise.withResolvers) {
 	Promise.withResolvers = function <T>(): {
 		promise: Promise<T>
@@ -185,6 +186,7 @@ if (!Promise.withResolvers) {
 		return { promise, resolve: resolve!, reject: reject! }
 	}
 }
+/* v8 ignore stop */
 
 export class Driver implements Disposable, AsyncDisposable {
 	readonly cs: URL
