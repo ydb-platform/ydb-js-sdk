@@ -562,9 +562,12 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			this.#env.pinnedChannels.set(nodeId, conn)
 		} else if (ref.state === 'retired') {
 			// A channel first dialed after the node was retired must land in the
-			// retired store so idle_sweep governs it — otherwise it escapes reaping.
+			// retired store so idle_sweep governs it. Defensive: a retired ref with
+			// no channel is reaped before it can be selected.
+			/* v8 ignore start */
 			this.#env.retiredChannels.set(nodeId, conn)
 			this.#env.retiredAt.set(nodeId, Date.now())
+			/* v8 ignore stop */
 		} else {
 			this.#env.channels.set(nodeId, conn)
 		}
@@ -582,9 +585,11 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		let env = this.#env
 		try {
 			await this.#drain()
+			/* v8 ignore start -- backstop for an unrecoverable FSM fault (should never happen) */
 		} catch (error) {
 			dbg.log('endpoints machine faulted: %O', error)
 			env.readyDeferred.reject(error)
+			/* v8 ignore stop */
 		} finally {
 			finalizeEnv(env)
 			// No-ops if already settled; guarantees no awaiter hangs on a fault.

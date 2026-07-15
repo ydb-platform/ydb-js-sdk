@@ -199,6 +199,28 @@ test('reports READY for a balanced channel when only pessimized refs exist', () 
 	expect(bc.getConnectivityState(false)).toBe(connectivityState.READY)
 })
 
+test('reports READY for a soft-affinity channel when its node is known', () => {
+	let fake = makeFakePool()
+	// node 7 is in byNodeId — the soft-affinity tier resolves it even before the
+	// balanced tiers are consulted.
+	expect(new BalancedChannel(fake.pool, {}, 7n).getConnectivityState(false)).toBe(
+		connectivityState.READY
+	)
+})
+
+test('exposes the grpc-js Channel identity stubs', () => {
+	let bc = new BalancedChannel(makeFakePool().pool)
+	expect(bc.getTarget()).toBe('ydb-balanced-channel')
+	expect(bc.getChannelzRef()).toMatchObject({ kind: 'channel', name: 'BalancedChannel' })
+	let notified = false
+	bc.watchConnectivityState(connectivityState.IDLE, 0, () => {
+		notified = true
+	})
+	return new Promise<void>((resolve) => setImmediate(resolve)).then(() =>
+		expect(notified).toBe(true)
+	)
+})
+
 test('reports connectivity for a hard channel by its exact node only', () => {
 	let fake = makeFakePool()
 	degenerateSnapshot(fake, [{ nodeId: 9n, state: 'pinned' }], [9n])

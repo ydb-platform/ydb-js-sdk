@@ -10,8 +10,35 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { ServerError, Status, createServer } from 'nice-grpc'
 
 import { Driver, kRegisterLibrary } from './driver.ts'
-import { DriverDegradedThresholdError } from './errors.ts'
+import {
+	DriverCSDatabaseError,
+	DriverDegradedThresholdError,
+	DriverResponseError,
+} from './errors.ts'
+import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import pkg from '../package.json' with { type: 'json' }
+
+// Stand up a discovery server whose listEndpoints returns a caller-supplied
+// operation object (to exercise the #fetchEndpoints error paths).
+async function startBadDiscovery(operation: unknown) {
+	let server = createServer()
+	server.add(
+		{
+			listEndpoints: DiscoveryServiceDefinition.listEndpoints,
+			whoAmI: DiscoveryServiceDefinition.whoAmI,
+		},
+		{
+			async listEndpoints() {
+				return { operation } as any
+			},
+			async whoAmI() {
+				return {} as any
+			},
+		}
+	)
+	let port = await server.listen('127.0.0.1:0')
+	return { port, [Symbol.asyncDispose]: () => server.shutdown() }
+}
 
 test('parses database from the pathname', () => {
 	using driver = new Driver('grpc://ydb:2136/local', {
@@ -53,6 +80,57 @@ test('accepts a discovery_degraded_threshold within (0, 1]', () => {
 		'ydb.sdk.discovery_degraded_threshold': 0.75,
 	})
 	expect(driver.options['ydb.sdk.discovery_degraded_threshold']).toBe(0.75)
+})
+
+test('rejects a connection string without a database', () => {
+	expect(() => new Driver('grpc://ydb:2136/', { 'ydb.sdk.enable_discovery': false })).toThrow(
+		DriverCSDatabaseError
+	)
+})
+
+test('builds TLS credentials from secureOptions and marks itself secure', () => {
+	using driver = new Driver('grpcs://ydb:2135/local', {
+		'ydb.sdk.enable_discovery': false,
+		secureOptions: {},
+	})
+	expect(driver.isSecure).toBe(true)
+})
+
+test('uses a provided credentials provider', async () => {
+	using driver = new Driver('grpc://ydb:2136/local', {
+		'ydb.sdk.enable_discovery': false,
+		credentialsProvider: new AnonymousCredentialsProvider(),
+	})
+	expect(await driver.token).toBe('')
+})
+
+test('discovery fails when the operation status is not SUCCESS', async (tc) => {
+	await using server = await startBadDiscovery({
+		status: StatusIds_StatusCode.BAD_REQUEST,
+		ready: true,
+	})
+	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+		'ydb.sdk.discovery_timeout_ms': 200,
+		'ydb.sdk.discovery_interval_ms': 1_000,
+		'ydb.sdk.ready_timeout_ms': 1_000,
+	})
+	let error = await driver.ready(tc.signal).then(
+		() => undefined,
+		(e) => e
+	)
+	expect(error).toBeInstanceOf(Error)
+	driver.close()
+})
+
+test('discovery fails when the response has no operation', async (tc) => {
+	await using server = await startBadDiscovery(undefined)
+	let driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+		'ydb.sdk.discovery_timeout_ms': 200,
+		'ydb.sdk.discovery_interval_ms': 1_000,
+		'ydb.sdk.ready_timeout_ms': 1_000,
+	})
+	await expect(driver.ready(tc.signal)).rejects.toThrow(DriverResponseError)
+	driver.close()
 })
 
 test('validates default channel options for long-lived streams', () => {
