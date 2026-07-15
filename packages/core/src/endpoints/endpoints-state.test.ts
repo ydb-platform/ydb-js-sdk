@@ -509,7 +509,7 @@ test('leaves an unchanged active node out of the diff', () => {
 test('retires a vanished active node as stale_active', () => {
 	let diff = computeRoundDiff(registry(entry(1, 'active'), entry(2, 'active')), [ep(1)])
 	expect(diff.retired).toEqual([
-		{ nodeId: 2n, address: 'n2:2136', location: 'A', reason: 'stale_active' },
+		{ nodeId: 2n, address: 'n2:2136', location: 'A', pile: '', reason: 'stale_active' },
 	])
 })
 
@@ -525,7 +525,7 @@ test('ignores an already-retired node that stays gone', () => {
 
 test('uses the fresh address for a revived node', () => {
 	let diff = computeRoundDiff(registry(entry(2, 'retired')), [ep(2, { host: 'n2b', port: 2137 })])
-	expect(diff.added).toEqual([{ nodeId: 2n, address: 'n2b:2137', location: 'A' }])
+	expect(diff.added).toEqual([{ nodeId: 2n, address: 'n2b:2137', location: 'A', pile: '' }])
 })
 
 // ── unhandled events / direct-IO while discovering ───────────────────────────

@@ -136,6 +136,7 @@ export let makeFakeConnectionFactory = function makeFakeConnectionFactory(): Fak
 			nodeId: ref.nodeId,
 			address: ref.address,
 			location: ref.location,
+			pile: ref.pile,
 		})
 		let channel = {
 			getConnectivityState: (_tryToConnect: boolean) => state,

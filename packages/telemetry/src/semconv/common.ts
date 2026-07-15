@@ -24,6 +24,8 @@ export let BASE_ATTRIBUTES: BaseAttributes = { [ATTR_DB_SYSTEM_NAME]: 'ydb' }
 // introduce snake_case variants of the same concept.
 export let ATTR_YDB_NODE_ID = 'ydb.node.id'
 export let ATTR_YDB_NODE_DC = 'ydb.node.dc'
+// Bridge (2DC) pile the node belongs to; '' / absent on a non-bridge cluster.
+export let ATTR_YDB_NODE_PILE = 'ydb.node.pile'
 
 /**
  * Per-driver identity attributes (`db.namespace`, `server.address`,

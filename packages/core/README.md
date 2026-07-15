@@ -132,14 +132,14 @@ Time values follow Node.js conventions:
 
 #### Discovery
 
-| Channel                          | Type    | Payload                                                                                                           |
-| -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `tracing:ydb:driver.discovery`   | tracing | `{ driver: DriverIdentity }`                                                                                      |
-| `ydb:driver.discovery.completed` | publish | `{ driver: DriverIdentity, addedCount: number, removedCount: number, totalCount: number, duration: number }` (ms) |
+| Channel                          | Type    | Payload                                                                                                                                                                                                 |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:driver.discovery`   | tracing | `{ driver: DriverIdentity }`                                                                                                                                                                            |
+| `ydb:driver.discovery.completed` | publish | `{ driver, addedCount, removedCount, totalCount, duration }` (ms) plus `selfLocation: string, piles: { name, status }[], primaryPile?: string` (topology roster; `piles` empty on a non-bridge cluster) |
 
 #### Connection pool
 
-All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, address: string, location: string }` plus the extra field listed below.
+All connection-pool channels carry `{ driver: DriverIdentity, nodeId: bigint, address: string, location: string, pile: string }` (`pile` is `''` on a non-bridge cluster) plus the extra field listed below.
 
 | Channel                              | Type    | Extra fields                                                      |
 | ------------------------------------ | ------- | ----------------------------------------------------------------- |
@@ -157,6 +157,19 @@ The pool exposes two distinct teardown events for connections:
 `connection.added`/`retired`/`discovery.completed` for a discovery round are published inside the `tracing:ydb:driver.discovery` span, so trace subscribers see them as span events/attributes.
 
 A gauge of "alive channels" can be reconstructed from the delta between `connection.added` and `connection.removed`. A gauge of "routable connections" should also subtract `retired`. `@ydbjs/telemetry` does this with an in-memory `Map<DriverIdentity, ConnectionState>`.
+
+#### Bridge topology & pool stats
+
+Additional channels surface bridge (2DC) topology and an aggregate routing snapshot. All carry `{ driver: DriverIdentity }`.
+
+| Channel                             | Type    | Extra fields                                                                                                                                                                                   |
+| ----------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ydb:driver.connection.pool.opened` | publish | `config: { localityEnabled, preferPrimaryPile, degradedThreshold, discoveryIntervalMs, idleIntervalMs, retiredGraceMs, closeDeadlineMs }` — fired once at construction                         |
+| `ydb:driver.connection.pool.stats`  | publish | `total, prefer, fallback, pessimized: number, piles: { name, status, nodes }[]` — emitted whenever routing changes                                                                             |
+| `ydb:driver.pile.changed`           | publish | `selfLocation, before: {name,status}[], after: {name,status}[], primaryBefore?, primaryAfter?: string` — fired only when the pile roster/statuses change (published inside the discovery span) |
+| `ydb:driver.pile.fallback`          | publish | `active: boolean, primaryPile?: string` — edge-triggered when `preferPrimaryPile` starts/stops serving from the SYNCHRONIZED fallback tier                                                     |
+
+`pool.opened` is the config baseline for a subscriber that attaches before the first round; `pool.stats` is the topology baseline for one that attaches mid-life (it re-emits on every routable-set change). On a non-bridge cluster `piles` is empty, `pile.changed` never fires, and `pile.fallback` never fires (it is gated on `preferPrimaryPile`).
 
 ### Subscribing
 

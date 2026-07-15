@@ -43,6 +43,7 @@ export class GrpcConnection implements Connection {
 			nodeId: BigInt(endpoint.nodeId),
 			address,
 			location: endpoint.location,
+			pile: endpoint.bridgePileName,
 		})
 
 		dbg.log('create channel to node id=%d address=%s', this.endpoint.nodeId, address)
