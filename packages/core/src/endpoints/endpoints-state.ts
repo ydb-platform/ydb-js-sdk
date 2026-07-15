@@ -92,6 +92,10 @@ export type EndpointsConfig = {
 	// Locality is OPT-IN and soft-only: it only reorders prefer/fallback tiers,
 	// never hard-pins to the local DC.
 	localityEnabled: boolean
+	// Bridge/2DC: prefer PRIMARY/PROMOTED-pile endpoints, fall back to
+	// SYNCHRONIZED. Opt-in, soft, and a no-op on a non-bridge cluster. Dominates
+	// locality in bridge mode (see snapshot.ts / ARCHITECTURE.md).
+	preferPrimaryPile: boolean
 	// Force rediscovery when the pessimized fraction exceeds this (0..1).
 	degradedThreshold: number
 }
@@ -118,6 +122,7 @@ export const DEFAULT_DEGRADED_THRESHOLD = 0.5
 
 export let createEndpointsCtx = function createEndpointsCtx(config?: {
 	localityEnabled?: boolean | undefined
+	preferPrimaryPile?: boolean | undefined
 	degradedThreshold?: number | undefined
 }): EndpointsCtx {
 	return {
@@ -131,6 +136,7 @@ export let createEndpointsCtx = function createEndpointsCtx(config?: {
 		pileStates: [],
 		config: {
 			localityEnabled: config?.localityEnabled ?? false,
+			preferPrimaryPile: config?.preferPrimaryPile ?? false,
 			degradedThreshold: config?.degradedThreshold ?? DEFAULT_DEGRADED_THRESHOLD,
 		},
 	}

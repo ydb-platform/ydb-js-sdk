@@ -123,6 +123,14 @@ export type DriverOptions = {
 	 */
 	'ydb.sdk.locality_enabled'?: boolean
 	/**
+	 * Prefer PRIMARY/PROMOTED-pile endpoints in a bridge (2DC) cluster, falling
+	 * back to SYNCHRONIZED when the primary pile has no available node. Opt-in,
+	 * soft, and a no-op outside bridge mode. Takes precedence over
+	 * `ydb.sdk.locality_enabled` in bridge mode.
+	 * @default false
+	 */
+	'ydb.sdk.prefer_primary_pile'?: boolean
+	/**
 	 * Fraction of pessimized nodes (0..1) that forces an early rediscovery round.
 	 * @default 0.5
 	 */
@@ -261,6 +269,7 @@ export class Driver implements Disposable, AsyncDisposable {
 				channelOptions: this.options.channelOptions,
 				hooks: this.options.hooks,
 				localityEnabled: this.options['ydb.sdk.locality_enabled'],
+				preferPrimaryPile: this.options['ydb.sdk.prefer_primary_pile'],
 				degradedThreshold: this.options['ydb.sdk.discovery_degraded_threshold'],
 				discoveryTimeoutMs: this.options['ydb.sdk.discovery_timeout_ms'],
 				discoveryIntervalMs: this.options['ydb.sdk.discovery_interval_ms'],

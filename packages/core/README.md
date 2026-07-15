@@ -63,6 +63,25 @@ await driver.ready()
 
 You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from `@ydbjs/auth`.
 
+### Bridge (2DC) clusters
+
+On a bridge cluster, discovery reports a pile per endpoint. The driver routes only to
+endpoints whose pile is `PRIMARY`, `PROMOTED`, or `SYNCHRONIZED`; endpoints in any other
+pile state (and any pile absent from `pile_states`) are kept out of the normal routing
+tiers, used only as a last resort when every pile is unusable. To also keep traffic on
+the primary pile — falling back to the synchronized pile only when the primary has no
+available node — enable `ydb.sdk.prefer_primary_pile`:
+
+```ts
+const driver = new Driver('grpc://localhost:2136/local', {
+  'ydb.sdk.prefer_primary_pile': true,
+})
+```
+
+It is opt-in, soft (fallback preserved), and a no-op on a non-bridge cluster. In bridge
+mode it takes precedence over `ydb.sdk.locality_enabled` (a pile already maps to a
+datacenter, so the two are not combined).
+
 ### Closing the Driver
 
 Always close the driver when done to release resources:

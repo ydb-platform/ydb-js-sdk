@@ -81,22 +81,41 @@ tracks topology change, not RPC volume.
 
 ### Selection cascade (`selectEndpoint`)
 
-`pile_states` empty ⇒ **no pile filter (identity — the non-bridge default)**.
+The pile filter **and** the `prefer`/`fallback` split are baked into the snapshot at
+build time, so `selectEndpoint` itself carries no pile or locality logic:
 
 0. **hard-pin** — direct-IO exact node or `undefined` (never substitutes).
 1. **soft affinity** — `byNodeId.get(preferNodeId)`; returns even a pessimized node so
    a node-bound session errors explicitly instead of landing elsewhere.
-2. healthy **prefer** (local, or all-healthy when locality is off) — uniform random.
-3. healthy **fallback** (remote) — uniform random.
+2. healthy **prefer** (local DC / primary pile / all-healthy) — uniform random.
+3. healthy **fallback** (remote DC / SYNCHRONIZED pile) — uniform random.
 4. any **active** (pile-relaxed) — last resort.
 5. **pessimized** — last resort.
 6. `undefined` → the facade throws `EndpointsUnavailableError`.
 
+### Bridge (2DC) piles
+
+`ListEndpointsResult.pile_states` **empty ⇒ non-bridge cluster ⇒ no pile filter
+(identity)**. In bridge mode, `buildSnapshot` first excludes endpoints in unusable
+piles (routable only when the pile is `PRIMARY`, `PROMOTED`, or `SYNCHRONIZED`), then
+tiers the survivors:
+
+- **`prefer_primary_pile` off (default):** all usable piles are equal; tiering falls
+  through to the locality axis below.
+- **`prefer_primary_pile` on:** `PRIMARY`/`PROMOTED` piles go to `prefer`, `SYNCHRONIZED`
+  to `fallback`, so traffic stays on the primary pile and only drifts to the synchronized
+  one when the primary has no available node.
+
+Pile-preference and locality model **different topologies** (a pile already maps to a
+datacenter), so they are never mixed: in bridge mode `prefer_primary_pile` **dominates**
+`locality_enabled`. Both knobs are opt-in and soft — they only reorder tiers, never
+hard-pin, and the pile-relaxed last-resort tiers still route if every pile is unusable.
+
 ### Balancing / pessimization / discovery decisions
 
-- **Uniform random within the best-locality tier** (not round-robin). Locality is
-  opt-in and soft-only. `load_factor` is surfaced for observability but never routed
-  on (the server hardcodes it to `0.0`).
+- **Uniform random within the best tier** (not round-robin). The tier is chosen by
+  pile preference (bridge) or locality, both opt-in and soft-only. `load_factor` is
+  surfaced for observability but never routed on (the server hardcodes it to `0.0`).
 - **Pessimization has no fixed timer.** A node is banned on a reported transport
   failure and recovered by an optimistic un-ban on the next successful RPC or a
   blanket un-ban on any successful discovery round.

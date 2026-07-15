@@ -16,6 +16,13 @@ export const USABLE_PILE_STATUSES: ReadonlySet<PileStatus> = new Set<PileStatus>
 	'SYNCHRONIZED',
 ])
 
+// Piles preferred by preferPrimaryPile: the write-serving primary and a pile
+// mid-promotion to it. SYNCHRONIZED is still usable but demoted to fallback.
+export const PRIMARY_PILE_STATUSES: ReadonlySet<PileStatus> = new Set<PileStatus>([
+	'PRIMARY',
+	'PROMOTED',
+])
+
 // The ref state is exactly the registry sub-state — aliased (not re-declared) so
 // the two unions can never drift and the `ref()` builder needs no cast.
 export type EndpointRefState = EndpointSubState
@@ -41,9 +48,11 @@ export type EndpointRef = Readonly<{
 export type RoutingSnapshot = Readonly<{
 	// Every discovered node (incl. pessimized/retired) — the affinity target set.
 	byNodeId: ReadonlyMap<bigint, EndpointRef>
-	// Healthy, pile-ok, local (or ALL healthy when locality is off).
+	// Preferred balancing tier: local-DC (locality) or PRIMARY/PROMOTED pile
+	// (preferPrimaryPile in bridge mode), or ALL healthy when neither knob is on.
 	prefer: readonly EndpointRef[]
-	// Healthy, pile-ok, remote (empty when locality is off).
+	// Fallback tier: remote-DC (locality) or SYNCHRONIZED pile (preferPrimaryPile);
+	// empty when neither knob reorders the tiers.
 	fallback: readonly EndpointRef[]
 	// Direct-IO pins — outside prefer/fallback balancing.
 	pinned: ReadonlyMap<bigint, EndpointRef>
@@ -90,15 +99,24 @@ let ref = function ref(entry: EndpointEntry): EndpointRef {
 }
 
 // Rebuild the immutable snapshot from the pure context. Applies the pile-health
-// filter BEFORE locality; keeps pessimized/retired in byNodeId (affinity) but
-// out of prefer/fallback.
+// filter BEFORE tiering; keeps pessimized/retired in byNodeId (affinity) but out
+// of prefer/fallback. Tiering axis: preferPrimaryPile (bridge) dominates locality
+// — the two model different topologies and are never mixed (see ARCHITECTURE.md).
 export let buildSnapshot = function buildSnapshot(ctx: EndpointsCtx): RoutingSnapshot {
 	let present = ctx.pileStates.length > 0
+	// A no-op on a non-bridge cluster: without pile_states there is no primary to
+	// prefer, so tiering falls through to the locality branch below.
+	let preferPrimary = present && ctx.config.preferPrimaryPile
 
 	let pileHealthy = function pileHealthy(pile: string): boolean {
 		if (!present) return true // identity: non-bridge cluster
 		let found = ctx.pileStates.find((p) => p.pileName === pile)
 		return found !== undefined && USABLE_PILE_STATUSES.has(found.status)
+	}
+
+	let pilePrimary = function pilePrimary(pile: string): boolean {
+		let found = ctx.pileStates.find((p) => p.pileName === pile)
+		return found !== undefined && PRIMARY_PILE_STATUSES.has(found.status)
 	}
 
 	let byNodeId = new Map<bigint, EndpointRef>()
@@ -114,7 +132,12 @@ export let buildSnapshot = function buildSnapshot(ctx: EndpointsCtx): RoutingSna
 		let routable = entry.subState === 'active' && pileHealthy(entry.bridgePileName)
 		if (!routable) continue
 
-		if (!ctx.config.localityEnabled) {
+		if (preferPrimary) {
+			// Bridge/2DC: primary leads, SYNCHRONIZED falls back. Locality is
+			// intentionally not mixed in (a pile already maps to a datacenter).
+			if (pilePrimary(entry.bridgePileName)) prefer.push(r)
+			else fallback.push(r)
+		} else if (!ctx.config.localityEnabled) {
 			prefer.push(r)
 		} else if (entry.location === ctx.selfLocation) {
 			prefer.push(r)
@@ -158,15 +181,16 @@ let filterByState = function filterByState(
 	return out
 }
 
-// The selection cascade. The pile filter is already baked into prefer/fallback
-// at build time (empty pile_states ⇒ identity), so no pile logic here.
+// The selection cascade. The pile filter AND the prefer/fallback tiering are
+// already baked in at build time (empty pile_states ⇒ identity), so no pile or
+// locality logic here.
 //
 //   (0) hard-pin      — direct-IO, exact node or undefined (never substitutes)
 //   (1) soft affinity — node-bound sessions; returns even a pessimized/retired
 //                       node so a bound session errors explicitly rather than
 //                       silently landing on the wrong node
-//   (2) healthy prefer (local, or all-healthy when locality off) — uniform random
-//   (3) healthy fallback (remote) — uniform random
+//   (2) healthy prefer (local DC / primary pile / all-healthy) — uniform random
+//   (3) healthy fallback (remote DC / SYNCHRONIZED pile) — uniform random
 //   (4) any active, pile-relaxed — last resort before pessimized
 //   (5) pessimized — last resort
 //   (6) undefined — zero connections (facade throws)
