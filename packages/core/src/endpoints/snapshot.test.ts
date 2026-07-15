@@ -30,6 +30,7 @@ let ctxOf = function ctxOf(
 		selfLocation?: string
 		pileStates?: PileState[]
 		localityEnabled?: boolean
+		preferPrimaryPile?: boolean
 		pinned?: EndpointEntry[]
 	} = {}
 ): EndpointsCtx {
@@ -42,7 +43,11 @@ let ctxOf = function ctxOf(
 		hasEverDiscovered: true,
 		selfLocation: over.selfLocation ?? 'A',
 		pileStates: over.pileStates ?? [],
-		config: { localityEnabled: over.localityEnabled ?? false, degradedThreshold: 0.5 },
+		config: {
+			localityEnabled: over.localityEnabled ?? false,
+			preferPrimaryPile: over.preferPrimaryPile ?? false,
+			degradedThreshold: 0.5,
+		},
 	}
 }
 
@@ -191,6 +196,80 @@ test('locality falls back to a remote node when no local one is active', () => {
 	})
 	expect(s.prefer).toHaveLength(0)
 	expect(selectEndpoint(s, { rng: first })?.nodeId).toBe(1n)
+})
+
+// ── preferPrimaryPile (bridge / 2DC) ─────────────────────────────────────────
+
+let bridge = function bridge(): PileState[] {
+	return [
+		{ pileName: 'p1', status: 'PRIMARY' },
+		{ pileName: 'p2', status: 'SYNCHRONIZED' },
+	]
+}
+
+test('preferPrimaryPile puts PRIMARY-pile nodes in prefer, SYNCHRONIZED in fallback', () => {
+	let s = snap([entry(1, { bridgePileName: 'p1' }), entry(2, { bridgePileName: 'p2' })], {
+		pileStates: bridge(),
+		preferPrimaryPile: true,
+	})
+	expect(s.prefer.map((r) => r.nodeId)).toEqual([1n])
+	expect(s.fallback.map((r) => r.nodeId)).toEqual([2n])
+	expect(selectEndpoint(s, { rng: first })?.nodeId).toBe(1n)
+})
+
+test('preferPrimaryPile treats a PROMOTED pile as primary', () => {
+	let s = snap([entry(1, { bridgePileName: 'p1' })], {
+		pileStates: [{ pileName: 'p1', status: 'PROMOTED' }],
+		preferPrimaryPile: true,
+	})
+	expect(s.prefer.map((r) => r.nodeId)).toEqual([1n])
+})
+
+test('preferPrimaryPile falls back to SYNCHRONIZED when no primary node is active', () => {
+	let s = snap([entry(1, { bridgePileName: 'p2' })], {
+		pileStates: bridge(),
+		preferPrimaryPile: true,
+	})
+	expect(s.prefer).toHaveLength(0)
+	expect(s.fallback.map((r) => r.nodeId)).toEqual([1n])
+	expect(selectEndpoint(s, { rng: first })?.nodeId).toBe(1n)
+})
+
+test('preferPrimaryPile still excludes an unusable pile', () => {
+	let s = snap([entry(1, { bridgePileName: 'p1' }), entry(2, { bridgePileName: 'p3' })], {
+		pileStates: [
+			{ pileName: 'p1', status: 'PRIMARY' },
+			{ pileName: 'p3', status: 'NOT_SYNCHRONIZED' },
+		],
+		preferPrimaryPile: true,
+	})
+	expect(s.prefer.map((r) => r.nodeId)).toEqual([1n])
+	expect(s.fallback).toHaveLength(0)
+})
+
+test('preferPrimaryPile is a no-op on a non-bridge cluster', () => {
+	let s = snap([entry(1), entry(2)], { preferPrimaryPile: true })
+	expect(s.prefer.map((r) => r.nodeId).sort()).toEqual([1n, 2n])
+	expect(s.fallback).toHaveLength(0)
+})
+
+test('preferPrimaryPile takes precedence over locality (pile axis, not location)', () => {
+	// Node 1: primary pile but remote DC; node 2: synchronized pile but local DC.
+	// Pile preference must win — node 1 leads despite locality pointing at node 2.
+	let s = snap(
+		[
+			entry(1, { bridgePileName: 'p1', location: 'remote' }),
+			entry(2, { bridgePileName: 'p2', location: 'home' }),
+		],
+		{
+			selfLocation: 'home',
+			pileStates: bridge(),
+			localityEnabled: true,
+			preferPrimaryPile: true,
+		}
+	)
+	expect(s.prefer.map((r) => r.nodeId)).toEqual([1n])
+	expect(s.fallback.map((r) => r.nodeId)).toEqual([2n])
 })
 
 // ── last resort ──────────────────────────────────────────────────────────────

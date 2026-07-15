@@ -205,6 +205,7 @@ export let makeEndpointPool = function makeEndpointPool(
 		connections?: FakeConnectionFactory
 		hooks?: DriverHooks
 		localityEnabled?: boolean
+		preferPrimaryPile?: boolean
 		degradedThreshold?: number
 		discoveryTimeoutMs?: number
 		discoveryIntervalMs?: number
@@ -223,6 +224,7 @@ export let makeEndpointPool = function makeEndpointPool(
 		connectionFactory: connections.factory,
 		hooks: over.hooks,
 		localityEnabled: over.localityEnabled,
+		preferPrimaryPile: over.preferPrimaryPile,
 		degradedThreshold: over.degradedThreshold,
 		discoveryTimeoutMs: over.discoveryTimeoutMs ?? 5_000,
 		discoveryIntervalMs: over.discoveryIntervalMs ?? 60_000,

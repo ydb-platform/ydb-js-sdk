@@ -736,6 +736,7 @@ export type EndpointsRuntimeConfig = {
 	connectionFactory?: ConnectionFactory | undefined
 	hooks?: DriverHooks | undefined
 	localityEnabled?: boolean | undefined
+	preferPrimaryPile?: boolean | undefined
 	degradedThreshold?: number | undefined
 	discoveryTimeoutMs?: number | undefined
 	discoveryIntervalMs?: number | undefined
@@ -788,6 +789,7 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 
 	let ctx = createEndpointsCtx({
 		localityEnabled: config.localityEnabled,
+		preferPrimaryPile: config.preferPrimaryPile,
 		degradedThreshold: config.degradedThreshold,
 	})
 
