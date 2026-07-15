@@ -93,11 +93,38 @@ export class BalancedChannel implements Channel {
 		return 'ydb-balanced-channel'
 	}
 
-	/** READY while the pool knows of any endpoint; TRANSIENT_FAILURE otherwise. */
+	/**
+	 * READY iff a call on THIS channel could actually be routed right now —
+	 * mirrors the selectEndpoint cascade for the channel's target instead of
+	 * "the pool knows of any endpoint" (byNodeId also holds retired/pinned refs
+	 * that balanced selection can never return).
+	 */
 	getConnectivityState(_tryToConnect: boolean): connectivityState {
-		return this.#pool.snapshot.byNodeId.size > 0
-			? connectivityState.READY
-			: connectivityState.TRANSIENT_FAILURE
+		let snapshot = this.#pool.snapshot
+
+		// Hard routing: the exact node or nothing.
+		if (this.#hard && this.#nodeId !== undefined) {
+			return snapshot.pinned.has(this.#nodeId) || snapshot.byNodeId.has(this.#nodeId)
+				? connectivityState.READY
+				: connectivityState.TRANSIENT_FAILURE
+		}
+
+		// Soft affinity resolves the target node even when pessimized/retired.
+		if (this.#nodeId !== undefined && snapshot.byNodeId.has(this.#nodeId)) {
+			return connectivityState.READY
+		}
+
+		// Balanced tiers, cheap path first.
+		if (snapshot.prefer.length > 0 || snapshot.fallback.length > 0) {
+			return connectivityState.READY
+		}
+		// Degenerate last-resort tiers: pile-relaxed active or pessimized still route.
+		for (let ref of snapshot.byNodeId.values()) {
+			if (ref.state === 'active' || ref.state === 'pessimized') {
+				return connectivityState.READY
+			}
+		}
+		return connectivityState.TRANSIENT_FAILURE
 	}
 
 	watchConnectivityState(
