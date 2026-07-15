@@ -1,5 +1,38 @@
 # @ydbjs/core
 
+## 7.0.0
+
+### Major Changes
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338) Thanks [@polRk](https://github.com/polRk)! - Rebuild `Driver`'s connection layer on a new, internal endpoints engine (a pure `@ydbjs/fsm` state machine for discovery/routing/health plus an `EndpointPool` facade with a synchronous, allocation-light `acquire()` that reads an atomically-swapped immutable `RoutingSnapshot`), replacing the legacy `ConnectionPool`. The engine is an implementation detail — consumers only ever hold a `Driver` — so it is **not** exported from the package root.
+
+  `Driver`'s public shape is preserved (`ready`, `close`, `token`, `database`, `identity`, `Disposable`/`AsyncDisposable`, `kRegisterLibrary`), and `createClient` gains direct-IO routing:
+  - `createClient(service)` — balanced across all healthy nodes.
+  - `createClient(service, nodeId)` — soft affinity to a node (node-bound query sessions).
+  - `createClient(service, { nodeId, endpoint?, hard? })` — direct-IO for topic direct read/write: `hard: true` routes every RPC to `nodeId` or fails (never substitutes); `endpoint` pins a server-named node (reachable before the next discovery round, e.g. a topic `PartitionLocation`). The returned client is `Disposable` and unpins on dispose.
+
+  Behavioural changes vs the old pool:
+  - **Balancing** is uniform-random within a locality tier (opt-in via `'ydb.sdk.locality_enabled'`, default off) instead of modulo round-robin, with O(1) node affinity.
+  - **Pessimization** has no fixed timer: a node is pessimized on `UNAVAILABLE`/`DEADLINE_EXCEEDED` and recovers on the next successful RPC or discovery round. The `ydb:driver.connection.pessimized` payload no longer carries `until`. `'ydb.sdk.connection_pessimization_timeout_ms'` is now ignored.
+  - **Rediscovery** adds degradation-triggered forced rounds and single-flight/backoff; each round is bounded by `'ydb.sdk.discovery_timeout_ms'` (a timed-out round is retryable, so a hung `listEndpoints` no longer wedges rediscovery). A retryable initial failure keeps retrying (only a non-retryable error is terminal and emits `ydb:driver.failed`); a round returning zero endpoints is rejected as a retryable failure in every state — never applied to routing, so a one-round LB glitch cannot wipe the endpoint set.
+  - **Connections** are dialed lazily and a node dropped from discovery is drained rather than torn down (a brief flap no longer forces a reconnect). `'ydb.sdk.connection_idle_timeout_ms'` now bounds the grace a retired channel is kept before reaping (no separate idle-active teardown). A graceful shutdown (`await using driver` / `[Symbol.asyncDispose]`) drains in-flight streams and returns as soon as they finish, capped by an internal close deadline; the synchronous `close()` tears everything down immediately.
+  - **Bridge (2DC) piles:** on a bridge cluster, routing is restricted to endpoints whose pile is `PRIMARY`, `PROMOTED`, or `SYNCHRONIZED` (other pile states are kept out of the balancing tiers, used only as a last resort when every pile is unusable). Opt-in `'ydb.sdk.prefer_primary_pile'` (default `false`) additionally keeps traffic on the `PRIMARY`/`PROMOTED` pile, falling back to `SYNCHRONIZED` only when the primary has no available node. It is soft (fallback preserved), a no-op on a non-bridge cluster, and takes precedence over `'ydb.sdk.locality_enabled'` in bridge mode (a pile already maps to a datacenter, so the two are not combined).
+  - **Bridge/pool observability:** every `ydb:driver.connection.*` event now carries the endpoint's `pile` (`''` on a non-bridge cluster), and `DriverHooks`' `EndpointInfo` gains a `pile` field. `ydb:driver.discovery.completed` additionally carries `selfLocation`, the pile roster (`piles: { name, status }[]`), and `primaryPile`. New channels: `ydb:driver.connection.pool.opened` (one-shot config snapshot), `ydb:driver.connection.pool.stats` (aggregate tier/pile counts on every routable-set change), `ydb:driver.pile.changed` (pile roster/primary change, inside the discovery span), and `ydb:driver.pile.fallback` (edge-triggered when `preferPrimaryPile` serves from the SYNCHRONIZED tier).
+  - **New options:** `'ydb.sdk.locality_enabled'` (default `false`), `'ydb.sdk.prefer_primary_pile'` (default `false`), and `'ydb.sdk.discovery_degraded_threshold'` (0..1, default `0.5`, validated).
+
+  The `ConnectionPool` class and the `POOL_*_FOR_TESTING` symbols are removed. All `diagnostics_channel` channel names and identity-stamped payloads are preserved (minus the `until` field on `connection.pessimized`); the round-derived events are published inside the `tracing:ydb:driver.discovery` span so `@ydbjs/telemetry` attaches them to traces. `EndpointsUnavailableError` and the `Driver*` option/connection-string error classes are re-exported from the package root.
+
+### Patch Changes
+
+- [#635](https://github.com/ydb-platform/ydb-js-sdk/pull/635) [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8) Thanks [@polRk](https://github.com/polRk)! - Fix process crash when a background rediscovery round fails. The periodic discovery loop scheduled its rounds as floating promises, so a terminally failed round (e.g. the discovery endpoint dropping mid-round until the per-round timeout aborted the retries) escalated to an `unhandledRejection` and killed the process. Failed background rounds are now caught and logged; the connection pool keeps serving last-known endpoints and the next interval tick retries.
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1)]:
+  - @ydbjs/api@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/auth@6.3.2
+  - @ydbjs/error@6.0.7
+  - @ydbjs/retry@6.3.1
+
 ## 6.3.1
 
 ### Patch Changes

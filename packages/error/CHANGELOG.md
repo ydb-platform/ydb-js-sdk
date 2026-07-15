@@ -1,5 +1,12 @@
 # @ydbjs/error
 
+## 6.0.7
+
+### Patch Changes
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be)]:
+  - @ydbjs/api@7.0.0
+
 ## 6.0.6
 
 ### Patch Changes

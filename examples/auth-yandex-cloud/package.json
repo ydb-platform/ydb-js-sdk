@@ -13,8 +13,8 @@
 	},
 	"dependencies": {
 		"@ydbjs/auth-yandex-cloud": "^0.2.0",
-		"@ydbjs/core": "^6.3.1",
-		"@ydbjs/query": "^6.3.0"
+		"@ydbjs/core": "^7.0.0",
+		"@ydbjs/query": "^6.3.1"
 	},
 	"engines": {
 		"node": ">=20.19.0",

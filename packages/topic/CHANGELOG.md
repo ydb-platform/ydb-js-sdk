@@ -1,5 +1,53 @@
 # @ydbjs/topic
 
+## 7.0.0
+
+### Major Changes
+
+- [#637](https://github.com/ydb-platform/ydb-js-sdk/pull/637) [`51d3c1b`](https://github.com/ydb-platform/ydb-js-sdk/commit/51d3c1b98396f9e2c131a488d85cfdc0138bd1e9) Thanks [@YandalfRed](https://github.com/YandalfRed)! - Rebuild the topic reader on a deterministic `@ydbjs/fsm` state machine (transport FSM + reader FSM), mirroring the writer. The public `TopicReader` / `TopicTxReader` API (read / commit / close / destroy + callbacks) is unchanged; the behaviour is more reliable:
+  - `commit()` no longer rejects on a transparent reconnect. Pending commits are held per partition and re-sent on the new partition session (verified against a live server — YDB accepts a re-sent commit for offsets not read on that session), so a `read()` + `commit()` loop survives reconnects instead of crashing.
+  - Transactional read offsets are keyed by the stable partition id and survive a reconnect (previously lost, so the transaction could miss offsets).
+  - Byte flow-control is charged once per `ReadResponse` — a response spanning several partitions no longer over-releases credit.
+  - Retention gap-fill (committing past retention-deleted offsets) is preserved.
+  - `read()` accumulates a batch up to `limit`. With `batchWindowMs` set it yields at least every window (an empty batch on an idle topic, so a polling consumer never hangs); without it, it blocks until the next delivered chunk. The option was renamed from `waitMs`, which remains as a deprecated alias.
+  - On an unrecoverable terminal error `read()` now throws (instead of ending like a clean end-of-stream); the reader is already torn down, so it is not reusable and every further `read()` / `commit()` throws too.
+  - Transparent reconnect is now unbounded by default (waits for the server/topic to come back); the new `recoveryWindowMs` option re-imposes a finite terminal deadline. The new `retryOnSchemeError` option (off by default) retries `SCHEME_ERROR` so a reader started before its topic exists waits until it is created. A running reader whose topic is dropped idles until the server closes the stale read stream (~1 min), then transparently reconnects and resumes automatically if the topic exists again (`retryOnSchemeError` extends this to a topic recreated later).
+  - The new `gracefulShutdownTimeoutMs` option makes the graceful `close()` deadline configurable (default 30 s): past it, pending commits are dropped and the reader force-closes.
+  - Structured lifecycle events on `node:diagnostics_channel` under `ydb:topic.reader.*`, plus a `tracing:ydb:topic.reader.commit` span.
+  - `TopicTxReader` is now `AsyncDisposable` / `Disposable`. A manual `commit()` on a tx reader now throws — the `TopicTxReader` type never exposed it, but the runtime object did, and a plain-JS call would commit offsets outside the transaction (they would survive its rollback).
+  - `TopicPartitionSession.nextCommitStartOffset` is removed from the public class. It was commit-machinery state that leaked into the public surface in 6.1.x: user-visible (and mutable), while a corrupted anchor produces malformed commit ranges — which are session-fatal server-side. The gap-fill anchor now lives inside the reader state machine, keyed by the stable partition id, so it also survives reconnects (the session object does not).
+  - The default `maxBufferBytes` (server read credit / client-side buffer cap) is now 8 MiB, up from 4 MiB.
+
+- [#637](https://github.com/ydb-platform/ydb-js-sdk/pull/637) [`8eefff2`](https://github.com/ydb-platform/ydb-js-sdk/commit/8eefff245e328f8aa79acef69d663906f1e02c04) Thanks [@YandalfRed](https://github.com/YandalfRed)! - Consolidate the topic writer onto a single deterministic `@ydbjs/fsm` state machine.
+
+  Breaking changes:
+  - `write()` now returns `void` instead of a sequence number. Obtain the last acknowledged `seqNo` via `flush()` (returns `bigint`) or the `onAck` callback.
+  - `flush()` now returns `bigint` (was `bigint | undefined`).
+  - Removed the experimental `@ydbjs/topic/writer2` subpath export.
+  - Removed the `retryConfig` writer option. The writer now reconnects transparently (exponential backoff + jitter) and, by default, indefinitely — waiting for the server/topic to come back; the new `recoveryWindowMs` option re‑imposes a terminal deadline. In‑flight messages are resent and pending writes are not failed by a transparent reconnect.
+  - `flushIntervalMs` default changed from 10ms to 1000ms.
+  - `close()` now rejects when the graceful drain fails (non‑retryable error, or timeout with undelivered messages) instead of resolving silently — this makes transactional commit hooks fail rather than commit with lost writes.
+
+  Fixes and additions:
+  - Non‑RAW codecs (GZIP/ZSTD) are compressed once at `write()` and the compressed bytes are what the buffer accounts and the wire carries.
+  - `maxBufferBytes` is now enforced as a fail‑fast cap: `write()` throws synchronously when a message would push the un‑acknowledged buffer past the limit (default 256 MB), bounding writer memory.
+  - New options: `recoveryWindowMs` (finite reconnect deadline; unbounded by default), `retryOnSchemeError` (retry SCHEME_ERROR to wait for a not‑yet‑created topic; off by default), `gracefulShutdownTimeoutMs`, `partitionId` / `messageGroupId` (mutually exclusive), and `producer` is auto‑generated when omitted.
+  - Structured lifecycle events on `node:diagnostics_channel` under `ydb:topic.writer.*`.
+
+### Patch Changes
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be) Thanks [@polRk](https://github.com/polRk)! - Widen the reader's internal `PartitionReadData` timestamp fields (`writtenAt`, `createdAt`) to `Timestamp | undefined` to match the stricter optional-field typing from the regenerated `@ydbjs/api`. No behavioural change.
+
+- [#637](https://github.com/ydb-platform/ydb-js-sdk/pull/637) [`51d3c1b`](https://github.com/ydb-platform/ydb-js-sdk/commit/51d3c1b98396f9e2c131a488d85cfdc0138bd1e9) Thanks [@YandalfRed](https://github.com/YandalfRed)! - The built-in ZSTD codec no longer crashes with a bare `TypeError` on runtimes where `node:zlib` has no zstd support (Node.js before 22.15 / 23.8). `getCodec(Codec.ZSTD)` and `ZSTD_CODEC` now throw an actionable error naming the required Node.js versions, the default reader codec map registers ZSTD only when the runtime supports it, and a reader that receives ZSTD data on an older runtime fails with the register-it-in-`codecMap` error instead.
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1)]:
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/error@6.0.7
+  - @ydbjs/retry@6.3.1
+  - @ydbjs/value@6.0.9
+
 ## 6.1.4
 
 ### Patch Changes
