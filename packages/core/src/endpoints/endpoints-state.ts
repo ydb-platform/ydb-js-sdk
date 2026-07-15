@@ -86,6 +86,8 @@ export type EndpointInfoLite = {
 	nodeId: bigint
 	address: string
 	location: string
+	// Bridge pile name; '' on a non-bridge cluster.
+	pile: string
 }
 
 export type EndpointsConfig = {
@@ -222,14 +224,27 @@ export type EndpointsOutput =
 			selfLocation: string
 	  }
 	| { type: 'endpoints.discovery_failed'; error: unknown; attempt: number; retryable: boolean }
-	| { type: 'endpoints.added'; nodeId: bigint; address: string; location: string }
-	| { type: 'endpoints.pessimized'; nodeId: bigint; address: string; location: string }
-	| { type: 'endpoints.unpessimized'; nodeId: bigint; address: string; location: string }
+	| { type: 'endpoints.added'; nodeId: bigint; address: string; location: string; pile: string }
+	| {
+			type: 'endpoints.pessimized'
+			nodeId: bigint
+			address: string
+			location: string
+			pile: string
+	  }
+	| {
+			type: 'endpoints.unpessimized'
+			nodeId: bigint
+			address: string
+			location: string
+			pile: string
+	  }
 	| {
 			type: 'endpoints.retired'
 			nodeId: bigint
 			address: string
 			location: string
+			pile: string
 			reason: 'stale_active' | 'stale_pessimized'
 	  }
 	| {
@@ -237,6 +252,7 @@ export type EndpointsOutput =
 			nodeId: bigint
 			address: string
 			location: string
+			pile: string
 			reason: 'idle' | 'pool_close'
 	  }
 	| { type: 'endpoints.failed'; error: unknown }
@@ -329,6 +345,7 @@ export let computeRoundDiff = function computeRoundDiff(
 				nodeId: ep.nodeId,
 				address: `${ep.host}:${ep.port}`,
 				location: ep.location,
+				pile: ep.bridgePileName,
 			})
 		}
 	}
@@ -340,6 +357,7 @@ export let computeRoundDiff = function computeRoundDiff(
 			nodeId: entry.nodeId,
 			address: entry.address,
 			location: entry.location,
+			pile: entry.bridgePileName,
 			reason: entry.subState === 'pessimized' ? 'stale_pessimized' : 'stale_active',
 		})
 	}
@@ -423,6 +441,7 @@ let applyRound = function applyRound(
 				nodeId: existing.nodeId,
 				address: existing.address,
 				location: existing.location,
+				pile: existing.bridgePileName,
 			})
 		}
 	}
@@ -440,6 +459,7 @@ let applyRound = function applyRound(
 			nodeId: a.nodeId,
 			address: a.address,
 			location: a.location,
+			pile: a.pile,
 		})
 	}
 	for (let r of retired) {
@@ -448,6 +468,7 @@ let applyRound = function applyRound(
 			nodeId: r.nodeId,
 			address: r.address,
 			location: r.location,
+			pile: r.pile,
 			reason: r.reason,
 		})
 	}
@@ -466,6 +487,7 @@ let applyRound = function applyRound(
 			nodeId: r.nodeId,
 			address: r.address,
 			location: r.location,
+			pile: r.pile,
 		})),
 		total: endpoints.length,
 		selfLocation,
@@ -515,6 +537,7 @@ let terminate = function terminate(
 			nodeId: entry.nodeId,
 			address: entry.address,
 			location: entry.location,
+			pile: entry.bridgePileName,
 			reason: 'pool_close',
 		})
 		effects.push({ type: 'endpoints.effect.close_channel', nodeId: entry.nodeId })
@@ -739,6 +762,7 @@ export let endpointsTransition = function endpointsTransition(
 						nodeId: entry.nodeId,
 						address: entry.address,
 						location: entry.location,
+						pile: entry.bridgePileName,
 					})
 					rebuild(ctx, runtime)
 					// Cross into degraded and force a round when too many are down.
@@ -767,6 +791,7 @@ export let endpointsTransition = function endpointsTransition(
 						nodeId: entry.nodeId,
 						address: entry.address,
 						location: entry.location,
+						pile: entry.bridgePileName,
 					})
 					rebuild(ctx, runtime)
 					return { state: healthState(ctx) }
@@ -783,6 +808,7 @@ export let endpointsTransition = function endpointsTransition(
 						nodeId: entry.nodeId,
 						address: entry.address,
 						location: entry.location,
+						pile: entry.bridgePileName,
 						reason: 'idle',
 					})
 					return {
@@ -811,6 +837,7 @@ export let endpointsTransition = function endpointsTransition(
 						nodeId: entry.nodeId,
 						address: entry.address,
 						location: entry.location,
+						pile: entry.bridgePileName,
 						reason: 'pool_close',
 					})
 					let close: EndpointsEffect = {

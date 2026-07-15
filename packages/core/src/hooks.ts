@@ -31,6 +31,8 @@ export interface EndpointInfo {
 	readonly address: string
 	/** Datacenter / availability zone, e.g. 'sas', 'vla' */
 	readonly location: string
+	/** Bridge pile name; '' on a non-bridge cluster. */
+	readonly pile: string
 }
 
 /**

@@ -120,6 +120,15 @@ type EndpointsEnv = {
 	roundStart: number
 	initAt: number
 	readyAt: number | undefined
+
+	// Bridge (2DC) observability state (never read by the transition).
+	preferPrimaryPile: boolean
+	// Last observed pile roster: the prev value for pile.changed detection and the
+	// current roster for pool.stats. Updated once per applied discovery round.
+	lastPileStates: PileState[]
+	// Whether the pool last reported serving from the SYNCHRONIZED fallback tier
+	// (primary pile empty under preferPrimaryPile) — drives edge-triggered events.
+	prevFallbackActive: boolean
 }
 
 type FullCtx = EndpointsCtx & EndpointsEnv
@@ -195,11 +204,38 @@ let finalizeEnv = function finalizeEnv(env: EndpointsEnv): void {
 	if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
 }
 
-// Publish the round-derived connection diagnostics + discovery.completed. Called
-// INSIDE the discovery tracePromise (before the round is dispatched, so it runs
-// against the pre-round registry) so @ydbjs/telemetry attaches these to the
-// discovery span — the async #consume loop has no active span. Uses the same
-// `computeRoundDiff` rule the FSM's applyRound uses, so the two can't drift.
+// Bridge topology helpers — pure, shared by the round + pool.stats publishers.
+let primaryPileName = function primaryPileName(piles: PileState[]): string | undefined {
+	return piles.find((p) => p.status === 'PRIMARY')?.pileName
+}
+
+let pileRoster = function pileRoster(piles: PileState[]): { name: string; status: PileStatus }[] {
+	return piles.map((p) => ({ name: p.pileName, status: p.status }))
+}
+
+let pilesEqual = function pilesEqual(a: PileState[], b: PileState[]): boolean {
+	if (a.length !== b.length) return false
+	let byName = new Map(a.map((p) => [p.pileName, p.status]))
+	for (let p of b) {
+		if (byName.get(p.pileName) !== p.status) return false
+	}
+	return true
+}
+
+let countPileNodes = function countPileNodes(snapshot: RoutingSnapshot, pile: string): number {
+	let n = 0
+	for (let ref of snapshot.byNodeId.values()) {
+		if (ref.pile === pile) n++
+	}
+	return n
+}
+
+// Publish the round-derived connection diagnostics + discovery.completed + any
+// pile topology change. Called INSIDE the discovery tracePromise (before the
+// round is dispatched, so it runs against the pre-round registry) so
+// @ydbjs/telemetry attaches these to the discovery span — the async #consume
+// loop has no active span. Uses the same `computeRoundDiff` rule the FSM's
+// applyRound uses, so the two can't drift.
 let publishRoundDiagnostics = function publishRoundDiagnostics(
 	ctx: FullCtx,
 	result: DiscoveryResult
@@ -212,6 +248,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 			nodeId: a.nodeId,
 			address: a.address,
 			location: a.location,
+			pile: a.pile,
 		})
 	}
 	for (let r of retired) {
@@ -220,6 +257,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 			nodeId: r.nodeId,
 			address: r.address,
 			location: r.location,
+			pile: r.pile,
 			reason: r.reason,
 		})
 	}
@@ -230,7 +268,25 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 		removedCount: retired.length,
 		totalCount: result.endpoints.length,
 		duration: Date.now() - ctx.roundStart,
+		selfLocation: result.selfLocation,
+		piles: pileRoster(result.pileStates),
+		primaryPile: primaryPileName(result.pileStates),
 	})
+
+	// Topology: emit pile.changed only when the roster/statuses differ from the
+	// last applied round (the first bridge round reports `before: []`). Refresh
+	// lastPileStates regardless — pool.stats reads it as the current roster.
+	if (!pilesEqual(ctx.lastPileStates, result.pileStates)) {
+		dc('ydb:driver.pile.changed').publish({
+			driver: ctx.identity,
+			selfLocation: result.selfLocation,
+			before: pileRoster(ctx.lastPileStates),
+			after: pileRoster(result.pileStates),
+			primaryBefore: primaryPileName(ctx.lastPileStates),
+			primaryAfter: primaryPileName(result.pileStates),
+		})
+	}
+	ctx.lastPileStates = result.pileStates
 }
 
 // ── Effect handlers ─────────────────────────────────────────────────────────
@@ -604,6 +660,11 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			switch (out.type) {
 				case 'endpoints.snapshot':
 					this.#snapshot = out.snapshot
+					// Snapshot rebuilds fire only when the routable set changes, so
+					// stats track topology change (not RPC volume); fallback is
+					// edge-triggered inside its publisher.
+					this.#publishPoolStats()
+					this.#publishFallbackTransition()
 					break
 				case 'endpoints.added':
 				case 'endpoints.retired':
@@ -615,6 +676,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 						nodeId: out.nodeId,
 						address: out.address,
 						location: out.location,
+						pile: out.pile,
 						reason: out.reason satisfies RemovedReason,
 					})
 					break
@@ -626,6 +688,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 								nodeId: out.nodeId,
 								address: out.address,
 								location: out.location,
+								pile: out.pile,
 							},
 						})
 					)
@@ -634,6 +697,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 						nodeId: out.nodeId,
 						address: out.address,
 						location: out.location,
+						pile: out.pile,
 					})
 					break
 				case 'endpoints.unpessimized': {
@@ -645,6 +709,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 								nodeId: out.nodeId,
 								address: out.address,
 								location: out.location,
+								pile: out.pile,
 							},
 						})
 					)
@@ -653,6 +718,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 						nodeId: out.nodeId,
 						address: out.address,
 						location: out.location,
+						pile: out.pile,
 						duration,
 					})
 					break
@@ -712,17 +778,57 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	#snapshotEndpoints(): EndpointInfo[] {
 		return Array.from(this.#snapshot.byNodeId.values(), toEndpointInfo)
 	}
+
+	// Aggregate routing snapshot — a baseline for a subscriber that attaches
+	// mid-life, and per-pile node counts for bridge clusters.
+	#publishPoolStats(): void {
+		let env = this.#env
+		let s = this.#snapshot
+		dc('ydb:driver.connection.pool.stats').publish({
+			driver: env.identity,
+			total: s.byNodeId.size,
+			prefer: s.prefer.length,
+			fallback: s.fallback.length,
+			pessimized: s.pessimizedCount,
+			piles: env.lastPileStates.map((p) => ({
+				name: p.pileName,
+				status: p.status,
+				nodes: countPileNodes(s, p.pileName),
+			})),
+		})
+	}
+
+	// Edge-triggered: fires only when preferPrimaryPile starts/stops serving from
+	// the SYNCHRONIZED fallback tier (the primary pile has no available node).
+	#publishFallbackTransition(): void {
+		let env = this.#env
+		let s = this.#snapshot
+		let active =
+			env.preferPrimaryPile &&
+			s.pileStatesPresent &&
+			s.prefer.length === 0 &&
+			s.fallback.length > 0
+		if (active === env.prevFallbackActive) return
+		env.prevFallbackActive = active
+		dc('ydb:driver.pile.fallback').publish({
+			driver: env.identity,
+			active,
+			primaryPile: primaryPileName(env.lastPileStates),
+		})
+	}
 }
 
 let toEndpointInfo = function toEndpointInfo(e: {
 	nodeId: bigint
 	address: string
 	location: string
+	pile: string
 }): EndpointInfo {
 	return Object.freeze<EndpointInfo>({
 		nodeId: e.nodeId,
 		address: e.address,
 		location: e.location,
+		pile: e.pile,
 	})
 }
 
@@ -783,6 +889,9 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		roundStart: 0,
 		initAt: Date.now(),
 		readyAt: undefined,
+		preferPrimaryPile: config.preferPrimaryPile ?? false,
+		lastPileStates: [],
+		prevFallbackActive: false,
 	}
 	// Silence unobserved-rejection noise when nobody awaits ready().
 	env.readyDeferred.promise.catch(() => {})
@@ -810,19 +919,39 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 
 	let pool = new EndpointPool(machine)
 
+	// One-shot config snapshot (AGENTS.md: config goes on *.pool.opened, fired once)
+	// so a subscriber attached before the first round has the full driver config.
+	dc('ydb:driver.connection.pool.opened').publish({
+		driver: config.identity,
+		config: {
+			localityEnabled: ctx.config.localityEnabled,
+			preferPrimaryPile: ctx.config.preferPrimaryPile,
+			degradedThreshold: ctx.config.degradedThreshold,
+			discoveryIntervalMs: env.discoveryIntervalMs,
+			idleIntervalMs: env.idleIntervalMs,
+			retiredGraceMs: env.retiredGraceMs,
+			closeDeadlineMs: env.closeDeadlineMs,
+		},
+	})
+
 	// No ingest — discovery is unary-per-round. Kick the initial round.
 	machine.dispatch({ type: 'endpoints.discovery.start' })
 
 	return { machine, pool }
 }
 
-let defaultProtoEndpoint = function defaultProtoEndpoint(ref: EndpointRef): ProtoEndpointInfo {
+export let defaultProtoEndpoint = function defaultProtoEndpoint(
+	ref: EndpointRef
+): ProtoEndpointInfo {
 	return create(EndpointInfoSchema, {
 		address: ref.host,
 		port: ref.port,
 		nodeId: Number(ref.nodeId),
 		location: ref.location,
 		sslTargetNameOverride: ref.sslTargetNameOverride,
+		// Carry the pile onto the dial proto so the production GrpcConnection's
+		// EndpointInfo.pile (and thus the onCall hook) sees it on a bridge cluster.
+		bridgePileName: ref.pile,
 	})
 }
 

@@ -19,6 +19,7 @@ import {
 	ATTR_YDB_ISOLATION,
 	ATTR_YDB_NODE_DC,
 	ATTR_YDB_NODE_ID,
+	ATTR_YDB_NODE_PILE,
 	ATTR_YDB_RETRY_ATTEMPT,
 	ATTR_YDB_RETRY_ATTEMPTS_TOTAL,
 	ATTR_YDB_RETRY_BACKOFF,
@@ -214,10 +215,11 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	},
 	{
 		channel: 'ydb:driver.connection.added',
-		apply: (msg: { nodeId: bigint; address: string; location: string }, span) => {
+		apply: (msg: { nodeId: bigint; address: string; location: string; pile: string }, span) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_ADDED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
+				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
 			})
 		},
@@ -226,10 +228,11 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 		channel: 'ydb:driver.connection.pessimized',
 		// The endpoints engine has no fixed pessimization timer, so the payload no
 		// longer carries `until` (recovery is optimistic un-ban / discovery reset).
-		apply: (msg: { nodeId: bigint; address: string; location: string }, span) => {
+		apply: (msg: { nodeId: bigint; address: string; location: string; pile: string }, span) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_PESSIMIZED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
+				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
 			})
 		},
@@ -237,12 +240,19 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	{
 		channel: 'ydb:driver.connection.unpessimized',
 		apply: (
-			msg: { nodeId: bigint; address: string; location: string; duration: number },
+			msg: {
+				nodeId: bigint
+				address: string
+				location: string
+				pile: string
+				duration: number
+			},
 			span
 		) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
+				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
 				[ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION]: msg.duration / 1000,
 			})
@@ -251,12 +261,19 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	{
 		channel: 'ydb:driver.connection.retired',
 		apply: (
-			msg: { nodeId: bigint; address: string; location: string; reason: string },
+			msg: {
+				nodeId: bigint
+				address: string
+				location: string
+				pile: string
+				reason: string
+			},
 			span
 		) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_RETIRED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
+				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
 				[ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON]: msg.reason,
 			})
@@ -265,12 +282,19 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	{
 		channel: 'ydb:driver.connection.removed',
 		apply: (
-			msg: { nodeId: bigint; address: string; location: string; reason: string },
+			msg: {
+				nodeId: bigint
+				address: string
+				location: string
+				pile: string
+				reason: string
+			},
 			span
 		) => {
 			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_REMOVED, {
 				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
 				[ATTR_YDB_NODE_DC]: msg.location,
+				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
 				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
 				[ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON]: msg.reason,
 			})

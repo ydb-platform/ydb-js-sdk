@@ -6,8 +6,13 @@ import { ClientError, Status } from 'nice-grpc'
 import { expect, test } from 'vitest'
 
 import { EndpointsUnavailableError } from '../errors.ts'
-import { mapDiscoveryResult } from './endpoints-runtime.ts'
+import {
+	type DiscoveryResult,
+	defaultProtoEndpoint,
+	mapDiscoveryResult,
+} from './endpoints-runtime.ts'
 import type { DiscoveredEndpoint } from './endpoints-state.ts'
+import type { EndpointRef } from './snapshot.ts'
 import {
 	type EndpointPoolHarness,
 	capture,
@@ -16,6 +21,7 @@ import {
 	makeEndpointPool,
 	makeFakeConnectionFactory,
 	makeFakeDiscovery,
+	pile,
 	settle,
 } from './endpoints.fixtures.ts'
 
@@ -88,6 +94,149 @@ test('a new discovery round is reflected in routing', async (tc) => {
 	expect(preferIds).toEqual([1n, 3n])
 	expect((added.events.at(-1) as { nodeId: bigint }).nodeId).toBe(3n)
 	expect((retired.events.at(-1) as { nodeId: bigint }).nodeId).toBe(2n)
+})
+
+// ── bridge (2DC) observability ───────────────────────────────────────────────
+
+// node1 in the PRIMARY pile p1, node2 in the SYNCHRONIZED pile p2.
+let bridgeRound = function bridgeRound(over: Partial<DiscoveryResult> = {}) {
+	return discoveryResult(
+		[endpoint(1, { bridgePileName: 'p1' }), endpoint(2, { bridgePileName: 'p2' })],
+		{
+			selfLocation: 'A',
+			pileStates: [pile('p1', 'PRIMARY'), pile('p2', 'SYNCHRONIZED')],
+			...over,
+		}
+	)
+}
+
+test('publishes ydb:driver.connection.pool.opened once with the driver config', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	using opened = capture('ydb:driver.connection.pool.opened')
+	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	await h.pool.ready(tc.signal)
+
+	expect(opened.events).toHaveLength(1)
+	expect(opened.events[0]).toMatchObject({
+		config: { preferPrimaryPile: true, localityEnabled: false },
+	})
+})
+
+test('publishes discovery.completed with selfLocation, pile roster and primaryPile', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	using completed = capture('ydb:driver.discovery.completed')
+	await using h = makeEndpointPool({ discovery })
+	await h.pool.ready(tc.signal)
+
+	expect(completed.events.at(-1)).toMatchObject({
+		selfLocation: 'A',
+		primaryPile: 'p1',
+		piles: [
+			{ name: 'p1', status: 'PRIMARY' },
+			{ name: 'p2', status: 'SYNCHRONIZED' },
+		],
+	})
+})
+
+test('tags connection.added with the pile name', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	using added = capture('ydb:driver.connection.added')
+	await using h = makeEndpointPool({ discovery })
+	await h.pool.ready(tc.signal)
+
+	expect(added.events).toEqual(
+		expect.arrayContaining([expect.objectContaining({ nodeId: 1n, pile: 'p1' })])
+	)
+})
+
+test('publishes pile.changed when the primary pile moves', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	await using h = makeEndpointPool({ discovery })
+	await h.pool.ready(tc.signal)
+
+	using changed = capture('ydb:driver.pile.changed')
+	// Failover: p2 promoted to primary, p1 demoted to synchronized.
+	discovery.push(bridgeRound({ pileStates: [pile('p1', 'SYNCHRONIZED'), pile('p2', 'PRIMARY')] }))
+	h.pool.forceRediscovery()
+	await settle()
+
+	expect(changed.events).toHaveLength(1)
+	expect(changed.events[0]).toMatchObject({ primaryBefore: 'p1', primaryAfter: 'p2' })
+})
+
+test('does not publish pile.changed when the roster is unchanged', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	await using h = makeEndpointPool({ discovery })
+	await h.pool.ready(tc.signal)
+
+	using changed = capture('ydb:driver.pile.changed')
+	discovery.push(bridgeRound())
+	h.pool.forceRediscovery()
+	await settle()
+
+	expect(changed.events).toHaveLength(0)
+})
+
+test('publishes pile.fallback when preferPrimaryPile has no primary node left', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	await h.pool.ready(tc.signal)
+
+	using fallback = capture('ydb:driver.pile.fallback')
+	// The only PRIMARY-pile node vanishes; only the SYNCHRONIZED node remains.
+	discovery.push(
+		discoveryResult([endpoint(2, { bridgePileName: 'p2' })], {
+			selfLocation: 'A',
+			pileStates: [pile('p1', 'PRIMARY'), pile('p2', 'SYNCHRONIZED')],
+		})
+	)
+	h.pool.forceRediscovery()
+	await settle()
+
+	expect(fallback.events.at(-1)).toMatchObject({ active: true, primaryPile: 'p1' })
+})
+
+test('publishes pool.stats with tier counts and pile composition', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.push(bridgeRound())
+	using stats = capture('ydb:driver.connection.pool.stats')
+	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	await h.pool.ready(tc.signal)
+
+	expect(stats.events.at(-1)).toMatchObject({
+		total: 2,
+		prefer: 1,
+		fallback: 1,
+		pessimized: 0,
+		piles: expect.arrayContaining([
+			expect.objectContaining({ name: 'p1', status: 'PRIMARY', nodes: 1 }),
+			expect.objectContaining({ name: 'p2', status: 'SYNCHRONIZED', nodes: 1 }),
+		]),
+	})
+})
+
+test('defaultProtoEndpoint carries the pile onto the production dial proto', () => {
+	// Guards the onCall path: the fake connection factory bypasses this mapper, so
+	// only a direct test catches a dropped pile on the real GrpcConnection.
+	let ref: EndpointRef = {
+		nodeId: 1n,
+		address: 'h:2136',
+		host: 'h',
+		port: 2136,
+		sslTargetNameOverride: '',
+		ipV4: [],
+		ipV6: [],
+		location: 'A',
+		pile: 'p1',
+		state: 'active',
+	}
+	expect(defaultProtoEndpoint(ref).bridgePileName).toBe('p1')
 })
 
 test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
