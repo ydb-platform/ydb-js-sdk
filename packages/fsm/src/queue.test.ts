@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { track } from './promise.fixtures.ts'
 import { AsyncPriorityQueue, AsyncQueue } from './queue.ts'
 
 test('processes priority items in descending order', async () => {
@@ -500,12 +501,11 @@ test('take does not deliver a buffered item while paused, then delivers on resum
 	queue.pause()
 	queue.push('a')
 
-	let settled = false
 	let pending = queue.take()
-	void pending.then(() => (settled = true))
+	let taken = track(pending)
 	// A microtask turn is enough for a wrongly-eager delivery to settle.
 	await Promise.resolve()
-	expect(settled).toBe(false)
+	expect(taken.settled).toBe(false)
 
 	queue.resume()
 	expect(await pending).toEqual({ value: 'a', done: false })

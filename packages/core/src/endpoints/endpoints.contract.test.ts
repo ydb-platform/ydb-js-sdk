@@ -23,6 +23,7 @@ import {
 	makeFakeDiscovery,
 	pile,
 	settle,
+	track,
 } from './endpoints.fixtures.ts'
 
 let setup = function setup(
@@ -327,23 +328,21 @@ test('close finalizes promptly without waiting the close deadline', async (tc) =
 })
 
 test('close waits for an in-flight call to drain, then finalizes', async (tc) => {
-	let closed = false
 	let h = setup([endpoint(1)], { closeDeadlineMs: 30_000 })
 	await h.pool.ready(tc.signal)
 	h.pool.acquire(1n)
 	h.pool.callStarted(1n) // simulate an in-flight RPC on node 1
 
-	let closing = h.pool.close().then(() => {
-		closed = true
-	})
+	let closing = h.pool.close()
+	let draining = track(closing)
 	await settle()
 	// The busy channel keeps close() pending.
-	expect(closed).toBe(false)
+	expect(draining.settled).toBe(false)
 	expect(h.connections.byNode(1n)!.closed).toBe(false)
 
 	h.pool.callEnded(1n) // the RPC finishes → channel drains → finalize
 	await closing
-	expect(closed).toBe(true)
+	expect(draining.settled).toBe(true)
 	expect(h.connections.byNode(1n)!.closed).toBe(true)
 })
 
