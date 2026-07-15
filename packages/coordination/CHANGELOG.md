@@ -1,5 +1,16 @@
 # @ydbjs/coordination
 
+## 6.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1)]:
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/error@6.0.7
+  - @ydbjs/retry@6.3.1
+
 ## 6.2.1
 
 ### Patch Changes

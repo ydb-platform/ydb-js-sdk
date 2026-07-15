@@ -1,5 +1,18 @@
 # @ydbjs/telemetry
 
+## 6.0.2
+
+### Patch Changes
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`d5cdb51`](https://github.com/ydb-platform/ydb-js-sdk/commit/d5cdb515e7f5522d4008ec55d90dc00263f4df25) Thanks [@polRk](https://github.com/polRk)! - Drop the `pessimization.until` span-event attribute from the `ydb:driver.connection.pessimized` subscriber. The endpoints engine in `@ydbjs/core` no longer emits `until` (pessimization has no fixed timer), so the subscriber was writing `NaN` (`undefined / 1000`) as the attribute value under an active span. The `ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL` semconv constant is kept but deprecated.
+
+  Add the `ydb.node.pile` (`ATTR_YDB_NODE_PILE`) span-event attribute to every `ydb:driver.connection.*` mapping, so bridge (2DC) traces show which pile each node belongs to alongside `ydb.node.dc`. The attribute is omitted on a non-bridge cluster (empty pile name).
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8)]:
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/error@6.0.7
+
 ## 6.0.1
 
 ### Patch Changes
