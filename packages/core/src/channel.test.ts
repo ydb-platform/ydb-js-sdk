@@ -158,6 +158,61 @@ test('getConnectivityState is READY with endpoints and TRANSIENT_FAILURE without
 	expect(bc2.getConnectivityState(false)).toBe(connectivityState.TRANSIENT_FAILURE)
 })
 
+// Reduce the fake pool's snapshot to only the given refs, with empty balanced tiers.
+let degenerateSnapshot = function degenerateSnapshot(
+	fake: ReturnType<typeof makeFakePool>,
+	refs: Array<Partial<EndpointRef> & { nodeId: bigint }>,
+	pinned: bigint[] = []
+): void {
+	let byNodeId = new Map(refs.map((r) => [r.nodeId, r as EndpointRef]))
+	;(fake.pool as { snapshot: RoutingSnapshot }).snapshot = {
+		byNodeId,
+		prefer: [],
+		fallback: [],
+		pinned: new Map(pinned.map((id) => [id, byNodeId.get(id)!])),
+		selfLocation: '',
+		pileStatesPresent: false,
+		pessimizedCount: refs.filter((r) => r.state === 'pessimized').length,
+	} as unknown as RoutingSnapshot
+}
+
+test('reports TRANSIENT_FAILURE for a balanced channel when only pinned refs exist', () => {
+	let fake = makeFakePool()
+	degenerateSnapshot(fake, [{ nodeId: 9n, state: 'pinned' }], [9n])
+	let bc = new BalancedChannel(fake.pool)
+	// Balanced selection can never return a pinned-only ref — acquire() would throw.
+	expect(bc.getConnectivityState(false)).toBe(connectivityState.TRANSIENT_FAILURE)
+})
+
+test('reports TRANSIENT_FAILURE for a balanced channel when only retired refs exist', () => {
+	let fake = makeFakePool()
+	degenerateSnapshot(fake, [{ nodeId: 1n, state: 'retired' }])
+	let bc = new BalancedChannel(fake.pool)
+	expect(bc.getConnectivityState(false)).toBe(connectivityState.TRANSIENT_FAILURE)
+})
+
+test('reports READY for a balanced channel when only pessimized refs exist', () => {
+	let fake = makeFakePool()
+	degenerateSnapshot(fake, [{ nodeId: 1n, state: 'pessimized' }])
+	let bc = new BalancedChannel(fake.pool)
+	// The last-resort tier still routes to a pessimized node.
+	expect(bc.getConnectivityState(false)).toBe(connectivityState.READY)
+})
+
+test('reports connectivity for a hard channel by its exact node only', () => {
+	let fake = makeFakePool()
+	degenerateSnapshot(fake, [{ nodeId: 9n, state: 'pinned' }], [9n])
+	// The pinned node exists → the hard channel to it is READY...
+	expect(new BalancedChannel(fake.pool, {}, 9n, true).getConnectivityState(false)).toBe(
+		connectivityState.READY
+	)
+	// ...but a hard channel to an absent node is down even with healthy peers.
+	let healthy = makeFakePool()
+	expect(new BalancedChannel(healthy.pool, {}, 99n, true).getConnectivityState(false)).toBe(
+		connectivityState.TRANSIENT_FAILURE
+	)
+})
+
 test('a throwing onCall hook does not prevent the RPC from being created', () => {
 	let fake = makeFakePool()
 	let bc = new BalancedChannel(fake.pool, {
