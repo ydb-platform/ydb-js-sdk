@@ -18,6 +18,10 @@ export let ATTR_YDB_DISCOVERY_REMOVED_COUNT = 'ydb.discovery.removed_count'
 export let ATTR_YDB_DISCOVERY_TOTAL_COUNT = 'ydb.discovery.total_count'
 /** seconds */
 export let ATTR_YDB_DISCOVERY_DURATION = 'ydb.discovery.duration'
+// Bridge (2DC) topology observed by a discovery round. Both are absent /
+// dropped on a non-bridge cluster (empty self location, no PRIMARY pile).
+export let ATTR_YDB_DISCOVERY_SELF_LOCATION = 'ydb.discovery.self_location'
+export let ATTR_YDB_DISCOVERY_PRIMARY_PILE = 'ydb.discovery.primary_pile'
 
 export let ATTR_YDB_RETRY_ATTEMPT = 'ydb.retry.attempt'
 /** seconds — wait observed before this attempt started; `0` for attempt 1. */

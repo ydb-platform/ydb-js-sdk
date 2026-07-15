@@ -23,3 +23,11 @@ export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION =
 
 export let ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON = 'ydb.driver.connection.retire.reason'
 export let ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON = 'ydb.driver.connection.remove.reason'
+
+// Bridge (2DC) pile roster change, recorded on the discovery span the round
+// fires within. The before/after rosters are structured, so only the scalar
+// PRIMARY-pile summary rides the span event; the full roster stays on dc.
+export let EVENT_YDB_DRIVER_PILE_CHANGED = 'ydb.driver.pile.changed'
+
+export let ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE = 'ydb.driver.pile.primary_before'
+export let ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER = 'ydb.driver.pile.primary_after'
