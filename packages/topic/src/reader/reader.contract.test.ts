@@ -658,14 +658,7 @@ test('resolves a pending commit covered by stop_partition committed_offset', asy
 	)
 	await settle()
 
-	let outcome = await Promise.race([
-		commit.then(
-			() => 'resolved',
-			() => 'rejected'
-		),
-		new Promise((resolve) => setTimeout(() => resolve('pending'), 500)),
-	])
-	expect(outcome).toBe('resolved')
+	await expect(commit).resolves.toBeUndefined()
 })
 
 test('sends a commit issued during a graceful stop and completes the handoff', async (tc) => {
@@ -1373,7 +1366,7 @@ test('answers a re-granted partition exactly once when the previous stream hook 
 		onPartitionSessionStart: () => {
 			let d = Promise.withResolvers<void>()
 			calls.push(d)
-			return d.promise.then(() => undefined)
+			return d.promise
 		},
 	})
 

@@ -6,6 +6,7 @@ import {
 	SessionRequestRegistry,
 	createDeferred,
 } from './session-registry.ts'
+import { track } from './session-runtime.fixtures.ts'
 
 // ── createDeferred ─────────────────────────────────────────────────────────────
 
@@ -125,12 +126,10 @@ test('delete removes a pending request silently', async () => {
 	expect(registry.resolve(reqId, fakeResponse)).toBe(false)
 
 	// The deferred promise itself is never settled — that's intentional.
-	// Attach a no-op race so we can confirm nothing settled synchronously.
-	let settled = false
-	deferred.promise.finally(() => (settled = true))
+	let deferredState = track(deferred.promise)
 
 	await Promise.resolve()
-	expect(settled).toBe(false)
+	expect(deferredState.settled).toBe(false)
 })
 
 // ── SessionRequestRegistry — reconnect ────────────────────────────────────────

@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { expect, test } from 'vitest'
 
+import { track } from './promise.fixtures.js'
 import { AsyncQueue } from './queue.js'
 import { createMachineRuntime } from './runtime.js'
 import type { EffectRuntime } from './types.js'
@@ -399,14 +400,10 @@ test('output iterator adds no microtask latency over the raw queue', async () =>
 	// number of microtask turns as one read straight from an AsyncQueue. A wrapper
 	// generator makes the runtime strictly slower and fails this.
 	let turnsToSettle = async (p: Promise<unknown>): Promise<number> => {
-		let settled = false
-		p.then(
-			() => (settled = true),
-			() => (settled = true)
-		)
+		let state = track(p)
 
 		let turns = 0
-		while (!settled && turns < 100) {
+		while (!state.settled && turns < 100) {
 			await Promise.resolve()
 			turns += 1
 		}

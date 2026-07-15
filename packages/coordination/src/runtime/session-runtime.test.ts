@@ -6,6 +6,7 @@ import {
 	sessionStartedResponse,
 	sessionStoppedResponse,
 	settle,
+	track,
 	waitForStatus,
 } from './session-runtime.fixtures.ts'
 
@@ -80,11 +81,11 @@ test('waitReady blocks during reconnect after first ready', async () => {
 
 	// waitReady must block now; the old (resolved) readyDeferred should have been
 	// replaced with a fresh unresolved one when schedule_retry_backoff ran.
-	let resolved = false
-	let waitPromise = runtime.transport.waitReady().then(() => (resolved = true))
+	let waitReady = runtime.transport.waitReady()
+	let waiting = track(waitReady)
 
 	await settle()
-	expect(resolved).toBe(false)
+	expect(waiting.settled).toBe(false)
 
 	// Wait for the retry backoff (5 ms) to fire and open the second stream.
 	let secondStream = await secondStreamP
@@ -92,8 +93,8 @@ test('waitReady blocks during reconnect after first ready', async () => {
 	await waitForStatus(runtime, 'ready')
 
 	// waitReady must have unblocked by now.
-	await waitPromise
-	expect(resolved).toBe(true)
+	await waitReady
+	expect(waiting.settled).toBe(true)
 	expect(runtime.status).toBe('ready')
 
 	runtime.destroy()
@@ -219,19 +220,19 @@ test('close() waits for sessionStopped before resolving', async () => {
 
 	expect(runtime.status).toBe('ready')
 
-	let closed = false
-	let closePromise = runtime.close().then(() => (closed = true))
+	let closing = runtime.close()
+	let closingState = track(closing)
 
 	// FSM moves to closing; close() must still be pending until sessionStopped.
 	await waitForStatus(runtime, 'closing')
-	expect(closed).toBe(false)
+	expect(closingState.settled).toBe(false)
 
 	// Server acknowledges the graceful stop.
 	stream.respond(sessionStoppedResponse())
 	await waitForStatus(runtime, 'closed')
 
-	await closePromise
-	expect(closed).toBe(true)
+	await closing
+	expect(closingState.settled).toBe(true)
 })
 
 test('close() resolves via disconnect when server drops stream instead of sending stopped', async () => {

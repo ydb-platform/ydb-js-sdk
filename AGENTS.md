@@ -217,6 +217,40 @@ test('creates a node', async () => {
 })
 ```
 
+### Assertions
+
+**One canonical style: vitest `expect` matchers.** No `node:assert`, no chai `.to.*`. Every assertion in `*.test.ts` goes through `expect(...)`. The recurring async patterns each have ONE idiom — don't hand-roll a `.then()` capture:
+
+- **A rejecting promise** → `await expect(promise).rejects.*`. oxlint's `vitest(require-to-throw-message)` requires an argument to `.toThrow()`, so pass a matcher or assert the type.
+- **A resolving promise** ("must finish, not hang") → `await expect(promise).resolves.*`, bounded by the test timeout / `tc.signal` — not an ad-hoc `Promise.race([p, setTimeout(...)])`.
+- **"Still pending after a tick"** → the shared `track()` helper, co-located with `settle()` in each package's `*.fixtures.ts` — not a scattered `let flag = false; p.then(() => (flag = true))` probe.
+
+```typescript
+// DO
+await expect(pool.acquire()).rejects.toBeInstanceOf(EndpointsUnavailableError)
+await expect(commit).resolves.toBeUndefined() // liveness: resolves, does not hang
+
+let closing = pool.close()
+let draining = track(closing)
+await settle()
+expect(draining.settled).toBe(false) // still blocked on the in-flight call
+pool.callEnded(1n)
+await closing
+expect(draining.settled).toBe(true)
+
+// DON'T
+let err = await p.then(
+  () => undefined,
+  (e) => e
+) // ❌ hand-rolled reject capture
+let closed = false
+let closing = pool.close().then(() => {
+  closed = true
+}) // ❌ probe flag + trips promise(always-return)
+await settle()
+expect(closed).toBe(false)
+```
+
 ### Test Types
 
 - **Unit tests** (`npm run test:uni`) - fast, no external dependencies, always run
