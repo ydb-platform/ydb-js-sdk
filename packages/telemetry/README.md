@@ -215,20 +215,20 @@ surface is documented in each package's README (`@ydbjs/core`,
 `Discovery.ListEndpoints`, …) so traces stay unambiguous when the Table
 service gets instrumented next to Query.
 
-| Span name            | Channel                             | Kind     | Specific attributes                                                                                                                              |
-| -------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ydb.Discovery`      | `tracing:ydb:driver.discovery`      | CLIENT   | `db.operation.name="Discovery.ListEndpoints"` + (on `discovery.completed`) `ydb.discovery.{added,removed,total}_count`, `ydb.discovery.duration` |
-| `ydb.Transaction`    | `tracing:ydb:query.transaction`     | CLIENT   | `ydb.isolation`, `ydb.idempotent`                                                                                                                |
-| `ydb.Begin`          | `tracing:ydb:query.begin`           | CLIENT   | `db.operation.name="Query.BeginTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.isolation`                                                   |
-| `ydb.ExecuteQuery`   | `tracing:ydb:query.execute`         | CLIENT   | `db.operation.name="Query.ExecuteQuery"`, `db.query.text`? (opt-in), `ydb.session.id`, `ydb.node.id`, `ydb.idempotent`, `ydb.isolation`          |
-| `ydb.Commit`         | `tracing:ydb:query.commit`          | CLIENT   | `db.operation.name="Query.CommitTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.transaction.id`                                             |
-| `ydb.Rollback`       | `tracing:ydb:query.rollback`        | CLIENT   | `db.operation.name="Query.RollbackTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.transaction.id`                                           |
-| `ydb.CreateSession`  | `tracing:ydb:query.session.create`  | CLIENT   | `db.operation.name="Query.CreateSession"`                                                                                                        |
-| `ydb.DeleteSession`  | `tracing:ydb:query.session.delete`  | CLIENT   | `db.operation.name="Query.DeleteSession"`, `ydb.session.id`, `ydb.node.id`, `ydb.session.close.reason`, `ydb.session.uptime`                     |
-| `ydb.AcquireSession` | `tracing:ydb:query.session.acquire` | INTERNAL | _(opt-in via `emitAcquireSessionSpan`)_                                                                                                          |
-| `ydb.RunWithRetry`   | `tracing:ydb:retry.run`             | INTERNAL | `ydb.idempotent` + (on `retry.exhausted`) `ydb.retry.attempts_total`, `ydb.retry.total_duration`                                                 |
-| `ydb.Try`            | `tracing:ydb:retry.attempt`         | INTERNAL | `ydb.retry.attempt`, `ydb.idempotent`, `ydb.retry.backoff` (seconds; `0` for attempt 1)                                                          |
-| `ydb.TokenFetch`     | `tracing:ydb:auth.token.fetch`      | INTERNAL | `ydb.auth.provider`                                                                                                                              |
+| Span name            | Channel                             | Kind     | Specific attributes                                                                                                                                                                                                                   |
+| -------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ydb.Discovery`      | `tracing:ydb:driver.discovery`      | CLIENT   | `db.operation.name="Discovery.ListEndpoints"` + (on `discovery.completed`) `ydb.discovery.{added,removed,total}_count`, `ydb.discovery.duration`, and on a bridge cluster `ydb.discovery.self_location`, `ydb.discovery.primary_pile` |
+| `ydb.Transaction`    | `tracing:ydb:query.transaction`     | CLIENT   | `ydb.isolation`, `ydb.idempotent`                                                                                                                                                                                                     |
+| `ydb.Begin`          | `tracing:ydb:query.begin`           | CLIENT   | `db.operation.name="Query.BeginTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.isolation`                                                                                                                                        |
+| `ydb.ExecuteQuery`   | `tracing:ydb:query.execute`         | CLIENT   | `db.operation.name="Query.ExecuteQuery"`, `db.query.text`? (opt-in), `ydb.session.id`, `ydb.node.id`, `ydb.idempotent`, `ydb.isolation`                                                                                               |
+| `ydb.Commit`         | `tracing:ydb:query.commit`          | CLIENT   | `db.operation.name="Query.CommitTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.transaction.id`                                                                                                                                  |
+| `ydb.Rollback`       | `tracing:ydb:query.rollback`        | CLIENT   | `db.operation.name="Query.RollbackTransaction"`, `ydb.session.id`, `ydb.node.id`, `ydb.transaction.id`                                                                                                                                |
+| `ydb.CreateSession`  | `tracing:ydb:query.session.create`  | CLIENT   | `db.operation.name="Query.CreateSession"`                                                                                                                                                                                             |
+| `ydb.DeleteSession`  | `tracing:ydb:query.session.delete`  | CLIENT   | `db.operation.name="Query.DeleteSession"`, `ydb.session.id`, `ydb.node.id`, `ydb.session.close.reason`, `ydb.session.uptime`                                                                                                          |
+| `ydb.AcquireSession` | `tracing:ydb:query.session.acquire` | INTERNAL | _(opt-in via `emitAcquireSessionSpan`)_                                                                                                                                                                                               |
+| `ydb.RunWithRetry`   | `tracing:ydb:retry.run`             | INTERNAL | `ydb.idempotent` + (on `retry.exhausted`) `ydb.retry.attempts_total`, `ydb.retry.total_duration`                                                                                                                                      |
+| `ydb.Try`            | `tracing:ydb:retry.attempt`         | INTERNAL | `ydb.retry.attempt`, `ydb.idempotent`, `ydb.retry.backoff` (seconds; `0` for attempt 1)                                                                                                                                               |
+| `ydb.TokenFetch`     | `tracing:ydb:auth.token.fetch`      | INTERNAL | `ydb.auth.provider`                                                                                                                                                                                                                   |
 
 Identity attributes (`db.system.name="ydb"`, `db.namespace`, `server.address`,
 `server.port`) flow through the channel payload — producers stamp them at
@@ -251,13 +251,17 @@ When a connection-pool event fires while a tracing channel span is active
 as a `span.addEvent`. When no span is active, the event is dropped by the
 traces pipeline — the metrics pipeline picks it up regardless.
 
-| Event name                           | Channel                              | Attributes                                                     |
-| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------- |
-| `ydb.driver.connection.added`        | `ydb:driver.connection.added`        | `ydb.node.id`, `ydb.node.dc`, `network.peer.address`           |
-| `ydb.driver.connection.pessimized`   | `ydb:driver.connection.pessimized`   | `… + ydb.driver.connection.pessimization.until` (unix seconds) |
-| `ydb.driver.connection.unpessimized` | `ydb:driver.connection.unpessimized` | `… + ydb.driver.connection.pessimization.duration` (seconds)   |
-| `ydb.driver.connection.retired`      | `ydb:driver.connection.retired`      | `… + ydb.driver.connection.retire.reason`                      |
-| `ydb.driver.connection.removed`      | `ydb:driver.connection.removed`      | `… + ydb.driver.connection.remove.reason`                      |
+The connection events additionally carry `ydb.node.pile` on a bridge (2DC)
+cluster (omitted when the pile name is empty).
+
+| Event name                           | Channel                              | Attributes                                                                                                           |
+| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `ydb.driver.connection.added`        | `ydb:driver.connection.added`        | `ydb.node.id`, `ydb.node.dc`, `ydb.node.pile`?, `network.peer.address`                                               |
+| `ydb.driver.connection.pessimized`   | `ydb:driver.connection.pessimized`   | `ydb.node.id`, `ydb.node.dc`, `ydb.node.pile`?, `network.peer.address`                                               |
+| `ydb.driver.connection.unpessimized` | `ydb:driver.connection.unpessimized` | `… + ydb.driver.connection.pessimization.duration` (seconds)                                                         |
+| `ydb.driver.connection.retired`      | `ydb:driver.connection.retired`      | `… + ydb.driver.connection.retire.reason`                                                                            |
+| `ydb.driver.connection.removed`      | `ydb:driver.connection.removed`      | `… + ydb.driver.connection.remove.reason`                                                                            |
+| `ydb.driver.pile.changed`            | `ydb:driver.pile.changed`            | `ydb.driver.pile.primary_before`?, `ydb.driver.pile.primary_after`? (bridge only; the structured roster stays on dc) |
 
 ## Metrics
 
@@ -281,23 +285,32 @@ payload includes a driver — most channels do).
 | `ydb.auth.token.expirations`           | Counter   | `{expiration}` | `ydb.auth.provider`                                                                  | `ydb:auth.token.expired`                                                                                                                                                                                                                                                                                                    |
 | `ydb.retry.attempts`                   | Counter   | `{attempt}`    | `ydb.idempotent`, `ydb.retry.outcome` ∈ {success, retried, exhausted, non_retryable} | `ydb:retry.attempt.completed`                                                                                                                                                                                                                                                                                               |
 | `ydb.retry.duration`                   | Histogram | `s`            | `ydb.idempotent`, `ydb.retry.outcome`                                                | `tracing:ydb:retry.run.asyncEnd` / `.error` (end-to-end, including backoffs)                                                                                                                                                                                                                                                |
+| `ydb.driver.pile.fallbacks`            | Counter   | `{event}`      | `ydb.pile.fallback.active` (bool — true entered fallback, false recovered)           | `ydb:driver.pile.fallback` (bridge only; edge-triggered when `preferPrimaryPile` starts/stops serving from the SYNCHRONIZED fallback tier)                                                                                                                                                                                  |
+| `ydb.driver.pile.changes`              | Counter   | `{event}`      | _(identity only)_                                                                    | `ydb:driver.pile.changed` (bridge only; the pile roster/statuses changed)                                                                                                                                                                                                                                                   |
 
 ### Observable instruments
 
 State for these is reconstructed from lifecycle events in two per-driver
 registries (`ConnectionPoolRegistry` for the gRPC connection pool,
-`SessionPoolRegistry` for the query session pool). Late-attaching subscribers
-(those registered after a driver is already `ready`) miss the initial state —
-that's an explicit trade-off vs. introducing a "snapshot" channel. Register
-telemetry at process start (the standard pattern) to avoid the gap.
+`SessionPoolRegistry` for the query session pool). The `ydb.driver.pool.*`
+gauges are the exception: they mirror the whole-snapshot `pool.stats` payload
+directly (not reassembled from deltas), so a late subscriber recovers the
+routing view on the next routable-set change rather than staying blind. The
+per-connection / per-session gauges still miss the initial state of an
+already-`ready` driver — an explicit trade-off vs. a per-entity snapshot
+channel. Register telemetry at process start (the standard pattern) to avoid
+the gap.
 
-| Instrument                          | Kind                    | Unit           | Tags                                                   | State updated by                                                                                              |
-| ----------------------------------- | ----------------------- | -------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `ydb.driver.connection.count`       | ObservableUpDownCounter | `{connection}` | `ydb.connection.state` ∈ {`live`, `pessimized`}        | `ydb:driver.connection.{added,pessimized,unpessimized,retired,removed}`; entry deleted on `ydb:driver.closed` |
-| `ydb.query.session.count`           | ObservableUpDownCounter | `{session}`    | `ydb.session.state` ∈ {`idle`, `acquired`, `creating`} | `ydb:query.session.{created,closed,acquired,released}` + hooks on `tracing:ydb:query.session.create`          |
-| `ydb.query.session.acquire.pending` | ObservableUpDownCounter | `{request}`    | _(identity only)_                                      | `ydb:query.session.waiter.{enqueued,dequeued}`                                                                |
-| `ydb.query.session.max`             | ObservableGauge         | `{session}`    | _(identity only)_                                      | `ydb:query.session.pool.opened` snapshot                                                                      |
-| `ydb.query.session.min`             | ObservableGauge         | `{session}`    | _(identity only)_                                      | `ydb:query.session.pool.opened` snapshot                                                                      |
+| Instrument                          | Kind                    | Unit           | Tags                                                                                                             | State updated by                                                                                                                    |
+| ----------------------------------- | ----------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `ydb.driver.connection.count`       | ObservableUpDownCounter | `{connection}` | `ydb.connection.state` ∈ {`live`, `pessimized`}                                                                  | `ydb:driver.connection.{added,pessimized,unpessimized,retired,removed}`; entry deleted on `ydb:driver.closed`                       |
+| `ydb.query.session.count`           | ObservableUpDownCounter | `{session}`    | `ydb.session.state` ∈ {`idle`, `acquired`, `creating`}                                                           | `ydb:query.session.{created,closed,acquired,released}` + hooks on `tracing:ydb:query.session.create`                                |
+| `ydb.query.session.acquire.pending` | ObservableUpDownCounter | `{request}`    | _(identity only)_                                                                                                | `ydb:query.session.waiter.{enqueued,dequeued}`                                                                                      |
+| `ydb.query.session.max`             | ObservableGauge         | `{session}`    | _(identity only)_                                                                                                | `ydb:query.session.pool.opened` snapshot                                                                                            |
+| `ydb.query.session.min`             | ObservableGauge         | `{session}`    | _(identity only)_                                                                                                | `ydb:query.session.pool.opened` snapshot                                                                                            |
+| `ydb.driver.pool.routable`          | ObservableGauge         | `{connection}` | `ydb.routing.tier` ∈ {`prefer`, `fallback`}, `ydb.routing.prefer_primary_pile`?, `ydb.routing.locality_enabled`? | `ydb:driver.connection.pool.stats` snapshot; routing mode folded in from `ydb:driver.connection.pool.opened`                        |
+| `ydb.driver.pool.pessimized`        | ObservableGauge         | `{connection}` | _(identity only)_                                                                                                | `ydb:driver.connection.pool.stats` snapshot (pool-authoritative; complements the event-reconstructed `ydb.driver.connection.count`) |
+| `ydb.driver.pool.nodes`             | ObservableGauge         | `{node}`       | `ydb.pile.name`, `ydb.pile.status`                                                                               | `ydb:driver.connection.pool.stats` snapshot (bridge only; empty piles off-bridge)                                                   |
 
 ### Histogram bucket defaults
 
@@ -333,6 +346,8 @@ All tag values are bounded and safe to ingest at high request rates:
 - `ydb.session.close.reason` — 4 strings (`pool_close`, `attach_failed`, `stream_closed`, `stream_error`)
 - `ydb.retry.outcome` — 4 strings
 - `ydb.connection.state` — 2 strings
+- `ydb.routing.tier` — 2 strings (`prefer`, `fallback`); `ydb.routing.prefer_primary_pile` / `ydb.routing.locality_enabled` / `ydb.pile.fallback.active` — booleans
+- `ydb.pile.name` / `ydb.pile.status` — bounded by the cluster's bridge topology (a handful of piles, 7 statuses)
 - `ydb.auth.provider` — bounded by the credential providers configured in the process
 - identity tags (`db.namespace`, `server.address`, `server.port`) — bounded by the deployment
 

@@ -10,11 +10,15 @@ import {
 	ATTR_YDB_AUTH_PROVIDER,
 	ATTR_YDB_DISCOVERY_ADDED_COUNT,
 	ATTR_YDB_DISCOVERY_DURATION,
+	ATTR_YDB_DISCOVERY_PRIMARY_PILE,
 	ATTR_YDB_DISCOVERY_REMOVED_COUNT,
+	ATTR_YDB_DISCOVERY_SELF_LOCATION,
 	ATTR_YDB_DISCOVERY_TOTAL_COUNT,
 	ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION,
 	ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON,
 	ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON,
+	ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER,
+	ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE,
 	ATTR_YDB_IDEMPOTENT,
 	ATTR_YDB_ISOLATION,
 	ATTR_YDB_NODE_DC,
@@ -33,6 +37,7 @@ import {
 	EVENT_YDB_DRIVER_CONNECTION_REMOVED,
 	EVENT_YDB_DRIVER_CONNECTION_RETIRED,
 	EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED,
+	EVENT_YDB_DRIVER_PILE_CHANGED,
 } from './semconv/index.js'
 
 // `ctx: never` makes every row's stricter `(ctx: T) => Attributes` assignable
@@ -193,6 +198,8 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 				removedCount: number
 				totalCount: number
 				duration: number
+				selfLocation: string
+				primaryPile?: string
 			},
 			span
 		) => {
@@ -201,6 +208,21 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 				[ATTR_YDB_DISCOVERY_REMOVED_COUNT]: msg.removedCount,
 				[ATTR_YDB_DISCOVERY_TOTAL_COUNT]: msg.totalCount,
 				[ATTR_YDB_DISCOVERY_DURATION]: msg.duration / 1000,
+				// Empty / absent on a non-bridge cluster — dropped by the OTel SDK.
+				[ATTR_YDB_DISCOVERY_SELF_LOCATION]: msg.selfLocation || undefined,
+				[ATTR_YDB_DISCOVERY_PRIMARY_PILE]: msg.primaryPile,
+			})
+		},
+	},
+	{
+		// Fires inside publishRoundDiagnostics — within the discovery span — so it
+		// attaches. The before/after rosters are structured (name+status pairs);
+		// only the scalar PRIMARY-pile summary is span-attribute material.
+		channel: 'ydb:driver.pile.changed',
+		apply: (msg: { primaryBefore?: string; primaryAfter?: string }, span) => {
+			span.addEvent(EVENT_YDB_DRIVER_PILE_CHANGED, {
+				[ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE]: msg.primaryBefore,
+				[ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER]: msg.primaryAfter,
 			})
 		},
 	},
