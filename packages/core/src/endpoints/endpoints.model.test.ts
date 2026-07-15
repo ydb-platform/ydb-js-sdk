@@ -101,6 +101,9 @@ let checkInvariants = function checkInvariants(sim: Sim, seed: number, stepIndex
 
 	let snapshot = buildSnapshot(ctx)
 
+	// The precomputed count must always match the actual pessimized set.
+	expect(snapshot.pessimizedCount, `${label} pessimizedCount`).toBe(pessimizedCount)
+
 	// Every discovered node is reachable by affinity.
 	for (let nodeId of ctx.byNodeId.keys()) {
 		expect(snapshot.byNodeId.has(nodeId), `${label} affinity ${nodeId}`).toBe(true)

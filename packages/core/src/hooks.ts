@@ -94,7 +94,12 @@ export interface DiscoveryEvent {
 	removed: ReadonlyArray<EndpointInfo>
 	/** Round duration in milliseconds. */
 	duration: number
-	/** The full routable endpoint set after this round. */
+	/**
+	 * The full known endpoint set after this round — includes pessimized and
+	 * retired (affinity-only) entries, not just the balanced-routable ones, so a
+	 * node retired by this round appears in both `removed` and here until it is
+	 * reaped.
+	 */
 	endpoints: ReadonlyArray<EndpointInfo>
 }
 
