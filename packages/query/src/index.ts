@@ -19,6 +19,7 @@ import { Query } from './query.js'
 import { ctx } from './ctx.js'
 import { Fragment, UnsafeString, fragment, identifier, join, unsafe, yql } from './yql.js'
 import { SessionPool, type SessionPoolOptions, sessionAcquireCh } from './session-pool.js'
+import { type VirtualTimestamp, virtualTimestampFromProto } from './virtual-timestamp.js'
 
 type TransactionContext = {
 	driver: DriverIdentity
@@ -72,8 +73,17 @@ interface SessionContextCallback<T> {
 }
 
 interface TransactionExecuteOptions extends Abortable {
-	isolation?: 'serializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite'
+	isolation?:
+		| 'serializableReadWrite'
+		| 'strictSerializableReadWrite'
+		| 'snapshotReadOnly'
+		| 'snapshotReadWrite'
 	idempotent?: boolean
+}
+
+export type TransactionResult<T> = {
+	result: T
+	commitTimestamp?: VirtualTimestamp
 }
 
 interface TransactionContextCallback<T> {
@@ -100,6 +110,22 @@ export interface QueryClient extends SQL, AsyncDisposable {
 		options: TransactionExecuteOptions,
 		fn: TransactionContextCallback<T>
 	): Promise<T>
+
+	beginWithTimestamp<T = unknown>(
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
+	beginWithTimestamp<T = unknown>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
+
+	transactionWithTimestamp<T = unknown>(
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T = unknown>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
 
 	/**
 	 * Create an UnsafeString that represents a DB identifier (table, column).
@@ -194,6 +220,24 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		options: TransactionExecuteOptions,
 		fn: TransactionContextCallback<T>
 	): Promise<T>
+	function txIml<T = unknown>(
+		optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>,
+		fn?: TransactionContextCallback<T>
+	): Promise<T> {
+		let transaction =
+			typeof optOrFn === 'function'
+				? txWithTimestampImpl(optOrFn)
+				: txWithTimestampImpl(optOrFn, fn!)
+		return transaction.then(({ result }) => result)
+	}
+
+	function txWithTimestampImpl<T = unknown>(
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
+	function txWithTimestampImpl<T = unknown>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
 	/**
 	 * Executes a transactional operation with automatic session and transaction management,
 	 * including retries on retryable errors.
@@ -219,10 +263,10 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 	 * - The transaction isolation level defaults to "serializableReadWrite" if not specified.
 	 * - The function uses the driver's QueryServiceDefinition to interact with YDB.
 	 */
-	async function txIml<T = unknown>(
+	async function txWithTimestampImpl<T = unknown>(
 		optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>,
 		fn?: TransactionContextCallback<T>
-	): Promise<T> {
+	): Promise<TransactionResult<T>> {
 		dbg.log('starting transaction')
 		await driver.ready()
 		// Snapshot the parent context once — we'll build a fresh attempt-scoped
@@ -355,7 +399,11 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 
 				committed = true
 				dbg.log('transaction committed successfully')
-				return result
+				let commitTimestamp =
+					options.isolation === 'strictSerializableReadWrite'
+						? virtualTimestampFromProto(commitResult.commitTimestamp, driver.identity)
+						: undefined
+				return { result, ...(commitTimestamp && { commitTimestamp }) }
 			} catch (error) {
 				dbg.log('transaction error: %O', error)
 
@@ -448,6 +496,8 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 		do: doImpl,
 		begin: txIml,
 		transaction: txIml,
+		beginWithTimestamp: txWithTimestampImpl,
+		transactionWithTimestamp: txWithTimestampImpl,
 		identifier: identifier,
 		unsafe: unsafe,
 		fragment: fragment,
@@ -459,5 +509,6 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 }
 
 export { type Query } from './query.ts'
+export { type VirtualTimestamp } from './virtual-timestamp.js'
 export { identifier, unsafe, UnsafeString, fragment, join, Fragment } from './yql.js'
 export { type SessionPoolOptions } from './session-pool.js'
