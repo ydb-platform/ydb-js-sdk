@@ -251,10 +251,24 @@ test('compares unsigned uint64 timestamps lexicographically and rejects another 
 	expect(low.compare(high)).toBe(-1)
 	expect(high.compare(low)).toBe(1)
 	expect(sameStep.compare(low)).toBe(-1)
+	expect(low.compare(sameStep)).toBe(1)
 	expect(low.compare(equal)).toBe(0)
 	expect(() => low.compare(foreign)).toThrow('same Driver')
 	expect(() => low.compare(separate)).toThrow('same Driver')
 	expect(() =>
 		low.compare({ planStep: low.planStep, txId: low.txId, compare: low.compare })
 	).toThrow('same Driver')
+})
+
+test('rejects timestamps outside the unsigned 64-bit range', () => {
+	let driver = { database: '/local', address: 'localhost' }
+	let beyondUint64 = 1n << 64n
+	for (let value of [
+		{ planStep: -1n, txId: 0n },
+		{ planStep: beyondUint64, txId: 0n },
+		{ planStep: 0n, txId: -1n },
+		{ planStep: 0n, txId: beyondUint64 },
+	]) {
+		expect(() => virtualTimestampFromProto(value, driver)).toThrow('uint64')
+	}
 })
