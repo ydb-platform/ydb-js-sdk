@@ -8,6 +8,7 @@ import {
 	type QueryExecutor,
 	type Transaction,
 	type TransactionOptions,
+	type TransactionResult,
 } from './client.js'
 import { Query } from './query.js'
 import type { ResultTypes } from './result.js'
@@ -65,6 +66,11 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 		options: TransactionExecuteOptions,
 		fn: TransactionContextCallback<T>
 	): Promise<T>
+
+	beginWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	beginWithTimestamp<T>(options: TransactionExecuteOptions, fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T>(options: TransactionExecuteOptions, fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
 
 	/**
 	 * Create an UnsafeString that represents a DB identifier (table, column).
@@ -150,6 +156,13 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
 		callback?: TransactionContextCallback<T>
 	): Promise<T> {
+		return (await transactWithTimestamp(optionsOrCallback, callback)).result
+	}
+
+	async function transactWithTimestamp<T>(
+		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
+		callback?: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>> {
 		if (typeof optionsOrCallback === 'function' && callback !== undefined)
 			throw new TypeError('Use transaction(options, callback) when passing options.')
 		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
@@ -159,7 +172,7 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		let callbackFailed = false
 		let callbackError: unknown
 		return client
-			.retryTransaction(options, (transaction, signal) =>
+			.retryTransactionWithTimestamp(options, (transaction, signal) =>
 				ctx.run({ client, executor: transaction, signal }, async () => {
 					callbackFailed = false
 					try {
@@ -206,6 +219,8 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		do: run,
 		begin: transact,
 		transaction: transact,
+		beginWithTimestamp: transactWithTimestamp,
+		transactionWithTimestamp: transactWithTimestamp,
 		identifier,
 		unsafe,
 		fragment,
@@ -214,6 +229,7 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 }
 
 export { type Query } from './query.js'
+export { type VirtualTimestamp } from './virtual-timestamp.js'
 export { identifier, unsafe, UnsafeString, fragment, join, Fragment } from './yql.js'
 export {
 	type SessionPoolOptions,
@@ -237,6 +253,7 @@ export type {
 	TransactionStatementOptions,
 	OperationOptions,
 	TransactionOptions,
+	TransactionResult,
 	Transaction,
 	Isolation,
 } from './client.js'

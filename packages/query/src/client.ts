@@ -38,6 +38,7 @@ import {
 } from './session-pool.js'
 import { type QueryPart, QueryStream, type QuerySummary } from './stream.js'
 import { type QueryResult, type ResultTypes, collect } from './result.js'
+import { type VirtualTimestamp, virtualTimestampFromProto } from './virtual-timestamp.js'
 
 export { type QueryStream, type QueryPart, type QuerySummary } from './stream.js'
 export type { QueryResult, ResultSet, ResultTypes } from './result.js'
@@ -46,6 +47,7 @@ export type { QueryParameters } from './parameters.js'
 export type Isolation =
 	| 'implicit'
 	| 'serializableReadWrite'
+	| 'strictSerializableReadWrite'
 	| 'snapshotReadOnly'
 	| 'snapshotReadWrite'
 	| 'onlineReadOnly'
@@ -73,7 +75,12 @@ export interface StatementOptions extends Pick<OperationOptions, 'signal' | 'tim
 }
 
 export interface TransactionOptions extends OperationOptions {
-	isolation?: 'serializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite' | undefined
+	isolation?: 'serializableReadWrite' | 'strictSerializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite' | undefined
+}
+
+export type TransactionResult<T> = {
+	result: T
+	commitTimestamp?: VirtualTimestamp
 }
 
 export interface QueryClientOptions {
@@ -204,6 +211,7 @@ export function prepareQuery(
 		![
 			'implicit',
 			'serializableReadWrite',
+			'strictSerializableReadWrite',
 			'snapshotReadOnly',
 			'snapshotReadWrite',
 			'onlineReadOnly',
@@ -648,6 +656,21 @@ export class QueryClient implements AsyncDisposable, Disposable {
 			| ((transaction: Transaction, signal: AbortSignal) => Promise<T>),
 		callback?: (transaction: Transaction, signal: AbortSignal) => Promise<T>
 	): Promise<T> {
+		return (await this.#retryTransaction(optionsOrCallback, callback)).result
+	}
+
+	/** @internal Used by the SQL facade to expose commit metadata. */
+	retryTransactionWithTimestamp<T>(
+		options: TransactionOptions,
+		callback: (transaction: Transaction, signal: AbortSignal) => Promise<T>
+	): Promise<TransactionResult<T>> {
+		return this.#retryTransaction(options, callback)
+	}
+
+	async #retryTransaction<T>(
+		optionsOrCallback: TransactionOptions | ((transaction: Transaction, signal: AbortSignal) => Promise<T>),
+		callback?: (transaction: Transaction, signal: AbortSignal) => Promise<T>
+	): Promise<TransactionResult<T>> {
 		if (typeof optionsOrCallback === 'function' && callback !== undefined)
 			throw new TypeError('Use retryTransaction(options, callback).')
 		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
@@ -656,7 +679,7 @@ export class QueryClient implements AsyncDisposable, Disposable {
 			throw new TypeError('retryTransaction() requires an async callback.')
 		validateOperation(options)
 		let isolation = options.isolation ?? 'serializableReadWrite'
-		if (!['serializableReadWrite', 'snapshotReadOnly', 'snapshotReadWrite'].includes(isolation))
+		if (!['serializableReadWrite', 'strictSerializableReadWrite', 'snapshotReadOnly', 'snapshotReadWrite'].includes(isolation))
 			throw new TypeError('Unsupported transaction isolation.')
 		return transactionCh.tracePromise(
 			() =>
@@ -703,6 +726,7 @@ export class QueryClient implements AsyncDisposable, Disposable {
 					let failed = false
 					let failure: unknown
 					let result: T | undefined
+					let commitTimestamp: VirtualTimestamp | undefined
 					try {
 						signal.throwIfAborted()
 						result = await abortable(
@@ -746,6 +770,9 @@ export class QueryClient implements AsyncDisposable, Disposable {
 						}
 						committed = true
 						attempt.committed = true
+						if (isolation === 'strictSerializableReadWrite') {
+							commitTimestamp = virtualTimestampFromProto(response.commitTimestamp, this.#driver.identity)
+						}
 					} catch (cause) {
 						attempt.seal()
 						let error = attempt.failure(cause)
@@ -819,7 +846,7 @@ export class QueryClient implements AsyncDisposable, Disposable {
 						if (committed) throw new TransactionCompletionError(failure)
 						throw failure
 					}
-					return result as T
+					return { result: result as T, ...(commitTimestamp && { commitTimestamp }) }
 				}),
 			{ driver: this.#driver.identity, isolation, idempotent: options.idempotent ?? false }
 		)
@@ -972,6 +999,7 @@ async function* readQuery<Row>(
 		void traced.catch(() => {})
 	}
 	try {
+		let trailingCommitTimestamp: Parameters<typeof virtualTimestampFromProto>[0]
 		let stream = rpc.executeQuery([session.encodedId, bytes], {
 			signal,
 			onTrailer: (metadata) => {
@@ -992,6 +1020,7 @@ async function* readQuery<Row>(
 				continue
 			}
 			if (serverError) continue
+			trailingCommitTimestamp = part.commitTimestamp
 			if (part.execStats) summary.stats = part.execStats
 			if (!part.resultSet) continue
 			let index = Number(part.resultSetIndex)
@@ -1024,6 +1053,9 @@ async function* readQuery<Row>(
 		if (serverError) {
 			if (fatalSessionStatus(serverError.code)) session.invalidate()
 			throw serverError
+		}
+		if (options.isolation === 'strictSerializableReadWrite') {
+			summary.commitTimestamp = virtualTimestampFromProto(trailingCommitTimestamp, driver.identity)
 		}
 		complete(summary)
 		done?.resolve()
