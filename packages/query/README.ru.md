@@ -117,6 +117,8 @@ const { result, commitTimestamp } = await sql.beginWithTimestamp(
 
 Время коммита приходит только для успешной StrictSerializableRW-транзакции с эффектами записи. Поля `planStep` и `txId` имеют тип `bigint` и сохраняют полный диапазон `uint64`. Метод `compare` сравнивает сначала `planStep`, затем `txId`. Сравнивать можно только значения, полученные через один и тот же `Driver`: SDK не может проверить, что разные драйверы подключены к одной БД.
 
+Интеграционные тесты обоих путей timestamp запускаются с `YDB_STRICT_RW_INTEGRATION=1` и `YDB_CONNECTION_STRING`, указывающим на сервер с включённым `TableServiceConfig.EnableStrictSerializableIsolation`. На общем CI-сервере этот параметр сейчас выключен.
+
 ### Продвинутое: несколько наборов результатов, стриминг и события
 
 ```ts
