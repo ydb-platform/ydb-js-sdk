@@ -6,17 +6,20 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Duration } from "../google/protobuf/duration_pb.js";
 import { file_google_protobuf_duration } from "../google/protobuf/duration_pb.js";
+import { file_protos_annotations_sensitive } from "./annotations/sensitive_pb.js";
 import { file_protos_annotations_validation } from "./annotations/validation_pb.js";
 import type { IssueMessage } from "./ydb_issue_message_pb.js";
 import { file_protos_ydb_issue_message } from "./ydb_issue_message_pb.js";
+import type { VirtualTimestamp } from "./ydb_common_pb.js";
+import { file_protos_ydb_common } from "./ydb_common_pb.js";
+import type { ArrowFormatSettings } from "./ydb_formats_pb.js";
+import { file_protos_ydb_formats } from "./ydb_formats_pb.js";
 import type { OperationParams } from "./ydb_operation_pb.js";
 import { file_protos_ydb_operation } from "./ydb_operation_pb.js";
 import type { QueryStats } from "./ydb_query_stats_pb.js";
 import { file_protos_ydb_query_stats } from "./ydb_query_stats_pb.js";
 import type { StatusIds_StatusCode } from "./ydb_status_codes_pb.js";
 import { file_protos_ydb_status_codes } from "./ydb_status_codes_pb.js";
-import type { ArrowFormatSettings } from "./ydb_formats_pb.js";
-import { file_protos_ydb_formats } from "./ydb_formats_pb.js";
 import type { Column, ResultSet, ResultSet_Format, TypedValue } from "./ydb_value_pb.js";
 import { file_protos_ydb_value } from "./ydb_value_pb.js";
 import type { Message } from "@bufbuild/protobuf";
@@ -25,7 +28,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file protos/ydb_query.proto.
  */
 export const file_protos_ydb_query: GenFile = /*@__PURE__*/
-  fileDesc("ChZwcm90b3MveWRiX3F1ZXJ5LnByb3RvEglZZGIuUXVlcnkiFgoUQ3JlYXRlU2Vzc2lvblJlcXVlc3QiowEKFUNyZWF0ZVNlc3Npb25SZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIbCgpzZXNzaW9uX2lkGAMgASgJQgei5ioDGIAIEhkKB25vZGVfaWQYBCABKANCCLLmKgQ+PSAwIjMKFERlbGV0ZVNlc3Npb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgiawoVRGVsZXRlU2Vzc2lvblJlc3BvbnNlEikKBnN0YXR1cxgBIAEoDjIZLllkYi5TdGF0dXNJZHMuU3RhdHVzQ29kZRInCgZpc3N1ZXMYAiADKAsyFy5ZZGIuSXNzdWUuSXNzdWVNZXNzYWdlIjMKFEF0dGFjaFNlc3Npb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgiFQoTU2Vzc2lvblNodXRkb3duSGludCISChBOb2RlU2h1dGRvd25IaW50IuQBCgxTZXNzaW9uU3RhdGUSKQoGc3RhdHVzGAEgASgOMhkuWWRiLlN0YXR1c0lkcy5TdGF0dXNDb2RlEicKBmlzc3VlcxgCIAMoCzIXLllkYi5Jc3N1ZS5Jc3N1ZU1lc3NhZ2USOgoQc2Vzc2lvbl9zaHV0ZG93bhgDIAEoCzIeLllkYi5RdWVyeS5TZXNzaW9uU2h1dGRvd25IaW50SAASNAoNbm9kZV9zaHV0ZG93bhgEIAEoCzIbLllkYi5RdWVyeS5Ob2RlU2h1dGRvd25IaW50SABCDgoMc2Vzc2lvbl9oaW50IhoKGFNlcmlhbGl6YWJsZU1vZGVTZXR0aW5ncyI2ChJPbmxpbmVNb2RlU2V0dGluZ3MSIAoYYWxsb3dfaW5jb25zaXN0ZW50X3JlYWRzGAEgASgIIhMKEVN0YWxlTW9kZVNldHRpbmdzIhYKFFNuYXBzaG90TW9kZVNldHRpbmdzIhgKFlNuYXBzaG90UldNb2RlU2V0dGluZ3Mi3QIKE1RyYW5zYWN0aW9uU2V0dGluZ3MSRgoXc2VyaWFsaXphYmxlX3JlYWRfd3JpdGUYASABKAsyIy5ZZGIuUXVlcnkuU2VyaWFsaXphYmxlTW9kZVNldHRpbmdzSAASOQoQb25saW5lX3JlYWRfb25seRgCIAEoCzIdLllkYi5RdWVyeS5PbmxpbmVNb2RlU2V0dGluZ3NIABI3Cg9zdGFsZV9yZWFkX29ubHkYAyABKAsyHC5ZZGIuUXVlcnkuU3RhbGVNb2RlU2V0dGluZ3NIABI9ChJzbmFwc2hvdF9yZWFkX29ubHkYBCABKAsyHy5ZZGIuUXVlcnkuU25hcHNob3RNb2RlU2V0dGluZ3NIABJAChNzbmFwc2hvdF9yZWFkX3dyaXRlGAUgASgLMiEuWWRiLlF1ZXJ5LlNuYXBzaG90UldNb2RlU2V0dGluZ3NIAEIJCgd0eF9tb2RlIoQBChJUcmFuc2FjdGlvbkNvbnRyb2wSGAoFdHhfaWQYASABKAlCB6LmKgMYgAhIABIyCghiZWdpbl90eBgCIAEoCzIeLllkYi5RdWVyeS5UcmFuc2FjdGlvblNldHRpbmdzSAASEQoJY29tbWl0X3R4GAogASgIQg0KC3R4X3NlbGVjdG9yImsKF0JlZ2luVHJhbnNhY3Rpb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgSMwoLdHhfc2V0dGluZ3MYAiABKAsyHi5ZZGIuUXVlcnkuVHJhbnNhY3Rpb25TZXR0aW5ncyImCg9UcmFuc2FjdGlvbk1ldGESEwoCaWQYASABKAlCB6LmKgMYgAgimwEKGEJlZ2luVHJhbnNhY3Rpb25SZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIrCgd0eF9tZXRhGAMgASgLMhouWWRiLlF1ZXJ5LlRyYW5zYWN0aW9uTWV0YSJPChhDb21taXRUcmFuc2FjdGlvblJlcXVlc3QSGwoKc2Vzc2lvbl9pZBgBIAEoCUIHouYqAxiACBIWCgV0eF9pZBgCIAEoCUIHouYqAxiACCJvChlDb21taXRUcmFuc2FjdGlvblJlc3BvbnNlEikKBnN0YXR1cxgBIAEoDjIZLllkYi5TdGF0dXNJZHMuU3RhdHVzQ29kZRInCgZpc3N1ZXMYAiADKAsyFy5ZZGIuSXNzdWUuSXNzdWVNZXNzYWdlIlEKGlJvbGxiYWNrVHJhbnNhY3Rpb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgSFgoFdHhfaWQYAiABKAlCB6LmKgMYgAgicQobUm9sbGJhY2tUcmFuc2FjdGlvblJlc3BvbnNlEikKBnN0YXR1cxgBIAEoDjIZLllkYi5TdGF0dXNJZHMuU3RhdHVzQ29kZRInCgZpc3N1ZXMYAiADKAsyFy5ZZGIuSXNzdWUuSXNzdWVNZXNzYWdlIj8KDFF1ZXJ5Q29udGVudBIhCgZzeW50YXgYASABKA4yES5ZZGIuUXVlcnkuU3ludGF4EgwKBHRleHQYAiABKAkitgUKE0V4ZWN1dGVRdWVyeVJlcXVlc3QSGwoKc2Vzc2lvbl9pZBgBIAEoCUIHouYqAxiACBImCglleGVjX21vZGUYAiABKA4yEy5ZZGIuUXVlcnkuRXhlY01vZGUSMQoKdHhfY29udHJvbBgDIAEoCzIdLllkYi5RdWVyeS5UcmFuc2FjdGlvbkNvbnRyb2wSMAoNcXVlcnlfY29udGVudBgEIAEoCzIXLllkYi5RdWVyeS5RdWVyeUNvbnRlbnRIABJCCgpwYXJhbWV0ZXJzGAYgAygLMi4uWWRiLlF1ZXJ5LkV4ZWN1dGVRdWVyeVJlcXVlc3QuUGFyYW1ldGVyc0VudHJ5EigKCnN0YXRzX21vZGUYByABKA4yFC5ZZGIuUXVlcnkuU3RhdHNNb2RlEh4KFmNvbmN1cnJlbnRfcmVzdWx0X3NldHMYCCABKAgSNAoZcmVzcG9uc2VfcGFydF9saW1pdF9ieXRlcxgJIAEoA0IRsuYqDVswOyAzMzU1NDQzMl0SDwoHcG9vbF9pZBgKIAEoCRIhCg9zdGF0c19wZXJpb2RfbXMYCyABKANCCLLmKgQ+PSAwEj0KFXNjaGVtYV9pbmNsdXNpb25fbW9kZRgMIAEoDjIeLllkYi5RdWVyeS5TY2hlbWFJbmNsdXNpb25Nb2RlEjAKEXJlc3VsdF9zZXRfZm9ybWF0GA0gASgOMhUuWWRiLlJlc3VsdFNldC5Gb3JtYXQSPwoVYXJyb3dfZm9ybWF0X3NldHRpbmdzGA4gASgLMiAuWWRiLkZvcm1hdHMuQXJyb3dGb3JtYXRTZXR0aW5ncxpCCg9QYXJhbWV0ZXJzRW50cnkSCwoDa2V5GAEgASgJEh4KBXZhbHVlGAIgASgLMg8uWWRiLlR5cGVkVmFsdWU6AjgBQgcKBXF1ZXJ5Ii0KDVJlc3VsdFNldE1ldGESHAoHY29sdW1ucxgBIAMoCzILLllkYi5Db2x1bW4ikwIKGEV4ZWN1dGVRdWVyeVJlc3BvbnNlUGFydBIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIiChByZXN1bHRfc2V0X2luZGV4GAMgASgDQgiy5ioEPj0gMBIiCgpyZXN1bHRfc2V0GAQgASgLMg4uWWRiLlJlc3VsdFNldBIuCgpleGVjX3N0YXRzGAUgASgLMhouWWRiLlRhYmxlU3RhdHMuUXVlcnlTdGF0cxIrCgd0eF9tZXRhGAYgASgLMhouWWRiLlF1ZXJ5LlRyYW5zYWN0aW9uTWV0YSKeAwoURXhlY3V0ZVNjcmlwdFJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxImCglleGVjX21vZGUYAiABKA4yEy5ZZGIuUXVlcnkuRXhlY01vZGUSLwoOc2NyaXB0X2NvbnRlbnQYAyABKAsyFy5ZZGIuUXVlcnkuUXVlcnlDb250ZW50EkMKCnBhcmFtZXRlcnMYBCADKAsyLy5ZZGIuUXVlcnkuRXhlY3V0ZVNjcmlwdFJlcXVlc3QuUGFyYW1ldGVyc0VudHJ5EigKCnN0YXRzX21vZGUYBSABKA4yFC5ZZGIuUXVlcnkuU3RhdHNNb2RlEi4KC3Jlc3VsdHNfdHRsGAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEg8KB3Bvb2xfaWQYByABKAkaQgoPUGFyYW1ldGVyc0VudHJ5EgsKA2tleRgBIAEoCRIeCgV2YWx1ZRgCIAEoCzIPLllkYi5UeXBlZFZhbHVlOgI4ASKfAgoVRXhlY3V0ZVNjcmlwdE1ldGFkYXRhEh0KDGV4ZWN1dGlvbl9pZBgBIAEoCUIHouYqAxiACBIqCgtleGVjX3N0YXR1cxgCIAEoDjIVLllkYi5RdWVyeS5FeGVjU3RhdHVzEi8KDnNjcmlwdF9jb250ZW50GAMgASgLMhcuWWRiLlF1ZXJ5LlF1ZXJ5Q29udGVudBIyChByZXN1bHRfc2V0c19tZXRhGAQgAygLMhguWWRiLlF1ZXJ5LlJlc3VsdFNldE1ldGESJgoJZXhlY19tb2RlGAUgASgOMhMuWWRiLlF1ZXJ5LkV4ZWNNb2RlEi4KCmV4ZWNfc3RhdHMYBiABKAsyGi5ZZGIuVGFibGVTdGF0cy5RdWVyeVN0YXRzIpABChlGZXRjaFNjcmlwdFJlc3VsdHNSZXF1ZXN0Eh0KDG9wZXJhdGlvbl9pZBgBIAEoCUIHouYqAxiACBIYChByZXN1bHRfc2V0X2luZGV4GAIgASgDEhwKC2ZldGNoX3Rva2VuGAMgASgJQgei5ioDGIAIEhwKCnJvd3NfbGltaXQYBCABKANCCLLmKgQ+PSAwItsBChpGZXRjaFNjcmlwdFJlc3VsdHNSZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIiChByZXN1bHRfc2V0X2luZGV4GAMgASgDQgiy5ioEPj0gMBIiCgpyZXN1bHRfc2V0GAQgASgLMg4uWWRiLlJlc3VsdFNldBIhChBuZXh0X2ZldGNoX3Rva2VuGAUgASgJQgei5ioDGIAIIjkKBlNjcmlwdBIvCg5zY3JpcHRfY29udGVudBgBIAEoCzIXLllkYi5RdWVyeS5RdWVyeUNvbnRlbnQqQgoGU3ludGF4EhYKElNZTlRBWF9VTlNQRUNJRklFRBAAEhEKDVNZTlRBWF9ZUUxfVjEQARINCglTWU5UQVhfUEcQAiqGAQoIRXhlY01vZGUSGQoVRVhFQ19NT0RFX1VOU1BFQ0lGSUVEEAASEwoPRVhFQ19NT0RFX1BBUlNFEAoSFgoSRVhFQ19NT0RFX1ZBTElEQVRFEBQSFQoRRVhFQ19NT0RFX0VYUExBSU4QHhIVChFFWEVDX01PREVfRVhFQ1VURRAyIgQIKBAoKn8KCVN0YXRzTW9kZRIaChZTVEFUU19NT0RFX1VOU1BFQ0lGSUVEEAASEwoPU1RBVFNfTU9ERV9OT05FEAoSFAoQU1RBVFNfTU9ERV9CQVNJQxAUEhMKD1NUQVRTX01PREVfRlVMTBAeEhYKElNUQVRTX01PREVfUFJPRklMRRAoKoQBChNTY2hlbWFJbmNsdXNpb25Nb2RlEiUKIVNDSEVNQV9JTkNMVVNJT05fTU9ERV9VTlNQRUNJRklFRBAAEiAKHFNDSEVNQV9JTkNMVVNJT05fTU9ERV9BTFdBWVMQARIkCiBTQ0hFTUFfSU5DTFVTSU9OX01PREVfRklSU1RfT05MWRACKqoBCgpFeGVjU3RhdHVzEhsKF0VYRUNfU1RBVFVTX1VOU1BFQ0lGSUVEEAASGAoURVhFQ19TVEFUVVNfU1RBUlRJTkcQChIXChNFWEVDX1NUQVRVU19BQk9SVEVEEBQSGQoVRVhFQ19TVEFUVVNfQ0FOQ0VMTEVEEB4SGQoVRVhFQ19TVEFUVVNfQ09NUExFVEVEECgSFgoSRVhFQ19TVEFUVVNfRkFJTEVEEDJCUwoUdGVjaC55ZGIucHJvdG8ucXVlcnlaOGdpdGh1Yi5jb20veWRiLXBsYXRmb3JtL3lkYi1nby1nZW5wcm90by9wcm90b3MvWWRiX1F1ZXJ5+AEBYgZwcm90bzM", [file_google_protobuf_duration, file_protos_annotations_validation, file_protos_ydb_issue_message, file_protos_ydb_operation, file_protos_ydb_query_stats, file_protos_ydb_status_codes, file_protos_ydb_formats, file_protos_ydb_value]);
+  fileDesc("ChZwcm90b3MveWRiX3F1ZXJ5LnByb3RvEglZZGIuUXVlcnkiFgoUQ3JlYXRlU2Vzc2lvblJlcXVlc3QiowEKFUNyZWF0ZVNlc3Npb25SZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIbCgpzZXNzaW9uX2lkGAMgASgJQgei5ioDGIAIEhkKB25vZGVfaWQYBCABKANCCLLmKgQ+PSAwIjMKFERlbGV0ZVNlc3Npb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgiawoVRGVsZXRlU2Vzc2lvblJlc3BvbnNlEikKBnN0YXR1cxgBIAEoDjIZLllkYi5TdGF0dXNJZHMuU3RhdHVzQ29kZRInCgZpc3N1ZXMYAiADKAsyFy5ZZGIuSXNzdWUuSXNzdWVNZXNzYWdlIjMKFEF0dGFjaFNlc3Npb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgiFQoTU2Vzc2lvblNodXRkb3duSGludCISChBOb2RlU2h1dGRvd25IaW50IuQBCgxTZXNzaW9uU3RhdGUSKQoGc3RhdHVzGAEgASgOMhkuWWRiLlN0YXR1c0lkcy5TdGF0dXNDb2RlEicKBmlzc3VlcxgCIAMoCzIXLllkYi5Jc3N1ZS5Jc3N1ZU1lc3NhZ2USOgoQc2Vzc2lvbl9zaHV0ZG93bhgDIAEoCzIeLllkYi5RdWVyeS5TZXNzaW9uU2h1dGRvd25IaW50SAASNAoNbm9kZV9zaHV0ZG93bhgEIAEoCzIbLllkYi5RdWVyeS5Ob2RlU2h1dGRvd25IaW50SABCDgoMc2Vzc2lvbl9oaW50IhoKGFNlcmlhbGl6YWJsZU1vZGVTZXR0aW5ncyI2ChJPbmxpbmVNb2RlU2V0dGluZ3MSIAoYYWxsb3dfaW5jb25zaXN0ZW50X3JlYWRzGAEgASgIIhMKEVN0YWxlTW9kZVNldHRpbmdzIhYKFFNuYXBzaG90TW9kZVNldHRpbmdzIhgKFlNuYXBzaG90UldNb2RlU2V0dGluZ3MiHQobUmVhZENvbW1pdHRlZFJXTW9kZVNldHRpbmdzIiIKIFN0cmljdFNlcmlhbGl6YWJsZVJXTW9kZVNldHRpbmdzIoEEChNUcmFuc2FjdGlvblNldHRpbmdzEkYKF3NlcmlhbGl6YWJsZV9yZWFkX3dyaXRlGAEgASgLMiMuWWRiLlF1ZXJ5LlNlcmlhbGl6YWJsZU1vZGVTZXR0aW5nc0gAEjkKEG9ubGluZV9yZWFkX29ubHkYAiABKAsyHS5ZZGIuUXVlcnkuT25saW5lTW9kZVNldHRpbmdzSAASNwoPc3RhbGVfcmVhZF9vbmx5GAMgASgLMhwuWWRiLlF1ZXJ5LlN0YWxlTW9kZVNldHRpbmdzSAASPQoSc25hcHNob3RfcmVhZF9vbmx5GAQgASgLMh8uWWRiLlF1ZXJ5LlNuYXBzaG90TW9kZVNldHRpbmdzSAASQAoTc25hcHNob3RfcmVhZF93cml0ZRgFIAEoCzIhLllkYi5RdWVyeS5TbmFwc2hvdFJXTW9kZVNldHRpbmdzSAASSwoZcmVhZF9jb21taXR0ZWRfcmVhZF93cml0ZRgGIAEoCzImLllkYi5RdWVyeS5SZWFkQ29tbWl0dGVkUldNb2RlU2V0dGluZ3NIABJVCh5zdHJpY3Rfc2VyaWFsaXphYmxlX3JlYWRfd3JpdGUYByABKAsyKy5ZZGIuUXVlcnkuU3RyaWN0U2VyaWFsaXphYmxlUldNb2RlU2V0dGluZ3NIAEIJCgd0eF9tb2RlIoQBChJUcmFuc2FjdGlvbkNvbnRyb2wSGAoFdHhfaWQYASABKAlCB6LmKgMYgAhIABIyCghiZWdpbl90eBgCIAEoCzIeLllkYi5RdWVyeS5UcmFuc2FjdGlvblNldHRpbmdzSAASEQoJY29tbWl0X3R4GAogASgIQg0KC3R4X3NlbGVjdG9yImsKF0JlZ2luVHJhbnNhY3Rpb25SZXF1ZXN0EhsKCnNlc3Npb25faWQYASABKAlCB6LmKgMYgAgSMwoLdHhfc2V0dGluZ3MYAiABKAsyHi5ZZGIuUXVlcnkuVHJhbnNhY3Rpb25TZXR0aW5ncyImCg9UcmFuc2FjdGlvbk1ldGESEwoCaWQYASABKAlCB6LmKgMYgAgimwEKGEJlZ2luVHJhbnNhY3Rpb25SZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIrCgd0eF9tZXRhGAMgASgLMhouWWRiLlF1ZXJ5LlRyYW5zYWN0aW9uTWV0YSJPChhDb21taXRUcmFuc2FjdGlvblJlcXVlc3QSGwoKc2Vzc2lvbl9pZBgBIAEoCUIHouYqAxiACBIWCgV0eF9pZBgCIAEoCUIHouYqAxiACCKgAQoZQ29tbWl0VHJhbnNhY3Rpb25SZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIvChBjb21taXRfdGltZXN0YW1wGAMgASgLMhUuWWRiLlZpcnR1YWxUaW1lc3RhbXAiUQoaUm9sbGJhY2tUcmFuc2FjdGlvblJlcXVlc3QSGwoKc2Vzc2lvbl9pZBgBIAEoCUIHouYqAxiACBIWCgV0eF9pZBgCIAEoCUIHouYqAxiACCJxChtSb2xsYmFja1RyYW5zYWN0aW9uUmVzcG9uc2USKQoGc3RhdHVzGAEgASgOMhkuWWRiLlN0YXR1c0lkcy5TdGF0dXNDb2RlEicKBmlzc3VlcxgCIAMoCzIXLllkYi5Jc3N1ZS5Jc3N1ZU1lc3NhZ2UiPwoMUXVlcnlDb250ZW50EiEKBnN5bnRheBgBIAEoDjIRLllkYi5RdWVyeS5TeW50YXgSDAoEdGV4dBgCIAEoCSK8BQoTRXhlY3V0ZVF1ZXJ5UmVxdWVzdBIbCgpzZXNzaW9uX2lkGAEgASgJQgei5ioDGIAIEiYKCWV4ZWNfbW9kZRgCIAEoDjITLllkYi5RdWVyeS5FeGVjTW9kZRIxCgp0eF9jb250cm9sGAMgASgLMh0uWWRiLlF1ZXJ5LlRyYW5zYWN0aW9uQ29udHJvbBIwCg1xdWVyeV9jb250ZW50GAQgASgLMhcuWWRiLlF1ZXJ5LlF1ZXJ5Q29udGVudEgAEkgKCnBhcmFtZXRlcnMYBiADKAsyLi5ZZGIuUXVlcnkuRXhlY3V0ZVF1ZXJ5UmVxdWVzdC5QYXJhbWV0ZXJzRW50cnlCBLjmKgESKAoKc3RhdHNfbW9kZRgHIAEoDjIULllkYi5RdWVyeS5TdGF0c01vZGUSHgoWY29uY3VycmVudF9yZXN1bHRfc2V0cxgIIAEoCBI0ChlyZXNwb25zZV9wYXJ0X2xpbWl0X2J5dGVzGAkgASgDQhGy5ioNWzA7IDMzNTU0NDMyXRIPCgdwb29sX2lkGAogASgJEiEKD3N0YXRzX3BlcmlvZF9tcxgLIAEoA0IIsuYqBD49IDASPQoVc2NoZW1hX2luY2x1c2lvbl9tb2RlGAwgASgOMh4uWWRiLlF1ZXJ5LlNjaGVtYUluY2x1c2lvbk1vZGUSMAoRcmVzdWx0X3NldF9mb3JtYXQYDSABKA4yFS5ZZGIuUmVzdWx0U2V0LkZvcm1hdBI/ChVhcnJvd19mb3JtYXRfc2V0dGluZ3MYDiABKAsyIC5ZZGIuRm9ybWF0cy5BcnJvd0Zvcm1hdFNldHRpbmdzGkIKD1BhcmFtZXRlcnNFbnRyeRILCgNrZXkYASABKAkSHgoFdmFsdWUYAiABKAsyDy5ZZGIuVHlwZWRWYWx1ZToCOAFCBwoFcXVlcnkiLQoNUmVzdWx0U2V0TWV0YRIcCgdjb2x1bW5zGAEgAygLMgsuWWRiLkNvbHVtbiL3AgoYRXhlY3V0ZVF1ZXJ5UmVzcG9uc2VQYXJ0EikKBnN0YXR1cxgBIAEoDjIZLllkYi5TdGF0dXNJZHMuU3RhdHVzQ29kZRInCgZpc3N1ZXMYAiADKAsyFy5ZZGIuSXNzdWUuSXNzdWVNZXNzYWdlEiIKEHJlc3VsdF9zZXRfaW5kZXgYAyABKANCCLLmKgQ+PSAwEiIKCnJlc3VsdF9zZXQYBCABKAsyDi5ZZGIuUmVzdWx0U2V0Ei4KCmV4ZWNfc3RhdHMYBSABKAsyGi5ZZGIuVGFibGVTdGF0cy5RdWVyeVN0YXRzEisKB3R4X21ldGEYBiABKAsyGi5ZZGIuUXVlcnkuVHJhbnNhY3Rpb25NZXRhEjEKEnNuYXBzaG90X3RpbWVzdGFtcBgHIAEoCzIVLllkYi5WaXJ0dWFsVGltZXN0YW1wEi8KEGNvbW1pdF90aW1lc3RhbXAYCCABKAsyFS5ZZGIuVmlydHVhbFRpbWVzdGFtcCKkAwoURXhlY3V0ZVNjcmlwdFJlcXVlc3QSOQoQb3BlcmF0aW9uX3BhcmFtcxgBIAEoCzIfLllkYi5PcGVyYXRpb25zLk9wZXJhdGlvblBhcmFtcxImCglleGVjX21vZGUYAiABKA4yEy5ZZGIuUXVlcnkuRXhlY01vZGUSLwoOc2NyaXB0X2NvbnRlbnQYAyABKAsyFy5ZZGIuUXVlcnkuUXVlcnlDb250ZW50EkkKCnBhcmFtZXRlcnMYBCADKAsyLy5ZZGIuUXVlcnkuRXhlY3V0ZVNjcmlwdFJlcXVlc3QuUGFyYW1ldGVyc0VudHJ5QgS45ioBEigKCnN0YXRzX21vZGUYBSABKA4yFC5ZZGIuUXVlcnkuU3RhdHNNb2RlEi4KC3Jlc3VsdHNfdHRsGAYgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEg8KB3Bvb2xfaWQYByABKAkaQgoPUGFyYW1ldGVyc0VudHJ5EgsKA2tleRgBIAEoCRIeCgV2YWx1ZRgCIAEoCzIPLllkYi5UeXBlZFZhbHVlOgI4ASKfAgoVRXhlY3V0ZVNjcmlwdE1ldGFkYXRhEh0KDGV4ZWN1dGlvbl9pZBgBIAEoCUIHouYqAxiACBIqCgtleGVjX3N0YXR1cxgCIAEoDjIVLllkYi5RdWVyeS5FeGVjU3RhdHVzEi8KDnNjcmlwdF9jb250ZW50GAMgASgLMhcuWWRiLlF1ZXJ5LlF1ZXJ5Q29udGVudBIyChByZXN1bHRfc2V0c19tZXRhGAQgAygLMhguWWRiLlF1ZXJ5LlJlc3VsdFNldE1ldGESJgoJZXhlY19tb2RlGAUgASgOMhMuWWRiLlF1ZXJ5LkV4ZWNNb2RlEi4KCmV4ZWNfc3RhdHMYBiABKAsyGi5ZZGIuVGFibGVTdGF0cy5RdWVyeVN0YXRzIpABChlGZXRjaFNjcmlwdFJlc3VsdHNSZXF1ZXN0Eh0KDG9wZXJhdGlvbl9pZBgBIAEoCUIHouYqAxiACBIYChByZXN1bHRfc2V0X2luZGV4GAIgASgDEhwKC2ZldGNoX3Rva2VuGAMgASgJQgei5ioDGIAIEhwKCnJvd3NfbGltaXQYBCABKANCCLLmKgQ+PSAwItsBChpGZXRjaFNjcmlwdFJlc3VsdHNSZXNwb25zZRIpCgZzdGF0dXMYASABKA4yGS5ZZGIuU3RhdHVzSWRzLlN0YXR1c0NvZGUSJwoGaXNzdWVzGAIgAygLMhcuWWRiLklzc3VlLklzc3VlTWVzc2FnZRIiChByZXN1bHRfc2V0X2luZGV4GAMgASgDQgiy5ioEPj0gMBIiCgpyZXN1bHRfc2V0GAQgASgLMg4uWWRiLlJlc3VsdFNldBIhChBuZXh0X2ZldGNoX3Rva2VuGAUgASgJQgei5ioDGIAIIjkKBlNjcmlwdBIvCg5zY3JpcHRfY29udGVudBgBIAEoCzIXLllkYi5RdWVyeS5RdWVyeUNvbnRlbnQqRgoGU3ludGF4EhYKElNZTlRBWF9VTlNQRUNJRklFRBAAEhEKDVNZTlRBWF9ZUUxfVjEQARIRCglTWU5UQVhfUEcQAhoCCAEqhgEKCEV4ZWNNb2RlEhkKFUVYRUNfTU9ERV9VTlNQRUNJRklFRBAAEhMKD0VYRUNfTU9ERV9QQVJTRRAKEhYKEkVYRUNfTU9ERV9WQUxJREFURRAUEhUKEUVYRUNfTU9ERV9FWFBMQUlOEB4SFQoRRVhFQ19NT0RFX0VYRUNVVEUQMiIECCgQKCp/CglTdGF0c01vZGUSGgoWU1RBVFNfTU9ERV9VTlNQRUNJRklFRBAAEhMKD1NUQVRTX01PREVfTk9ORRAKEhQKEFNUQVRTX01PREVfQkFTSUMQFBITCg9TVEFUU19NT0RFX0ZVTEwQHhIWChJTVEFUU19NT0RFX1BST0ZJTEUQKCqEAQoTU2NoZW1hSW5jbHVzaW9uTW9kZRIlCiFTQ0hFTUFfSU5DTFVTSU9OX01PREVfVU5TUEVDSUZJRUQQABIgChxTQ0hFTUFfSU5DTFVTSU9OX01PREVfQUxXQVlTEAESJAogU0NIRU1BX0lOQ0xVU0lPTl9NT0RFX0ZJUlNUX09OTFkQAiqqAQoKRXhlY1N0YXR1cxIbChdFWEVDX1NUQVRVU19VTlNQRUNJRklFRBAAEhgKFEVYRUNfU1RBVFVTX1NUQVJUSU5HEAoSFwoTRVhFQ19TVEFUVVNfQUJPUlRFRBAUEhkKFUVYRUNfU1RBVFVTX0NBTkNFTExFRBAeEhkKFUVYRUNfU1RBVFVTX0NPTVBMRVRFRBAoEhYKEkVYRUNfU1RBVFVTX0ZBSUxFRBAyQlMKFHRlY2gueWRiLnByb3RvLnF1ZXJ5WjhnaXRodWIuY29tL3lkYi1wbGF0Zm9ybS95ZGItZ28tZ2VucHJvdG8vcHJvdG9zL1lkYl9RdWVyefgBAWIGcHJvdG8z", [file_google_protobuf_duration, file_protos_annotations_sensitive, file_protos_annotations_validation, file_protos_ydb_issue_message, file_protos_ydb_common, file_protos_ydb_formats, file_protos_ydb_operation, file_protos_ydb_query_stats, file_protos_ydb_status_codes, file_protos_ydb_value]);
 
 /**
  * @generated from message Ydb.Query.CreateSessionRequest
@@ -137,6 +140,11 @@ export const AttachSessionRequestSchema: GenMessage<AttachSessionRequest> = /*@_
   messageDesc(file_protos_ydb_query, 4);
 
 /**
+ * Sent by server when this session is being gracefully terminated.
+ * Server will attempt to complete in-flight requests within the soft deadline; 
+ * requests still running at the hard deadline will be cancelled.
+ * Client should not reuse the session after receiving this hint.
+ *
  * @generated from message Ydb.Query.SessionShutdownHint
  */
 export type SessionShutdownHint = Message<"Ydb.Query.SessionShutdownHint"> & {
@@ -150,6 +158,11 @@ export const SessionShutdownHintSchema: GenMessage<SessionShutdownHint> = /*@__P
   messageDesc(file_protos_ydb_query, 5);
 
 /**
+ * Sent by server when the node is being gracefully shut down.
+ * Server will attempt to complete in-flight requests within the soft deadline;
+ * requests still running at the hard deadline will be cancelled.
+ * Client should not create new sessions on this node.
+ *
  * @generated from message Ydb.Query.NodeShutdownHint
  */
 export type NodeShutdownHint = Message<"Ydb.Query.NodeShutdownHint"> & {
@@ -273,6 +286,32 @@ export const SnapshotRWModeSettingsSchema: GenMessage<SnapshotRWModeSettings> = 
   messageDesc(file_protos_ydb_query, 12);
 
 /**
+ * @generated from message Ydb.Query.ReadCommittedRWModeSettings
+ */
+export type ReadCommittedRWModeSettings = Message<"Ydb.Query.ReadCommittedRWModeSettings"> & {
+};
+
+/**
+ * Describes the message Ydb.Query.ReadCommittedRWModeSettings.
+ * Use `create(ReadCommittedRWModeSettingsSchema)` to create a new message.
+ */
+export const ReadCommittedRWModeSettingsSchema: GenMessage<ReadCommittedRWModeSettings> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_query, 13);
+
+/**
+ * @generated from message Ydb.Query.StrictSerializableRWModeSettings
+ */
+export type StrictSerializableRWModeSettings = Message<"Ydb.Query.StrictSerializableRWModeSettings"> & {
+};
+
+/**
+ * Describes the message Ydb.Query.StrictSerializableRWModeSettings.
+ * Use `create(StrictSerializableRWModeSettingsSchema)` to create a new message.
+ */
+export const StrictSerializableRWModeSettingsSchema: GenMessage<StrictSerializableRWModeSettings> = /*@__PURE__*/
+  messageDesc(file_protos_ydb_query, 14);
+
+/**
  * @generated from message Ydb.Query.TransactionSettings
  */
 export type TransactionSettings = Message<"Ydb.Query.TransactionSettings"> & {
@@ -309,6 +348,18 @@ export type TransactionSettings = Message<"Ydb.Query.TransactionSettings"> & {
      */
     value: SnapshotRWModeSettings;
     case: "snapshotReadWrite";
+  } | {
+    /**
+     * @generated from field: Ydb.Query.ReadCommittedRWModeSettings read_committed_read_write = 6;
+     */
+    value: ReadCommittedRWModeSettings;
+    case: "readCommittedReadWrite";
+  } | {
+    /**
+     * @generated from field: Ydb.Query.StrictSerializableRWModeSettings strict_serializable_read_write = 7;
+     */
+    value: StrictSerializableRWModeSettings;
+    case: "strictSerializableReadWrite";
   } | { case: undefined; value?: undefined };
 };
 
@@ -317,7 +368,7 @@ export type TransactionSettings = Message<"Ydb.Query.TransactionSettings"> & {
  * Use `create(TransactionSettingsSchema)` to create a new message.
  */
 export const TransactionSettingsSchema: GenMessage<TransactionSettings> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 13);
+  messageDesc(file_protos_ydb_query, 15);
 
 /**
  * @generated from message Ydb.Query.TransactionControl
@@ -351,7 +402,7 @@ export type TransactionControl = Message<"Ydb.Query.TransactionControl"> & {
  * Use `create(TransactionControlSchema)` to create a new message.
  */
 export const TransactionControlSchema: GenMessage<TransactionControl> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 14);
+  messageDesc(file_protos_ydb_query, 16);
 
 /**
  * @generated from message Ydb.Query.BeginTransactionRequest
@@ -375,7 +426,7 @@ export type BeginTransactionRequest = Message<"Ydb.Query.BeginTransactionRequest
  * Use `create(BeginTransactionRequestSchema)` to create a new message.
  */
 export const BeginTransactionRequestSchema: GenMessage<BeginTransactionRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 15);
+  messageDesc(file_protos_ydb_query, 17);
 
 /**
  * @generated from message Ydb.Query.TransactionMeta
@@ -394,7 +445,7 @@ export type TransactionMeta = Message<"Ydb.Query.TransactionMeta"> & {
  * Use `create(TransactionMetaSchema)` to create a new message.
  */
 export const TransactionMetaSchema: GenMessage<TransactionMeta> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 16);
+  messageDesc(file_protos_ydb_query, 18);
 
 /**
  * @generated from message Ydb.Query.BeginTransactionResponse
@@ -421,7 +472,7 @@ export type BeginTransactionResponse = Message<"Ydb.Query.BeginTransactionRespon
  * Use `create(BeginTransactionResponseSchema)` to create a new message.
  */
 export const BeginTransactionResponseSchema: GenMessage<BeginTransactionResponse> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 17);
+  messageDesc(file_protos_ydb_query, 19);
 
 /**
  * @generated from message Ydb.Query.CommitTransactionRequest
@@ -447,7 +498,7 @@ export type CommitTransactionRequest = Message<"Ydb.Query.CommitTransactionReque
  * Use `create(CommitTransactionRequestSchema)` to create a new message.
  */
 export const CommitTransactionRequestSchema: GenMessage<CommitTransactionRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 18);
+  messageDesc(file_protos_ydb_query, 20);
 
 /**
  * @generated from message Ydb.Query.CommitTransactionResponse
@@ -462,6 +513,14 @@ export type CommitTransactionResponse = Message<"Ydb.Query.CommitTransactionResp
    * @generated from field: repeated Ydb.Issue.IssueMessage issues = 2;
    */
   issues: IssueMessage[];
+
+  /**
+   * Commit timestamp (PlanStep, TxId) for StrictSerializableRW write transactions.
+   * Present only on SUCCESS and when the transaction had write effects.
+   *
+   * @generated from field: Ydb.VirtualTimestamp commit_timestamp = 3;
+   */
+  commitTimestamp?: VirtualTimestamp | undefined;
 };
 
 /**
@@ -469,7 +528,7 @@ export type CommitTransactionResponse = Message<"Ydb.Query.CommitTransactionResp
  * Use `create(CommitTransactionResponseSchema)` to create a new message.
  */
 export const CommitTransactionResponseSchema: GenMessage<CommitTransactionResponse> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 19);
+  messageDesc(file_protos_ydb_query, 21);
 
 /**
  * @generated from message Ydb.Query.RollbackTransactionRequest
@@ -495,7 +554,7 @@ export type RollbackTransactionRequest = Message<"Ydb.Query.RollbackTransactionR
  * Use `create(RollbackTransactionRequestSchema)` to create a new message.
  */
 export const RollbackTransactionRequestSchema: GenMessage<RollbackTransactionRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 20);
+  messageDesc(file_protos_ydb_query, 22);
 
 /**
  * @generated from message Ydb.Query.RollbackTransactionResponse
@@ -517,7 +576,7 @@ export type RollbackTransactionResponse = Message<"Ydb.Query.RollbackTransaction
  * Use `create(RollbackTransactionResponseSchema)` to create a new message.
  */
 export const RollbackTransactionResponseSchema: GenMessage<RollbackTransactionResponse> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 21);
+  messageDesc(file_protos_ydb_query, 23);
 
 /**
  * @generated from message Ydb.Query.QueryContent
@@ -539,7 +598,7 @@ export type QueryContent = Message<"Ydb.Query.QueryContent"> & {
  * Use `create(QueryContentSchema)` to create a new message.
  */
 export const QueryContentSchema: GenMessage<QueryContent> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 22);
+  messageDesc(file_protos_ydb_query, 24);
 
 /**
  * @generated from message Ydb.Query.ExecuteQueryRequest
@@ -643,7 +702,7 @@ export type ExecuteQueryRequest = Message<"Ydb.Query.ExecuteQueryRequest"> & {
  * Use `create(ExecuteQueryRequestSchema)` to create a new message.
  */
 export const ExecuteQueryRequestSchema: GenMessage<ExecuteQueryRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 23);
+  messageDesc(file_protos_ydb_query, 25);
 
 /**
  * @generated from message Ydb.Query.ResultSetMeta
@@ -660,7 +719,7 @@ export type ResultSetMeta = Message<"Ydb.Query.ResultSetMeta"> & {
  * Use `create(ResultSetMetaSchema)` to create a new message.
  */
 export const ResultSetMetaSchema: GenMessage<ResultSetMeta> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 24);
+  messageDesc(file_protos_ydb_query, 26);
 
 /**
  * @generated from message Ydb.Query.ExecuteQueryResponsePart
@@ -701,6 +760,19 @@ export type ExecuteQueryResponsePart = Message<"Ydb.Query.ExecuteQueryResponsePa
    * @generated from field: Ydb.Query.TransactionMeta tx_meta = 6;
    */
   txMeta?: TransactionMeta | undefined;
+
+  /**
+   * @generated from field: Ydb.VirtualTimestamp snapshot_timestamp = 7;
+   */
+  snapshotTimestamp?: VirtualTimestamp | undefined;
+
+  /**
+   * Commit timestamp (PlanStep, TxId) for StrictSerializableRW write transactions.
+   * Present only in the final (trailing) part on SUCCESS and when the transaction had write effects.
+   *
+   * @generated from field: Ydb.VirtualTimestamp commit_timestamp = 8;
+   */
+  commitTimestamp?: VirtualTimestamp | undefined;
 };
 
 /**
@@ -708,7 +780,7 @@ export type ExecuteQueryResponsePart = Message<"Ydb.Query.ExecuteQueryResponsePa
  * Use `create(ExecuteQueryResponsePartSchema)` to create a new message.
  */
 export const ExecuteQueryResponsePartSchema: GenMessage<ExecuteQueryResponsePart> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 25);
+  messageDesc(file_protos_ydb_query, 27);
 
 /**
  * @generated from message Ydb.Query.ExecuteScriptRequest
@@ -760,7 +832,7 @@ export type ExecuteScriptRequest = Message<"Ydb.Query.ExecuteScriptRequest"> & {
  * Use `create(ExecuteScriptRequestSchema)` to create a new message.
  */
 export const ExecuteScriptRequestSchema: GenMessage<ExecuteScriptRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 26);
+  messageDesc(file_protos_ydb_query, 28);
 
 /**
  * @generated from message Ydb.Query.ExecuteScriptMetadata
@@ -804,7 +876,7 @@ export type ExecuteScriptMetadata = Message<"Ydb.Query.ExecuteScriptMetadata"> &
  * Use `create(ExecuteScriptMetadataSchema)` to create a new message.
  */
 export const ExecuteScriptMetadataSchema: GenMessage<ExecuteScriptMetadata> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 27);
+  messageDesc(file_protos_ydb_query, 29);
 
 /**
  * @generated from message Ydb.Query.FetchScriptResultsRequest
@@ -836,7 +908,7 @@ export type FetchScriptResultsRequest = Message<"Ydb.Query.FetchScriptResultsReq
  * Use `create(FetchScriptResultsRequestSchema)` to create a new message.
  */
 export const FetchScriptResultsRequestSchema: GenMessage<FetchScriptResultsRequest> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 28);
+  messageDesc(file_protos_ydb_query, 30);
 
 /**
  * @generated from message Ydb.Query.FetchScriptResultsResponse
@@ -873,7 +945,7 @@ export type FetchScriptResultsResponse = Message<"Ydb.Query.FetchScriptResultsRe
  * Use `create(FetchScriptResultsResponseSchema)` to create a new message.
  */
 export const FetchScriptResultsResponseSchema: GenMessage<FetchScriptResultsResponse> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 29);
+  messageDesc(file_protos_ydb_query, 31);
 
 /**
  * @generated from message Ydb.Query.Script
@@ -890,7 +962,7 @@ export type Script = Message<"Ydb.Query.Script"> & {
  * Use `create(ScriptSchema)` to create a new message.
  */
 export const ScriptSchema: GenMessage<Script> = /*@__PURE__*/
-  messageDesc(file_protos_ydb_query, 30);
+  messageDesc(file_protos_ydb_query, 32);
 
 /**
  * @generated from enum Ydb.Query.Syntax
@@ -909,9 +981,10 @@ export enum Syntax {
   YQL_V1 = 1,
 
   /**
-   * PostgresQL
+   * Removed: PostgreSQL syntax is no longer supported
    *
-   * @generated from enum value: SYNTAX_PG = 2;
+   * @generated from enum value: SYNTAX_PG = 2 [deprecated = true];
+   * @deprecated
    */
   PG = 2,
 }

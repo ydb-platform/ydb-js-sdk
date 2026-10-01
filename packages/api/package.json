@@ -86,6 +86,10 @@
 			"development": "./src/scheme.ts",
 			"default": "./dist/scheme.js"
 		},
+		"./secret": {
+			"development": "./src/secret.ts",
+			"default": "./dist/secret.js"
+		},
 		"./scripting": {
 			"development": "./src/scripting.ts",
 			"default": "./dist/scripting.js"

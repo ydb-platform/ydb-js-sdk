@@ -30,6 +30,7 @@ import type { Metadata } from 'nice-grpc'
 import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'
 import { type SessionPool, sessionAcquireCh } from './session-pool.js'
+import { type VirtualTimestamp, virtualTimestampFromProto } from './virtual-timestamp.js'
 
 type QueryExecuteContext = {
 	driver: DriverIdentity
@@ -84,11 +85,13 @@ export class Query<T extends any[] = unknown[]>
 	#poolId: string | undefined
 
 	#stats: QueryStats | undefined
+	#commitTimestamp: VirtualTimestamp | undefined
 	#statsMode: StatsMode = StatsMode.UNSPECIFIED
 
 	#isolation:
 		| 'implicit'
 		| 'serializableReadWrite'
+		| 'strictSerializableReadWrite'
 		| 'snapshotReadOnly'
 		| 'snapshotReadWrite'
 		| 'onlineReadOnly'
@@ -182,6 +185,7 @@ export class Query<T extends any[] = unknown[]>
 		await this.#driver.ready(linkedSignal.signal)
 
 		let runAttempt = async (retrySignal: AbortSignal) => {
+			this.#commitTimestamp = undefined
 			// Transaction-owned session stays pinned; out-of-transaction
 			// attempts always get a fresh lease — no cross-attempt reuse.
 			using sessionLease = txSession
@@ -283,6 +287,7 @@ export class Query<T extends any[] = unknown[]>
 				)
 
 				let results = [] as ArrayifyTuple<T>
+				let trailingCommitTimestamp: { planStep: bigint; txId: bigint } | undefined
 
 				try {
 					for await (let part of stream) {
@@ -292,6 +297,8 @@ export class Query<T extends any[] = unknown[]>
 							dbg.log('query part failed, status: %d', part.status)
 							throw new YDBError(part.status, part.issues)
 						}
+						// The last successful part is trailing only after the stream completes.
+						trailingCommitTimestamp = part.commitTimestamp
 
 						if (part.execStats) {
 							dbg.log('received query stats')
@@ -327,6 +334,12 @@ export class Query<T extends any[] = unknown[]>
 
 							results[Number(part.resultSetIndex)]!.push(result)
 						}
+					}
+					if (this.#isolation === 'strictSerializableReadWrite' && !transactionId) {
+						this.#commitTimestamp = virtualTimestampFromProto(
+							trailingCommitTimestamp,
+							this.#driver.identity
+						)
 					}
 				} catch (err) {
 					// Record whether this attempt failed because the session died.
@@ -467,6 +480,7 @@ export class Query<T extends any[] = unknown[]>
 	 *
 	 * @param mode Transaction isolation level:
 	 *  - 'serializableReadWrite' — serializable read/write
+	 *  - 'strictSerializableReadWrite' — strict serializable read/write
 	 *  - 'snapshotReadOnly' — snapshot read-only
 	 *  - 'snapshotReadWrite' — snapshot read/write
 	 *  - 'onlineReadOnly' — online read-only
@@ -480,6 +494,7 @@ export class Query<T extends any[] = unknown[]>
 		mode:
 			| 'implicit'
 			| 'serializableReadWrite'
+			| 'strictSerializableReadWrite'
 			| 'snapshotReadOnly'
 			| 'snapshotReadWrite'
 			| 'onlineReadOnly'
@@ -496,6 +511,11 @@ export class Query<T extends any[] = unknown[]>
 	// TODO: Return user-friendly stats report
 	stats(): QueryStats | undefined {
 		return this.#stats
+	}
+
+	/** Returns the commit position after a successful StrictSerializableRW write query. */
+	commitTimestamp(): VirtualTimestamp | undefined {
+		return this.#commitTimestamp
 	}
 
 	/** Returns a query with statistics enabled */
