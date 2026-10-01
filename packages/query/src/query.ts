@@ -291,14 +291,14 @@ export class Query<T extends any[] = unknown[]>
 
 				try {
 					for await (let part of stream) {
-						// Only the final, result-free part may carry the commit position.
-						trailingCommitTimestamp = part.resultSet ? undefined : part.commitTimestamp
 						signal.throwIfAborted()
 
 						if (part.status !== StatusIds_StatusCode.SUCCESS) {
 							dbg.log('query part failed, status: %d', part.status)
 							throw new YDBError(part.status, part.issues)
 						}
+						// The last successful part is trailing only after the stream completes.
+						trailingCommitTimestamp = part.commitTimestamp
 
 						if (part.execStats) {
 							dbg.log('received query stats')

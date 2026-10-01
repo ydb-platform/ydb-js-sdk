@@ -192,21 +192,26 @@ test('does not use a timestamp from an earlier response part', async () => {
 	expect(q.commitTimestamp()).toBeUndefined()
 })
 
-test('does not use a timestamp from a result-set part or another mode', async () => {
+test('returns the timestamp when the final trailing part also has a result set', async () => {
 	srv = await startServer()
 	srv.setExecuteParts([
+		part({ planStep: 1n, txId: 1n }),
 		create(ExecuteQueryResponsePartSchema, {
 			status: StatusIds_StatusCode.SUCCESS,
 			resultSet: {},
-			commitTimestamp: { planStep: 1n, txId: 1n },
+			commitTimestamp: { planStep: 2n, txId: 3n },
 		}),
 	])
 	await using sql = query(srv.driver)
-	let strict = sql`SELECT 1`.isolation('strictSerializableReadWrite')
-	await strict
-	expect(strict.commitTimestamp()).toBeUndefined()
+	let write = sql`UPSERT INTO t ...; SELECT 1`.isolation('strictSerializableReadWrite')
+	expect(await write).toEqual([[]])
+	expect(write.commitTimestamp()).toMatchObject({ planStep: 2n, txId: 3n })
+})
 
+test('does not use a timestamp from another isolation mode', async () => {
+	srv = await startServer()
 	srv.setExecuteParts([part({ planStep: 2n, txId: 2n })])
+	await using sql = query(srv.driver)
 	let ordinary = sql`SELECT 1`
 	await ordinary
 	expect(ordinary.commitTimestamp()).toBeUndefined()
