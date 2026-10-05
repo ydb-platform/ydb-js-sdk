@@ -14,3 +14,6 @@ npm start --workspace=@ydbjs/ydb-tech-topic
 `YDB_CONNECTION_STRING` defaults to `grpc://localhost:2136/local`.
 The application checks management operations, codecs, acknowledgments, metadata,
 reader selectors and commit variants. It creates and removes uniquely named topics.
+
+The multi-topic reader selects distinct partition IDs because this SDK currently
+tracks reader sessions by partition ID across all topics.

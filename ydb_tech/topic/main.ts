@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { gzipSync, gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import { StatusIds_StatusCode, type Operation } from '@ydbjs/api/operation'
+import { type Operation, StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	AlterTopicRequestSchema,
 	Codec,
@@ -15,8 +15,8 @@ import {
 } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { topic } from '@ydbjs/topic'
-import { defaultCodecMap, GZIP_CODEC, RAW_CODEC } from '@ydbjs/topic/codec'
-import { createTopicReader, type TopicReader } from '@ydbjs/topic/reader'
+import { GZIP_CODEC, RAW_CODEC, defaultCodecMap } from '@ydbjs/topic/codec'
+import { type TopicReader, createTopicReader } from '@ydbjs/topic/reader'
 import { createTopicWriter } from '@ydbjs/topic/writer'
 import type { TopicMessage } from '@ydbjs/topic/message'
 
@@ -26,7 +26,14 @@ let topicName2 = `${topicName}_another`
 let topicName3 = `${topicName}_third`
 let producerName = 'ydb-tech-producer'
 let consumers = ['one', 'batch', 'commit_one', 'commit_batch', 'selectors', 'offset']
-let expected = new Set(['buffered', 'acknowledged', 'metadata', 'codec-raw', 'codec-gzip', 'codec-custom'])
+let expected = new Set([
+	'buffered',
+	'acknowledged',
+	'metadata',
+	'codec-raw',
+	'codec-gzip',
+	'codec-custom',
+])
 let deadline = AbortSignal.timeout(60_000)
 let createdTopics: string[] = []
 
@@ -51,25 +58,33 @@ try {
 	// [END topic_create]
 	createdTopics.push(topicName)
 	for (let path of [topicName2, topicName3]) {
-		let response = await topicService.createTopic(create(CreateTopicRequestSchema, {
-			path, consumers: [{ name: 'selectors' }],
-		}))
+		let response = await topicService.createTopic(
+			create(CreateTopicRequestSchema, {
+				path,
+				partitioningSettings: { minActivePartitions: 3n, maxActivePartitions: 3n },
+				consumers: [{ name: 'selectors' }],
+			})
+		)
 		checkOperation(response.operation)
 		createdTopics.push(path)
 	}
 
 	// [BEGIN topic_alter]
-	let alterResponse = await topicService.alterTopic(create(AlterTopicRequestSchema, {
-		path: topicName,
-		addConsumers: [{ name: 'another-consumer' }],
-	}))
+	let alterResponse = await topicService.alterTopic(
+		create(AlterTopicRequestSchema, {
+			path: topicName,
+			addConsumers: [{ name: 'another-consumer' }],
+		})
+	)
 	checkOperation(alterResponse.operation)
 	// [END topic_alter]
 
 	// [BEGIN topic_describe]
-	let describeResponse = await topicService.describeTopic(create(DescribeTopicRequestSchema, {
-		path: topicName,
-	}))
+	let describeResponse = await topicService.describeTopic(
+		create(DescribeTopicRequestSchema, {
+			path: topicName,
+		})
+	)
 	checkOperation(describeResponse.operation)
 	let description = anyUnpack(describeResponse.operation!.result!, DescribeTopicResultSchema)
 	// [END topic_describe]
@@ -98,7 +113,9 @@ try {
 	await using ackWriter = createTopicWriter(driver, {
 		topic: topicName,
 		producer: `${producerName}-ack`,
-		onAck: (_seqNo, status) => { acknowledged = status === 'written' },
+		onAck: (_seqNo, status) => {
+			acknowledged = status === 'written'
+		},
 	})
 	ackWriter.write(Buffer.from('acknowledged'))
 	await ackWriter.flush()
@@ -107,16 +124,23 @@ try {
 	await ackWriter.close()
 
 	// [BEGIN topic_codec]
-	for (let [codec, payload] of [[RAW_CODEC, 'codec-raw'], [GZIP_CODEC, 'codec-gzip']] as const) {
+	for (let [codec, payload] of [
+		[RAW_CODEC, 'codec-raw'],
+		[GZIP_CODEC, 'codec-gzip'],
+	] as const) {
 		await using codecWriter = t.createWriter({
-			topic: topicName, producer: `${producerName}-${payload}`, codec,
+			topic: topicName,
+			producer: `${producerName}-${payload}`,
+			codec,
 		})
 		codecWriter.write(Buffer.from(payload))
 		await codecWriter.flush()
 	}
 	let customCodec = { codec: 10_000, compress: gzipSync, decompress: gunzipSync }
 	await using customWriter = t.createWriter({
-		topic: topicName, producer: `${producerName}-custom`, codec: customCodec,
+		topic: topicName,
+		producer: `${producerName}-custom`,
+		codec: customCodec,
 	})
 	customWriter.write(Buffer.from('codec-custom'))
 	await customWriter.flush()
@@ -128,7 +152,9 @@ try {
 	for (let consumerName of ['one', 'batch', 'commit_one', 'commit_batch']) {
 		// [BEGIN topic_start_reader]
 		await using reader = createTopicReader(driver, {
-			topic: topicName, consumer: consumerName, codecMap,
+			topic: topicName,
+			consumer: consumerName,
+			codecMap,
 		})
 		// [END topic_start_reader]
 		let received = new Set<string>()
@@ -174,10 +200,11 @@ try {
 	await using selectorReader = createTopicReader(driver, {
 		topic: [
 			{ path: topicName, partitionIds: [0n] },
-			{ path: topicName2, maxLag: '1h' },
-			{ path: topicName3, readFrom: new Date(0) },
+			{ path: topicName2, partitionIds: [1n], maxLag: '1h' },
+			{ path: topicName3, partitionIds: [2n], readFrom: new Date(0) },
 		],
-		consumer: 'selectors', codecMap,
+		consumer: 'selectors',
+		codecMap,
 	})
 	// [END topic_reader_selectors]
 	await readAll(selectorReader)
@@ -185,7 +212,9 @@ try {
 	// [BEGIN topic_client_offset]
 	let offsets = new Map<bigint, bigint>()
 	await using offsetReader = createTopicReader(driver, {
-		topic: topicName, consumer: 'offset', codecMap,
+		topic: topicName,
+		consumer: 'offset',
+		codecMap,
 		onPartitionSessionStart: async (session) => ({
 			readOffset: offsets.get(session.partitionId) ?? 0n,
 			commitOffset: offsets.get(session.partitionId) ?? 0n,
