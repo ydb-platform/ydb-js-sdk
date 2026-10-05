@@ -1,0 +1,16 @@
+name: SDK security baseline
+
+queries:
+  - uses: security-extended
+
+paths:
+  - 'packages'
+  - 'third-parties'
+  - 'examples'
+  - 'scripts'
+  - '.github/scripts'
+
+paths-ignore:
+  - 'packages/api/src/gen/**'
+  - '**/*.test.ts'
+  - '**/*.spec.ts'
