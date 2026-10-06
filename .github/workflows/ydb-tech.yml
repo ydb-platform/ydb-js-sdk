@@ -27,5 +27,5 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
-      - run: npm run build -- --filter=./ydb_tech/**...
-      - run: bash ydb_tech/run.sh
+      - run: npm run build -- --filter=./examples/ydb_tech/**...
+      - run: bash examples/ydb_tech/run.sh

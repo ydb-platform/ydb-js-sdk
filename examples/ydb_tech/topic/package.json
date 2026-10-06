@@ -9,8 +9,8 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",
-		"@ydbjs/api": "file:../../packages/api",
-		"@ydbjs/core": "file:../../packages/core",
-		"@ydbjs/topic": "file:../../packages/topic"
+		"@ydbjs/api": "file:../../../packages/api",
+		"@ydbjs/core": "file:../../../packages/core",
+		"@ydbjs/topic": "file:../../../packages/topic"
 	}
 }

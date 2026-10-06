@@ -8,7 +8,7 @@
 		"e2e/*",
 		"tests/*",
 		"examples/*",
-		"ydb_tech/*",
+		"examples/ydb_tech/*",
 		"packages/*",
 		"third-parties/*"
 	],
