@@ -73,6 +73,39 @@ let writeBytes = async function writeBytes(
 	await writer.flush()
 }
 
+test('confirms a start-session commit override and retains it for the next reader', async (tc) => {
+	let topic = await makeTopic('commit-override')
+	await using writer = createTopicWriter(driver, { topic, producer: 'p' })
+	for (let value of [0, 1, 2]) {
+		writer.write(new Uint8Array([value]))
+	}
+	await writer.flush(tc.signal)
+	let confirmed: bigint[] = []
+	await using reader = createTopicReader(driver, {
+		topic,
+		consumer: consumerName,
+		onPartitionSessionStart: async () => ({ readOffset: 2n, commitOffset: 2n }),
+		onCommittedOffset: (_, offset) => {
+			confirmed.push(offset)
+		},
+	})
+	await expect.poll(() => confirmed, { timeout: 10_000 }).toEqual([2n])
+	await reader.close()
+	let restartedOffset: bigint | undefined
+	await using restarted = createTopicReader(driver, {
+		topic,
+		consumer: consumerName,
+		onPartitionSessionStart: async (_, committed) => {
+			restartedOffset = committed
+		},
+	})
+	for await (let batch of restarted.read({ limit: 1, signal: tc.signal })) {
+		expect(restartedOffset).toBe(2n)
+		expect(batch[0]!.offset).toBe(2n)
+		break
+	}
+})
+
 let waitUntil = async function waitUntil(predicate: () => boolean, ms: number): Promise<boolean> {
 	let started = Date.now()
 	while (Date.now() - started < ms) {

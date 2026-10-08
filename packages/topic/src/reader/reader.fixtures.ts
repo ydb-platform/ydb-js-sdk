@@ -393,6 +393,20 @@ export let updateTokenResponse = function updateTokenResponse(): StreamReadMessa
 	} as unknown as StreamReadMessage_FromServer
 }
 
+export let partitionStatusResponse = function partitionStatusResponse(
+	partitionSessionId: bigint,
+	committedOffset: bigint
+): StreamReadMessage_FromServer {
+	return {
+		status: StatusIds_StatusCode.SUCCESS,
+		issues: [],
+		serverMessage: {
+			case: 'partitionSessionStatusResponse',
+			value: { partitionSessionId, committedOffset, readOffset: committedOffset },
+		},
+	} as unknown as StreamReadMessage_FromServer
+}
+
 export let failureResponse = function failureResponse(
 	status: StatusIds_StatusCode
 ): StreamReadMessage_FromServer {

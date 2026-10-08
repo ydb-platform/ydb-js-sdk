@@ -35,6 +35,7 @@ let DEFAULT_UPDATE_TOKEN_INTERVAL_MS = 60_000
 // Bound how long pending commits are held for a partition that was stopped
 // (rebalanced away) and never re-Started before rejecting them.
 let DEFAULT_PARTITION_REASSIGN_GC_MS = 60_000
+let COMMIT_STATUS_INTERVAL_MS = 1000
 // Single source of truth — the facade imports it for its diagnostics config snapshot.
 export const DEFAULT_MAX_BUFFER_BYTES = 8n * 1024n * 1024n
 let BACKOFF_BASE_MS = 50
@@ -85,6 +86,8 @@ let timerEvent = function timerEvent(ref: TimerRef): ReaderEvent {
 			}
 		case 'partition_reassign_gc':
 			return { type: 'reader.timer.partition_reassign_gc', partitionKey: ref.partitionKey }
+		case 'partition_commit_status':
+			return { type: 'reader.timer.partition_commit_status', partitionKey: ref.partitionKey }
 	}
 }
 
@@ -109,6 +112,8 @@ let delayFor = function delayFor(ctx: FullCtx, which: TimerName): number {
 			return ctx.gracefulShutdownTimeoutMs
 		case 'partition_reassign_gc':
 			return ctx.partitionReassignGcMs
+		case 'partition_commit_status':
+			return COMMIT_STATUS_INTERVAL_MS
 	}
 }
 
@@ -182,6 +187,12 @@ let classifyServerMessage = function classifyServerMessage(
 				type: 'reader.stream.commit_response',
 				committed: server.value.partitionsCommittedOffsets,
 			}
+		case 'partitionSessionStatusResponse':
+			return {
+				type: 'reader.stream.partition_status',
+				partitionSessionId: server.value.partitionSessionId,
+				committedOffset: server.value.committedOffset,
+			}
 		case 'endPartitionSession':
 			return {
 				type: 'reader.stream.end_partition',
@@ -189,7 +200,7 @@ let classifyServerMessage = function classifyServerMessage(
 				childPartitionIds: server.value.childPartitionIds,
 				adjacentPartitionIds: server.value.adjacentPartitionIds,
 			}
-		// Direct-read / status / token frames — nothing for the reader FSM to route.
+		// Direct-read / token frames — nothing for the reader FSM to route.
 		default:
 			return null
 	}
@@ -293,6 +304,18 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 					create(StreamReadMessage_FromClientSchema, {
 						clientMessage: {
 							case: 'stopPartitionSessionResponse',
+							value: { partitionSessionId: effect.partitionSessionId },
+						},
+					}),
+					PRIORITY_CONTROL
+				)
+			},
+
+			'reader.effect.send.partition_status': (fullCtx, effect) => {
+				fullCtx.transport.send(
+					create(StreamReadMessage_FromClientSchema, {
+						clientMessage: {
+							case: 'partitionSessionStatusRequest',
 							value: { partitionSessionId: effect.partitionSessionId },
 						},
 					}),

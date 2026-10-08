@@ -20,7 +20,7 @@
 npm install @ydbjs/topic
 ```
 
-Требуется Node.js >= 20.19.
+Требуется Node.js 22.15+ в ветке 22.x или Node.js 23.8+.
 
 Контрибьюторам: карты внутренних конечных автоматов — в [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -87,7 +87,7 @@ await using writer = createTopicWriter(driver, {
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — путь или источники с фильтрами
 - `consumer`: `string` — имя консюмера
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки (встроенный ZSTD требует Node.js 22.15+ / 23.8+; для рантаймов без zlib zstd зарегистрируйте свой)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки (встроенные: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — начальное окно чтения на сервере (по умолчанию 8 МиБ); большое сообщение может его превысить
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()`, после него ожидающие коммиты отбрасываются (по умолчанию 30000)
@@ -141,7 +141,7 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `topic`: `string`
 - `tx?`: `TX` — транзакция для записи
 - `producer?`: `string` — id продюсера (по умолчанию генерируется)
-- `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё; встроенный ZSTD требует Node.js 22.15+ / 23.8+)
+- `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
 - `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
 - `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)

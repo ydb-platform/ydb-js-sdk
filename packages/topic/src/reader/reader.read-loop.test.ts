@@ -70,6 +70,34 @@ test('rejects a zero read limit', async (tc) => {
 	await expect(firstBatch()).rejects.toThrow(/limit/)
 })
 
+// Server-controlled response boundaries make a fixed message-count overflow
+// nondeterministic on a live server, even when the response fits the byte budget.
+test('delivers a large batch of tiny messages without overflowing the argument stack', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	let count = 150_000
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			bytesSize: 4_000_000n,
+			messages: Array.from({ length: count }, (_, i) => ({
+				offset: BigInt(i),
+				seqNo: BigInt(i + 1),
+				data: new Uint8Array([i % 256]),
+			})),
+		})
+	)
+	for await (let batch of reader.read({ signal: tc.signal })) {
+		expect(batch).toHaveLength(count)
+		expect(batch[0]!.offset).toBe(0n)
+		expect(batch.at(-1)!.offset).toBe(BigInt(count - 1))
+		break
+	}
+})
+
 // Same invariant as above: a negative limit fails validation.
 test('rejects a negative read limit', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()

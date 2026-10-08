@@ -1342,7 +1342,7 @@ test('passes readOffset and commitOffset overrides through to the start response
 	expect(rs[0]!.commitOffset).toBe(10n)
 })
 
-test('emits partition.committed when a commitOffset override advances the watermark', () => {
+test('confirms a commitOffset override only from a server watermark', () => {
 	let h = mk()
 	toReadyWithPartition(h) // server says committed 5
 	h.emitted.length = 0
@@ -1352,6 +1352,17 @@ test('emits partition.committed when a commitOffset override advances the waterm
 		partitionKey: pk(10n),
 		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
 		commitOffset: 10n,
+	})
+	expect(outputs(h, 'reader.partition.committed')).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.partitionCommittedOffset).toBe(5n)
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.send.partition_status',
+		partitionSessionId: 1n,
+	})
+	step(h, {
+		type: 'reader.stream.partition_status',
+		partitionSessionId: 1n,
+		committedOffset: 10n,
 	})
 	let committed = outputs(h, 'reader.partition.committed')
 	expect(committed).toHaveLength(1)
@@ -1371,11 +1382,11 @@ test('clamps a subsequent commit at the commitOffset override', () => {
 	commit(h, 10n, [{ start: 5n, end: 13n }], 1)
 	let cs = commitSends(h.effects)
 	expect(cs).toHaveLength(1)
-	// The override is the committed floor, not the stale server committedOffset 5.
+	// The requested override suppresses overlapping wire ranges before its ack.
 	expect(cs[0]!.ranges).toEqual([{ start: 10n, end: 13n }])
 })
 
-test('reconciles pending commits against the commitOffset override instead of re-sending below it', () => {
+test('waits for confirmation of an override covering a pending commit', () => {
 	let h = mk()
 	toReadyWithPartition(h)
 	ackStart(h, 1n, 10n)
@@ -1387,8 +1398,7 @@ test('reconciles pending commits against the commitOffset override instead of re
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
 	message(h, startMsg(7n, 10n, 5n)) // the server still says committed 5
-	// The hook's offset store is ahead: everything below 10 is committed. Re-sending
-	// [5,8) after the override would be session-fatal — resolve the waiter instead.
+	// Re-sending [5,8) after the override would overlap the server's pending commit.
 	step(h, {
 		type: 'reader.partition.start_ready',
 		partitionSessionId: 7n,
@@ -1397,7 +1407,131 @@ test('reconciles pending commits against the commitOffset override instead of re
 		commitOffset: 10n,
 	})
 	expect(commitSends(h.effects)).toHaveLength(0)
+	expect(outputs(h, 'reader.commit.resolved')).toHaveLength(0)
+	step(h, {
+		type: 'reader.stream.partition_status',
+		partitionSessionId: 7n,
+		committedOffset: 10n,
+	})
 	expect(outputs(h, 'reader.commit.resolved').map((o) => o.waiterId)).toContain(1)
+})
+
+test('retries status confirmation and stops querying a revoked partition', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	step(h, {
+		type: 'reader.partition.start_ready',
+		partitionSessionId: 1n,
+		partitionKey: pk(10n),
+		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		commitOffset: 10n,
+	})
+	step(h, { type: 'reader.stream.partition_status', partitionSessionId: 1n, committedOffset: 5n })
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.timer.schedule',
+		which: 'partition_commit_status',
+		partitionKey: pk(10n),
+	})
+	step(h, { type: 'reader.timer.partition_commit_status', partitionKey: pk(10n) })
+	expect(h.effects).toEqual([
+		{ type: 'reader.effect.send.partition_status', partitionSessionId: 1n },
+	])
+	message(h, stopMsg(1n, false, 5n))
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.timer.clear',
+		which: 'partition_commit_status',
+		partitionKey: pk(10n),
+	})
+	h.emitted.length = 0
+	step(h, {
+		type: 'reader.stream.partition_status',
+		partitionSessionId: 1n,
+		committedOffset: 10n,
+	})
+	expect(outputs(h, 'reader.partition.committed')).toHaveLength(0)
+	step(h, { type: 'reader.timer.partition_commit_status', partitionKey: pk(10n) })
+	expect(h.effects).toEqual([])
+})
+
+test('replays ranges suppressed by an unconfirmed override after reconnect', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	step(h, {
+		type: 'reader.partition.start_ready',
+		partitionSessionId: 1n,
+		partitionKey: pk(10n),
+		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		commitOffset: 10n,
+	})
+	commit(h, 10n, [{ start: 5n, end: 8n }], 1)
+	expect(commitSends(h.effects)).toHaveLength(0)
+	step(h, { type: 'reader.stream.disconnected' })
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.timer.clear',
+		which: 'partition_commit_status',
+		partitionKey: pk(10n),
+	})
+	step(h, { type: 'reader.timer.retry_backoff' })
+	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
+	message(h, startMsg(7n, 10n, 5n))
+	ackStart(h, 7n, 10n)
+	expect(commitSends(h.effects)).toEqual([
+		{
+			type: 'reader.effect.send.commit',
+			partitionSessionId: 7n,
+			ranges: [{ start: 5n, end: 8n }],
+		},
+	])
+	expect(outputs(h, 'reader.commit.resolved')).toHaveLength(0)
+	message(h, commitMsg([[7n, 8n]]))
+	expect(outputs(h, 'reader.commit.resolved').map((o) => o.waiterId)).toEqual([1])
+})
+
+test('drains an unconfirmed start override before closing', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	step(h, {
+		type: 'reader.partition.start_ready',
+		partitionSessionId: 1n,
+		partitionKey: pk(10n),
+		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		commitOffset: 10n,
+	})
+	step(h, { type: 'reader.close' })
+	expect(h.state).toBe('closing')
+	step(h, {
+		type: 'reader.stream.partition_status',
+		partitionSessionId: 1n,
+		committedOffset: 10n,
+	})
+	expect(h.state).toBe('closed')
+	expect(outputs(h, 'reader.partition.committed')).toContainEqual(
+		expect.objectContaining({ committedOffset: 10n })
+	)
+})
+
+test('accepts a stop watermark as confirmation of the start override', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	step(h, {
+		type: 'reader.partition.start_ready',
+		partitionSessionId: 1n,
+		partitionKey: pk(10n),
+		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		commitOffset: 10n,
+	})
+	message(h, stopMsg(1n, true, 10n))
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.timer.clear',
+		which: 'partition_commit_status',
+		partitionKey: pk(10n),
+	})
+	ackStop(h, 10n)
+	expect(h.ctx.partitions.get(pk(10n))!.state).toBe('stopped')
+	expect(h.effects).toContainEqual({
+		type: 'reader.effect.send.stop_response',
+		partitionSessionId: 1n,
+	})
 })
 
 test('does not double-send a commit issued between start_partition and start_ready', () => {

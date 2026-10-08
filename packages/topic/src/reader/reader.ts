@@ -446,7 +446,9 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		while (chunks.length > 0 && remaining > 0) {
 			let chunk = chunks[0]!
 			let count = Math.min(chunk.messages.length, remaining)
-			messages.push(...chunk.messages.splice(0, count))
+			for (let message of chunk.messages.splice(0, count)) {
+				messages.push(message)
+			}
 			remaining -= count
 			if (chunk.messages.length === 0) {
 				releaseBytes += chunk.releaseBytes
@@ -509,7 +511,10 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		if (this.#commitBatch === batch) {
 			this.#commitBatch = undefined
 		}
-		void this.#commitOffsets(batch.messages).then(batch.completion.resolve, batch.completion.reject)
+		void this.#commitOffsets(batch.messages).then(
+			batch.completion.resolve,
+			batch.completion.reject
+		)
 	}
 
 	async #commitOffsets(messages: TopicMessage[]): Promise<void> {

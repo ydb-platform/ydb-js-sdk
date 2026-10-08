@@ -286,6 +286,12 @@ let classify = function classify(message: any): ReaderEvent | null {
 				type: 'reader.stream.commit_response',
 				committed: server.value.partitionsCommittedOffsets,
 			}
+		case 'partitionSessionStatusResponse':
+			return {
+				type: 'reader.stream.partition_status',
+				partitionSessionId: server.value.partitionSessionId,
+				committedOffset: server.value.committedOffset,
+			}
 		case 'endPartitionSession':
 			return {
 				type: 'reader.stream.end_partition',
@@ -415,6 +421,22 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 		case 'reader.effect.send.read_request': {
 			if (!sim.streamOpen || sim.initPending) break // lost on a not-yet-live stream
 			sim.credit += effect.bytesSize
+			break
+		}
+		case 'reader.effect.send.partition_status': {
+			if (!sim.streamOpen || sim.initPending) break
+			let part = sim.partitions.find(
+				(p) => p.partitionSessionId === effect.partitionSessionId
+			)
+			if (part) {
+				forward(sim, {
+					case: 'partitionSessionStatusResponse',
+					value: {
+						partitionSessionId: effect.partitionSessionId,
+						committedOffset: part.durableCommitted,
+					},
+				})
+			}
 			break
 		}
 		case 'reader.effect.send.commit': {

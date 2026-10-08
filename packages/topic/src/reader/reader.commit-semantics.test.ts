@@ -9,6 +9,7 @@ import {
 	commitOffsetResponse,
 	initResponse,
 	makeFakeTopicDriver,
+	partitionStatusResponse,
 	readResponse,
 	settle,
 	startPartitionSession,
@@ -468,7 +469,7 @@ test('rejects a foreign-reader commit whose partition is not granted locally', a
 
 // ── onCommittedOffset observer ─────────────────────────────────────────────────
 
-test('reports a start-session commitOffset after sending the start response', async () => {
+test('reports a start-session commitOffset after server status confirms it', async () => {
 	let acks: bigint[] = []
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, {
@@ -487,7 +488,67 @@ test('reports a start-session commitOffset after sending the start response', as
 	let response = await stream.waitForStartResponse()
 	expect(response.commitOffset).toBe(10n)
 	await settle()
+	expect(acks).toEqual([])
+	stream.respond(partitionStatusResponse(1n, 10n))
+	await settle()
 	expect(acks).toEqual([10n])
+})
+
+// A live server cannot deterministically lose a particular commit ack and then
+// delay a start override's persistence; the scripted stream fixes both races.
+test('keeps a reconnected commit pending until the start override is confirmed', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let starts = 0
+	let confirmed: bigint[] = []
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		onPartitionSessionStart: async () =>
+			++starts > 1 ? { readOffset: 1n, commitOffset: 1n } : undefined,
+		onCommittedOffset: (_, offset) => {
+			confirmed.push(offset)
+		},
+	})
+	let first = await primeStream(reader, waitForNextStream)
+	first.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await first.waitForStartResponse()
+	first.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('x') }],
+		})
+	)
+	let [message] = await collect(reader, 1, tc.signal)
+	let pending = reader.commit(message!)
+	let resolved = false
+	void pending.then(
+		() => (resolved = true),
+		() => undefined
+	)
+	await first.waitForCommit()
+	first.disconnect()
+	let second = await primeStream(reader, waitForNextStream)
+	second.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await second.waitForStartResponse()
+	await settle()
+	expect(resolved).toBe(false)
+	expect(confirmed).toEqual([])
+	expect(second.sent.filter((m) => m.clientMessage.case === 'commitOffsetRequest')).toHaveLength(
+		0
+	)
+	second.respond(partitionStatusResponse(1n, 0n))
+	await expect
+		.poll(
+			() =>
+				second.sent.filter((m) => m.clientMessage.case === 'partitionSessionStatusRequest')
+					.length,
+			{ timeout: 3000 }
+		)
+		.toBe(2)
+	expect(resolved).toBe(false)
+	second.respond(partitionStatusResponse(1n, 1n))
+	await expect(pending).resolves.toBeUndefined()
+	expect(confirmed).toEqual([1n])
 })
 
 // end_partition is informational: the session stays committable and the final

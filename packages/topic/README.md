@@ -20,7 +20,7 @@ High‑level, type‑safe clients for YDB Topics (publish–subscribe message st
 npm install @ydbjs/topic
 ```
 
-Requires Node.js >= 20.19.
+Requires Node.js 22.15+ on the 22.x release line, or Node.js 23.8+.
 
 Contributing? The internal state machines are mapped in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -89,7 +89,7 @@ await using writer = createTopicWriter(driver, {
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — topic path or detailed sources
 - `consumer`: `string` — consumer name
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built‑in ZSTD needs Node.js 22.15+ / 23.8+; register your own for runtimes without zlib zstd)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built-ins: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — initial server read-credit window (default 8 MiB); an oversized message may exceed it
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
@@ -145,7 +145,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `topic`: `string`
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
-- `codec?`: `CompressionCodec` — compression (default RAW; built‑ins: RAW, GZIP, ZSTD — built‑in ZSTD needs Node.js 22.15+ / 23.8+)
+- `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
 - `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
