@@ -846,10 +846,19 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		)
 	}
 
-	if (sim.readerState === 'ready' && ctx.readCreditBytes !== sim.credit) {
-		throw new Error(
-			`${where}: stream credit ${ctx.readCreditBytes} differs from server ${sim.credit}`
-		)
+	if (sim.readerState === 'ready') {
+		let expectedCredit = ctx.limits.maxBufferBytes - retainedBytes
+		if (sim.credit !== expectedCredit) {
+			throw new Error(`${where}: expected server credit ${expectedCredit}, got ${sim.credit}`)
+		}
+	}
+
+	if (sim.readerState === 'connecting' && ctx.sessionId !== undefined) {
+		if (sim.credit !== 0n || retainedBytes < ctx.limits.maxBufferBytes) {
+			throw new Error(
+				`${where}: initialized session waits for credit without a full retained buffer`
+			)
+		}
 	}
 
 	// sessionIndex is consistent: every entry points to a partition whose current

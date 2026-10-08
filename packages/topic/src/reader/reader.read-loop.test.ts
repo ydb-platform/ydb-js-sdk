@@ -398,3 +398,41 @@ test('accepts an oversized response and replenishes the full server-reported byt
 	await settle()
 	expect(readRequests(stream.sent)).toEqual([1024n, 5000n, 600n])
 })
+
+test('returns the server response size once after all 100 message batches are delivered', async (tc) => {
+	// The fake fixes response framing and bytesSize independently of payload lengths.
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let maxBufferBytes = 8n * 1024n * 1024n
+	let responseBytes = 10n * 1024n * 1024n
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes })
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			bytesSize: responseBytes,
+			messages: Array.from({ length: 10_000 }, (_, offset) => ({
+				offset: BigInt(offset),
+				seqNo: BigInt(offset + 1),
+				data: new Uint8Array([offset % 256]),
+			})),
+		})
+	)
+	await settle()
+	expect(reader.bufferedBytes).toBe(responseBytes)
+
+	let deliveredBatches = 0
+	for await (let batch of reader.read({ limit: 100, signal: tc.signal })) {
+		expect(batch).toHaveLength(100)
+		deliveredBatches += 1
+		await settle()
+		let lastBatch = deliveredBatches === 100
+		expect(reader.bufferedBytes).toBe(lastBatch ? 0n : responseBytes)
+		expect(readRequests(stream.sent)).toEqual(
+			lastBatch ? [maxBufferBytes, responseBytes] : [maxBufferBytes]
+		)
+		if (lastBatch) break
+	}
+	expect(deliveredBatches).toBe(100)
+})

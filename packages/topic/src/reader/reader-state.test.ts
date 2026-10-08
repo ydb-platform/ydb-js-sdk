@@ -1246,7 +1246,9 @@ test('ignores a late per-partition graceful timeout after the reader closed', ()
 test('replenishes exactly the released read credit without delay', () => {
 	let h = mk(1000n)
 	toReadyWithPartition(h)
-	message(h, readMsg(1n, 300n, [5n]))
+	message(h, readMsg(1n, 150n, [5n]))
+	message(h, readMsg(1n, 100n, [6n]))
+	message(h, readMsg(1n, 50n, [7n]))
 	h.effects = []
 	step(h, { type: 'reader.read_release', bytes: 150n })
 	let first = h.effects.find(
@@ -1277,19 +1279,21 @@ test('reserves reconnect credit for retained responses', () => {
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
 	expect(h.ctx.bufferedBytes).toBe(400n)
-	expect(h.ctx.readCreditBytes).toBe(600n)
+	expect(h.state).toBe('ready')
 	expect(h.effects).toContainEqual({ type: 'reader.effect.send.read_request', bytesSize: 600n })
 	expect(h.ctx.sessionIndex.size).toBe(0)
 	step(h, { type: 'reader.read_release', bytes: 400n })
 	expect(h.ctx.bufferedBytes).toBe(0n)
-	expect(h.ctx.readCreditBytes).toBe(1000n)
+	expect(h.state).toBe('ready')
 	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 400n }])
 })
 
 test('accounts retained-byte releases during reconnect backoff and init', () => {
 	let h = mk(1000n)
 	toReadyWithPartition(h)
-	message(h, readMsg(1n, 600n, [5n]))
+	message(h, readMsg(1n, 200n, [5n]))
+	message(h, readMsg(1n, 100n, [6n]))
+	message(h, readMsg(1n, 300n, [7n]))
 	step(h, { type: 'reader.stream.disconnected' })
 	step(h, { type: 'reader.read_release', bytes: 200n })
 	expect(h.ctx.bufferedBytes).toBe(400n)
@@ -1299,7 +1303,7 @@ test('accounts retained-byte releases during reconnect backoff and init', () => 
 	expect(h.ctx.bufferedBytes).toBe(300n)
 	expect(h.effects).toEqual([])
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
-	expect(h.ctx.readCreditBytes).toBe(700n)
+	expect(h.state).toBe('ready')
 	expect(h.effects).toContainEqual({ type: 'reader.effect.send.read_request', bytesSize: 700n })
 })
 
@@ -1307,10 +1311,10 @@ test('repays current-stream overdraw without increasing the credit window', () =
 	let h = mk(1000n)
 	toReadyWithPartition(h)
 	message(h, readMsg(1n, 1400n, [5n]))
-	expect(h.ctx.readCreditBytes).toBe(-400n)
+	expect(h.state).toBe('ready')
 	step(h, { type: 'reader.read_release', bytes: 1400n })
 	expect(h.ctx.bufferedBytes).toBe(0n)
-	expect(h.ctx.readCreditBytes).toBe(1000n)
+	expect(h.state).toBe('ready')
 	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 1400n }])
 })
 
@@ -1778,4 +1782,47 @@ test('finalizes from closing when the reassign gc drains the last held commit', 
 	})
 	step(h, { type: 'reader.timer.partition_reassign_gc', partitionKey: pk(10n) })
 	expect(h.state).toBe('closed')
+})
+
+test('drains commits and refreshes the token before retained responses allow the first read request', () => {
+	let h = mk(1000n)
+	toReadyWithPartition(h)
+	ackStart(h, 1n, 10n)
+	message(h, readMsg(1n, 1000n, [5n, 6n]))
+	commit(h, 10n, [{ start: 5n, end: 6n }], 1)
+	step(h, { type: 'reader.stream.disconnected' })
+	step(h, { type: 'reader.timer.retry_backoff' })
+	step(h, { type: 'reader.stream.init_response', sessionId: '' })
+	expect(h.state).toBe('connecting')
+	expect(h.ctx.sessionId).toBe('')
+	expect(effectTypes(h.effects)).not.toContain('reader.effect.send.read_request')
+	message(h, startMsg(2n, 10n, 5n))
+	ackStart(h, 2n, 10n)
+	expect(commitSends(h.effects)).toEqual([
+		{
+			type: 'reader.effect.send.commit',
+			partitionSessionId: 2n,
+			ranges: [{ start: 5n, end: 6n }],
+		},
+	])
+	message(h, commitMsg([[2n, 6n]]))
+	expect(outputs(h, 'reader.commit.resolved')).toContainEqual({
+		type: 'reader.commit.resolved',
+		waiterId: 1,
+	})
+	step(h, { type: 'reader.timer.update_token' })
+	expect(h.effects).toEqual([{ type: 'reader.effect.send.update_token' }])
+	step(h, { type: 'reader.timer.start_timeout' })
+	expect(h.state).toBe('connecting')
+	expect(h.effects).toEqual([])
+	commit(h, 10n, [{ start: 6n, end: 7n }], 2)
+	expect(commitSends(h.effects)).toHaveLength(1)
+	step(h, { type: 'reader.close' })
+	expect(h.state).toBe('closing')
+	message(h, commitMsg([[2n, 7n]]))
+	expect(h.state).toBe('closed')
+	expect(outputs(h, 'reader.commit.resolved')).toContainEqual({
+		type: 'reader.commit.resolved',
+		waiterId: 2,
+	})
 })

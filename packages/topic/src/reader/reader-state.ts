@@ -149,8 +149,7 @@ export type ReaderLimits = {
 // Pure logical context — mutated synchronously inside the transition only.
 export type ReaderCtx = {
 	// connection identity
-	sessionId: string
-	hasEverConnected: boolean
+	sessionId: string | undefined
 
 	// reconnect bookkeeping (mirrors the writer)
 	attempts: number
@@ -171,9 +170,6 @@ export type ReaderCtx = {
 
 	// Unreleased ReadResponse.bytesSize, including responses retained across reconnects.
 	bufferedBytes: bigint
-	// Current-stream balance: requested bytes minus received bytes. The protocol
-	// permits a negative balance for an oversized response. Only this balance resets on reconnect.
-	readCreditBytes: bigint
 
 	limits: ReaderLimits
 }
@@ -363,8 +359,7 @@ export let createReaderCtx = function createReaderCtx(
 	options?: { retryOnSchemeError?: boolean; recoveryWindowMs?: number }
 ): ReaderCtx {
 	return {
-		sessionId: '',
-		hasEverConnected: false,
+		sessionId: undefined,
 
 		attempts: 0,
 		lastError: undefined,
@@ -376,7 +371,6 @@ export let createReaderCtx = function createReaderCtx(
 		grantSeq: 0,
 
 		bufferedBytes: 0n,
-		readCreditBytes: 0n,
 
 		limits,
 	}
@@ -626,7 +620,6 @@ let readResponse = function readResponse(
 	// exactly bytesSize — several partitions in one response must not each claim the
 	// full size. Emit even when everything was dropped so credit is still released.
 	ctx.bufferedBytes += event.bytesSize
-	ctx.readCreditBytes -= event.bytesSize
 	runtime.emit({ type: 'reader.messages', releaseBytes: event.bytesSize, groups })
 	return []
 }
@@ -1160,8 +1153,8 @@ let recordCommit = function recordCommit(
 	entry.pendingCommits.push({ targetOffset, wireRanges, waiterId: event.waiterId })
 	entry.claimedRanges = mergeRanges([...entry.claimedRanges, ...wireRanges])
 
-	// Send only in `ready` and only over a session granted by the CURRENT stream:
-	// toReady clears sessionIndex and only start_partition repopulates it, so a commit
+	// An initialized stream can commit while retained responses delay its first read request.
+	// initializeSession clears sessionIndex and only start_partition repopulates it, so a commit
 	// landing in the init→start_partition window after a reconnect buffers here and
 	// rides the reconcile — sending immediately would use the previous stream's
 	// session id.
@@ -1173,7 +1166,8 @@ let recordCommit = function recordCommit(
 	// buffered too: the ack performs the single send — sending here AND there would
 	// put the same range on the wire twice, which is session-fatal.
 	let sessionLive =
-		runtime.state === 'ready' &&
+		(runtime.state === 'ready' ||
+			(runtime.state === 'connecting' && ctx.sessionId !== undefined)) &&
 		ctx.sessionIndex.get(entry.partitionSessionId) === event.partitionKey
 	let committable =
 		entry.state === 'active' || entry.state === 'stopping-graceful' || entry.state === 'ended'
@@ -1187,27 +1181,32 @@ let recordCommit = function recordCommit(
 	return []
 }
 
-// Retained responses and the current stream's unspent credit share one budget.
-// A new stream has no credit debt from an oversized response on an old stream.
-let replenishReadCredit = function replenishReadCredit(ctx: ReaderCtx): ReaderEffect[] {
-	let bytes = ctx.limits.maxBufferBytes - ctx.bufferedBytes - ctx.readCreditBytes
-	if (bytes <= 0n) {
-		return []
-	}
-	ctx.readCreditBytes += bytes
-	return [readRequestEffect(bytes)]
+let startReading = function startReading(
+	ctx: ReaderCtx
+): TransitionResult<ReaderState, ReaderEffect> {
+	let bytes = ctx.limits.maxBufferBytes - ctx.bufferedBytes
+	return bytes > 0n
+		? { state: 'ready', effects: [readRequestEffect(bytes)] }
+		: { state: 'connecting' }
 }
 
 let releaseBytes = function releaseBytes(
 	ctx: ReaderCtx,
 	bytes: bigint,
-	ready: boolean
-): ReaderEffect[] {
-	ctx.bufferedBytes -= bytes
-	if (ctx.bufferedBytes < 0n) {
-		ctx.bufferedBytes = 0n
+	state: ReaderState
+): TransitionResult<ReaderState, ReaderEffect> | void {
+	if (bytes <= 0n) {
+		return
 	}
-	return ready ? replenishReadCredit(ctx) : []
+	let released = bytes < ctx.bufferedBytes ? bytes : ctx.bufferedBytes
+	ctx.bufferedBytes -= released
+	if (state === 'ready') {
+		// The facade releases each complete response once, using its server-supplied bytesSize.
+		return { effects: released > 0n ? [readRequestEffect(released)] : [] }
+	}
+	if (state === 'connecting' && ctx.sessionId !== undefined) {
+		return startReading(ctx)
+	}
 }
 
 // ── Terminal / transitions ──────────────────────────────────────────────────────
@@ -1255,31 +1254,25 @@ let releaseState = function releaseState(ctx: ReaderCtx): void {
 	ctx.partitions.clear()
 	ctx.sessionIndex.clear()
 	ctx.bufferedBytes = 0n
-	ctx.readCreditBytes = 0n
+	ctx.sessionId = undefined
 }
 
-// Enter `ready` on a successful init. Unlike the writer there is no seqNo recovery:
-// the server re-sends start_partition per partition, where reconcile happens.
-let toReady = function toReady(
+// Initialize the session before granting read credit; retained responses may keep
+// the reader connecting while partition control and commits already run.
+let initializeSession = function initializeSession(
 	ctx: ReaderCtx,
 	sessionId: string,
 	runtime: ReaderRuntime
 ): TransitionResult<ReaderState, ReaderEffect> {
 	ctx.sessionId = sessionId
-	ctx.hasEverConnected = true
 	ctx.attempts = 0
-
-	// The stream's grants expire on reconnect, but responses retained by the facade
-	// still consume the shared buffer budget until read() releases them.
 	ctx.sessionIndex.clear()
-	ctx.readCreditBytes = 0n
 
 	runtime.emit({ type: 'reader.session', sessionId })
 
 	let effects: ReaderEffect[] = [
 		...clearConnectTimersEffects,
 		{ type: 'reader.effect.timer.schedule', which: 'update_token' },
-		...replenishReadCredit(ctx),
 	]
 
 	// Bound the wait for every partition holding pending commits: if the server does
@@ -1296,7 +1289,8 @@ let toReady = function toReady(
 		}
 	}
 
-	return { state: 'ready', effects }
+	let reading = startReading(ctx)
+	return { ...reading, effects: [...effects, ...(reading.effects ?? [])] }
 }
 
 let toReconnecting = function toReconnecting(
@@ -1305,11 +1299,11 @@ let toReconnecting = function toReconnecting(
 	runtime: ReaderRuntime
 ): TransitionResult<ReaderState, ReaderEffect> {
 	// sessionIndex means "session ids granted by the CURRENT stream" — with the stream
-	// gone there are none. Clearing here (not only in toReady) keeps the guards in
+	// gone there are none. Clearing here (not only on init) keeps the guards in
 	// recordCommit / forceStopStalledGraceful honest while connecting: nothing may be
 	// sent under an id the next stream never granted.
 	ctx.sessionIndex.clear()
-	ctx.readCreditBytes = 0n
+	ctx.sessionId = undefined
 	if (error !== undefined) {
 		ctx.lastError = error
 	}
@@ -1412,6 +1406,64 @@ let ignored = function ignored(state: ReaderState, event: ReaderEvent): void {
 	dbg.log('ignoring %s in state %s', event.type, state)
 }
 
+let sessionTransition = function sessionTransition(
+	ctx: ReaderCtx,
+	event: ReaderEvent,
+	runtime: ReaderRuntime
+): TransitionResult<ReaderState, ReaderEffect> | void {
+	let state = runtime.state
+	switch (event.type) {
+		case 'reader.stream.read_response':
+		case 'reader.stream.start_partition':
+		case 'reader.stream.stop_partition':
+		case 'reader.stream.commit_response':
+		case 'reader.stream.partition_status':
+		case 'reader.stream.end_partition': {
+			let effects = applyStreamEvent(ctx, event, runtime)
+			return { effects }
+		}
+
+		case 'reader.commit':
+			return { effects: recordCommit(ctx, event, runtime) }
+
+		case 'reader.partition.start_ready': {
+			let effects = ackPartitionStart(ctx, event)
+			return { effects }
+		}
+
+		case 'reader.partition.stop_ready': {
+			let effects = ackPartitionStop(ctx, event, runtime)
+			return { effects }
+		}
+
+		case 'reader.timer.update_token':
+			return { effects: [{ type: 'reader.effect.send.update_token' }] }
+
+		case 'reader.timer.partition_reassign_gc':
+			gcPartition(ctx, event.partitionKey, runtime)
+			return
+
+		// Fallback for a graceful stop whose hook or commits never completed: the
+		// server waits for the stop response indefinitely, so the client must not.
+		case 'reader.timer.partition_graceful_timeout': {
+			let effects = forceStopStalledGraceful(ctx, event.partitionKey, runtime)
+			return { effects }
+		}
+
+		case 'reader.stream.disconnected':
+			if (!isRetryableReaderError(event.error, ctx.retryOnSchemeError)) {
+				return terminate(ctx, 'errored', event.error, runtime)
+			}
+			return toReconnecting(ctx, event.error, runtime)
+
+		case 'reader.close':
+			return toClosing(ctx, runtime)
+
+		default:
+			return ignored(state, event)
+	}
+}
+
 export let readerTransition = function readerTransition(
 	ctx: ReaderCtx,
 	event: ReaderEvent,
@@ -1424,10 +1476,12 @@ export let readerTransition = function readerTransition(
 		return terminate(ctx, 'closed', event.reason ?? new Error('Reader destroyed'), runtime)
 	}
 	if (state !== 'closed' && state !== 'errored' && event.type === 'reader.read_release') {
-		return { effects: releaseBytes(ctx, event.bytes, state === 'ready') }
+		return releaseBytes(ctx, event.bytes, state)
 	}
 	if (
-		(state === 'ready' || state === 'closing') &&
+		(state === 'ready' ||
+			state === 'closing' ||
+			(state === 'connecting' && ctx.sessionId !== undefined)) &&
 		event.type === 'reader.timer.partition_commit_status'
 	) {
 		let entry = ctx.partitions.get(event.partitionKey)
@@ -1474,13 +1528,16 @@ export let readerTransition = function readerTransition(
 
 		case 'connecting':
 		case 'reconnecting': {
+			if (state === 'connecting' && ctx.sessionId !== undefined) {
+				return sessionTransition(ctx, event, runtime)
+			}
 			switch (event.type) {
 				case 'reader.stream.init_response':
-					return toReady(ctx, event.sessionId, runtime)
+					return initializeSession(ctx, event.sessionId, runtime)
 
 				case 'reader.commit':
 					// Buffered for re-send on the next start_partition (recordCommit never
-					// sends outside `ready`).
+					// sends before the new session has initialized).
 					return { effects: recordCommit(ctx, event, runtime) }
 
 				case 'reader.stream.disconnected':
@@ -1540,58 +1597,8 @@ export let readerTransition = function readerTransition(
 			}
 		}
 
-		case 'ready': {
-			switch (event.type) {
-				case 'reader.stream.read_response':
-				case 'reader.stream.start_partition':
-				case 'reader.stream.stop_partition':
-				case 'reader.stream.commit_response':
-				case 'reader.stream.partition_status':
-				case 'reader.stream.end_partition': {
-					let effects = applyStreamEvent(ctx, event, runtime)
-					return { effects }
-				}
-
-				case 'reader.commit':
-					return { effects: recordCommit(ctx, event, runtime) }
-
-				case 'reader.partition.start_ready': {
-					let effects = ackPartitionStart(ctx, event)
-					return { effects }
-				}
-
-				case 'reader.partition.stop_ready': {
-					let effects = ackPartitionStop(ctx, event, runtime)
-					return { effects }
-				}
-
-				case 'reader.timer.update_token':
-					return { effects: [{ type: 'reader.effect.send.update_token' }] }
-
-				case 'reader.timer.partition_reassign_gc':
-					gcPartition(ctx, event.partitionKey, runtime)
-					return
-
-				// Fallback for a graceful stop whose hook or commits never completed: the
-				// server waits for the stop response indefinitely, so the client must not.
-				case 'reader.timer.partition_graceful_timeout': {
-					let effects = forceStopStalledGraceful(ctx, event.partitionKey, runtime)
-					return { effects }
-				}
-
-				case 'reader.stream.disconnected':
-					if (!isRetryableReaderError(event.error, ctx.retryOnSchemeError)) {
-						return terminate(ctx, 'errored', event.error, runtime)
-					}
-					return toReconnecting(ctx, event.error, runtime)
-
-				case 'reader.close':
-					return toClosing(ctx, runtime)
-
-				default:
-					return ignored(state, event)
-			}
-		}
+		case 'ready':
+			return sessionTransition(ctx, event, runtime)
 
 		case 'closing': {
 			switch (event.type) {
