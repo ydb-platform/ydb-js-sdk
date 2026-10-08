@@ -372,3 +372,37 @@ test('survives background rediscovery failure and keeps serving requests', async
 		await server.shutdown()
 	}
 })
+
+test('rejects ready after close with discovery disabled', async (tc) => {
+	using driver = new Driver('grpc://127.0.0.1:1/local', {
+		'ydb.sdk.enable_discovery': false,
+	})
+	await driver.ready(tc.signal)
+	driver.close()
+	await expect(driver.ready(tc.signal)).rejects.toThrow(/closed/i)
+})
+
+test('rejects ready after close with discovery enabled', async (tc) => {
+	await using server = await startBadDiscovery({
+		status: StatusIds_StatusCode.SUCCESS,
+		ready: true,
+		result: anyPack(
+			ListEndpointsResultSchema,
+			create(ListEndpointsResultSchema, {
+				endpoints: [{ nodeId: 1, address: '127.0.0.1', port: 2136 }],
+			})
+		),
+	})
+	using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`)
+	await driver.ready(tc.signal)
+	driver.close()
+	await expect(driver.ready(tc.signal)).rejects.toThrow(/closed/i)
+})
+
+test('honors an already aborted ready signal with discovery disabled', async () => {
+	using driver = new Driver('grpc://127.0.0.1:1/local', {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let reason = new Error('caller cancelled readiness')
+	await expect(driver.ready(AbortSignal.abort(reason))).rejects.toBe(reason)
+})

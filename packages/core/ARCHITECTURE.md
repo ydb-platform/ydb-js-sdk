@@ -26,9 +26,9 @@ registry, and health. On any change to the routable set it rebuilds an **immutab
 `acquireNode()` — reads the latest snapshot reference (swapped by `#consume`),
 selects a `RoutingSnapshot` ref (pure), and lazily materializes a channel. The only
 per-RPC dispatch is a fire-and-forget `penalize()` / `recover()` (enqueue only;
-handled off the hot path). Reads never dispatch; writes never happen inline. `#channels` / `#retired` /
-`#pinned` are facade-owned I/O the transition never touches — that is what makes the
-sync hot path race-free against the async FSM.
+handled off the hot path). Reads never dispatch; writes never happen inline.
+
+The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache.
 
 ### States (discovery lifecycle)
 
@@ -128,10 +128,7 @@ hard-pin, and the pile-relaxed last-resort tiers still route if every pile is un
 
 A connection dropped from discovery is **not** torn down while it works: live streams
 drain on it and a brief flap does not close it. New RPCs are simply not routed there.
-The `idle_sweep` effect closes a retired channel only on genuine breakage
-(`SHUTDOWN` / sustained `TRANSIENT_FAILURE`) or after `retiredGraceMs` idle with no
-reappearance; a returning node revives the **same** channel. Still-discovered channels
-are never proactively closed — grpc-js manages their idle socket.
+The `idle_sweep` effect keeps retired channels in `READY`, removes `SHUTDOWN` channels immediately, and reaps other connectivity states after `retiredGraceMs` from retirement. A returning node reuses the same channel; another retirement starts a new grace interval. Still-discovered channels are never proactively closed — grpc-js manages their idle socket.
 
 ### Direct topic IO
 

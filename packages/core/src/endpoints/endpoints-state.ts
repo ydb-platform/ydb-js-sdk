@@ -109,9 +109,7 @@ export type EndpointsCtx = {
 	pinned: Map<bigint, EndpointEntry>
 
 	attempts: number
-	lastError: unknown
 	roundInFlight: boolean
-	hasEverDiscovered: boolean
 
 	selfLocation: string
 	// Empty ⇒ the cluster is not in bridge mode ⇒ the pile filter is identity.
@@ -131,9 +129,7 @@ export let createEndpointsCtx = function createEndpointsCtx(config?: {
 		byNodeId: new Map(),
 		pinned: new Map(),
 		attempts: 0,
-		lastError: undefined,
 		roundInFlight: false,
-		hasEverDiscovered: false,
 		selfLocation: '',
 		pileStates: [],
 		config: {
@@ -476,7 +472,6 @@ let applyRound = function applyRound(
 	ctx.selfLocation = selfLocation
 	ctx.pileStates = pileStates
 	ctx.attempts = 0
-	ctx.lastError = undefined
 	ctx.roundInFlight = false
 
 	rebuild(ctx, runtime)
@@ -655,8 +650,6 @@ export let endpointsTransition = function endpointsTransition(
 			switch (event.type) {
 				case 'endpoints.discovery.round_succeeded': {
 					if (event.endpoints.length === 0) return rejectEmptyRound(ctx, runtime)
-					let firstReady = !ctx.hasEverDiscovered
-					ctx.hasEverDiscovered = true
 					let effects = applyRound(
 						ctx,
 						event.endpoints,
@@ -669,12 +662,11 @@ export let endpointsTransition = function endpointsTransition(
 						which: 'discovery_interval',
 					})
 					effects.push({ type: 'endpoints.effect.timer.schedule', which: 'idle_sweep' })
-					if (firstReady) runtime.emit({ type: 'endpoints.ready' })
+					runtime.emit({ type: 'endpoints.ready' })
 					return { state: healthState(ctx), effects }
 				}
 				case 'endpoints.discovery.round_failed': {
 					ctx.attempts += 1
-					ctx.lastError = event.error
 					ctx.roundInFlight = false
 					runtime.emit({
 						type: 'endpoints.discovery_failed',
@@ -729,7 +721,6 @@ export let endpointsTransition = function endpointsTransition(
 					// Background failure is never terminal — keep serving the last
 					// snapshot; the interval/backoff retries.
 					ctx.attempts += 1
-					ctx.lastError = event.error
 					ctx.roundInFlight = false
 					runtime.emit({
 						type: 'endpoints.discovery_failed',

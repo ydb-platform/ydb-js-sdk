@@ -439,6 +439,8 @@ test('a non-retryable initial failure rejects ready with the cause', async (tc) 
 	// A non-retryable failure is terminal; ready() rejects with the real cause,
 	// not a generic 'Endpoints closed'/'finalized'.
 	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
+	await settle()
+	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
 })
 
 test('a throwing onDiscovery hook does not break the pool', async (tc) => {
@@ -557,4 +559,50 @@ test('mapDiscoveryResult leaves pile states empty for a non-bridge cluster', () 
 	let dto = mapDiscoveryResult(result)
 	expect(dto.pileStates).toHaveLength(0)
 	expect(dto.endpoints[0]!.bridgePileName).toBe('')
+})
+
+test('keeps a live channel through repeated retirement and revival', async (tc) => {
+	// Fake discovery changes the roster without interrupting the channel's active RPC.
+	let discovery = makeFakeDiscovery()
+	await using h = setup([endpoint(1), endpoint(2)], { discovery })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(2n)
+	let connection = h.connections.byNode(2n)!
+	connection.driveState(connectivityState.READY)
+	h.pool.callStarted(2n)
+	try {
+		for (let endpoints of [[endpoint(1)], [endpoint(1), endpoint(2)], [endpoint(1)]]) {
+			discovery.push(discoveryResult(endpoints))
+			h.pool.forceRediscovery()
+			// oxlint-disable-next-line no-await-in-loop
+			await settle()
+			expect(connection.closed).toBe(false)
+			expect(h.pool.acquire(2n)).toBe(connection)
+		}
+		expect(h.connections.factoryCalls()).toBe(1)
+	} finally {
+		h.pool.callEnded(2n)
+	}
+})
+
+test('rejects ready after a previously ready pool closes', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	await h.pool.close()
+	await expect(h.pool.ready(tc.signal)).rejects.toThrow(/closed/i)
+})
+
+test('rejects ready while a live call keeps the pool closing', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.callStarted(1n)
+	let closing = h.pool.close()
+	try {
+		await settle()
+		await expect(h.pool.ready(tc.signal)).rejects.toThrow(/clos/i)
+	} finally {
+		h.pool.callEnded(1n)
+		await closing
+	}
 })

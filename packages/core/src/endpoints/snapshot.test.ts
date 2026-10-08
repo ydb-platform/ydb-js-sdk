@@ -38,9 +38,7 @@ let ctxOf = function ctxOf(
 		byNodeId: new Map(entries.map((e) => [e.nodeId, e])),
 		pinned: new Map((over.pinned ?? []).map((e) => [e.nodeId, e])),
 		attempts: 0,
-		lastError: undefined,
 		roundInFlight: false,
-		hasEverDiscovered: true,
 		selfLocation: over.selfLocation ?? 'A',
 		pileStates: over.pileStates ?? [],
 		config: {
