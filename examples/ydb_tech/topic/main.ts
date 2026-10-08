@@ -276,6 +276,7 @@ async function codecCustom() {
 }
 
 async function readScenario(consumerName: string) {
+	console.log('Reading', consumerName)
 	// [BEGIN topic_start_reader]
 	await using reader = createTopicReader(driver, {
 		topic: topicName,
@@ -313,6 +314,7 @@ async function readScenario(consumerName: string) {
 }
 
 async function selectPartitions(consumerName: string) {
+	console.log('Running selectPartitions')
 	// [BEGIN topic_reader_selectors_partitions]
 	await using reader = createTopicReader(driver, {
 		topic: {
@@ -327,6 +329,7 @@ async function selectPartitions(consumerName: string) {
 }
 
 async function selectLag(consumerName: string) {
+	console.log('Running selectLag')
 	// [BEGIN topic_reader_selectors_lag]
 	await using reader = createTopicReader(driver, {
 		topic: {
@@ -341,6 +344,7 @@ async function selectLag(consumerName: string) {
 }
 
 async function selectFrom(consumerName: string) {
+	console.log('Running selectFrom')
 	// [BEGIN topic_reader_selectors_from]
 	await using reader = createTopicReader(driver, {
 		topic: {
@@ -355,6 +359,7 @@ async function selectFrom(consumerName: string) {
 }
 
 async function selectMultiple(consumerName: string) {
+	console.log('Running selectMultiple')
 	// [BEGIN topic_reader_selectors_multiple]
 	await using reader = createTopicReader(driver, {
 		topic: [
@@ -380,6 +385,7 @@ async function selectMultiple(consumerName: string) {
 }
 
 async function offset(consumerName: string) {
+	console.log('Running offset')
 	// [BEGIN topic_client_offset]
 	await using reader = createTopicReader(driver, {
 		topic: topicName,
@@ -431,6 +437,7 @@ function bound(reader: TopicReader, count: number): void {
 		for await (let batch of read({ signal: deadline, limit: count })) {
 			for (let message of batch) checkMessage(message)
 			received += batch.length
+			console.log('Received', received, 'of', count)
 			yield batch
 			if (received === count) break
 		}
