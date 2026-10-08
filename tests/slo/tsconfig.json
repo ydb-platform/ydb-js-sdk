@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"allowImportingTsExtensions": true
+	},
+	"include": ["index.ts", "instrument.ts", "lib/**/*.ts", "workloads/**/*.ts"],
+	"exclude": ["**/*.test.ts", "dist"]
+}

@@ -1,0 +1,18 @@
+services:
+  database-2:
+    cap_add:
+      - NET_ADMIN
+
+  workload-current:
+    build:
+      args:
+        image: ${IMAGE:-node:24.19.0-bookworm}
+    command: ${WORKLOAD_CURRENT_COMMAND:---worker=topic.run --topic.run.partitions=10 --topic.run.rps=100 --topic.run.size=1024 --topic.run.codec=mixed}
+    extra_hosts: !override
+      - 'ydb:172.28.0.11'
+      - 'ydb:172.28.0.12'
+    environment:
+      WORKLOAD_DURATION: ${WORKLOAD_DURATION:-900}
+      WORKLOAD_REF: ${WORKLOAD_CURRENT_REF:-local-topic}
+      OTEL_EXPORTER_OTLP_TIMEOUT: '2000'
+      TOPIC_RESULT_FILE: /usr/src/app/topic-result.json

@@ -23,10 +23,10 @@ jobs:
         sdk:
           - name: node-kv
             image: node
-            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
+            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write --kv.read.rps=1000 --kv.write.rps=100
           - name: bun-kv
             image: oven/bun
-            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
+            command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write --kv.read.rps=1000 --kv.write.rps=100
         topology:
           - name: regular
             workload_suffix: ''
@@ -36,6 +36,16 @@ jobs:
             workload_suffix: '-2dc'
             bridge_mode: true
             fail_on_workload_error: true
+        include:
+          - sdk:
+              name: node-topic
+              image: node:24.19.0-bookworm
+              command: --worker=topic.run --topic.run.partitions=10 --topic.run.rps=100 --topic.run.size=1024 --topic.run.codec=mixed --topic.run.drainTimeoutMs=50000
+            topology:
+              name: regular
+              workload_suffix: ''
+              bridge_mode: false
+              fail_on_workload_error: true
 
     concurrency:
       group: slo-${{ github.ref }}-${{ matrix.sdk.name }}-${{ matrix.topology.name }}
@@ -131,6 +141,11 @@ jobs:
 
       - name: Build baseline workload image
         run: |
+          if [ "${{ matrix.sdk.name }}" = "node-topic" ]; then
+            # Compare SDK revisions with the same integrity checker and shutdown contract.
+            rsync -a --delete --exclude=node_modules --exclude=dist \
+              "$GITHUB_WORKSPACE/current/tests/slo/" "$GITHUB_WORKSPACE/baseline/tests/slo/"
+          fi
           npm --prefix "$GITHUB_WORKSPACE/baseline" ci
           npm --prefix "$GITHUB_WORKSPACE/baseline" run build
 
@@ -150,14 +165,8 @@ jobs:
           fail_on_workload_error: ${{ matrix.topology.fail_on_workload_error }}
           workload_current_ref: ${{ github.head_ref || github.ref_name }}
           workload_current_image: ydb-app-current
-          workload_current_command: >-
-            ${{ matrix.sdk.command }}
-            --kv.read.rps=1000
-            --kv.write.rps=100
+          workload_current_command: ${{ matrix.sdk.command }}
           bridge_mode: ${{ matrix.topology.bridge_mode }}
           workload_baseline_ref: ${{ steps.baseline.outputs.ref }}
           workload_baseline_image: ydb-app-baseline
-          workload_baseline_command: >-
-            ${{ matrix.sdk.command }}
-            --kv.read.rps=1000
-            --kv.write.rps=100
+          workload_baseline_command: ${{ matrix.sdk.command }}
