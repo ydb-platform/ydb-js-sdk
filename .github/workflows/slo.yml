@@ -10,8 +10,9 @@ jobs:
   ydb-slo-action:
     if: contains(github.event.pull_request.labels.*.name, 'SLO')
 
-    name: Run YDB SLO Tests
+    name: Run YDB SLO Tests (${{ matrix.sdk.name }}, ${{ matrix.topology.name }})
     runs-on: 'large-runner-js-sdk'
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -26,9 +27,18 @@ jobs:
           - name: bun-kv
             image: oven/bun
             command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
+        topology:
+          - name: regular
+            workload_suffix: ''
+            bridge_mode: false
+            fail_on_workload_error: false
+          - name: 2dc
+            workload_suffix: '-2dc'
+            bridge_mode: true
+            fail_on_workload_error: true
 
     concurrency:
-      group: slo-${{ github.ref }}-${{ matrix.sdk.name }}
+      group: slo-${{ github.ref }}-${{ matrix.sdk.name }}-${{ matrix.topology.name }}
       cancel-in-progress: true
 
     steps:
@@ -74,25 +84,25 @@ jobs:
       - name: Determine baseline commit
         id: baseline
         run: |
-          cd current
+          cd "$GITHUB_WORKSPACE/current"
           BASELINE=$(git merge-base HEAD origin/main)
-          echo "sha=$BASELINE" >> $GITHUB_OUTPUT
+          echo "sha=$BASELINE" >> "$GITHUB_OUTPUT"
 
           # Try to determine a human-readable ref name for baseline
           # Check if baseline is on main
-          if git merge-base --is-ancestor $BASELINE origin/main && \
+          if git merge-base --is-ancestor "$BASELINE" origin/main && \
              [ "$(git rev-parse origin/main)" = "$BASELINE" ]; then
              BASELINE_REF="main"
           else
             # Try to find a branch containing this commit
-            BRANCH=$(git branch -r --contains $BASELINE | grep -v HEAD | head -1 | sed 's/.*\///' || echo "")
+            BRANCH=$(git branch -r --contains "$BASELINE" | grep -v HEAD | head -1 | sed 's/.*\///' || echo "")
             if [ -n "$BRANCH" ]; then
               BASELINE_REF="${BRANCH}@${BASELINE:0:7}"
             else
               BASELINE_REF="${BASELINE:0:7}"
             fi
           fi
-          echo "ref=$BASELINE_REF" >> $GITHUB_OUTPUT
+          echo "ref=$BASELINE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Checkout baseline version
         uses: actions/checkout@v7
@@ -109,7 +119,7 @@ jobs:
         with:
           node-version: latest
 
-      - name: Build workload images
+      - name: Build current workload image
         run: |
           npm --prefix "$GITHUB_WORKSPACE/current" ci
           npm --prefix "$GITHUB_WORKSPACE/current" run build
@@ -119,30 +129,32 @@ jobs:
             -t "ydb-app-current" \
             "$GITHUB_WORKSPACE/current/tests/slo"
 
-          docker tag ydb-app-current ydb-app-baseline
+      - name: Build baseline workload image
+        run: |
+          npm --prefix "$GITHUB_WORKSPACE/baseline" ci
+          npm --prefix "$GITHUB_WORKSPACE/baseline" run build
 
-          # npm --prefix "$GITHUB_WORKSPACE/baseline" ci
-          # npm --prefix "$GITHUB_WORKSPACE/baseline" run build
+          docker build \
+            --build-arg image=${{ matrix.sdk.image }} \
+            -t "ydb-app-baseline" \
+            "$GITHUB_WORKSPACE/baseline/tests/slo"
 
-          # docker build \
-          #   --build-arg image=${{ matrix.sdk.image }} \
-          #   -t "ydb-app-baseline" \
-          #   "$GITHUB_WORKSPACE/baseline/tests/slo"
-
-      - name: Run SLO Tests
-        uses: ydb-platform/ydb-slo-action/init@v2
-        timeout-minutes: 30
+      - name: Run ${{ matrix.topology.name }} SLO Tests
+        uses: ydb-platform/ydb-slo-action/init@6b8e6cd4b96d70e747fbba2f2cfa196a6e2b2717
+        timeout-minutes: 35
         with:
           github_issue: ${{ github.event.pull_request.number }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          workload_name: ${{ matrix.sdk.name }}
-          workload_duration: '600'
+          workload_name: ${{ format('{0}{1}', matrix.sdk.name, matrix.topology.workload_suffix) }}
+          workload_duration: '900'
+          fail_on_workload_error: ${{ matrix.topology.fail_on_workload_error }}
           workload_current_ref: ${{ github.head_ref || github.ref_name }}
           workload_current_image: ydb-app-current
           workload_current_command: >-
             ${{ matrix.sdk.command }}
             --kv.read.rps=1000
             --kv.write.rps=100
+          bridge_mode: ${{ matrix.topology.bridge_mode }}
           workload_baseline_ref: ${{ steps.baseline.outputs.ref }}
           workload_baseline_image: ydb-app-baseline
           workload_baseline_command: >-

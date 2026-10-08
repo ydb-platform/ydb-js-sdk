@@ -8,16 +8,19 @@ on:
 
 jobs:
   publish-slo-report:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     name: Publish YDB SLO Report
     permissions:
+      actions: read
       checks: write
       contents: read
       pull-requests: write
     steps:
       - name: Publish YDB SLO Report
-        uses: ydb-platform/ydb-slo-action/report@v2
+        uses: ydb-platform/ydb-slo-action/report@6b8e6cd4b96d70e747fbba2f2cfa196a6e2b2717
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           github_run_id: ${{ github.event.workflow_run.id }}

@@ -32,7 +32,8 @@ features:
   - title: 'Безопасность'
     details: 'Параметризация, безопасные идентификаторы, валидация входных данных'
   - title: 'Примеры'
-    details: 'Готовые проекты: api, query, topic, tls, sls. Больше примеров в репозитории [ydb-js-examples](https://github.com/ydb-platform/ydb-js-examples)'
+    details: >
+      Готовые проекты: api, query, topic, tls, sls. Больше примеров в репозитории <a href="https://github.com/ydb-platform/ydb-js-examples" target="_blank" rel="noreferrer"><u>ydb-js-examples</u></a>
 ---
 
 Добро пожаловать в документацию YDB JS SDK.

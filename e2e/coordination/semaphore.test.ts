@@ -41,8 +41,8 @@ beforeEach(async (ctx) => {
 })
 // #endregion
 
-// Helper: unique semaphore name per call so tests never collide even within a file
-let semName = () => `sem-${Date.now()}-${Math.floor(Math.random() * 0xffff).toString(16)}`
+let semaphoreNameSequence = 0
+let semName = () => `sem-${semaphoreNameSequence++}`
 
 test('creates and describes a semaphore', async (tc) => {
 	let name = semName()
