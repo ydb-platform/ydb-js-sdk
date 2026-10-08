@@ -40,6 +40,7 @@ type ClosedClientLabel = {
 	epoch: number
 }
 export type MemoryReport = {
+	topic?: string
 	runtime?: MemoryRuntime
 	node: string
 	platform: string
@@ -105,6 +106,7 @@ let signal = new AbortController()
 process.once('SIGTERM', () => signal.abort(new Error('Memory workload interrupted')))
 let codecs = [RAW_CODEC, GZIP_CODEC, ZSTD_CODEC]
 let topic = `memory-${randomUUID()}`
+console.log(JSON.stringify({ type: 'topic', topic }))
 let consumer = 'memory-consumer'
 let producers = codecs.map((_, partition) => `${topic}-${partition}`)
 let accepted = codecs.map(() => 0)
@@ -334,6 +336,7 @@ try {
 			return label
 		})
 	let report: MemoryReport = {
+		topic,
 		runtime,
 		node: process.version,
 		platform: process.platform,

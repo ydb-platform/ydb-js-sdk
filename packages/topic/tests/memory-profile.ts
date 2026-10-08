@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { type Socket, createConnection, createServer } from 'node:net'
+import { createServer } from 'node:http'
+import { type Socket, createConnection } from 'node:net'
 
 import type { MemoryReport, MemorySample } from './memory-worker.ts'
 
@@ -12,25 +13,37 @@ export async function runMemoryProfile(
 	signal?: AbortSignal
 ): Promise<{ report: MemoryReport; cuts: number }> {
 	let upstream = new URL(connectionString)
+	let upstreamPort = Number(upstream.port || (upstream.protocol === 'grpcs:' ? 443 : 80))
 	let sockets = new Set<Socket>()
+	let track = (socket: Socket) => {
+		socket.setNoDelay(true)
+		sockets.add(socket)
+		socket.once('close', () => sockets.delete(socket))
+	}
 	let disconnect = () => {
 		for (let socket of sockets) socket.destroy()
 	}
-	let server = createServer((incoming) => {
+	let server = createServer()
+	server.on('connection', track)
+	server.on('connect', (request, incoming, head) => {
+		if (request.url !== `${upstream.hostname}:${upstreamPort}`) {
+			incoming.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+			return
+		}
 		let outgoing = createConnection({
 			host: upstream.hostname,
-			port: Number(upstream.port),
+			port: upstreamPort,
 		})
-		for (let socket of [incoming, outgoing]) {
-			socket.setNoDelay(true)
-			sockets.add(socket)
-			socket.once('close', () => sockets.delete(socket))
-			socket.once('error', () => {
-				incoming.destroy()
-				outgoing.destroy()
-			})
-		}
-		incoming.pipe(outgoing).pipe(incoming)
+		track(outgoing)
+		incoming.once('error', () => outgoing.destroy())
+		outgoing.once('error', () => incoming.destroy())
+		incoming.once('close', () => outgoing.destroy())
+		outgoing.once('close', () => incoming.destroy())
+		outgoing.once('connect', () => {
+			incoming.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+			if (head.length) outgoing.write(head)
+			incoming.pipe(outgoing).pipe(incoming)
+		})
 	})
 	await new Promise<void>((resolve, reject) => {
 		server.once('error', reject)
@@ -45,9 +58,6 @@ export async function runMemoryProfile(
 	}
 	let address = proxy.server.address()
 	if (!address || typeof address === 'string') throw new Error('Missing proxy address')
-	let connection = new URL(upstream)
-	connection.hostname = '127.0.0.1'
-	connection.port = String(address.port)
 	let reportFile = reportPath
 	let child = fork(workerPath, [], {
 		execPath: process.env['YDB_MEMORY_RUNTIME'] || process.execPath,
@@ -57,7 +67,11 @@ export async function runMemoryProfile(
 		env: {
 			...process.env,
 			DEBUG: '',
-			YDB_CONNECTION_STRING: connection.toString(),
+			YDB_CONNECTION_STRING: connectionString,
+			// CONNECT preserves the server hostname for TLS identity verification.
+			grpc_proxy: `http://127.0.0.1:${address.port}`,
+			no_grpc_proxy: '',
+			no_proxy: '',
 			MEMORY_REPORT_FILE: reportFile,
 		},
 	})
