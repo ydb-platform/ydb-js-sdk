@@ -371,7 +371,7 @@ test('delivers messages and charges the flow-control budget', () => {
 	expect(delivered).toHaveLength(1)
 	expect(delivered[0]!.groups[0]!.messages.map((m) => m.offset)).toEqual([5n, 6n, 7n])
 	expect(delivered[0]!.releaseBytes).toBe(300n)
-	expect(h.ctx.inFlightBytes).toBe(300n)
+	expect(h.ctx.bufferedBytes).toBe(300n)
 })
 
 test('stitches the head gap into the first delivered message commit range', () => {
@@ -484,7 +484,7 @@ test('charges a multi-partition read response only once', () => {
 	expect(delivered).toHaveLength(1)
 	expect(delivered[0]!.groups).toHaveLength(2)
 	expect(delivered[0]!.releaseBytes).toBe(1000n) // once, not 1000 per partition
-	expect(h.ctx.inFlightBytes).toBe(1000n)
+	expect(h.ctx.bufferedBytes).toBe(1000n)
 })
 
 test('drops the superseded session id from the index on reassign', () => {
@@ -1254,7 +1254,7 @@ test('replenishes exactly the released read credit without delay', () => {
 			e.type === 'reader.effect.send.read_request'
 	)
 	expect(first?.bytesSize).toBe(150n)
-	expect(h.ctx.inFlightBytes).toBe(150n)
+	expect(h.ctx.bufferedBytes).toBe(150n)
 	h.effects = []
 	step(h, { type: 'reader.read_release', bytes: 100n })
 	let second = h.effects.find(
@@ -1262,26 +1262,26 @@ test('replenishes exactly the released read credit without delay', () => {
 			e.type === 'reader.effect.send.read_request'
 	)
 	expect(second?.bytesSize).toBe(100n)
-	expect(h.ctx.inFlightBytes).toBe(50n)
+	expect(h.ctx.bufferedBytes).toBe(50n)
 })
 
 test('reserves reconnect credit for retained responses', () => {
 	let h = mk(1000n)
 	toReadyWithPartition(h)
 	message(h, readMsg(1n, 400n, [5n]))
-	expect(h.ctx.inFlightBytes).toBe(400n)
+	expect(h.ctx.bufferedBytes).toBe(400n)
 	step(h, {
 		type: 'reader.stream.disconnected',
 		error: new YDBError(StatusIds_StatusCode.UNAVAILABLE, []),
 	})
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
-	expect(h.ctx.inFlightBytes).toBe(400n)
+	expect(h.ctx.bufferedBytes).toBe(400n)
 	expect(h.ctx.readCreditBytes).toBe(600n)
 	expect(h.effects).toContainEqual({ type: 'reader.effect.send.read_request', bytesSize: 600n })
 	expect(h.ctx.sessionIndex.size).toBe(0)
 	step(h, { type: 'reader.read_release', bytes: 400n })
-	expect(h.ctx.inFlightBytes).toBe(0n)
+	expect(h.ctx.bufferedBytes).toBe(0n)
 	expect(h.ctx.readCreditBytes).toBe(1000n)
 	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 400n }])
 })
@@ -1292,11 +1292,11 @@ test('accounts retained-byte releases during reconnect backoff and init', () => 
 	message(h, readMsg(1n, 600n, [5n]))
 	step(h, { type: 'reader.stream.disconnected' })
 	step(h, { type: 'reader.read_release', bytes: 200n })
-	expect(h.ctx.inFlightBytes).toBe(400n)
+	expect(h.ctx.bufferedBytes).toBe(400n)
 	expect(h.effects).toEqual([])
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.read_release', bytes: 100n })
-	expect(h.ctx.inFlightBytes).toBe(300n)
+	expect(h.ctx.bufferedBytes).toBe(300n)
 	expect(h.effects).toEqual([])
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
 	expect(h.ctx.readCreditBytes).toBe(700n)
@@ -1309,7 +1309,7 @@ test('repays current-stream overdraw without increasing the credit window', () =
 	message(h, readMsg(1n, 1400n, [5n]))
 	expect(h.ctx.readCreditBytes).toBe(-400n)
 	step(h, { type: 'reader.read_release', bytes: 1400n })
-	expect(h.ctx.inFlightBytes).toBe(0n)
+	expect(h.ctx.bufferedBytes).toBe(0n)
 	expect(h.ctx.readCreditBytes).toBe(1000n)
 	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 1400n }])
 })

@@ -87,6 +87,7 @@ export type WriterCtx = {
 
 	// flush barrier
 	flushRequested: boolean
+	// Highest flush call processed by the FSM, not the newest call registered by the facade.
 	flushRequestId: number
 
 	// The session codec (Codec enum value / custom id) — validated against

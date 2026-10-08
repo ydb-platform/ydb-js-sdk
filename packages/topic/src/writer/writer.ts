@@ -86,6 +86,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	#runtime: WriterRuntime
 	#validator = new SeqNoValidator()
 	#flushWaiters = new Map<number, PromiseWithResolvers<bigint>>()
+	// Per-writer flush call order, independent of message seqNos and gRPC requests.
 	#nextFlushId = 0
 
 	// Byte budget mirrored here so write() can reject a full buffer synchronously,
@@ -375,6 +376,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					break
 
 				case 'writer.flushed':
+					// Later calls can register while this completion waits in the output queue.
 					for (let [requestId, waiter] of this.#flushWaiters) {
 						if (requestId > output.requestId) {
 							break

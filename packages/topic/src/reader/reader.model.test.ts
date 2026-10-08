@@ -840,9 +840,9 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 	}
 
 	let retainedBytes = sim.unreleased.reduce((total, bytes) => total + bytes, 0n)
-	if (ctx.inFlightBytes !== retainedBytes) {
+	if (ctx.bufferedBytes !== retainedBytes) {
 		throw new Error(
-			`${where}: retained flow-control bytes ${ctx.inFlightBytes} differ from queued ${retainedBytes}`
+			`${where}: retained flow-control bytes ${ctx.bufferedBytes} differ from queued ${retainedBytes}`
 		)
 	}
 

@@ -169,9 +169,10 @@ export type ReaderCtx = {
 	// monotonic grant counter — source of PartitionEntry.grantId
 	grantSeq: number
 
-	// Retained response bytes survive stream reconnects. Stream credit may be
-	// negative when the server sends an oversized message.
-	inFlightBytes: bigint
+	// Unreleased ReadResponse.bytesSize, including responses retained across reconnects.
+	bufferedBytes: bigint
+	// Current-stream balance: requested bytes minus received bytes. The protocol
+	// permits a negative balance for an oversized response. Only this balance resets on reconnect.
 	readCreditBytes: bigint
 
 	limits: ReaderLimits
@@ -374,7 +375,7 @@ export let createReaderCtx = function createReaderCtx(
 		sessionIndex: new Map(),
 		grantSeq: 0,
 
-		inFlightBytes: 0n,
+		bufferedBytes: 0n,
 		readCreditBytes: 0n,
 
 		limits,
@@ -624,7 +625,7 @@ let readResponse = function readResponse(
 	// Charge the whole response once and emit a single batch so the consumer releases
 	// exactly bytesSize — several partitions in one response must not each claim the
 	// full size. Emit even when everything was dropped so credit is still released.
-	ctx.inFlightBytes += event.bytesSize
+	ctx.bufferedBytes += event.bytesSize
 	ctx.readCreditBytes -= event.bytesSize
 	runtime.emit({ type: 'reader.messages', releaseBytes: event.bytesSize, groups })
 	return []
@@ -1189,7 +1190,7 @@ let recordCommit = function recordCommit(
 // Retained responses and the current stream's unspent credit share one budget.
 // A new stream has no credit debt from an oversized response on an old stream.
 let replenishReadCredit = function replenishReadCredit(ctx: ReaderCtx): ReaderEffect[] {
-	let bytes = ctx.limits.maxBufferBytes - ctx.inFlightBytes - ctx.readCreditBytes
+	let bytes = ctx.limits.maxBufferBytes - ctx.bufferedBytes - ctx.readCreditBytes
 	if (bytes <= 0n) {
 		return []
 	}
@@ -1202,9 +1203,9 @@ let releaseBytes = function releaseBytes(
 	bytes: bigint,
 	ready: boolean
 ): ReaderEffect[] {
-	ctx.inFlightBytes -= bytes
-	if (ctx.inFlightBytes < 0n) {
-		ctx.inFlightBytes = 0n
+	ctx.bufferedBytes -= bytes
+	if (ctx.bufferedBytes < 0n) {
+		ctx.bufferedBytes = 0n
 	}
 	return ready ? replenishReadCredit(ctx) : []
 }
@@ -1253,7 +1254,7 @@ let terminate = function terminate(
 let releaseState = function releaseState(ctx: ReaderCtx): void {
 	ctx.partitions.clear()
 	ctx.sessionIndex.clear()
-	ctx.inFlightBytes = 0n
+	ctx.bufferedBytes = 0n
 	ctx.readCreditBytes = 0n
 }
 
