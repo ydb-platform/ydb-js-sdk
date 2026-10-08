@@ -238,6 +238,9 @@ export class WriterTransport {
 								...(value.partitionId !== undefined && {
 									partitionId: value.partitionId,
 								}),
+								...(value.supportedCodecs && {
+									supportedCodecs: value.supportedCodecs.codecs,
+								}),
 							})
 							break
 						}

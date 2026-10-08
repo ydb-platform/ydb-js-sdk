@@ -26,6 +26,7 @@ export type ReaderConfig = {
 }
 
 let openedCh = dc('ydb:topic.reader.opened')
+let bufferChangedCh = dc('ydb:topic.reader.buffer.changed')
 let sessionStartedCh = dc('ydb:topic.reader.session.started')
 let partitionStartedCh = dc('ydb:topic.reader.partition.started')
 let partitionStoppedCh = dc('ydb:topic.reader.partition.stopped')
@@ -34,7 +35,7 @@ let reconnectingCh = dc('ydb:topic.reader.reconnecting')
 let closedCh = dc('ydb:topic.reader.closed')
 let erroredCh = dc('ydb:topic.reader.errored')
 
-// One commit() call → one span (batching + server ack + any reconnect in between).
+// One microtask commit batch → one span (server ack + any reconnect in between).
 let commitCh = tracingChannel<ReaderScope>('tracing:ydb:topic.reader.commit')
 
 // Every helper below guards with hasSubscribers before publish(). publish() itself
@@ -43,6 +44,15 @@ let commitCh = tracingChannel<ReaderScope>('tracing:ydb:topic.reader.commit')
 export let publishOpened = function publishOpened(scope: ReaderScope, config: ReaderConfig): void {
 	if (openedCh.hasSubscribers) {
 		openedCh.publish({ ...scope, config })
+	}
+}
+
+export let publishBufferChanged = function publishBufferChanged(
+	scope: ReaderScope,
+	bufferedBytes: bigint
+): void {
+	if (bufferChangedCh.hasSubscribers) {
+		bufferChangedCh.publish({ ...scope, bufferedBytes })
 	}
 }
 

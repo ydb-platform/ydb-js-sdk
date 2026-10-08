@@ -99,6 +99,32 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	#transactional: boolean
 
 	constructor(driver: Driver, options: TopicWriterOptions) {
+		// Validation lives in the constructor, not the factory: the class is exported,
+		// and a directly-constructed writer must obey the same invariants.
+		if (options.partitionId !== undefined && options.messageGroupId !== undefined) {
+			throw new Error(
+				'partitionId and messageGroupId are mutually exclusive — provide at most one'
+			)
+		}
+		// Reject send-path-deadlocking config up front rather than stalling silently:
+		// maxInflightCount < 1 gates every batch, so writes would never leave the buffer.
+		if (
+			options.maxInflightCount !== undefined &&
+			(!Number.isInteger(options.maxInflightCount) || options.maxInflightCount < 1)
+		) {
+			throw new Error('maxInflightCount must be a positive integer')
+		}
+		if (options.maxBufferBytes !== undefined && options.maxBufferBytes < 1n) {
+			throw new Error('maxBufferBytes must be a positive number of bytes')
+		}
+		// An empty producerId on the wire silently disables server-side dedup, so every
+		// reconnect would duplicate in-flight messages. A producer id is generated when
+		// omitted (zero-config writes); an explicit empty string is a config error.
+		if (options.producer === '') {
+			throw new Error('producer must be a non-empty string — omit it to get a generated id')
+		}
+		options = { ...options, producer: options.producer ?? generateProducerId() }
+
 		this.#onAck = options.onAck
 		this.#transactional = options.tx !== undefined
 		this.#codec = options.codec ?? RAW_CODEC
@@ -144,6 +170,141 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 				}
 			})
 		}
+	}
+
+	write(data: Uint8Array, extra?: WriteExtra): void {
+		if (this.#closed || this.#closing) {
+			throw new Error('Writer is closed — cannot write messages')
+		}
+		if (this.#lastError) {
+			throw new Error('Writer has failed — cannot write messages', { cause: this.#lastError })
+		}
+		// Size limit applies to the uncompressed payload.
+		if (BigInt(data.length) > MAX_PAYLOAD_BYTES) {
+			throw new Error(
+				`Message payload of ${data.length} bytes exceeds the ${MAX_PAYLOAD_BYTES} byte limit`
+			)
+		}
+
+		let uncompressedSize = BigInt(data.length)
+		let payload = this.#codec.compress(data)
+		let bufferedSize = BigInt(payload.length)
+
+		// Fail-fast cap on retained (un-acknowledged) bytes to bound memory. Checked
+		// before the seqNo validator mutates, so a rejected write leaves no state behind.
+		if (this.#bufferedBytes + bufferedSize > this.#maxBufferBytes) {
+			throw new Error(
+				`Writer buffer is full: ${this.#bufferedBytes + bufferedSize} bytes would exceed the ${this.#maxBufferBytes} byte limit`
+			)
+		}
+
+		let seqNo = this.#validator.validate(extra?.seqNo)
+		this.#bufferedBytes += bufferedSize
+
+		this.#runtime.machine.dispatch({
+			type: 'writer.write',
+			message: {
+				data: payload,
+				uncompressedSize,
+				seqNo,
+				createdAt: extra?.createdAt ?? new Date(),
+				...(extra?.metadataItems && { metadataItems: extra.metadataItems }),
+			},
+		})
+	}
+
+	async flush(signal?: AbortSignal): Promise<bigint> {
+		if (this.#lastError) {
+			throw this.#lastError
+		}
+		if (this.#closed) {
+			throw new Error('Writer is closed')
+		}
+
+		// One span per flush covers batching + server acks + any reconnect in between.
+		return traceFlush(this.#scope, async () => {
+			let waiter = Promise.withResolvers<bigint>()
+			this.#flushWaiters.push(waiter)
+			this.#runtime.machine.dispatch({ type: 'writer.flush' })
+
+			if (!signal) {
+				return waiter.promise
+			}
+
+			try {
+				return await abortable(signal, waiter.promise)
+			} catch (error) {
+				// Abort (or a rejected flush) settled the caller's promise. Drop our
+				// waiter so it neither lingers in #flushWaiters — which would grow
+				// unbounded when a long-lived signal is threaded into many flush() calls
+				// — nor later rejects unhandled when the writer terminates. If the FSM
+				// already removed it (error/closed), indexOf is -1 and this is a no-op.
+				let index = this.#flushWaiters.indexOf(waiter)
+				if (index !== -1) {
+					this.#flushWaiters.splice(index, 1)
+				}
+				throw error
+			}
+		})
+	}
+
+	async close(signal?: AbortSignal): Promise<void> {
+		if (this.#closed) {
+			// A close that dropped data surfaces the failure even on a repeat call.
+			if (this.#lastError) {
+				throw this.#lastError
+			}
+			return
+		}
+
+		// Set synchronously so a concurrent write() is rejected rather than dropped.
+		this.#closing = true
+		this.#runtime.machine.dispatch({ type: 'writer.close' })
+
+		let closed = this.#closedDeferred.promise
+		await (signal ? abortable(signal, closed) : closed)
+
+		// The graceful drain failed (errored / timed out with undelivered messages).
+		if (this.#lastError) {
+			throw this.#lastError
+		}
+	}
+
+	destroy(reason?: unknown): void {
+		if (this.#closed) {
+			return
+		}
+
+		this.#closing = true
+		let error = reason ?? new Error('Writer destroyed')
+		this.#lastError = error
+		for (let waiter of this.#flushWaiters.splice(0)) {
+			waiter.reject(error)
+		}
+
+		this.#runtime.machine.dispatch({ type: 'writer.destroy', reason: error })
+	}
+
+	async [Symbol.asyncDispose](): Promise<void> {
+		try {
+			await this.close()
+		} catch (error) {
+			this.destroy(error)
+			throw error
+		}
+	}
+
+	// Synchronous disposal is a hard stop — destroy() drops un-acknowledged messages
+	// immediately. Use `await using` (graceful close, drains the buffer) when delivery
+	// matters; a sync `using` cannot await a drain, so it must hard-stop.
+	[Symbol.dispose](): void {
+		this.destroy()
+	}
+
+	// Debuggers and util.inspect show the constructor name, which cannot tell a tx
+	// writer apart — the tag makes it render as TopicWriter [TopicTxWriter] { ... }.
+	get [Symbol.toStringTag](): string {
+		return this.#transactional ? 'TopicTxWriter' : 'TopicWriter'
 	}
 
 	// Drain the FSM output stream, resolving/rejecting the promises the facade owns.
@@ -248,172 +409,14 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		}
 		this.#markClosed()
 	}
-
-	write(data: Uint8Array, extra?: WriteExtra): void {
-		if (this.#closed || this.#closing) {
-			throw new Error('Writer is closed — cannot write messages')
-		}
-		if (this.#lastError) {
-			throw new Error('Writer has failed — cannot write messages', { cause: this.#lastError })
-		}
-		// Size limit applies to the uncompressed payload.
-		if (BigInt(data.length) > MAX_PAYLOAD_BYTES) {
-			throw new Error(
-				`Message payload of ${data.length} bytes exceeds the ${MAX_PAYLOAD_BYTES} byte limit`
-			)
-		}
-
-		let uncompressedSize = BigInt(data.length)
-		let payload = this.#codec.compress(data)
-		let bufferedSize = BigInt(payload.length)
-
-		// Fail-fast cap on retained (un-acknowledged) bytes to bound memory. Checked
-		// before the seqNo validator mutates, so a rejected write leaves no state behind.
-		if (this.#bufferedBytes + bufferedSize > this.#maxBufferBytes) {
-			throw new Error(
-				`Writer buffer is full: ${this.#bufferedBytes + bufferedSize} bytes would exceed the ${this.#maxBufferBytes} byte limit`
-			)
-		}
-
-		let seqNo = this.#validator.validate(extra?.seqNo)
-		this.#bufferedBytes += bufferedSize
-
-		this.#runtime.machine.dispatch({
-			type: 'writer.write',
-			message: {
-				data: payload,
-				uncompressedSize,
-				seqNo,
-				createdAt: extra?.createdAt ?? new Date(),
-				...(extra?.metadataItems && { metadataItems: extra.metadataItems }),
-			},
-		})
-	}
-
-	async flush(signal?: AbortSignal): Promise<bigint> {
-		if (this.#lastError) {
-			throw this.#lastError
-		}
-		if (this.#closed) {
-			throw new Error('Writer is closed')
-		}
-
-		// One span per flush covers batching + server acks + any reconnect in between.
-		return traceFlush(this.#scope, async () => {
-			let waiter = Promise.withResolvers<bigint>()
-			this.#flushWaiters.push(waiter)
-			this.#runtime.machine.dispatch({ type: 'writer.flush' })
-
-			if (!signal) {
-				return waiter.promise
-			}
-
-			try {
-				return await abortable(signal, waiter.promise)
-			} catch (error) {
-				// Abort (or a rejected flush) settled the caller's promise. Drop our
-				// waiter so it neither lingers in #flushWaiters — which would grow
-				// unbounded when a long-lived signal is threaded into many flush() calls
-				// — nor later rejects unhandled when the writer terminates. If the FSM
-				// already removed it (error/closed), indexOf is -1 and this is a no-op.
-				let index = this.#flushWaiters.indexOf(waiter)
-				if (index !== -1) {
-					this.#flushWaiters.splice(index, 1)
-				}
-				throw error
-			}
-		})
-	}
-
-	// Debuggers and util.inspect show the constructor name, which cannot tell a tx
-	// writer apart — the tag makes it render as TopicWriter [TopicTxWriter] { ... }.
-	get [Symbol.toStringTag](): string {
-		return this.#transactional ? 'TopicTxWriter' : 'TopicWriter'
-	}
-
-	async close(signal?: AbortSignal): Promise<void> {
-		if (this.#closed) {
-			// A close that dropped data surfaces the failure even on a repeat call.
-			if (this.#lastError) {
-				throw this.#lastError
-			}
-			return
-		}
-
-		// Set synchronously so a concurrent write() is rejected rather than dropped.
-		this.#closing = true
-		this.#runtime.machine.dispatch({ type: 'writer.close' })
-
-		let closed = this.#closedDeferred.promise
-		await (signal ? abortable(signal, closed) : closed)
-
-		// The graceful drain failed (errored / timed out with undelivered messages).
-		if (this.#lastError) {
-			throw this.#lastError
-		}
-	}
-
-	destroy(reason?: unknown): void {
-		if (this.#closed) {
-			return
-		}
-
-		this.#closing = true
-		let error = reason ?? new Error('Writer destroyed')
-		this.#lastError = error
-		for (let waiter of this.#flushWaiters.splice(0)) {
-			waiter.reject(error)
-		}
-
-		this.#runtime.machine.dispatch({ type: 'writer.destroy', reason: error })
-	}
-
-	async [Symbol.asyncDispose](): Promise<void> {
-		try {
-			await this.close()
-		} catch (error) {
-			this.destroy(error)
-			throw error
-		}
-	}
-
-	// Synchronous disposal is a hard stop — destroy() drops un-acknowledged messages
-	// immediately. Use `await using` (graceful close, drains the buffer) when delivery
-	// matters; a sync `using` cannot await a drain, so it must hard-stop.
-	[Symbol.dispose](): void {
-		this.destroy()
-	}
 }
 
 export function createTopicWriter(driver: Driver, options: TopicWriterOptions): TopicWriter {
-	if (options.partitionId !== undefined && options.messageGroupId !== undefined) {
-		throw new Error(
-			'partitionId and messageGroupId are mutually exclusive — provide at most one'
-		)
-	}
-
-	// Reject send-path-deadlocking config up front rather than stalling silently:
-	// maxInflightCount < 1 gates every batch, so writes would never leave the buffer.
-	if (
-		options.maxInflightCount !== undefined &&
-		(!Number.isInteger(options.maxInflightCount) || options.maxInflightCount < 1)
-	) {
-		throw new Error('maxInflightCount must be a positive integer')
-	}
-	if (options.maxBufferBytes !== undefined && options.maxBufferBytes < 1n) {
-		throw new Error('maxBufferBytes must be a positive number of bytes')
-	}
-
-	// A producer id is generated when omitted (zero-config writes).
-	let resolved: TopicWriterOptions = {
-		...options,
-		producer: options.producer ?? generateProducerId(),
-	}
-
 	dbg.log('creating writer for topic %s', options.topic)
 
-	// The constructor wires the tx lifecycle when options.tx is set.
-	return new TopicWriter(driver, resolved)
+	// The constructor validates options, fills the producer id, and wires the tx
+	// lifecycle when options.tx is set.
+	return new TopicWriter(driver, options)
 }
 
 // Transaction writer: writes are tagged with the tx and the tx commit waits for

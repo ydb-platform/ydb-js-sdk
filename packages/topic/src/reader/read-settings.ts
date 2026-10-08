@@ -64,13 +64,15 @@ export let parseReadSettings = function parseReadSettings(
 			settings.push(
 				create(StreamReadMessage_InitRequest_TopicReadSettingsSchema, {
 					path: topicSource.path,
-					...(topicSource.maxLag && {
+					// Presence checks, not truthiness: readFrom 0 is the epoch and maxLag 0 is
+					// a legal explicit value — both must reach the wire when the caller set them.
+					...(topicSource.maxLag !== undefined && {
 						maxLag: parseDuration(topicSource.maxLag),
 					}),
-					...(topicSource.readFrom && {
+					...(topicSource.readFrom !== undefined && {
 						readFrom: parseTimestamp(topicSource.readFrom),
 					}),
-					...(topicSource.partitionIds && {
+					...(topicSource.partitionIds !== undefined && {
 						partitionIds: topicSource.partitionIds,
 					}),
 				})

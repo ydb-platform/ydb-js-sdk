@@ -3,12 +3,15 @@ import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
 
 import {
+	type OffsetRange,
 	type ReaderCtx,
 	type ReaderEffect,
 	type ReaderEvent,
 	type ReaderOutput,
 	type ReaderState,
 	createReaderCtx,
+	mergeRanges,
+	partitionKey,
 	readerTransition,
 } from './reader-state.ts'
 import {
@@ -22,16 +25,31 @@ import {
 // Model-based / property test. It wires the two REAL pure transitions
 // (readerTransition + transportTransition) to a protocol-faithful server model and
 // drives them with random sequences of consumer calls, commits, network events,
-// server assignments/deliveries/acks, server-initiated partition stops (graceful
-// AND force) and timer firings — including the per-partition partition_graceful_timeout and
-// partition_reassign_gc — checking invariants after every step. The crux is
-// commit-reconcile across reconnect and partition churn: a commit must never be
-// rejected by a transparent reconnect, a resolved commit must be durable on the
-// server, a stop_response is sent at most once per partition session, no data may
-// surface for a force-stopped session, and after the cooldown every waiter must
-// have settled. The only legal rejections are the reassign gc (partition rebalanced
+// server assignments/deliveries (with server-side offset holes)/acks,
+// server-initiated partition stops (graceful AND force) and timer firings —
+// including the per-partition partition_graceful_timeout and partition_reassign_gc
+// — checking invariants after every step. Commits are generated the way the facade
+// builds them: per delivered message [commitRangeStart, offset+1), merged — the
+// model mirrors the delivery-time stitching and asserts every delivered message's
+// commitRangeStart continues exactly where the previous delivery (or the grant's
+// committed offset) left off. The graceful-stop handshake is modeled too: the
+// stop_hook effect completes as a randomly interleaved stop_ready, and a stop
+// response is legal only after BOTH stop_ready and drained commits (or the
+// per-partition timeout escalation).
+//
+// The crux is commit-reconcile across reconnect and partition churn: a commit must
+// never be rejected by a transparent reconnect, a resolved commit must be covered
+// by a server-reported committed watermark, wire commit
+// ranges must be ascending, non-overlapping, never below the server's committed
+// offset, and never cover an offset outside the committing messages' own stitched
+// ranges — i.e. never a delivered-but-uncommitted message someone else still holds.
+// A stop_response is sent at most once per partition session, no data may surface
+// for a force-stopped session, and after the cooldown every waiter must have
+// settled. The only legal rejections are the reassign gc (partition rebalanced
 // away before its commits were acknowledged) and a terminal shutdown — any other
-// rejection is a bug.
+// rejection is a bug. Partitions are keyed by the stable (path, partitionId) pair,
+// and the multi-partition run reuses one partitionId across two topics to pin the
+// composite keying.
 
 let mulberry32 = function mulberry32(seed: number): () => number {
 	let a = seed >>> 0
@@ -45,19 +63,102 @@ let mulberry32 = function mulberry32(seed: number): () => number {
 
 let NEVER = new AbortController().signal
 
+// ── model-side range algebra (independent of the implementation under test) ─────
+
+let modelMerge = function modelMerge(ranges: OffsetRange[]): OffsetRange[] {
+	let sorted = ranges
+		.filter((r) => r.end > r.start)
+		.map((r) => ({ start: r.start, end: r.end }))
+		.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+	let merged: OffsetRange[] = []
+	for (let range of sorted) {
+		let last = merged[merged.length - 1]
+		if (last !== undefined && range.start <= last.end) {
+			if (range.end > last.end) {
+				last.end = range.end
+			}
+		} else {
+			merged.push(range)
+		}
+	}
+	return merged
+}
+
+let rangesLength = function rangesLength(ranges: OffsetRange[]): bigint {
+	let total = 0n
+	for (let range of ranges) {
+		total += range.end - range.start
+	}
+	return total
+}
+
+let clampRanges = function clampRanges(ranges: OffsetRange[], floor: bigint): OffsetRange[] {
+	let clamped: OffsetRange[] = []
+	for (let range of ranges) {
+		if (range.end <= floor) {
+			continue
+		}
+		clamped.push({ start: range.start < floor ? floor : range.start, end: range.end })
+	}
+	return clamped
+}
+
+let sameRanges = function sameRanges(a: OffsetRange[], b: OffsetRange[]): boolean {
+	if (a.length !== b.length) {
+		return false
+	}
+	return a.every((r, i) => r.start === b[i]!.start && r.end === b[i]!.end)
+}
+
+let overlapsAny = function overlapsAny(range: OffsetRange, list: OffsetRange[]): boolean {
+	return list.some((r) => r.start < range.end && range.start < r.end)
+}
+
+let coveredBy = function coveredBy(ranges: OffsetRange[], coverage: OffsetRange[]): boolean {
+	let merged = modelMerge(coverage)
+	return ranges.every((range) => merged.some((c) => c.start <= range.start && range.end <= c.end))
+}
+
+let assertNormalized = function assertNormalized(ranges: OffsetRange[], label: string): void {
+	let prevEnd = -1n
+	for (let range of ranges) {
+		if (range.start >= range.end) {
+			throw new Error(`${label}: malformed range [${range.start}, ${range.end})`)
+		}
+		if (range.start < prevEnd) {
+			throw new Error(`${label}: descending or overlapping ranges on the wire`)
+		}
+		prevEnd = range.end
+	}
+}
+
+// ── server / consumer model ─────────────────────────────────────────────────────
+
 type ServerPartition = {
+	path: string
 	partitionId: bigint
-	durableCommitted: bigint // persisted, survives reconnect
-	availableUpTo: bigint // server holds messages [0, availableUpTo)
-	deliveredUpTo: bigint // delivered on the current stream
+	key: string // partitionKey(path, partitionId) — the stable identity
+	durableCommitted: bigint // committed watermark; the only commit state that survives the session
+	sessionRanges: OffsetRange[] // sparse committed ranges beyond the watermark; die with the session
+	availableUpTo: bigint // server holds offsets [0, availableUpTo) minus delivery-time holes
+	deliveredUpTo: bigint // send cursor on the current stream
 	partitionSessionId: bigint | undefined // ephemeral id, set on assign, cleared on stop/reconnect
 	ready: boolean // client sent StartPartitionSessionResponse
 	stopping: boolean // graceful stop pending the client's response
-	pendingCommitEnds: bigint[] // commit range ends the client sent, not yet acked
+	unackedCommits: number // commit requests applied on the current session, not yet acked
 }
 
+// What the consumer holds for one partition on the CURRENT grant: each delivered
+// message's stitched commit range, in delivery order. `nextStitch` is the model's
+// independent delivery watermark — every delivered message's commitRangeStart must
+// continue exactly here (D2: server-side holes attributed to the next delivered
+// message, never to a later commit of an unrelated one).
+type MirrorMessage = { start: bigint; end: bigint; requested: boolean }
+type Mirror = { nextStitch: bigint; msgs: MirrorMessage[] }
+
 type Waiter = {
-	partitionId: bigint
+	partitionKey: string
+	ranges: OffsetRange[] // the merged stitched ranges this commit() asked for
 	endOffset: bigint
 	state: 'pending' | 'resolved' | 'rejected'
 	rejectReason?: unknown
@@ -70,43 +171,58 @@ type Sim = {
 	readerEvents: ReaderEvent[]
 	transportEvents: TransportEvent[]
 
-	armed: Set<string> // timer keys
+	armed: Set<string> // timer keys: `which` or `which:partitionKey`
 
 	streamOpen: boolean
 	initPending: boolean
 	credit: bigint // server flow-control: sum(ReadRequest.bytesSize) - sum(ReadResponse.bytesSize)
 	nextSessionId: bigint
 	sessionCounter: number
+	nextWaiterId: number
 
 	partitions: ServerPartition[]
+	byKey: Map<string, ServerPartition>
 	waiters: Map<number, Waiter>
 	unreleased: bigint[] // reader.messages releaseBytes emitted, not yet released by the consumer
+
+	mirrors: Map<string, Mirror>
+	// Union of every range any commit() ever asked for, per partition — the wire
+	// must never carry an offset outside it (that offset would belong to a
+	// delivered-but-uncommitted message, or to nobody).
+	requestedUnion: Map<string, OffsetRange[]>
+
+	// The async onPartitionSessionStop hook: the stop_hook effect queues here and a
+	// randomly interleaved action completes it as reader.partition.stop_ready.
+	pendingStopHooks: { partitionKey: string; grantId: number }[]
+	stopReadyDone: Set<string> // `${partitionKey}#${grantId}` — hook completed for that grant
+	gracefulTimeoutFired: Set<string> // partitionKey — the escalation legalizing an early stop_response
 
 	// Session ids are globally unique here (nextSessionId is monotonic), so both sets
 	// can track per-session facts across streams without collisions.
 	stopResponded: Set<bigint> // sessions already released via stop_response (a duplicate is session-fatal)
 	forceStopped: Set<bigint> // sessions killed by a force stop — no reader.messages may follow
 
-	committedSeen: Map<bigint, bigint> // partitionId -> last partitionCommittedOffset (monotonic check)
-	errored: boolean
-	destroyed: boolean
+	committedSeen: Map<string, bigint> // partitionKey -> last committed offset seen (monotonic check)
 	terminal: boolean
 }
 
-let mkSim = function mkSim(partitionCount: number, maxBufferBytes: bigint): Sim {
-	let partitions: ServerPartition[] = []
-	for (let i = 0; i < partitionCount; i++) {
-		partitions.push({
-			partitionId: BigInt(10 + i),
-			durableCommitted: 0n,
-			availableUpTo: 0n,
-			deliveredUpTo: 0n,
-			partitionSessionId: undefined,
-			ready: false,
-			stopping: false,
-			pendingCommitEnds: [],
-		})
-	}
+let mkSim = function mkSim(
+	topology: { path: string; partitionId: bigint }[],
+	maxBufferBytes: bigint
+): Sim {
+	let partitions: ServerPartition[] = topology.map(({ path, partitionId }) => ({
+		path,
+		partitionId,
+		key: partitionKey(path, partitionId),
+		durableCommitted: 0n,
+		sessionRanges: [],
+		availableUpTo: 0n,
+		deliveredUpTo: 0n,
+		partitionSessionId: undefined,
+		ready: false,
+		stopping: false,
+		unackedCommits: 0,
+	}))
 	return {
 		readerState: 'idle',
 		readerCtx: createReaderCtx({ maxBufferBytes }),
@@ -119,14 +235,19 @@ let mkSim = function mkSim(partitionCount: number, maxBufferBytes: bigint): Sim 
 		credit: 0n,
 		nextSessionId: 1n,
 		sessionCounter: 0,
+		nextWaiterId: 1,
 		partitions,
+		byKey: new Map(partitions.map((p) => [p.key, p])),
 		waiters: new Map(),
 		unreleased: [],
+		mirrors: new Map(),
+		requestedUnion: new Map(),
+		pendingStopHooks: [],
+		stopReadyDone: new Set(),
+		gracefulTimeoutFired: new Set(),
 		stopResponded: new Set(),
 		forceStopped: new Set(),
 		committedSeen: new Map(),
-		errored: false,
-		destroyed: false,
 		terminal: false,
 	}
 }
@@ -165,10 +286,18 @@ let classify = function classify(message: any): ReaderEvent | null {
 				type: 'reader.stream.commit_response',
 				committed: server.value.partitionsCommittedOffsets,
 			}
+		case 'partitionSessionStatusResponse':
+			return {
+				type: 'reader.stream.partition_status',
+				partitionSessionId: server.value.partitionSessionId,
+				committedOffset: server.value.committedOffset,
+			}
 		case 'endPartitionSession':
 			return {
 				type: 'reader.stream.end_partition',
 				partitionSessionId: server.value.partitionSessionId,
+				childPartitionIds: server.value.childPartitionIds ?? [],
+				adjacentPartitionIds: server.value.adjacentPartitionIds ?? [],
 			}
 		default:
 			return null
@@ -182,26 +311,66 @@ let forward = function forward(sim: Sim, serverMessage: unknown): void {
 let onReaderOutput = function onReaderOutput(sim: Sim, output: ReaderOutput): void {
 	switch (output.type) {
 		case 'reader.messages':
-			// A force-stopped session is dead server-side the instant the stop is issued
-			// and the model never forwards data for it afterwards — so any message
-			// surfacing under that session id can only be a client-side buffering bug.
 			for (let group of output.groups) {
+				// A force-stopped session is dead server-side the instant the stop is issued
+				// and the model never forwards data for it afterwards — so any message
+				// surfacing under that session id can only be a client-side buffering bug.
 				if (sim.forceStopped.has(group.session.partitionSessionId)) {
 					throw new Error(
 						`messages emitted for force-stopped session ${group.session.partitionSessionId}`
 					)
 				}
+				let key = partitionKey(group.session.topicPath, group.session.partitionId)
+				let mirror = sim.mirrors.get(key)
+				if (!mirror) {
+					throw new Error(`messages delivered for never-started partition ${key}`)
+				}
+				for (let message of group.messages) {
+					// D2 stitching: the commit range continues exactly at the delivery
+					// watermark (or the message's own offset when it sits below it — a
+					// redelivery raced past by concurrent commit acks).
+					let expected =
+						message.offset < mirror.nextStitch ? message.offset : mirror.nextStitch
+					if (message.commitRangeStart !== expected) {
+						throw new Error(
+							`stitch break on ${key}: offset ${message.offset} carries commitRangeStart ${message.commitRangeStart}, expected ${expected}`
+						)
+					}
+					mirror.msgs.push({
+						start: message.commitRangeStart,
+						end: message.offset + 1n,
+						requested: false,
+					})
+					if (mirror.nextStitch < message.offset + 1n) {
+						mirror.nextStitch = message.offset + 1n
+					}
+				}
 			}
 			sim.unreleased.push(output.releaseBytes)
 			break
+		case 'reader.partition.started': {
+			// A fresh grant restarts redelivery (and thus stitching) at the server's
+			// committed offset — the consumer-side view resets with it.
+			let key = partitionKey(output.session.topicPath, output.partitionId)
+			sim.mirrors.set(key, { nextStitch: output.committedOffset, msgs: [] })
+			sim.gracefulTimeoutFired.delete(key)
+			break
+		}
 		case 'reader.partition.committed': {
-			let prev = sim.committedSeen.get(output.partitionId) ?? 0n
+			let key = partitionKey(output.session.topicPath, output.partitionId)
+			let prev = sim.committedSeen.get(key) ?? 0n
 			if (output.committedOffset < prev) {
 				throw new Error(
-					`committed regressed on ${output.partitionId}: ${prev} -> ${output.committedOffset}`
+					`committed regressed on ${key}: ${prev} -> ${output.committedOffset}`
 				)
 			}
-			sim.committedSeen.set(output.partitionId, output.committedOffset)
+			sim.committedSeen.set(key, output.committedOffset)
+			// The delivery watermark never falls below the committed offset — commits
+			// re-applied on a fresh session can outrun redelivery.
+			let mirror = sim.mirrors.get(key)
+			if (mirror && mirror.nextStitch < output.committedOffset) {
+				mirror.nextStitch = output.committedOffset
+			}
 			break
 		}
 		case 'reader.commit.resolved': {
@@ -211,12 +380,18 @@ let onReaderOutput = function onReaderOutput(sim: Sim, output: ReaderOutput): vo
 					throw new Error(`waiter ${output.waiterId} resolved after being rejected`)
 				}
 				waiter.state = 'resolved'
-				// No-loss: a resolved commit must be durable on the server.
-				let part = sim.partitions.find((p) => p.partitionId === waiter.partitionId)!
+				// No-loss: claimed wire coverage is not an acknowledgment. A commit resolves
+				// only after the server-reported watermark reaches its target.
+				let part = sim.byKey.get(waiter.partitionKey)!
 				if (waiter.endOffset > part.durableCommitted) {
-					throw new Error(
-						`commit resolved but not durable: end=${waiter.endOffset} durable=${part.durableCommitted}`
-					)
+					let entry = sim.readerCtx.partitions.get(waiter.partitionKey)
+					let reportedCommitted = entry?.partitionCommittedOffset ?? 0n
+					if (waiter.endOffset > reportedCommitted) {
+						throw new Error(
+							`commit resolved before a reported watermark: end=${waiter.endOffset} ` +
+								`durable=${part.durableCommitted} reported=${reportedCommitted}`
+						)
+					}
 				}
 			}
 			break
@@ -232,9 +407,6 @@ let onReaderOutput = function onReaderOutput(sim: Sim, output: ReaderOutput): vo
 			}
 			break
 		}
-		case 'reader.error':
-			sim.errored = true
-			break
 		case 'reader.closed':
 			sim.terminal = true
 			break
@@ -251,16 +423,65 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			sim.credit += effect.bytesSize
 			break
 		}
-		case 'reader.effect.send.commit': {
+		case 'reader.effect.send.partition_status': {
 			if (!sim.streamOpen || sim.initPending) break
 			let part = sim.partitions.find(
 				(p) => p.partitionSessionId === effect.partitionSessionId
 			)
 			if (part) {
-				for (let range of effect.ranges) {
-					part.pendingCommitEnds.push(range.end)
+				forward(sim, {
+					case: 'partitionSessionStatusResponse',
+					value: {
+						partitionSessionId: effect.partitionSessionId,
+						committedOffset: part.durableCommitted,
+					},
+				})
+			}
+			break
+		}
+		case 'reader.effect.send.commit': {
+			if (!sim.streamOpen || sim.initPending) break
+			let part = sim.partitions.find(
+				(p) => p.partitionSessionId === effect.partitionSessionId
+			)
+			if (!part) {
+				// The FSM's live-session guard failed: this frame names a session the
+				// current stream never granted — session-fatal on a real server.
+				throw new Error(
+					`commit sent for a session the current stream never granted: ${effect.partitionSessionId}`
+				)
+			}
+			// Wire contract: normalized ranges, nothing below the committed watermark,
+			// nothing overlapping ranges this session already committed (both are
+			// BAD_REQUEST "double committing is forbidden"), and nothing outside what
+			// commit() calls actually asked for — a range covering a foreign
+			// delivered-but-uncommitted message would commit someone else's data.
+			assertNormalized(effect.ranges, `commit on ${part.key}`)
+			for (let range of effect.ranges) {
+				if (range.start < part.durableCommitted) {
+					throw new Error(
+						`commit on ${part.key} rewinds below committed: [${range.start}, ${range.end}) < ${part.durableCommitted}`
+					)
+				}
+				if (overlapsAny(range, part.sessionRanges)) {
+					throw new Error(
+						`commit on ${part.key} overlaps an already-committed range: [${range.start}, ${range.end})`
+					)
 				}
 			}
+			if (!coveredBy(effect.ranges, sim.requestedUnion.get(part.key) ?? [])) {
+				throw new Error(`commit on ${part.key} covers offsets no commit() ever asked for`)
+			}
+			// Apply at receive (wire order): the watermark advances over the contiguous
+			// prefix; sparse remainders wait as session state.
+			part.sessionRanges = modelMerge([...part.sessionRanges, ...effect.ranges])
+			while (
+				part.sessionRanges.length > 0 &&
+				part.sessionRanges[0]!.start === part.durableCommitted
+			) {
+				part.durableCommitted = part.sessionRanges.shift()!.end
+			}
+			part.unackedCommits += 1
 			break
 		}
 		case 'reader.effect.send.stop_response': {
@@ -275,30 +496,55 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			let part = sim.partitions.find(
 				(p) => p.partitionSessionId === effect.partitionSessionId
 			)
-			if (part) {
-				// Wire order: commits the client sent before this response were processed
-				// by the server first, so they are durably applied — just never acked (the
-				// session is released). The client only learns of them via a re-grant's
-				// committed_offset, which is exactly what the reconcile must absorb.
-				part.durableCommitted = part.pendingCommitEnds.reduce(
-					(m, e) => (e > m ? e : m),
-					part.durableCommitted
+			if (!part) break
+			if (!part.stopping) {
+				throw new Error(
+					`unsolicited stop_response for session ${effect.partitionSessionId}`
 				)
-				part.pendingCommitEnds = []
-				part.partitionSessionId = undefined
-				part.ready = false
-				part.stopping = false
 			}
+			// D3: a graceful stop is answered only after BOTH the stop hook completed
+			// (stop_ready) and the pending commits drained — or the per-partition
+			// timeout escalated a stalled handshake.
+			let entry = sim.readerCtx.partitions.get(part.key)
+			let handshakeDone =
+				entry !== undefined &&
+				sim.stopReadyDone.has(`${part.key}#${entry.grantId}`) &&
+				entry.pendingCommits.length === 0
+			if (!handshakeDone && !sim.gracefulTimeoutFired.has(part.key)) {
+				throw new Error(
+					`stop_response for ${part.key} before stop_ready and drained commits`
+				)
+			}
+			sim.gracefulTimeoutFired.delete(part.key)
+			// The session is released. Commits the client sent before this response were
+			// processed by the server first (wire order) and already advanced the durable
+			// watermark; the sparse session state dies with the session — the client only
+			// learns the watermark via a re-grant's committed_offset, which is exactly
+			// what the reconcile must absorb.
+			part.sessionRanges = []
+			part.unackedCommits = 0
+			part.partitionSessionId = undefined
+			part.ready = false
+			part.stopping = false
 			break
 		}
 		case 'reader.effect.partition.start_hook': {
-			// Mirror the runtime: the (hookless) async handshake completes immediately
-			// and re-enters the FSM as start_ready, which answers with start_response
-			// and re-sends reconciled commits.
+			// Mirror the hookless runtime: the async start handshake completes
+			// immediately and re-enters the FSM as start_ready, which answers with
+			// start_response and re-sends reconciled commits.
 			sim.readerEvents.push({
 				type: 'reader.partition.start_ready',
 				partitionSessionId: effect.partitionSessionId,
-				partitionId: effect.partitionId,
+				partitionKey: effect.partitionKey,
+				grantId: effect.grantId,
+			})
+			break
+		}
+		case 'reader.effect.partition.stop_hook': {
+			// The graceful-stop hook runs detached in the runtime — the model completes
+			// it as a separate, randomly interleaved action (or in the cooldown flush).
+			sim.pendingStopHooks.push({
+				partitionKey: effect.partitionKey,
 				grantId: effect.grantId,
 			})
 			break
@@ -320,7 +566,7 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			break
 		case 'reader.effect.timer.schedule': {
 			let key =
-				'partitionId' in effect ? `${effect.which}:${effect.partitionId}` : effect.which
+				'partitionKey' in effect ? `${effect.which}:${effect.partitionKey}` : effect.which
 			if (effect.which === 'recovery_window' && sim.armed.has(key)) {
 				break
 			}
@@ -329,7 +575,7 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 		}
 		case 'reader.effect.timer.clear': {
 			let key =
-				'partitionId' in effect ? `${effect.which}:${effect.partitionId}` : effect.which
+				'partitionKey' in effect ? `${effect.which}:${effect.partitionKey}` : effect.which
 			sim.armed.delete(key)
 			break
 		}
@@ -346,13 +592,15 @@ let applyTransportEffect = function applyTransportEffect(sim: Sim, effect: Trans
 			sim.streamOpen = true
 			sim.initPending = true
 			sim.credit = 0n
-			// Ephemeral assignments die with the old stream.
+			// Ephemeral assignments — and the sparse per-session commit state — die
+			// with the old stream; only the durable watermark survives.
 			for (let part of sim.partitions) {
 				part.partitionSessionId = undefined
 				part.ready = false
 				part.stopping = false
 				part.deliveredUpTo = part.durableCommitted
-				part.pendingCommitEnds = []
+				part.sessionRanges = []
+				part.unackedCommits = 0
 			}
 			break
 		case 'transport.effect.close_stream':
@@ -436,13 +684,15 @@ let assignPartition = function assignPartition(sim: Sim, part: ServerPartition):
 	part.ready = false
 	part.stopping = false
 	part.deliveredUpTo = part.durableCommitted
+	part.sessionRanges = []
+	part.unackedCommits = 0
 	forward(sim, {
 		case: 'startPartitionSessionRequest',
 		value: {
 			partitionSession: {
 				partitionSessionId,
 				partitionId: part.partitionId,
-				path: '/t',
+				path: part.path,
 			},
 			committedOffset: part.durableCommitted,
 			partitionOffsets: { start: part.durableCommitted, end: part.availableUpTo },
@@ -470,10 +720,19 @@ let deliver = function deliver(
 	}
 	let offsets: bigint[] = []
 	for (let o = part.deliveredUpTo; o < end; o++) {
+		// Server-side offset holes (retention, compaction): the offset exists in the
+		// numbering but is never delivered — the stitching must cover it via the NEXT
+		// delivered message's commit range.
+		if (randInt(5) === 0) {
+			continue
+		}
 		offsets.push(o)
 	}
-	let bytesSize = BigInt(offsets.length * 10)
 	part.deliveredUpTo = end
+	if (offsets.length === 0) {
+		return
+	}
+	let bytesSize = BigInt(offsets.length * 10)
 	sim.credit -= bytesSize
 	forward(sim, {
 		case: 'readResponse',
@@ -502,12 +761,10 @@ let deliver = function deliver(
 }
 
 let ackCommits = function ackCommits(sim: Sim, part: ServerPartition): void {
-	if (part.partitionSessionId === undefined || part.pendingCommitEnds.length === 0) {
+	if (part.partitionSessionId === undefined || part.unackedCommits === 0) {
 		return
 	}
-	let maxEnd = part.pendingCommitEnds.reduce((m, e) => (e > m ? e : m), part.durableCommitted)
-	part.durableCommitted = maxEnd
-	part.pendingCommitEnds = []
+	part.unackedCommits = 0
 	forward(sim, {
 		case: 'commitOffsetResponse',
 		value: {
@@ -521,12 +778,39 @@ let ackCommits = function ackCommits(sim: Sim, part: ServerPartition): void {
 	})
 }
 
+// Consumer commit(): mirror the facade — merged half-open ranges built from the
+// selected messages' stitched [commitRangeStart, offset+1), one waiter per call.
+let issueCommit = function issueCommit(sim: Sim, key: string, selected: MirrorMessage[]): void {
+	if (selected.length === 0) {
+		return
+	}
+	for (let message of selected) {
+		message.requested = true
+	}
+	let ranges = mergeRanges(selected.map((m) => ({ start: m.start, end: m.end })))
+	sim.requestedUnion.set(key, modelMerge([...(sim.requestedUnion.get(key) ?? []), ...ranges]))
+	let waiterId = sim.nextWaiterId++
+	sim.waiters.set(waiterId, {
+		partitionKey: key,
+		ranges,
+		endOffset: ranges[ranges.length - 1]!.end,
+		state: 'pending',
+	})
+	sim.readerEvents.push({ type: 'reader.commit', partitionKey: key, ranges, waiterId })
+}
+
 // ── invariants ────────────────────────────────────────────────────────────────
 
-// The reassign gc is the ONE non-terminal path allowed to reject a commit: the
-// partition was rebalanced away and nothing can ever acknowledge those offsets.
+// Two non-terminal paths may reject a commit: the reassign gc (partition rebalanced
+// away, held offsets never acknowledged) and the stop race (commit dispatched while
+// the session was live but processed after the partition stopped — uncovered offsets
+// can never be acked on this stream).
 let isReassignRejection = function isReassignRejection(reason: unknown): boolean {
-	return reason instanceof Error && reason.message.includes('reassigned before commit')
+	return (
+		reason instanceof Error &&
+		(reason.message.includes('reassigned before commit') ||
+			reason.message.includes('stopped or expired partition session'))
+	)
 }
 
 let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
@@ -555,39 +839,56 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		}
 	}
 
-	if (ctx.inFlightBytes < 0n || ctx.pendingReadRequestBytes < 0n) {
-		throw new Error(
-			`${where}: negative flow-control inFlight=${ctx.inFlightBytes} pending=${ctx.pendingReadRequestBytes}`
-		)
+	if (ctx.inFlightBytes < 0n) {
+		throw new Error(`${where}: negative flow-control inFlight=${ctx.inFlightBytes}`)
 	}
 
 	// sessionIndex is consistent: every entry points to a partition whose current
 	// partitionSessionId equals the index key.
-	for (let [partitionSessionId, partitionId] of ctx.sessionIndex) {
-		let entry = ctx.partitions.get(partitionId)
+	for (let [partitionSessionId, key] of ctx.sessionIndex) {
+		let entry = ctx.partitions.get(key)
 		if (!entry) {
 			throw new Error(
-				`${where}: sessionIndex ${partitionSessionId} -> missing partition ${partitionId}`
+				`${where}: sessionIndex ${partitionSessionId} -> missing partition ${key}`
 			)
 		}
 		if (entry.partitionSessionId !== partitionSessionId) {
 			throw new Error(
-				`${where}: stale sessionIndex ${partitionSessionId} -> partition ${partitionId} (current ${entry.partitionSessionId})`
+				`${where}: stale sessionIndex ${partitionSessionId} -> ${key} (current ${entry.partitionSessionId})`
 			)
 		}
 	}
 
-	// pending commit ranges per partition are strictly increasing and non-overlapping.
-	for (let entry of ctx.partitions.values()) {
-		let prevEnd = -1n
+	for (let [key, entry] of ctx.partitions) {
+		if (entry.deliveredWatermark < entry.partitionCommittedOffset) {
+			throw new Error(`${where}: delivery watermark below committed on ${key}`)
+		}
+		// Wire ranges are normalized and pairwise disjoint. A fully claimed duplicate
+		// legitimately has no wire ranges while its target waits for the same watermark.
+		let all: OffsetRange[] = []
 		for (let pending of entry.pendingCommits) {
-			if (pending.startOffset < prevEnd) {
-				throw new Error(`${where}: overlapping pending commit on ${entry.partitionId}`)
+			if (pending.targetOffset <= entry.partitionCommittedOffset) {
+				throw new Error(`${where}: confirmed pending target on ${key}`)
 			}
-			if (pending.endOffset <= pending.startOffset) {
-				throw new Error(`${where}: empty pending commit range on ${entry.partitionId}`)
-			}
-			prevEnd = pending.endOffset
+			assertNormalized(pending.wireRanges, `${where}: pending commit on ${key}`)
+			all.push(...pending.wireRanges)
+		}
+		let union = modelMerge(all)
+		if (rangesLength(union) !== rangesLength(all)) {
+			throw new Error(`${where}: overlapping pending commits on ${key}`)
+		}
+		// Claimed coverage is exactly the pending remainders above the watermark —
+		// the guard recordCommit subtracts to never re-send a claimed offset.
+		let expected = clampRanges(union, entry.partitionCommittedOffset)
+		if (!sameRanges(entry.claimedRanges, expected)) {
+			throw new Error(`${where}: claimedRanges drifted from pending coverage on ${key}`)
+		}
+		// The model's independently tracked delivery watermark agrees with the FSM's.
+		let mirror = sim.mirrors.get(key)
+		if (mirror && mirror.nextStitch !== entry.deliveredWatermark) {
+			throw new Error(
+				`${where}: stitch watermark drift on ${key}: model ${mirror.nextStitch} != fsm ${entry.deliveredWatermark}`
+			)
 		}
 	}
 }
@@ -611,12 +912,15 @@ let checkFinal = function checkFinal(sim: Sim, seed: number): void {
 
 // ── driver ──────────────────────────────────────────────────────────────────────
 
-let runOne = function runOne(seed: number, partitionCount: number, steps: number): void {
+let runOne = function runOne(
+	seed: number,
+	topology: { path: string; partitionId: bigint }[],
+	steps: number
+): void {
 	let rng = mulberry32(seed)
 	let randInt = (bound: number): number => Math.floor(rng() * bound)
 
-	let sim = mkSim(partitionCount, 1000n)
-	let nextWaiterId = 1
+	let sim = mkSim(topology, 1000n)
 
 	sim.readerEvents.push({ type: 'reader.start' })
 	runToQuiescence(sim)
@@ -648,48 +952,78 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 			})
 		}
 
-		// Consumer: commit some delivered-but-uncommitted offsets on a live partition.
+		// Consumer: commit delivered messages the way the facade does — per-message
+		// stitched ranges, merged. Mixed selection shapes: the oldest unrequested run,
+		// a skip-ahead (sparse hole the watermark cannot pass yet), a non-contiguous
+		// subset (several wire ranges), and an overlap with an earlier commit().
 		if (live) {
-			for (let entry of sim.readerCtx.partitions.values()) {
-				let part = sim.partitions.find((p) => p.partitionId === entry.partitionId)
-				if (!part || part.deliveredUpTo <= entry.nextCommitStartOffset) {
+			for (let [key, mirror] of sim.mirrors) {
+				if (!sim.readerCtx.partitions.has(key)) {
+					continue
+				}
+				if (!mirror.msgs.some((m) => !m.requested)) {
 					continue
 				}
 				actions.push({
 					w: 5,
 					run: () => {
-						let upTo = part.deliveredUpTo - 1n
-						let offsets: bigint[] = []
-						for (let o = entry.nextCommitStartOffset; o <= upTo; o++) {
-							offsets.push(o)
-						}
-						if (offsets.length === 0) {
+						let fresh = mirror.msgs.filter((m) => !m.requested)
+						if (fresh.length === 0) {
 							return
 						}
-						let waiterId = nextWaiterId++
-						sim.waiters.set(waiterId, {
-							partitionId: part.partitionId,
-							endOffset: upTo + 1n,
-							state: 'pending',
-						})
-						sim.readerEvents.push({
-							type: 'reader.commit',
-							partitionId: part.partitionId,
-							offsets,
-							waiterId,
-						})
+						let mode = randInt(6)
+						let selected: MirrorMessage[]
+						if (mode === 0) {
+							// Non-contiguous picks merge into SEVERAL wire ranges (a consumer
+							// acking messages out of order after parallel processing).
+							selected = fresh.filter(() => randInt(2) === 0)
+							if (selected.length === 0) {
+								selected = [fresh[0]!]
+							}
+						} else if (mode === 1) {
+							// Overlap a previous commit(): re-committed offsets are claimed
+							// or durable — the FSM must dedupe them off the wire, never resend.
+							let from = randInt(mirror.msgs.length)
+							selected = mirror.msgs.slice(from, from + 1 + randInt(3))
+						} else if (mode === 2 && fresh.length > 1) {
+							// Skip ahead: leaves a hole the watermark cannot pass until the
+							// earlier messages are committed too.
+							let from = randInt(fresh.length)
+							selected = fresh.slice(from, from + 1 + randInt(3))
+						} else {
+							selected = fresh.slice(0, 1 + randInt(3))
+						}
+						issueCommit(sim, key, selected)
 					},
 				})
 			}
 		}
 
+		// Low weight: most runs must SURVIVE to the reconcile teeth and cooldown —
+		// terminal shutdown is a coverage path, not the default outcome.
 		if (live) {
-			actions.push({ w: 1, run: () => sim.readerEvents.push({ type: 'reader.close' }) })
+			actions.push({ w: 0.1, run: () => sim.readerEvents.push({ type: 'reader.close' }) })
 			actions.push({
-				w: 1,
+				w: 0.1,
 				run: () => {
-					sim.destroyed = true
 					sim.readerEvents.push({ type: 'reader.destroy', reason: new Error('destroy') })
+				},
+			})
+		}
+
+		// The async stop hook completes — possibly long after the stop request, and in
+		// any order relative to the commit drain (the FSM must wait for BOTH).
+		for (let i = 0; i < sim.pendingStopHooks.length; i++) {
+			actions.push({
+				w: 4,
+				run: () => {
+					let hook = sim.pendingStopHooks.splice(i, 1)[0]!
+					sim.stopReadyDone.add(`${hook.partitionKey}#${hook.grantId}`)
+					sim.readerEvents.push({
+						type: 'reader.partition.stop_ready',
+						partitionKey: hook.partitionKey,
+						grantId: hook.grantId,
+					})
 				},
 			})
 		}
@@ -705,7 +1039,7 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 					actions.push({ w: 5, run: () => assignPartition(sim, part) })
 				} else {
 					actions.push({ w: 6, run: () => deliver(sim, part, randInt) })
-					if (part.pendingCommitEnds.length > 0) {
+					if (part.unackedCommits > 0) {
 						actions.push({ w: 6, run: () => ackCommits(sim, part) })
 					}
 					// Server-initiated graceful hand-off: delivery stops (deliver guards on
@@ -746,7 +1080,8 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 							part.partitionSessionId = undefined
 							part.ready = false
 							part.stopping = false
-							part.pendingCommitEnds = []
+							part.sessionRanges = []
+							part.unackedCommits = 0
 						},
 					})
 				}
@@ -763,33 +1098,31 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 			})
 		}
 
-		// Timer firings.
+		// Timer firings. All timers are one-shot in the runtime except the repeating
+		// update_token interval.
 		for (let key of sim.armed) {
-			let which = key.split(':')[0]!
-			let pid = key.split(':')[1]
-			let oneShot =
-				which === 'start_timeout' ||
-				which === 'retry_backoff' ||
-				which === 'recovery_window' ||
-				which === 'graceful_timeout' ||
-				which === 'partition_graceful_timeout'
+			let sep = key.indexOf(':')
+			let which = sep === -1 ? key : key.slice(0, sep)
+			let pkey = sep === -1 ? undefined : key.slice(sep + 1)
 			actions.push({
 				w: which === 'update_token' ? 1 : 3,
 				run: () => {
-					if (oneShot) {
+					if (which !== 'update_token') {
 						sim.armed.delete(key)
 					}
 					if (which === 'partition_reassign_gc') {
 						sim.readerEvents.push({
 							type: 'reader.timer.partition_reassign_gc',
-							partitionId: BigInt(pid!),
+							partitionKey: pkey!,
 						})
 					} else if (which === 'partition_graceful_timeout') {
-						// Per-partition stall fallback — distinct from the pid-less close
-						// deadline the FSM honors only in `closing`.
+						// Per-partition stall fallback — distinct from the key-less close
+						// deadline the FSM honors only in `closing`. Firing it legalizes a
+						// stop_response with the handshake still incomplete.
+						sim.gracefulTimeoutFired.add(pkey!)
 						sim.readerEvents.push({
 							type: 'reader.timer.partition_graceful_timeout',
-							partitionId: BigInt(pid!),
+							partitionKey: pkey!,
 						})
 					} else {
 						sim.readerEvents.push({ type: `reader.timer.${which}` } as ReaderEvent)
@@ -823,34 +1156,21 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 	if (!sim.terminal && sim.readerState === 'ready' && sim.streamOpen && !sim.initPending) {
 		sim.credit += 100_000n
 		for (let part of sim.partitions) {
-			if (part.partitionSessionId !== undefined && part.ready) {
+			if (part.partitionSessionId !== undefined && part.ready && !part.stopping) {
 				part.availableUpTo = part.deliveredUpTo + 5n
 				deliver(sim, part, () => 4)
 			}
 		}
 		runToQuiescence(sim)
-		for (let entry of sim.readerCtx.partitions.values()) {
-			let part = sim.partitions.find((p) => p.partitionId === entry.partitionId)
-			if (!part || part.deliveredUpTo <= entry.nextCommitStartOffset) {
+		for (let [key, mirror] of sim.mirrors) {
+			if (!sim.readerCtx.partitions.has(key)) {
 				continue
 			}
-			let upTo = part.deliveredUpTo - 1n
-			let offsets: bigint[] = []
-			for (let o = entry.nextCommitStartOffset; o <= upTo; o++) {
-				offsets.push(o)
-			}
-			let waiterId = nextWaiterId++
-			sim.waiters.set(waiterId, {
-				partitionId: part.partitionId,
-				endOffset: upTo + 1n,
-				state: 'pending',
-			})
-			sim.readerEvents.push({
-				type: 'reader.commit',
-				partitionId: part.partitionId,
-				offsets,
-				waiterId,
-			})
+			issueCommit(
+				sim,
+				key,
+				mirror.msgs.filter((m) => !m.requested)
+			)
 		}
 		runToQuiescence(sim)
 		if (sim.streamOpen) {
@@ -859,7 +1179,9 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 		}
 	}
 
-	// Cooldown: reconnect + init + drain acks so committed offsets settle.
+	// Cooldown: reconnect + init, re-grant every partition, redeliver, complete the
+	// outstanding stop hooks, commit everything still unrequested (filling any sparse
+	// holes so the watermark can pass), and drain acks until a fixed point.
 	for (let i = 0; i < 5000 && !sim.terminal; i++) {
 		if (!sim.streamOpen) {
 			if (sim.armed.has('retry_backoff')) {
@@ -870,7 +1192,7 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 				sim.readerEvents.push({ type: 'reader.timer.start_timeout' })
 			} else if (sim.armed.has('graceful_timeout')) {
 				// close() was called while no stream was up: the connect timers are
-				// cleared, so only the pid-less close deadline can settle the drain.
+				// cleared, so only the key-less close deadline can settle the drain.
 				sim.armed.delete('graceful_timeout')
 				sim.readerEvents.push({ type: 'reader.timer.graceful_timeout' })
 			} else {
@@ -884,12 +1206,59 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 			runToQuiescence(sim)
 			continue
 		}
+
+		// The consumer keeps up and the server grants effectively unlimited credit —
+		// the cooldown drives the system to its fixed point, not the flow-control edge.
+		sim.credit = 1_000_000n
+		while (sim.unreleased.length > 0) {
+			sim.readerEvents.push({ type: 'reader.read_release', bytes: sim.unreleased.shift()! })
+		}
 		let progressed = false
 		for (let part of sim.partitions) {
 			if (part.partitionSessionId === undefined) {
 				assignPartition(sim, part)
 				progressed = true
-			} else if (part.pendingCommitEnds.length > 0) {
+			}
+		}
+		runToQuiescence(sim)
+		for (let part of sim.partitions) {
+			while (
+				part.partitionSessionId !== undefined &&
+				part.ready &&
+				!part.stopping &&
+				part.deliveredUpTo < part.availableUpTo
+			) {
+				deliver(sim, part, randInt)
+				progressed = true
+			}
+		}
+		runToQuiescence(sim)
+		while (sim.pendingStopHooks.length > 0) {
+			let hook = sim.pendingStopHooks.shift()!
+			sim.stopReadyDone.add(`${hook.partitionKey}#${hook.grantId}`)
+			sim.readerEvents.push({
+				type: 'reader.partition.stop_ready',
+				partitionKey: hook.partitionKey,
+				grantId: hook.grantId,
+			})
+			progressed = true
+		}
+		runToQuiescence(sim)
+		if (sim.readerState === 'ready') {
+			for (let [key, mirror] of sim.mirrors) {
+				if (!sim.readerCtx.partitions.has(key)) {
+					continue
+				}
+				let unrequested = mirror.msgs.filter((m) => !m.requested)
+				if (unrequested.length > 0) {
+					issueCommit(sim, key, unrequested)
+					progressed = true
+				}
+			}
+			runToQuiescence(sim)
+		}
+		for (let part of sim.partitions) {
+			if (part.unackedCommits > 0) {
 				ackCommits(sim, part)
 				progressed = true
 			}
@@ -898,19 +1267,22 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 		if (progressed) {
 			continue
 		}
-		// Quiesced with no assignable/ackable work left, yet waiters may still be
-		// pending behind a stalled graceful stop or an orphaned partition. Fire the
-		// stall-bounding timers the way the real runtime eventually would: per-partition
-		// partition_graceful_timeout first (its stop_response frees the partition for a
-		// re-grant, so the waiter can still RESOLVE), then the reassign gc (a legal
-		// rejection), and last the pid-less close deadline armed by toClosing.
+
+		// Quiesced with no assignable/deliverable/ackable work left, yet waiters may
+		// still be pending behind a stalled graceful stop or an orphaned partition.
+		// Fire the stall-bounding timers the way the real runtime eventually would:
+		// per-partition partition_graceful_timeout first (its stop_response frees the
+		// partition for a re-grant, so the waiter can still RESOLVE), then the reassign
+		// gc (a legal rejection), and last the key-less close deadline armed by toClosing.
 		let fired = false
 		for (let key of [...sim.armed]) {
 			if (key.startsWith('partition_graceful_timeout:')) {
 				sim.armed.delete(key)
+				let pkey = key.slice('partition_graceful_timeout:'.length)
+				sim.gracefulTimeoutFired.add(pkey)
 				sim.readerEvents.push({
 					type: 'reader.timer.partition_graceful_timeout',
-					partitionId: BigInt(key.split(':')[1]!),
+					partitionKey: pkey,
 				})
 				fired = true
 			}
@@ -921,7 +1293,7 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 					sim.armed.delete(key)
 					sim.readerEvents.push({
 						type: 'reader.timer.partition_reassign_gc',
-						partitionId: BigInt(key.split(':')[1]!),
+						partitionKey: key.slice('partition_reassign_gc:'.length),
 					})
 					fired = true
 				}
@@ -945,16 +1317,26 @@ let runOne = function runOne(seed: number, partitionCount: number, steps: number
 test('random reader sequences preserve every invariant (single partition)', () => {
 	let runs = 0
 	for (let seed = 1; seed <= 400; seed++) {
-		runOne(seed, 1, 60)
+		runOne(seed, [{ path: '/t', partitionId: 10n }], 60)
 		runs++
 	}
 	expect(runs).toBe(400)
 })
 
-test('random reader sequences preserve every invariant (multi partition)', () => {
+test('random reader sequences preserve every invariant (multi partition, colliding ids across topics)', () => {
 	let runs = 0
 	for (let seed = 1; seed <= 400; seed++) {
-		runOne(seed + 100_000, 3, 60)
+		// partitionId 10 exists in BOTH topics: only the composite (path, partitionId)
+		// key tells the state apart — id-keyed state would cross-wire commits and grants.
+		runOne(
+			seed + 100_000,
+			[
+				{ path: '/a', partitionId: 10n },
+				{ path: '/b', partitionId: 10n },
+				{ path: '/b', partitionId: 11n },
+			],
+			60
+		)
 		runs++
 	}
 	expect(runs).toBe(400)

@@ -82,7 +82,7 @@
 		"@types/ms": "^2.1.0"
 	},
 	"engines": {
-		"node": ">=20.19.0",
+		"node": "^22.15.0 || >=23.8.0",
 		"npm": ">=10"
 	},
 	"engineStrict": true

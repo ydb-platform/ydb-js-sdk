@@ -13,6 +13,11 @@ type TopicMessageOptions = {
 	createdAt?: number
 	writtenAt?: number
 	metadataItems?: Record<string, Uint8Array>
+
+	// Start of this message's commit range: covers the server-side offset hole
+	// (retention, readFrom skip) immediately preceding the message, stitched at
+	// delivery time. Defaults to the message's own offset.
+	commitRangeStart?: bigint
 }
 
 export class TopicMessage {
@@ -26,6 +31,7 @@ export class TopicMessage {
 	readonly createdAt?: number
 	readonly writtenAt?: number
 	readonly metadataItems?: Record<string, Uint8Array>
+	readonly commitRangeStart: bigint
 
 	constructor(options: TopicMessageOptions) {
 		this.partitionSession = new WeakRef(options.partitionSession)
@@ -35,6 +41,7 @@ export class TopicMessage {
 		this.offset = options.offset ?? 0n
 		this.payload = options.payload
 		this.uncompressedSize = options.uncompressedSize ?? 0n
+		this.commitRangeStart = options.commitRangeStart ?? this.offset
 		if (options.createdAt !== undefined) {
 			this.createdAt = options.createdAt
 		}

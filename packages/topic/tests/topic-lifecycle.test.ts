@@ -196,7 +196,9 @@ test(
 	}
 )
 
-test('waits for the topic to be created before writing with retryOnSchemeError', async () => {
+// The 1s pre-creation window stacks up SCHEME_ERROR retries, so the recovery leg
+// rides the grown backoff — under CPU contention that can exceed the default budget.
+test('waits for the topic to be created before writing with retryOnSchemeError', { timeout: 30_000 }, async () => {
 	await using writer = createTopicWriter(driver, {
 		topic,
 		producer: 'p',

@@ -20,7 +20,7 @@ High‑level, type‑safe clients for YDB Topics (publish–subscribe message st
 npm install @ydbjs/topic
 ```
 
-Requires Node.js >= 20.19.
+Requires Node.js 22.15+ on the 22.x release line, or Node.js 23.8+.
 
 Contributing? The internal state machines are mapped in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -89,15 +89,18 @@ await using writer = createTopicWriter(driver, {
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — topic path or detailed sources
 - `consumer`: `string` — consumer name
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built‑in ZSTD needs Node.js 22.15+ / 23.8+; register your own for runtimes without zlib zstd)
-- `maxBufferBytes?`: `bigint` — internal buffer cap (default 8 MiB)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built-ins: RAW, GZIP, ZSTD)
+- `maxBufferBytes?`: `bigint` — initial server read-credit window (default 8 MiB); an oversized message may exceed it
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
 - `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
+- `autoPartitioningSupport?`: `boolean` — declare autopartitioning support to the server; ended partitions expose `childPartitionIds`/`adjacentPartitionIds` on their session (off by default)
 - `onPartitionSessionStart?`: hook to adjust read/commit offsets per session
-- `onPartitionSessionStop?`: hook on session stop (cleanup/commit)
-- `onCommittedOffset?`: observe commit acknowledgments from server
+- `onPartitionSessionStop?`: on a graceful stop runs while the session is still committable and is awaited before the stop response — the last chance to commit processed offsets; on a forced stop or end-of-partition it is informational
+- `onCommittedOffset?`: observe every server-confirmed commit advance (commit acks, stop watermarks, offset overrides)
+
+`reader.bufferedBytes` exposes the server-accounted bytes currently retained by the reader and not yet fully delivered through `read()`.
 
 TopicReaderSource supports partition filters and time‑based selectors:
 
@@ -126,13 +129,14 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 
   // Option A (simple): await commit for each batch
   await reader.commit(batch)
-
-  // Option B (fast path): fire‑and‑forget commit
-  // void reader.commit(batch)
 }
 ```
 
-Performance note: awaiting `commit()` in the hot path reduces throughput. For high load, prefer fire‑and‑forget plus `onCommittedOffset` to observe confirmations asynchronously.
+`commit()` calls made synchronously in the same JavaScript turn are combined into one microtask batch and return the same promise. This keeps per-message concurrent processing efficient without allocating one public promise or sending one request per message. Passing the whole processed batch remains the clearest option. Awaiting every individual `commit(message)` before issuing the next one intentionally waits for a server round trip each time.
+
+Always handle the returned promise. Ignoring it can surface a commit failure as an unhandled rejection; use `onCommittedOffset` as an observer, not as a replacement for error handling.
+
+Commit semantics: each message acknowledges its own offset range (plus any server-side offset hole immediately preceding it — retention gaps and `readFrom` skips). A message you deliberately leave uncommitted is never covered by later commits of other messages, and the server advances the consumer offset only over gap-free acknowledged intervals — so a failed message keeps the committed offset behind it and is redelivered after a restart. Committing out of order is safe; an awaited `commit()` of a later message resolves once the earlier ones are committed too.
 
 ## Writer
 
@@ -141,7 +145,7 @@ Performance note: awaiting `commit()` in the hot path reduces throughput. For hi
 - `topic`: `string`
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
-- `codec?`: `CompressionCodec` — compression (default RAW; built‑ins: RAW, GZIP, ZSTD — built‑in ZSTD needs Node.js 22.15+ / 23.8+)
+- `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
 - `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)

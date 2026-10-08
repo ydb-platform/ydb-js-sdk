@@ -127,6 +127,9 @@ let mapTransportOutput = function mapTransportOutput(output: TransportOutput): W
 				sessionId: output.sessionId,
 				lastSeqNo: output.lastSeqNo,
 				...(output.partitionId !== undefined && { partitionId: output.partitionId }),
+				...(output.supportedCodecs !== undefined && {
+					supportedCodecs: output.supportedCodecs,
+				}),
 			}
 		case 'transport.stream.write_response':
 			return { type: 'writer.stream.write_response', acks: output.acks }
@@ -186,6 +189,7 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 		{
 			retryOnSchemeError: options.retryOnSchemeError ?? false,
 			recoveryWindowMs: options.recoveryWindowMs ?? DEFAULT_RECOVERY_WINDOW_MS,
+			codec: options.codec?.codec ?? Codec.RAW,
 		}
 	)
 

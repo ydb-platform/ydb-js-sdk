@@ -27,6 +27,14 @@ export class TopicPartitionSession {
 	 * Flag indicating whether the session has ended.
 	 */
 	#ended = false
+	/**
+	 * Partitions formed by the split/merge that ended this one (autopartitioning).
+	 */
+	#childPartitionIds: bigint[] = []
+	/**
+	 * Partitions merged with this one (autopartitioning).
+	 */
+	#adjacentPartitionIds: bigint[] = []
 
 	/**
 	 * Creates a new instance of TopicPartitionSession.
@@ -48,11 +56,29 @@ export class TopicPartitionSession {
 		return this.#ended
 	}
 
+	/**
+	 * Partitions formed by the split/merge that ended this one. Empty until the
+	 * session ends (autopartitioning topics only).
+	 */
+	get childPartitionIds(): readonly bigint[] {
+		return this.#childPartitionIds
+	}
+
+	/**
+	 * Partitions merged with this one. Empty until the session ends
+	 * (autopartitioning topics only).
+	 */
+	get adjacentPartitionIds(): readonly bigint[] {
+		return this.#adjacentPartitionIds
+	}
+
 	stop(): void {
 		this.#stopped = true
 	}
 
-	end(): void {
+	end(childPartitionIds: bigint[] = [], adjacentPartitionIds: bigint[] = []): void {
 		this.#ended = true
+		this.#childPartitionIds = childPartitionIds
+		this.#adjacentPartitionIds = adjacentPartitionIds
 	}
 }

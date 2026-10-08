@@ -86,6 +86,12 @@ export type WriterCtx = {
 	// flush barrier
 	flushRequested: boolean
 
+	// The session codec (Codec enum value / custom id) — validated against
+	// InitResponse.supported_codecs: a disallowed codec is fatal at init, before any
+	// buffered data reaches the wire (the server would otherwise kill the session
+	// with an opaque BAD_REQUEST at the first WriteRequest).
+	codec: number
+
 	// sliding-window buffer (see the diagram above)
 	messages: BufferedMessage[]
 	bufferStart: number
@@ -124,6 +130,8 @@ export type WriterEvent =
 			sessionId: string
 			lastSeqNo: bigint
 			partitionId?: bigint
+			// Codecs the topic permits; empty = the server-side codec check is disabled.
+			supportedCodecs?: number[]
 	  }
 	| { type: 'writer.stream.write_response'; acks: WriteAck[] }
 	| { type: 'writer.stream.token_response' }
@@ -169,7 +177,7 @@ type WriterRuntime = TransitionRuntime<WriterState, WriterEvent, WriterOutput>
 
 export let createWriterCtx = function createWriterCtx(
 	limits: WriterLimits,
-	options?: { retryOnSchemeError?: boolean; recoveryWindowMs?: number }
+	options?: { retryOnSchemeError?: boolean; recoveryWindowMs?: number; codec?: number }
 ): WriterCtx {
 	return {
 		sessionId: '',
@@ -184,6 +192,9 @@ export let createWriterCtx = function createWriterCtx(
 		recoveryWindowMs: options?.recoveryWindowMs ?? Infinity,
 
 		flushRequested: false,
+
+		// 1 = Codec.RAW, the writer default.
+		codec: options?.codec ?? 1,
 
 		messages: [],
 		bufferStart: 0,
@@ -553,6 +564,25 @@ let pump = function pump(
 	return { effects: [{ type: 'writer.effect.send.write_request', messages }] }
 }
 
+// The server permits only codecs from InitResponse.supported_codecs (empty list =
+// check disabled); writing with any other closes the session with an opaque
+// BAD_REQUEST after data is already buffered. Failing at init is the only moment
+// the writer can stop with an actionable error and nothing lost on the wire.
+let codecRejectedByTopic = function codecRejectedByTopic(
+	ctx: WriterCtx,
+	supportedCodecs: number[] | undefined
+): Error | undefined {
+	if (!supportedCodecs || supportedCodecs.length === 0) {
+		return undefined
+	}
+	if (supportedCodecs.includes(ctx.codec)) {
+		return undefined
+	}
+	return new Error(
+		`Codec ${ctx.codec} is not allowed by the topic (supported codecs: ${supportedCodecs.join(', ')})`
+	)
+}
+
 // Enter `ready` on a successful init — from `connecting`, or from `reconnecting`
 // when a slow init lands after start_timeout already moved us there. Recover the
 // seqNo state, resolve any pending flush the recovery just drained, and resume.
@@ -561,6 +591,10 @@ let toReady = function toReady(
 	event: Extract<WriterEvent, { type: 'writer.stream.init_response' }>,
 	runtime: WriterRuntime
 ): TransitionResult<WriterState, WriterEffect> {
+	let codecError = codecRejectedByTopic(ctx, event.supportedCodecs)
+	if (codecError) {
+		return terminate(ctx, 'errored', codecError, runtime)
+	}
 	ctx.attempts = 0
 	applyInit(ctx, event.sessionId, event.lastSeqNo, runtime)
 	resolveFlushIfDrained(ctx, runtime)
@@ -853,8 +887,14 @@ export let writerTransition = function writerTransition(
 					requestFlush(ctx, runtime)
 					return
 
-				// A reconnect completed mid-close — recover and keep draining.
-				case 'writer.stream.init_response':
+				// A reconnect completed mid-close — recover and keep draining. A codec the
+				// topic rejects makes the drain impossible: fail the close instead of
+				// letting the server kill the session at the first WriteRequest.
+				case 'writer.stream.init_response': {
+					let codecError = codecRejectedByTopic(ctx, event.supportedCodecs)
+					if (codecError) {
+						return terminate(ctx, 'errored', codecError, runtime)
+					}
 					applyInit(ctx, event.sessionId, event.lastSeqNo, runtime)
 					resolveFlushIfDrained(ctx, runtime)
 					return (
@@ -864,6 +904,7 @@ export let writerTransition = function writerTransition(
 							],
 						}
 					)
+				}
 
 				case 'writer.timer.retry_backoff':
 					return { effects: connectEffects(ctx) }

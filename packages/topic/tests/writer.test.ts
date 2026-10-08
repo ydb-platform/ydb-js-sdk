@@ -8,6 +8,7 @@ import { Driver } from '@ydbjs/core'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
 import { GZIP_CODEC } from '../src/codec.ts'
+import type { TopicMessage } from '../src/message.ts'
 import { createTopicReader } from '../src/reader/index.ts'
 import { createTopicWriter } from '../src/writer/index.ts'
 
@@ -78,6 +79,46 @@ test('writes messages and reads them back in order', async () => {
 	expect(contents).toEqual(['Message 1', 'Message 2', 'Message 3'])
 	expect(seqNos).toEqual([1n, 2n, 3n])
 })
+
+test(
+	'batches concurrent per-message commits behind one server acknowledgment',
+	{ timeout: 30_000 },
+	async (tc) => {
+		let count = 100
+		await using writer = createTopicWriter(driver, {
+			topic: testTopicName,
+			producer: testProducerName,
+		})
+		for (let index = 0; index < count; index++) {
+			writer.write(encode(String(index)))
+		}
+		await writer.flush()
+
+		await using reader = createTopicReader(driver, {
+			topic: testTopicName,
+			consumer: testConsumerName,
+		})
+		let messages: TopicMessage[] = []
+		for await (let batch of reader.read({
+			limit: count,
+			batchWindowMs: 1000,
+			signal: tc.signal,
+		})) {
+			messages.push(...batch)
+			if (messages.length >= count) {
+				break
+			}
+		}
+		expect(messages).toHaveLength(count)
+
+		let commits: Promise<void>[] = []
+		for (let message of messages) {
+			commits.push(reader.commit(message))
+		}
+		expect(new Set(commits).size).toBe(1)
+		await expect(Promise.all(commits)).resolves.toHaveLength(count)
+	}
+)
 
 test('assigns correct seqNos to messages written before initialization', async () => {
 	await using writer = createTopicWriter(driver, {

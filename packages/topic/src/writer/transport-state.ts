@@ -23,7 +23,13 @@ export type TransportEvent =
 	| { type: 'transport.close' }
 	| { type: 'transport.destroy'; reason?: unknown }
 	// classified stream facts the ingest task forwards
-	| { type: 'transport.init'; sessionId: string; lastSeqNo: bigint; partitionId?: bigint }
+	| {
+			type: 'transport.init'
+			sessionId: string
+			lastSeqNo: bigint
+			partitionId?: bigint
+			supportedCodecs?: number[]
+	  }
 	| { type: 'transport.write'; acks: WriteAck[] }
 	| { type: 'transport.token' }
 	| { type: 'transport.ended' }
@@ -41,6 +47,7 @@ export type TransportOutput =
 			sessionId: string
 			lastSeqNo: bigint
 			partitionId?: bigint
+			supportedCodecs?: number[]
 	  }
 	| { type: 'transport.stream.write_response'; acks: WriteAck[] }
 	| { type: 'transport.stream.token_response' }
@@ -58,6 +65,9 @@ let toInitResponse = function toInitResponse(
 	}
 	if (event.partitionId !== undefined) {
 		output = { ...output, partitionId: event.partitionId }
+	}
+	if (event.supportedCodecs !== undefined) {
+		output = { ...output, supportedCodecs: event.supportedCodecs }
 	}
 	return output
 }

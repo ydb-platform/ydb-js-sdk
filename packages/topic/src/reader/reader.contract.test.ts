@@ -1,5 +1,4 @@
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
-import * as zlib from 'node:zlib'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Codec } from '@ydbjs/api/topic'
@@ -204,7 +203,8 @@ test('does not reject commit() across a reconnect and resolves it on the new ses
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	// Session A: read [0,1,2], commit offset 2 (range [0,3)), but the server never acks.
+	// Session A: read [0,1,2], commit offset 2 (its stitched range [2,3) — the
+	// delivered-but-uncommitted 0 and 1 are never covered), but the server never acks.
 	let a = await primeStream(reader, waitForNextStream, 'session-A')
 	a.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
@@ -228,7 +228,7 @@ test('does not reject commit() across a reconnect and resolves it on the new ses
 	a.disconnect()
 
 	// Session B: same partition, fresh session id, committed still 0. The reconcile must
-	// re-send the pending [committed, 3) on the new session id.
+	// re-send the pending [2, 3) verbatim on the new session id — never a widened span.
 	let b = await waitForNextStream()
 	await b.waitForInit()
 	b.respond(initResponse('session-B'))
@@ -287,7 +287,10 @@ test('a tx reader binds offsets read across a reconnect to the transaction commi
 	await collect(reader, 1, tc.signal)
 
 	// The tx commit sends one UpdateOffsetsInTransaction with the merged (grow-only)
-	// range spanning both sessions — the wire is the observable contract here.
+	// range spanning both sessions — the wire is the observable contract here. The
+	// range starts at the FIRST delivered message's stitched commitRangeStart (the
+	// grant committedOffset 0, covering the head gap before offset 5): a range that
+	// began at the raw offset would leave a gap the server rejects at tx commit.
 	await fake.commit()
 	expect(txOffsetRequests).toHaveLength(1)
 	let request = txOffsetRequests[0]!
@@ -297,7 +300,7 @@ test('a tx reader binds offsets read across a reconnect to the transaction commi
 	expect(request.topics[0]!.partitions).toEqual([
 		expect.objectContaining({
 			partitionId: 10n,
-			partitionOffsets: [expect.objectContaining({ start: 5n, end: 8n })],
+			partitionOffsets: [expect.objectContaining({ start: 0n, end: 8n })],
 		}),
 	])
 })
@@ -462,15 +465,44 @@ test('replenishes read credit once the consumer drains a batch', async () => {
 
 	let iterator = reader.read({ batchWindowMs: 5 })[Symbol.asyncIterator]()
 	await iterator.next() // take the batch
-	// Resume past the yield so the read-release dispatches. This next() may reject with
-	// the terminal error once the reader is destroyed at teardown — swallow it (it is not
-	// the assertion under test, and an un-awaited rejection would fail the run).
-	iterator.next().catch(() => {})
 	await settle()
 
 	let reads = stream.sent.filter((m) => m.clientMessage.case === 'readRequest')
 	expect(reads.length).toBeGreaterThanOrEqual(2)
 	expect(reads.at(-1)!.clientMessage.value.bytesSize).toBe(100n)
+})
+
+test('reports buffered bytes and publishes every change', async (tc) => {
+	using changes = capture<{ bufferedBytes: bigint; consumer: string; topics: string[] }>(
+		'ydb:topic.reader.buffer.changed'
+	)
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			bytesSize: 300n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('x') }],
+		})
+	)
+	await settle()
+	expect(reader.bufferedBytes).toBe(300n)
+	expect(changes.payloads.at(-1)).toMatchObject({
+		bufferedBytes: 300n,
+		consumer: 'c',
+		topics: ['/t'],
+	})
+
+	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
+		expect(batch).toHaveLength(1)
+		break
+	}
+	await settle()
+	expect(reader.bufferedBytes).toBe(0n)
+	expect(changes.payloads.at(-1)?.bufferedBytes).toBe(0n)
 })
 
 test('publishes session-started, partition-started, and committed diagnostics', async (tc) => {
@@ -516,71 +548,29 @@ test('publishes session-started, partition-started, and committed diagnostics', 
 	expect(committed.payloads.at(-1)!.committedOffset).toBe(1n)
 })
 
-// node:zlib gained zstd in Node.js 22.15 / 23.8 — the roundtrip below needs it; the
-// sibling test covers the graceful failure on runtimes without it (the Node 20 CI lane).
-let runtimeHasZstd = typeof zlib.zstdCompressSync === 'function'
+test('decodes a zstd-compressed batch delivered by the server', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-test.skipIf(!runtimeHasZstd)(
-	'decodes a zstd-compressed batch delivered by the server',
-	async (tc) => {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
 
-		let stream = await primeStream(reader, waitForNextStream)
-		stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-		await stream.waitForStartResponse()
+	// Real zstd bytes on the wire — proves the default codec map decompresses ZSTD
+	// end-to-end (fixtures otherwise deliver RAW, which decodes as identity).
+	let payload = bytes('zstd payload that must round-trip through decompression')
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			codec: Codec.ZSTD,
+			messages: [{ offset: 0n, seqNo: 1n, data: ZSTD_CODEC.compress(payload) }],
+		})
+	)
 
-		// Real zstd bytes on the wire — proves the default codec map decompresses ZSTD
-		// end-to-end (fixtures otherwise deliver RAW, which decodes as identity).
-		let payload = bytes('zstd payload that must round-trip through decompression')
-		stream.respond(
-			readResponse({
-				partitionSessionId: 1n,
-				codec: Codec.ZSTD,
-				messages: [{ offset: 0n, seqNo: 1n, data: ZSTD_CODEC.compress(payload) }],
-			})
-		)
-
-		let [message] = await collect(reader, 1, tc.signal)
-		expect(text(message!.payload)).toBe(
-			'zstd payload that must round-trip through decompression'
-		)
-		expect(message!.codec).toBe(Codec.ZSTD)
-	}
-)
-
-test.skipIf(runtimeHasZstd)(
-	'fails with the codecMap remedy on zstd data when the runtime lacks zstd',
-	async (tc) => {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		let reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-		let stream = await primeStream(reader, waitForNextStream)
-		stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-		await stream.waitForStartResponse()
-
-		// Without runtime zstd the default codec map deliberately has no ZSTD entry, so
-		// server-delivered zstd data must surface the actionable unknown-codec error
-		// (register a custom codec in codecMap) instead of a bare zlib TypeError.
-		stream.respond(
-			readResponse({
-				partitionSessionId: 1n,
-				codec: Codec.ZSTD,
-				messages: [{ offset: 0n, seqNo: 1n, data: bytes('zstd-compressed-elsewhere') }],
-			})
-		)
-
-		let firstError: unknown
-		try {
-			await collect(reader, 1, tc.signal)
-		} catch (error) {
-			firstError = error
-		}
-		expect(String(firstError)).toMatch(/codec/i)
-		expect(String(firstError)).toMatch(/codecMap/)
-		reader.destroy()
-	}
-)
+	let [message] = await collect(reader, 1, tc.signal)
+	expect(text(message!.payload)).toBe('zstd payload that must round-trip through decompression')
+	expect(message!.codec).toBe(Codec.ZSTD)
+})
 
 // ── commit protocol ────────────────────────────────────────────────────────────
 
@@ -1410,7 +1400,7 @@ test('answers a re-granted partition exactly once when the previous stream hook 
 
 // ── flow control (release-before-yield) ────────────────────────────────────────
 
-test('releases a chunk exactly once when limit splits it into several yields', async (tc) => {
+test('releases a response only after its final limit slice is yielded', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, {
 		topic: '/t',
@@ -1433,20 +1423,26 @@ test('releases a chunk exactly once when limit splits it into several yields', a
 		})
 	)
 
-	// One chunk of 4 messages, limit 2 → two slices. Break after the FIRST slice: the
-	// credit must have been released once (before the first yield) — never per slice,
-	// and never leaked by the break. (review M5 / READER-8)
+	// One response of 4 messages is split into two iterable values. Receiving the first
+	// half does not release the response because its remaining messages stay carried.
 	for await (let batch of reader.read({ limit: 2, signal: tc.signal })) {
 		expect(batch.length).toBe(2)
 		break
 	}
 	await settle()
+	expect(readRequests(stream.sent)).toEqual([1000n])
 
-	// initial full-buffer credit + exactly one 500n replenishment
+	// The second read completes the original response, so its server-accounted size is
+	// replenished exactly once.
+	for await (let batch of reader.read({ limit: 2, signal: tc.signal })) {
+		expect(batch.length).toBe(2)
+		break
+	}
+	await settle()
 	expect(readRequests(stream.sent)).toEqual([1000n, 500n])
 })
 
-test('releases consumed chunks when the signal aborts mid batch window', async () => {
+test('does not release a response when the signal aborts before yield', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, {
 		topic: '/t',
@@ -1465,9 +1461,8 @@ test('releases consumed chunks when the signal aborts mid batch window', async (
 	)
 	await settle()
 
-	// Long window with limit unset: the chunk is consumed immediately, then read()
-	// keeps waiting for more chunks. Abort during that wait — the abort throws out of
-	// the accumulation, which must not strand the consumed chunk's credit. (M5 edge)
+	// Long window with limit unset: the response leaves the transport queue, but the
+	// iterable has not yielded it yet when the signal aborts.
 	let ac = new AbortController()
 	let thrown: unknown
 	let consume = (async () => {
@@ -1486,7 +1481,15 @@ test('releases consumed chunks when the signal aborts mid batch window', async (
 	expect(String(thrown)).toContain('consumer aborted')
 	await settle()
 
-	// The consumed 400n chunk left the buffer — its credit must be returned.
+	// No iterable value was received, so no read credit is returned yet.
+	expect(readRequests(stream.sent)).toEqual([1000n])
+
+	// A later read receives the carried response and releases its credit then.
+	for await (let batch of reader.read({ limit: 1 })) {
+		expect(batch.map((message) => message.offset)).toEqual([0n])
+		break
+	}
+	await settle()
 	expect(readRequests(stream.sent)).toEqual([1000n, 400n])
 })
 
