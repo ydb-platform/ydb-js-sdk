@@ -27,6 +27,7 @@ let topicPath3 = `${topicName}_third`
 let defaultProducerName = 'demo-producer'
 let deadline = AbortSignal.timeout(90_000)
 let createdTopics: string[] = []
+let seededMessages = 7
 let driver = new Driver(connectionString)
 await driver.ready()
 let topicFactory = topic(driver)
@@ -411,7 +412,7 @@ async function offset(consumerName: string) {
 		},
 	})
 	// [END topic_client_offset]
-	await readAll(reader, 7)
+	await readAll(reader, seededMessages)
 }
 
 async function seedSelection() {
@@ -422,6 +423,7 @@ async function seedSelection() {
 	})
 	writer.write(Buffer.from('Hello, world!', 'utf-8'))
 	await writer.flush()
+	seededMessages++
 }
 
 function lzop(payload: Uint8Array, decompress: boolean): Uint8Array {
@@ -452,7 +454,7 @@ function bound(reader: TopicReader, count: number): void {
 			received += batch.length
 			console.log('Received', received, 'of', count)
 			yield batch
-			if (received === count) break
+			if (received >= count) break
 		}
 		assert.equal(received, count)
 	}
