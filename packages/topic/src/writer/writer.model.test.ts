@@ -230,6 +230,14 @@ let runToQuiescence = function runToQuiescence(sim: Sim): void {
 
 let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 	let ctx = sim.writerCtx
+	let bufferedWireBytes = ctx.messages
+		.slice(ctx.inflightCount)
+		.reduce((sum, message) => sum + message.wireSize, 0n)
+	if (ctx.bufferedWireBytes !== bufferedWireBytes) {
+		throw new Error(
+			`${where}: buffered wire bytes ${ctx.bufferedWireBytes} differ from queued messages ${bufferedWireBytes}`
+		)
+	}
 
 	if (sim.terminal) {
 		// Terminal stop releases the buffer and the facade budget resets.

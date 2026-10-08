@@ -88,6 +88,8 @@ export type WriterCtx = {
 
 	messages: BufferedMessage[]
 	inflightCount: number
+	// Sum of wireSize in the unsent suffix; avoids rescanning a partial batch on every write.
+	bufferedWireBytes: bigint
 
 	limits: WriterLimits
 }
@@ -185,6 +187,7 @@ export let createWriterCtx = function createWriterCtx(
 
 		messages: [],
 		inflightCount: 0,
+		bufferedWireBytes: 0n,
 
 		limits,
 	}
@@ -319,26 +322,30 @@ let toMessageData = function toMessageData(
 // batch-byte limits, assigning auto seqNos as we go. Mutates the window in place
 // (buffer → inflight) and returns the on-wire messages. Synchronous by design.
 let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequest_MessageData[] {
+	let available = ctx.limits.maxInflightCount - ctx.inflightCount
+	if (
+		!ctx.batchDue &&
+		!ctx.closeRequested &&
+		ctx.pendingFlushId === undefined &&
+		ctx.messages.length - ctx.inflightCount < available &&
+		ctx.bufferedWireBytes < ctx.limits.maxBatchBytes
+	) {
+		return []
+	}
+
 	let count = 0
 	let batchBytes = 0n
-	let full = false
-	let available = ctx.limits.maxInflightCount - ctx.inflightCount
 	for (let i = ctx.inflightCount; i < ctx.messages.length; i++) {
 		let size = ctx.messages[i]!.wireSize
 		if (batchBytes + size > ctx.limits.maxBatchBytes) {
 			if (count === 0) throw new Error('Message exceeds the protobuf write frame limit')
-			full = true
 			break
 		}
 		count++
 		batchBytes += size
 		if (count === available || batchBytes === ctx.limits.maxBatchBytes) {
-			full = true
 			break
 		}
-	}
-	if (!full && !ctx.batchDue && !ctx.closeRequested && ctx.pendingFlushId === undefined) {
-		return []
 	}
 
 	let batch: StreamWriteMessage_WriteRequest_MessageData[] = []
@@ -351,6 +358,7 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 		batch.push(toMessageData(message))
 	}
 	ctx.inflightCount += count
+	ctx.bufferedWireBytes -= batchBytes
 	if (ctx.inflightCount === ctx.messages.length) ctx.batchDue = false
 	return batch
 }
@@ -428,6 +436,9 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 	}
 
 	let resend = i < ctx.inflightCount
+	for (let j = i; j < inflightEnd; j++) {
+		ctx.bufferedWireBytes += ctx.messages[j]!.wireSize
+	}
 	ctx.messages.splice(0, i)
 	ctx.inflightCount = 0
 	ctx.batchDue = ctx.messages.length > 0 && (ctx.batchDue || resend)
@@ -486,6 +497,7 @@ let enqueue = function enqueue(ctx: WriterCtx, message: BufferedMessage): void {
 	}
 
 	ctx.messages.push(message)
+	ctx.bufferedWireBytes += message.wireSize
 }
 
 // ── Terminal / transitions ──────────────────────────────────────────────────────
@@ -524,6 +536,7 @@ let terminate = function terminate(
 export let releaseState = function releaseState(ctx: WriterCtx): void {
 	ctx.messages = []
 	ctx.inflightCount = 0
+	ctx.bufferedWireBytes = 0n
 	ctx.batchDue = false
 	ctx.pendingFlushId = undefined
 }

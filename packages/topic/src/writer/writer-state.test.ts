@@ -31,7 +31,11 @@ let limits: WriterLimits = {
 }
 
 let ctxWith = function ctxWith(overrides: Partial<WriterCtx> = {}): WriterCtx {
-	return { ...createWriterCtx(limits), ...overrides }
+	let ctx = { ...createWriterCtx(limits), ...overrides }
+	ctx.bufferedWireBytes = ctx.messages
+		.slice(ctx.inflightCount)
+		.reduce((sum, message) => sum + message.wireSize, 0n)
+	return ctx
 }
 
 let msg = function msg(byte: number, seqNo = 0n): BufferedMessage {
@@ -77,6 +81,33 @@ let drive = function drive(state: WriterState, event: WriterEvent, ctx: WriterCt
 let effectTypes = function effectTypes(effects: WriterEffect[]): string[] {
 	return effects.map((effect) => effect.type)
 }
+
+test('checks batch readiness with linear work while small writes accumulate', () => {
+	let count = 1000
+	let ctx = ctxWith({ limits: { ...limits, maxInflightCount: count } })
+	let sizeReads = 0
+	let sent: WriterEffect[] = []
+	for (let i = 0; i < count; i++) {
+		let message = msg(i)
+		Object.defineProperty(message, 'wireSize', {
+			get() {
+				sizeReads++
+				return 1n
+			},
+		})
+		drive('ready', { type: 'writer.write', message }, ctx)
+		let result = drive('ready', { type: 'writer.pump' }, ctx)
+		sent.push(...result.effects)
+		expect(result.effects).toHaveLength(Number(i === count - 1))
+	}
+	expect(sent).toHaveLength(1)
+	expect(sent[0]).toMatchObject({
+		type: 'writer.effect.send.write_request',
+		messages: { length: count },
+	})
+	expect(ctx.inflightCount).toBe(count)
+	expect(sizeReads).toBeLessThanOrEqual(count * 2)
+})
 
 // Drive to ready with two unacked in-flight messages (seqNos 1, 2).
 let readyWithInflight = function readyWithInflight(): WriterCtx {
