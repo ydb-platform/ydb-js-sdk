@@ -17,3 +17,5 @@ reader selectors and commit variants. It creates and removes uniquely named topi
 
 The multi-topic reader selects distinct partition IDs because this SDK currently
 tracks reader sessions by partition ID across all topics.
+
+The LZOP codec example uses the `lzop` command for compression and decompression. Install it with `sudo apt-get install lzop` on Ubuntu. The custom codec example uses gzip under codec ID 10000.

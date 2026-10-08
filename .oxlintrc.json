@@ -28,7 +28,8 @@
 		{
 			"files": ["examples/ydb_tech/**"],
 			"rules": {
-				"no-await-in-loop": "off"
+				"no-await-in-loop": "off",
+				"no-underscore-dangle": ["warn", { "allow": ["_msg", "_batch"] }]
 			}
 		}
 	],

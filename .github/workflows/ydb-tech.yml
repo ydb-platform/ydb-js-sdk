@@ -27,5 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
+      - name: Install example dependencies
+        run: sudo apt-get update && sudo apt-get install -y lzop
       - run: npm run build -- --filter=./examples/ydb_tech/**...
       - run: bash examples/ydb_tech/run.sh

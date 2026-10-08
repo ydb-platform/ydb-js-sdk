@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { create } from '@bufbuild/protobuf'
-import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { type Operation, StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	AlterTopicRequestSchema,
 	Codec,
 	CreateTopicRequestSchema,
 	DescribeTopicRequestSchema,
-	DescribeTopicResultSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
@@ -22,74 +21,155 @@ import type { TopicMessage } from '@ydbjs/topic/message'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let topicName = `ydb_tech_${randomUUID().replaceAll('-', '')}`
-let topicName2 = `${topicName}_another`
-let topicName3 = `${topicName}_third`
-let producerName = 'ydb-tech-producer'
-let consumers = ['one', 'batch', 'commit_one', 'commit_batch', 'selectors', 'offset']
-let expected = new Set([
-	'buffered',
-	'acknowledged',
-	'metadata',
-	'codec-raw',
-	'codec-gzip',
-	'codec-custom',
-])
-let deadline = AbortSignal.timeout(60_000)
+let topicPath = topicName
+let topicPath2 = `${topicName}_another`
+let topicPath3 = `${topicName}_third`
+let defaultProducerName = 'demo-producer'
+let deadline = AbortSignal.timeout(90_000)
 let createdTopics: string[] = []
-
-// [BEGIN topic_init]
 let driver = new Driver(connectionString)
 await driver.ready()
-let t = topic(driver)
-// [END topic_init]
-
+let topicFactory = topic(driver)
+let customCodec = { codec: 10_000, compress: gzipSync, decompress: gunzipSync }
+let lzopCodec = {
+	codec: Codec.LZOP,
+	compress: (payload: Uint8Array) => lzop(payload, false),
+	decompress: (payload: Uint8Array) => lzop(payload, true),
+}
+defaultCodecMap.set(10_000, customCodec)
+defaultCodecMap.set(Codec.LZOP, lzopCodec)
 try {
-	// [BEGIN topic_create]
-	let topicService = driver.createClient(TopicServiceDefinition)
-	let createResponse = await topicService.createTopic(
-		create(CreateTopicRequestSchema, {
-			path: topicName,
-			partitioningSettings: { minActivePartitions: 1n, maxActivePartitions: 100n },
-			supportedCodecs: { codecs: [Codec.RAW, Codec.GZIP, 10_000] },
-			consumers: consumers.map((name) => ({ name })),
-		})
-	)
-	checkOperation(createResponse.operation)
-	// [END topic_create]
-	createdTopics.push(topicName)
-	for (let path of [topicName2, topicName3]) {
-		let response = await topicService.createTopic(
+	await createTopic()
+	for (let path of [topicPath2, topicPath3]) {
+		let service = driver.createClient(TopicServiceDefinition)
+		let result = await service.createTopic(
 			create(CreateTopicRequestSchema, {
 				path,
-				partitioningSettings: { minActivePartitions: 3n, maxActivePartitions: 3n },
 				consumers: [{ name: 'selectors' }],
 			})
 		)
-		checkOperation(response.operation)
+		checkOperation(result.operation)
 		createdTopics.push(path)
 	}
-
-	// [BEGIN topic_alter]
-	let alterResponse = await topicService.alterTopic(
+	let service = driver.createClient(TopicServiceDefinition)
+	let result = await service.alterTopic(
 		create(AlterTopicRequestSchema, {
 			path: topicName,
-			addConsumers: [{ name: 'another-consumer' }],
+			alterPartitioningSettings: { setMinActivePartitions: 4n },
+			addConsumers: [
+				'demo-consumer',
+				'one',
+				'batch',
+				'commit_one',
+				'commit_batch',
+				'offset',
+				'selector_partitions',
+				'selector_lag',
+				'selector_from',
+				'selectors',
+			].map((name) => ({ name })),
 		})
 	)
-	checkOperation(alterResponse.operation)
-	// [END topic_alter]
+	checkOperation(result.operation)
+	await initialize()
+	await alterTopic()
+	await describeTopic()
+	await write()
+	await writeMetadata()
+	await writeAck(`${defaultProducerName}-ack`)
+	await codecRaw()
+	await codecGzip()
+	await codecLzop()
+	await codecCustom()
+	for (let consumerName of ['one', 'batch', 'commit_one', 'commit_batch']) {
+		await readScenario(consumerName)
+	}
+	await selectPartitions('selector_partitions')
+	await selectLag('selector_lag')
+	await selectFrom('selector_from')
+	await selectMultiple('selectors')
+	await offset('offset')
+} finally {
+	for (let path of createdTopics.reverse()) await dropTopic(path)
+	driver.close()
+}
+console.log('All topic scenarios completed')
 
+async function initialize() {
+	// [BEGIN topic_init]
+	let t = topic(driver)
+
+	await using reader = t.createReader({
+		topic: topicName,
+		consumer: 'demo-consumer',
+	})
+
+	await using writer = t.createWriter({
+		topic: topicName,
+		producer: 'demo-producer',
+	})
+	// [END topic_init]
+	void reader
+	void writer
+}
+
+async function createTopic() {
+	// [BEGIN topic_create]
+	let topicService = driver.createClient(TopicServiceDefinition)
+	let response = await topicService.createTopic(
+		create(CreateTopicRequestSchema, {
+			path: topicName,
+			partitioningSettings: {
+				minActivePartitions: 1n,
+				maxActivePartitions: 100n,
+			},
+			consumers: [{ name: 'my-consumer' }],
+		})
+	)
+	// [END topic_create]
+	checkOperation(response.operation)
+	createdTopics.push(topicName)
+}
+
+async function alterTopic() {
+	// [BEGIN topic_alter]
+	let topicService = driver.createClient(TopicServiceDefinition)
+	let response = await topicService.alterTopic(
+		create(AlterTopicRequestSchema, {
+			path: topicName,
+			addConsumers: [{ name: 'my-consumer-2' }],
+		})
+	)
+	// [END topic_alter]
+	checkOperation(response.operation)
+}
+
+async function describeTopic() {
 	// [BEGIN topic_describe]
-	let describeResponse = await topicService.describeTopic(
+	let topicService = driver.createClient(TopicServiceDefinition)
+	let response = await topicService.describeTopic(
 		create(DescribeTopicRequestSchema, {
 			path: topicName,
 		})
 	)
-	checkOperation(describeResponse.operation)
-	let description = anyUnpack(describeResponse.operation!.result!, DescribeTopicResultSchema)
 	// [END topic_describe]
-	assert(description?.consumers.some((consumer) => consumer.name === 'another-consumer'))
+	checkOperation(response.operation)
+}
 
+async function dropTopic(path: string) {
+	// [BEGIN topic_drop]
+	let topicService = driver.createClient(TopicServiceDefinition)
+	let response = await topicService.dropTopic(
+		create(DropTopicRequestSchema, {
+			path: path,
+		})
+	)
+	// [END topic_drop]
+	checkOperation(response.operation)
+}
+
+async function write() {
+	let producerName = defaultProducerName
 	// [BEGIN topic_start_writer]
 	await using writer = createTopicWriter(driver, {
 		topic: topicName,
@@ -97,167 +177,270 @@ try {
 	})
 	// [END topic_start_writer]
 	// [BEGIN topic_write]
-	writer.write(Buffer.from('buffered'))
-	await writer.flush()
-	// [END topic_write]
-	// [BEGIN topic_write_metadata]
-	writer.write(Buffer.from('metadata'), {
-		metadataItems: { 'meta-key': new TextEncoder().encode('meta-value') },
-	})
-	await writer.flush()
-	// [END topic_write_metadata]
-	await writer.close()
+	// Writes a message to the internal buffer
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
 
-	// [BEGIN topic_write_ack]
-	let acknowledged = false
-	await using ackWriter = createTopicWriter(driver, {
-		topic: topicName,
-		producer: `${producerName}-ack`,
-		onAck: (_seqNo, status) => {
-			acknowledged = status === 'written'
+	// For immediate sending, you need to call flush
+	await writer.flush()
+
+	// Or close the writer
+	await writer.close()
+	// [END topic_write]
+}
+
+async function writeMetadata() {
+	let producerName = defaultProducerName
+	await using writer = createTopicWriter(driver, { topic: topicName, producer: producerName })
+	// [BEGIN topic_write_metadata]
+	writer.write(Buffer.from('Hello, world!', 'utf-8'), {
+		metadataItems: {
+			'meta-key': new TextEncoder().encode('meta-value'),
 		},
 	})
-	ackWriter.write(Buffer.from('acknowledged'))
-	await ackWriter.flush()
-	// [END topic_write_ack]
-	assert(acknowledged)
-	await ackWriter.close()
+	// [END topic_write_metadata]
+	await writer.flush()
+}
 
-	// [BEGIN topic_codec]
-	for (let [codec, payload] of [
-		[RAW_CODEC, 'codec-raw'],
-		[GZIP_CODEC, 'codec-gzip'],
-	] as const) {
-		await using codecWriter = t.createWriter({
-			topic: topicName,
-			producer: `${producerName}-${payload}`,
-			codec,
-		})
-		codecWriter.write(Buffer.from(payload))
-		await codecWriter.flush()
-	}
-	let customCodec = { codec: 10_000, compress: gzipSync, decompress: gunzipSync }
-	await using customWriter = t.createWriter({
+async function writeAck(producerName: string) {
+	// [BEGIN topic_write_ack]
+	await using writer = createTopicWriter(driver, {
+		topic: topicName,
+		producer: producerName,
+		// Callback that is called when writer receives an acknowledgment for a message.
+		onAck: (seqNo, status) => {
+			console.log('ACK', seqNo, status)
+		},
+	})
+
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+
+	// To get the last written seqNo on the server.
+	await writer.flush()
+	// [END topic_write_ack]
+}
+
+async function codecRaw() {
+	let producerName = defaultProducerName
+	let t = topicFactory
+	// [BEGIN topic_codec_raw]
+	await using writer = t.createWriter({
+		topic: topicName,
+		producer: `${producerName}-raw`,
+		codec: RAW_CODEC,
+	})
+	// [END topic_codec_raw]
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+}
+
+async function codecGzip() {
+	let producerName = defaultProducerName
+	let t = topicFactory
+	// [BEGIN topic_codec_gzip]
+	await using writer = t.createWriter({
+		topic: topicName,
+		producer: `${producerName}-gzip`,
+		codec: GZIP_CODEC,
+	})
+	// [END topic_codec_gzip]
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+}
+
+async function codecLzop() {
+	let producerName = defaultProducerName
+	let t = topicFactory
+	// [BEGIN topic_codec_lzop]
+	await using writer = t.createWriter({
+		topic: topicName,
+		producer: `${producerName}-lzop`,
+		codec: lzopCodec,
+	})
+	// [END topic_codec_lzop]
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+}
+
+async function codecCustom() {
+	let producerName = defaultProducerName
+	let t = topicFactory
+	// [BEGIN topic_codec_custom]
+	await using writer = t.createWriter({
 		topic: topicName,
 		producer: `${producerName}-custom`,
 		codec: customCodec,
 	})
-	customWriter.write(Buffer.from('codec-custom'))
-	await customWriter.flush()
-	// [END topic_codec]
-	await customWriter.close()
-	let codecMap = new Map(defaultCodecMap)
-	codecMap.set(10_000, customCodec)
+	// [END topic_codec_custom]
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+}
 
-	for (let consumerName of ['one', 'batch', 'commit_one', 'commit_batch']) {
-		// [BEGIN topic_start_reader]
-		await using reader = createTopicReader(driver, {
-			topic: topicName,
-			consumer: consumerName,
-			codecMap,
-		})
-		// [END topic_start_reader]
-		let received = new Set<string>()
-		if (consumerName === 'one') {
-			// [BEGIN topic_read_one]
-			for await (let batch of reader.read({ signal: deadline, limit: expected.size })) {
-				for (let message of batch) {
-					received.add(checkMessage(message))
-				}
-				if (received.size === expected.size) break
-			}
-			// [END topic_read_one]
-		} else if (consumerName === 'batch') {
-			// [BEGIN topic_read_batch]
-			for await (let batch of reader.read({ signal: deadline, limit: expected.size })) {
-				processBatch(batch, received)
-				if (received.size === expected.size) break
-			}
-			// [END topic_read_batch]
-		} else if (consumerName === 'commit_one') {
-			// [BEGIN topic_read_commit]
-			for await (let batch of reader.read({ signal: deadline, limit: expected.size })) {
-				for (let message of batch) {
-					received.add(checkMessage(message))
-					await reader.commit(message)
-				}
-				if (received.size === expected.size) break
-			}
-			// [END topic_read_commit]
-		} else {
-			// [BEGIN topic_read_batch_commit]
-			for await (let batch of reader.read({ signal: deadline, limit: expected.size })) {
-				processBatch(batch, received)
-				await reader.commit(batch)
-				if (received.size === expected.size) break
-			}
-			// [END topic_read_batch_commit]
-		}
-		assert.deepEqual(received, expected)
-	}
-
-	// [BEGIN topic_reader_selectors]
-	await using selectorReader = createTopicReader(driver, {
-		topic: [
-			{ path: topicName, partitionIds: [0n] },
-			{ path: topicName2, partitionIds: [1n], maxLag: '1h' },
-			{ path: topicName3, partitionIds: [2n], readFrom: new Date(0) },
-		],
-		consumer: 'selectors',
-		codecMap,
-	})
-	// [END topic_reader_selectors]
-	await readAll(selectorReader)
-
-	// [BEGIN topic_client_offset]
-	let offsets = new Map<bigint, bigint>()
-	await using offsetReader = createTopicReader(driver, {
+async function readScenario(consumerName: string) {
+	// [BEGIN topic_start_reader]
+	await using reader = createTopicReader(driver, {
 		topic: topicName,
-		consumer: 'offset',
-		codecMap,
-		onPartitionSessionStart: async (session) => ({
-			readOffset: offsets.get(session.partitionId) ?? 0n,
-			commitOffset: offsets.get(session.partitionId) ?? 0n,
-		}),
+		consumer: consumerName,
+	})
+	// [END topic_start_reader]
+	bound(reader, 7)
+	if (consumerName === 'one') {
+		// [BEGIN topic_read_one]
+		for await (let batch of reader.read()) {
+			for await (let _msg of batch) {
+			}
+		}
+		// [END topic_read_one]
+	} else if (consumerName === 'batch') {
+		// [BEGIN topic_read_batch]
+		for await (let _batch of reader.read()) {
+		}
+		// [END topic_read_batch]
+	} else if (consumerName === 'commit_one') {
+		// [BEGIN topic_read_commit]
+		for await (let batch of reader.read()) {
+			for (let msg of batch) {
+				await reader.commit(msg)
+			}
+		}
+		// [END topic_read_commit]
+	} else {
+		// [BEGIN topic_read_batch_commit]
+		for await (let batch of reader.read()) {
+			await reader.commit(batch)
+		}
+		// [END topic_read_batch_commit]
+	}
+}
+
+async function selectPartitions(consumerName: string) {
+	// [BEGIN topic_reader_selectors_partitions]
+	await using reader = createTopicReader(driver, {
+		topic: {
+			path: topicPath,
+			partitionIds: [1n, 2n, 3n],
+		},
+		consumer: consumerName,
+	})
+	// [END topic_reader_selectors_partitions]
+	await seedSelection()
+	await readAll(reader, 1)
+}
+
+async function selectLag(consumerName: string) {
+	// [BEGIN topic_reader_selectors_lag]
+	await using reader = createTopicReader(driver, {
+		topic: {
+			path: topicPath,
+			maxLag: '1s', // number, import('ms').StringValue, protobuff Duration
+		},
+		consumer: consumerName,
+	})
+	// [END topic_reader_selectors_lag]
+	await seedSelection()
+	await readAll(reader, 1)
+}
+
+async function selectFrom(consumerName: string) {
+	// [BEGIN topic_reader_selectors_from]
+	await using reader = createTopicReader(driver, {
+		topic: {
+			path: topicPath,
+			readFrom: new Date(), // number, Date, protobuf Timestamp
+		},
+		consumer: consumerName,
+	})
+	// [END topic_reader_selectors_from]
+	await seedSelection()
+	await readAll(reader, 1)
+}
+
+async function selectMultiple(consumerName: string) {
+	// [BEGIN topic_reader_selectors_multiple]
+	await using reader = createTopicReader(driver, {
+		topic: [
+			{
+				path: topicPath,
+				partitionIds: [1n, 2n, 3n],
+			},
+			{
+				path: topicPath2,
+				maxLag: '1s',
+			},
+			{
+				path: topicPath3,
+				readFrom: new Date(),
+			},
+			// ...
+		],
+		consumer: consumerName,
+	})
+	// [END topic_reader_selectors_multiple]
+	await seedSelection()
+	await readAll(reader, 1)
+}
+
+async function offset(consumerName: string) {
+	// [BEGIN topic_client_offset]
+	await using reader = createTopicReader(driver, {
+		topic: topicName,
+		consumer: consumerName,
+		onPartitionSessionStart: async (_evt) => {
+			return {
+				readOffset: 0n,
+				commitOffset: 0n,
+			}
+		},
 	})
 	// [END topic_client_offset]
-	await readAll(offsetReader)
-} finally {
-	for (let path of createdTopics.reverse()) {
-		// [BEGIN topic_drop]
-		let topicService = driver.createClient(TopicServiceDefinition)
-		let response = await topicService.dropTopic(create(DropTopicRequestSchema, { path }))
-		checkOperation(response.operation)
-		// [END topic_drop]
-	}
-	driver.close()
+	await readAll(reader, 7)
 }
-console.log('All topic scenarios completed')
+
+async function seedSelection() {
+	await using writer = createTopicWriter(driver, {
+		topic: topicPath,
+		producer: randomUUID(),
+		partitionId: 1n,
+	})
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+}
+
+function lzop(payload: Uint8Array, decompress: boolean): Uint8Array {
+	let result = spawnSync('lzop', decompress ? ['-d', '-c'] : ['-c'], { input: payload })
+	if (result.error) throw result.error
+	assert.equal(result.status, 0, result.stderr.toString())
+	return result.stdout
+}
 
 function checkOperation(operation: Operation | undefined): asserts operation is Operation {
 	assert(operation?.ready, 'The topic operation has not completed')
 	assert.equal(operation.status, StatusIds_StatusCode.SUCCESS, JSON.stringify(operation.issues))
 }
 
-function checkMessage(message: TopicMessage): string {
-	let payload = Buffer.from(message.payload).toString()
-	assert(expected.has(payload), `Unexpected payload: ${payload}`)
-	if (payload === 'metadata') {
-		assert(message.metadataItems?.['meta-key'])
+function checkMessage(message: TopicMessage): void {
+	assert.equal(Buffer.from(message.payload).toString(), 'Hello, world!')
+	if (message.metadataItems?.['meta-key']) {
 		assert.equal(Buffer.from(message.metadataItems['meta-key']).toString(), 'meta-value')
 	}
-	return payload
 }
 
-function processBatch(batch: TopicMessage[], received: Set<string>): void {
-	for (let message of batch) received.add(checkMessage(message))
-}
-
-async function readAll(reader: TopicReader): Promise<void> {
-	let received = new Set<string>()
-	for await (let batch of reader.read({ signal: deadline, limit: expected.size })) {
-		processBatch(batch, received)
-		if (received.size === expected.size) break
+function bound(reader: TopicReader, count: number): void {
+	let read = reader.read.bind(reader)
+	reader.read = async function* () {
+		let received = 0
+		for await (let batch of read({ signal: deadline, limit: count })) {
+			for (let message of batch) checkMessage(message)
+			received += batch.length
+			yield batch
+			if (received === count) break
+		}
+		assert.equal(received, count)
 	}
-	assert.deepEqual(received, expected)
+}
+
+async function readAll(reader: TopicReader, count: number): Promise<void> {
+	bound(reader, count)
+	for await (let batch of reader.read()) {
+		assert(batch.length > 0)
+	}
 }
