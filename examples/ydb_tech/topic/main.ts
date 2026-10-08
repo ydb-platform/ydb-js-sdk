@@ -96,21 +96,32 @@ try {
 console.log('All topic scenarios completed')
 
 async function initialize() {
+	let initializationTopic = `${topicName}_init`
+	let service = driver.createClient(TopicServiceDefinition)
+	let response = await service.createTopic(
+		create(CreateTopicRequestSchema, {
+			path: initializationTopic,
+			consumers: [{ name: 'demo-consumer' }],
+		})
+	)
+	checkOperation(response.operation)
+	createdTopics.push(initializationTopic)
 	// [BEGIN topic_init]
 	let t = topic(driver)
 
 	await using reader = t.createReader({
-		topic: topicName,
+		topic: initializationTopic,
 		consumer: 'demo-consumer',
 	})
 
 	await using writer = t.createWriter({
-		topic: topicName,
+		topic: initializationTopic,
 		producer: 'demo-producer',
 	})
 	// [END topic_init]
-	void reader
-	void writer
+	writer.write(Buffer.from('Hello, world!', 'utf-8'))
+	await writer.flush()
+	await readAll(reader, 1)
 }
 
 async function createTopic() {
@@ -169,6 +180,7 @@ async function dropTopic(path: string) {
 }
 
 async function write() {
+	console.log('Writing buffered message')
 	let producerName = defaultProducerName
 	// [BEGIN topic_start_writer]
 	await using writer = createTopicWriter(driver, {
@@ -189,6 +201,7 @@ async function write() {
 }
 
 async function writeMetadata() {
+	console.log('Writing metadata')
 	let producerName = defaultProducerName
 	await using writer = createTopicWriter(driver, { topic: topicName, producer: producerName })
 	// [BEGIN topic_write_metadata]
