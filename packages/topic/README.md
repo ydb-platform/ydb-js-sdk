@@ -90,7 +90,7 @@ await using writer = createTopicWriter(driver, {
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — topic path or detailed sources
 - `consumer`: `string` — consumer name
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — initial server read-credit window (default 8 MiB); an oversized message may exceed it
+- `maxBufferBytes?`: `bigint` — read-credit budget shared with buffered responses across reconnects (default 8 MiB); an oversized message may exceed it
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
@@ -146,7 +146,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
 - `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
+- `maxBufferBytes?`: `bigint` — budget for unacknowledged compressed payloads and metadata, including 256 bytes per message and 64 bytes per metadata item for retained objects (default 256 MiB; not an exact process-memory limit)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
 - `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
@@ -178,7 +178,7 @@ writer.write(payload) // fire-and-forget (void)
 const lastSeqNo = await writer.flush()
 ```
 
-`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed.
+`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. Keep payload bytes unchanged until acknowledgment; the writer snapshots metadata and timestamps.
 
 ## Transactions
 
@@ -245,7 +245,7 @@ await using writer = createTopicWriter(driver, {
 
 - `@ydbjs/topic`: `topic(driver)` and types
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
-- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types
+- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types including `TopicTxWriter`
 
 ## License
 

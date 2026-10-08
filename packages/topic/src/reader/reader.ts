@@ -332,6 +332,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				if (this.#lastError) {
 					throw this.#lastError
 				}
+				signal?.throwIfAborted()
 
 				// Accumulate a batch of up to `limit` messages, waiting at most
 				// `batchWindowMs` (a batch is yielded — possibly empty — once the window
@@ -395,14 +396,16 @@ export class TopicReader implements AsyncDisposable, Disposable {
 					}
 
 					if (batchLength > 0) {
-						while (batchLength > 0) {
+						while (chunks.length > 0) {
+							signal?.throwIfAborted()
 							let batch = this.#takeBatch(chunks, limit)
-							batchLength -= batch.messages.length
 							growTxOffsets(this.#txReadOffsets, batch.messages)
 							if (batch.releaseBytes > 0n) {
 								this.#releaseReadBytes(batch.releaseBytes)
 							}
-							yield batch.messages
+							if (batch.messages.length > 0) {
+								yield batch.messages
+							}
 						}
 					} else if (batchWindowMs !== undefined && !closed) {
 						// Idle-window tick: yield an empty batch so the consumer can act.
@@ -447,9 +450,11 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			let chunk = chunks[0]!
 			let count = Math.min(chunk.messages.length, remaining)
 			for (let message of chunk.messages.splice(0, count)) {
-				messages.push(message)
+				if (message.alive) {
+					messages.push(message)
+					remaining--
+				}
 			}
-			remaining -= count
 			if (chunk.messages.length === 0) {
 				releaseBytes += chunk.releaseBytes
 				chunks.shift()

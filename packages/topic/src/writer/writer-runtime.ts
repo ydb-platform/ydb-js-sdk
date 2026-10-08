@@ -1,4 +1,4 @@
-import { create } from '@bufbuild/protobuf'
+import { create, toBinary } from '@bufbuild/protobuf'
 import {
 	Codec,
 	StreamWriteMessage_WriteRequestSchema,
@@ -20,6 +20,7 @@ import {
 	type WriterOutput,
 	type WriterState,
 	createWriterCtx,
+	releaseState,
 	writerTransition,
 } from './writer-state.js'
 
@@ -61,6 +62,7 @@ type WriterEnv = {
 type FullCtx = WriterCtx & WriterEnv
 
 export type WriterRuntime = {
+	maxMessageBytes: bigint
 	machine: MachineRuntime<WriterState, WriterCtx, WriterEvent, WriterOutput>
 }
 
@@ -145,6 +147,21 @@ let mapTransportOutput = function mapTransportOutput(output: TransportOutput): W
 	}
 }
 
+let finalize = function finalize(ctx: FullCtx, reason: unknown): void {
+	if (ctx.isFinalized) {
+		return
+	}
+	ctx.isFinalized = true
+	for (let handle of ctx.timers.values()) {
+		clearTimeout(handle)
+	}
+	ctx.timers.clear()
+	releaseState(ctx)
+	ctx.transport.destroy(reason)
+	ctx.ac.abort(reason)
+	ctx.closedDeferred.resolve()
+}
+
 // Builds the writer FSM and binds its effects to real I/O: transport connect/send,
 // timers with equal-jitter backoff, and transport-output → writer-event mapping.
 // The returned machine is the only handle the facade drives; every side effect
@@ -181,10 +198,19 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 		timers: new Map(),
 	}
 
+	let requestHeader = create(StreamWriteMessage_WriteRequestSchema, {
+		codec: env.codec,
+		...(env.txIdentity && { tx: create(TransactionIdentitySchema, env.txIdentity) }),
+	})
+	// FromClient wraps WriteRequest in a one-byte tag and, below 48 MiB, a four-byte length.
+	let maxMessageBytes =
+		MAX_BATCH_BYTES -
+		BigInt(toBinary(StreamWriteMessage_WriteRequestSchema, requestHeader).length) -
+		5n
 	let ctx = createWriterCtx(
 		{
 			maxInflightCount: options.maxInflightCount ?? DEFAULT_MAX_INFLIGHT_COUNT,
-			maxBatchBytes: MAX_BATCH_BYTES,
+			maxBatchBytes: maxMessageBytes,
 		},
 		{
 			retryOnSchemeError: options.retryOnSchemeError ?? false,
@@ -274,23 +300,18 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 				clearTimerByKey(fullCtx, effect.which)
 			},
 
-			'writer.effect.finalize': (fullCtx, effect) => {
-				if (fullCtx.isFinalized) {
-					return
-				}
-				fullCtx.isFinalized = true
-
-				for (let handle of fullCtx.timers.values()) {
-					clearTimeout(handle)
-				}
-				fullCtx.timers.clear()
-
-				fullCtx.transport.destroy(effect.reason)
-				fullCtx.ac.abort(effect.reason)
-				fullCtx.closedDeferred.resolve()
-			},
+			'writer.effect.finalize': (fullCtx, effect) => finalize(fullCtx, effect.reason),
 		},
 	})
+
+	// Runtime faults bypass transition effects; resource ownership still ends here.
+	machine.signal.addEventListener(
+		'abort',
+		() => finalize(ctx as FullCtx, machine.signal.reason),
+		{
+			once: true,
+		}
+	)
 
 	// Route transport lifecycle events into the writer FSM.
 	machine.ingest(transport.events, mapTransportOutput)
@@ -299,5 +320,5 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 
 	machine.dispatch({ type: 'writer.start' })
 
-	return { machine }
+	return { machine, maxMessageBytes }
 }

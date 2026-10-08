@@ -1265,7 +1265,7 @@ test('replenishes exactly the released read credit without delay', () => {
 	expect(h.ctx.inFlightBytes).toBe(50n)
 })
 
-test('resets flow-control on reconnect init', () => {
+test('reserves reconnect credit for retained responses', () => {
 	let h = mk(1000n)
 	toReadyWithPartition(h)
 	message(h, readMsg(1n, 400n, [5n]))
@@ -1276,8 +1276,42 @@ test('resets flow-control on reconnect init', () => {
 	})
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
-	expect(h.ctx.inFlightBytes).toBe(0n)
+	expect(h.ctx.inFlightBytes).toBe(400n)
+	expect(h.ctx.readCreditBytes).toBe(600n)
+	expect(h.effects).toContainEqual({ type: 'reader.effect.send.read_request', bytesSize: 600n })
 	expect(h.ctx.sessionIndex.size).toBe(0)
+	step(h, { type: 'reader.read_release', bytes: 400n })
+	expect(h.ctx.inFlightBytes).toBe(0n)
+	expect(h.ctx.readCreditBytes).toBe(1000n)
+	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 400n }])
+})
+
+test('accounts retained-byte releases during reconnect backoff and init', () => {
+	let h = mk(1000n)
+	toReadyWithPartition(h)
+	message(h, readMsg(1n, 600n, [5n]))
+	step(h, { type: 'reader.stream.disconnected' })
+	step(h, { type: 'reader.read_release', bytes: 200n })
+	expect(h.ctx.inFlightBytes).toBe(400n)
+	expect(h.effects).toEqual([])
+	step(h, { type: 'reader.timer.retry_backoff' })
+	step(h, { type: 'reader.read_release', bytes: 100n })
+	expect(h.ctx.inFlightBytes).toBe(300n)
+	expect(h.effects).toEqual([])
+	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
+	expect(h.ctx.readCreditBytes).toBe(700n)
+	expect(h.effects).toContainEqual({ type: 'reader.effect.send.read_request', bytesSize: 700n })
+})
+
+test('repays current-stream overdraw without increasing the credit window', () => {
+	let h = mk(1000n)
+	toReadyWithPartition(h)
+	message(h, readMsg(1n, 1400n, [5n]))
+	expect(h.ctx.readCreditBytes).toBe(-400n)
+	step(h, { type: 'reader.read_release', bytes: 1400n })
+	expect(h.ctx.inFlightBytes).toBe(0n)
+	expect(h.ctx.readCreditBytes).toBe(1000n)
+	expect(h.effects).toEqual([{ type: 'reader.effect.send.read_request', bytesSize: 1400n }])
 })
 
 // (tx read-offset tracking lives in the facade — the FSM is tx-agnostic; covered

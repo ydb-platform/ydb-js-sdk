@@ -456,7 +456,7 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 				w: 10,
 				name: 'write',
 				run: () => {
-					let size = 1 + randInt(6)
+					let size = 1 + randInt(Math.min(6, Number(cfg.maxBatchBytes)))
 					let data = new Uint8Array(size)
 					let seqNo = 0n
 					if (cfg.mode === 'manual') {
@@ -466,6 +466,8 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 					let message: BufferedMessage = {
 						data,
 						uncompressedSize: BigInt(size),
+						bufferedSize: BigInt(size),
+						wireSize: BigInt(size),
 						seqNo,
 						createdAt: new Date(0),
 					}
@@ -479,7 +481,7 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 				name: 'flush',
 				run: () => {
 					sim.outstandingFlush = true
-					sim.writerEvents.push({ type: 'writer.flush' })
+					sim.writerEvents.push({ type: 'writer.flush', requestId: 1 })
 				},
 			})
 			actions.push({

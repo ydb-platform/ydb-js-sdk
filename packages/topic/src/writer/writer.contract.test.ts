@@ -4,8 +4,9 @@ import { getEventListeners } from 'node:events'
 import { Codec } from '@ydbjs/api/topic'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
+import { MESSAGE_OVERHEAD_BYTES } from './message-size.ts'
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
 import {
@@ -16,6 +17,7 @@ import {
 	tick,
 	writeResponse,
 } from './writer.fixtures.ts'
+import { WriterTransport } from './transport.ts'
 import { createTopicTxWriter, createTopicWriter } from './writer.ts'
 
 let bytes = function bytes(...values: number[]): Uint8Array {
@@ -333,7 +335,11 @@ test('rejects a non-increasing manual seqNo', async () => {
 
 test('throws synchronously when a write would exceed maxBufferBytes', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 4n })
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		maxBufferBytes: MESSAGE_OVERHEAD_BYTES + 4n,
+	})
 
 	let stream = await waitForNextStream()
 	await stream.waitForInit()
@@ -347,7 +353,11 @@ test('throws synchronously when a write would exceed maxBufferBytes', async () =
 
 test('reclaims buffer budget once acknowledgments free bytes', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 3n })
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		maxBufferBytes: MESSAGE_OVERHEAD_BYTES + 3n,
+	})
 
 	let stream = await waitForNextStream()
 	await stream.waitForInit()
@@ -399,7 +409,7 @@ test('publishes opened, session, and acknowledgment diagnostics events', async (
 
 	// acknowledged: per-status breakdown + acked bytes, not just a total count.
 	expect(acks.payloads.reduce((sum, a) => sum + a.written, 0)).toBe(1)
-	expect(acks.payloads.reduce((sum, a) => sum + a.bytes, 0n)).toBeGreaterThan(0n)
+	expect(acks.payloads.reduce((sum, a) => sum + a.bytes, 0n)).toBe(1n)
 })
 
 test('emits a flush tracing span', async () => {
@@ -1408,3 +1418,168 @@ test('coalesces update-token requests until one is acknowledged', async () => {
 	let tokenFrames = stream.sent.filter((m) => m.clientMessage.case === 'updateTokenRequest')
 	expect(tokenFrames).toHaveLength(1)
 })
+
+test('keeps a later flush pending until its preceding write is acknowledged', async () => {
+	// The fake controls ack delivery while both calls share the facade output queue.
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await settle()
+
+	let first = writer.flush()
+	writer.write(bytes(1))
+	let completed = false
+	let second = writer.flush().then((seqNo) => {
+		completed = true
+		return seqNo
+	})
+	await expect(first).resolves.toBe(0n)
+	await settle()
+	expect(completed).toBe(false)
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await expect(second).resolves.toBe(1n)
+})
+
+test('rejects an invalid date before accepting the write and remains usable', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	expect(() => writer.write(bytes(1), { createdAt: new Date(NaN), seqNo: 10n })).toThrow(
+		/valid date/
+	)
+	writer.write(bytes(2))
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let request = await stream.waitForWrite()
+	expect(request.messages[0]!.seqNo).toBe(1n)
+	let flushed = writer.flush()
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await expect(flushed).resolves.toBe(1n)
+})
+
+test('cleans up the stream and timers when a runtime effect throws', async () => {
+	// A thrown effect is an internal fault; a real server cannot trigger it deterministically.
+	vi.useFakeTimers()
+	let failure = new Error('send effect failed')
+	let send = vi.spyOn(WriterTransport.prototype, 'sendBatch').mockImplementationOnce(() => {
+		throw failure
+	})
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		expect(vi.getTimerCount()).toBeGreaterThan(0)
+		writer.write(bytes(1))
+		await expect(writer.flush()).rejects.toBe(failure)
+		await settle()
+		expect(stream.wasAborted()).toBe(true)
+		expect(vi.getTimerCount()).toBe(0)
+		await expect(writer.close()).rejects.toBe(failure)
+	} finally {
+		send.mockRestore()
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('includes metadata in the buffer budget before accepting a sequence number', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1024n })
+	expect(() =>
+		writer.write(bytes(), { seqNo: 10n, metadataItems: { trace: new Uint8Array(1024) } })
+	).toThrow(/buffer is full/)
+	writer.write(bytes(1))
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	expect((await stream.waitForWrite()).messages[0]!.seqNo).toBe(1n)
+})
+
+test('bounds empty messages and restores capacity after acknowledgment', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1024n })
+	let accepted = 0
+	let rejected: unknown
+	for (; accepted < 100; accepted++) {
+		try {
+			writer.write(bytes())
+		} catch (error) {
+			rejected = error
+			break
+		}
+	}
+	expect(rejected).toMatchObject({ message: expect.stringMatching(/buffer is full/) })
+	expect(accepted).toBeGreaterThan(0)
+	expect(accepted).toBeLessThan(100)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await settle()
+	let flushed = writer.flush()
+	stream.respond(
+		writeResponse(Array.from({ length: accepted }, (_, i) => ({ seqNo: BigInt(i + 1) })))
+	)
+	await flushed
+	expect(() => writer.write(bytes())).not.toThrow()
+})
+
+test('restores the full metadata budget when reconnect initialization acknowledges a message', async () => {
+	// The fake drops the response after persistence, then reports the recovered seqNo.
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 512n })
+	let metadataItems = { trace: new Uint8Array(100) }
+	let first = await waitForNextStream()
+	first.respond(initResponse(0n))
+	writer.write(bytes(1), { metadataItems })
+	await first.waitForWrite()
+	expect(() => writer.write(bytes(2), { metadataItems })).toThrow(/buffer is full/)
+	let flushed = writer.flush()
+	first.disconnect()
+	let second = await waitForNextStream()
+	second.respond(initResponse(1n))
+	await expect(flushed).resolves.toBe(1n)
+	expect(() => writer.write(bytes(2), { metadataItems })).not.toThrow()
+})
+
+test('snapshots metadata and avoids retaining a larger backing buffer', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let backing = new Uint8Array(1024 * 1024)
+	let payload = backing.subarray(0, 3)
+	let metadataItems = { trace: bytes(7) }
+	writer.write(payload, { metadataItems })
+	metadataItems.trace[0] = 9
+	metadataItems.trace = new Uint8Array(1024)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let message = (await stream.waitForWrite()).messages[0]!
+	expect(message.data.buffer.byteLength).toBe(3)
+	expect(message.metadataItems).toMatchObject([{ key: 'trace', value: bytes(7) }])
+})
+
+test('rejects a compressed frame that exceeds the protobuf limit', async () => {
+	let { driver } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		codec: {
+			codec: 99,
+			compress: () => new Uint8Array(48 * 1024 * 1024),
+			decompress: (data) => data,
+		},
+	})
+	expect(() => writer.write(bytes(1))).toThrow(/protobuf write frame limit/)
+})
+
+test.each([0n, -1n, 1n << 63n])(
+	'keeps auto numbering available after rejecting seqNo %s',
+	async (seqNo) => {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+		expect(() => writer.write(bytes(1), { seqNo })).toThrow(/positive int64/)
+		writer.write(bytes(2))
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		expect((await stream.waitForWrite()).messages[0]!.seqNo).toBe(1n)
+	}
+)

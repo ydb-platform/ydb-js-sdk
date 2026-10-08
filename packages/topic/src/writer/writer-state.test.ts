@@ -1,9 +1,16 @@
+import { create, toBinary } from '@bufbuild/protobuf'
+import {
+	StreamWriteMessage_FromClientSchema,
+	StreamWriteMessage_WriteRequestSchema,
+} from '@ydbjs/api/topic'
 import { expect, test } from 'vitest'
 
 import type { TransitionRuntime } from '@ydbjs/fsm'
 import { YDBError } from '@ydbjs/error'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { ClientError, Status } from 'nice-grpc'
+
+import { messageSizes } from './message-size.ts'
 
 import {
 	type BufferedMessage,
@@ -28,7 +35,14 @@ let ctxWith = function ctxWith(overrides: Partial<WriterCtx> = {}): WriterCtx {
 }
 
 let msg = function msg(byte: number, seqNo = 0n): BufferedMessage {
-	return { data: new Uint8Array([byte]), uncompressedSize: 1n, seqNo, createdAt: new Date(0) }
+	return {
+		data: new Uint8Array([byte]),
+		uncompressedSize: 1n,
+		bufferedSize: 1n,
+		wireSize: 1n,
+		seqNo,
+		createdAt: new Date(0),
+	}
 }
 
 type Driven = {
@@ -308,17 +322,17 @@ test('acknowledges only the contiguous prefix on a non-prefix ack set', () => {
 
 test('flushes immediately when nothing is pending', () => {
 	let ctx = ctxWith({ hasEverConnected: true, lastSeqNo: 7n })
-	let d = drive('ready', { type: 'writer.flush' }, ctx)
+	let d = drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
 
 	let flushed = d.emitted.find((o) => o.type === 'writer.flushed')
-	expect(flushed).toEqual({ type: 'writer.flushed', lastSeqNo: 7n })
+	expect(flushed).toEqual({ type: 'writer.flushed', requestId: 1, lastSeqNo: 7n })
 })
 
 test('emits flushed once the buffer drains after a flush request', () => {
 	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.pump' }, ctx)
-	drive('ready', { type: 'writer.flush' }, ctx)
+	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(ctx.flushRequested).toBe(true)
 
 	let d = drive(
@@ -406,7 +420,7 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
 	drive('ready', { type: 'writer.pump' }, ctx)
-	drive('ready', { type: 'writer.flush' }, ctx)
+	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(ctx.flushRequested).toBe(true)
 
 	let d = drive(
@@ -417,6 +431,7 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 
 	expect(d.emitted.find((o) => o.type === 'writer.flushed')).toEqual({
 		type: 'writer.flushed',
+		requestId: 1,
 		lastSeqNo: 2n,
 	})
 	expect(d.ctx.flushRequested).toBe(false)
@@ -623,7 +638,7 @@ test('orders recovered acks before flushed before closed on a mid-close reconnec
 	// on `flushed` before `closed` rejects the remainder (review WRITER-2 / WRITER-3).
 	let ctx = readyWithInflight()
 	drive('ready', { type: 'writer.close' }, ctx)
-	drive('closing', { type: 'writer.flush' }, ctx)
+	drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
 	drive('closing', { type: 'writer.stream.disconnected' }, ctx)
 
 	let d = drive(
@@ -655,7 +670,7 @@ test('resolves a flush issued during closing when the ack drains the window', ()
 	let ctx = readyWithInflight()
 	drive('ready', { type: 'writer.close' }, ctx)
 
-	let f = drive('closing', { type: 'writer.flush' }, ctx)
+	let f = drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(f.emitted.filter((o) => o.type === 'writer.flushed')).toHaveLength(0)
 
 	let d = drive(
@@ -950,7 +965,7 @@ test('defers a flush requested during a gated close until the init unlocks the d
 	drive('connecting', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('connecting', { type: 'writer.close' }, ctx)
 
-	let flushed = drive('closing', { type: 'writer.flush' }, ctx)
+	let flushed = drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(flushed.emitted).toHaveLength(0) // not drained — must not resolve now
 	expect(ctx.flushRequested).toBe(true)
 
@@ -1021,4 +1036,69 @@ test('releases the message buffer on a terminal error', () => {
 
 	expect(d.state).toBe('errored')
 	expect(d.ctx.messages).toHaveLength(0)
+})
+
+test('releases recovered payloads after every reconnect without normal acknowledgments', () => {
+	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	for (let i = 1; i <= 10; i++) {
+		drive('ready', { type: 'writer.write', message: msg(i) }, ctx)
+		drive('ready', { type: 'writer.pump' }, ctx)
+		let recovered = drive(
+			'connecting',
+			{ type: 'writer.stream.init_response', sessionId: `s${i}`, lastSeqNo: BigInt(i) },
+			ctx
+		)
+		expect(recovered.emitted).toContainEqual({
+			type: 'writer.acknowledgments',
+			acknowledgments: new Map([[BigInt(i), 'skipped']]),
+			freedBytes: 1n,
+			payloadBytes: 1n,
+		})
+		expect(ctx.messages).toHaveLength(0)
+		expect(ctx.bufferLength).toBe(0)
+		expect(ctx.inflightLength).toBe(0)
+	}
+})
+
+test('splits metadata-heavy batches before the encoded frame exceeds the limit', () => {
+	let frameLimit = 128n
+	let ctx = ctxWith({
+		hasEverConnected: true,
+		limits: { maxInflightCount: 1000, maxBatchBytes: frameLimit - 7n },
+	})
+	for (let i = 0; i < 3; i++) {
+		let message = {
+			data: new Uint8Array(50),
+			uncompressedSize: 50n,
+			seqNo: 0n,
+			createdAt: new Date(0),
+			metadataItems: { trace: new Uint8Array(20) },
+		}
+		drive(
+			'ready',
+			{ type: 'writer.write', message: { ...message, ...messageSizes(message) } },
+			ctx
+		)
+	}
+	let batches = 0
+	while (ctx.bufferLength > 0) {
+		let result = drive('ready', { type: 'writer.pump' }, ctx)
+		for (let effect of result.effects) {
+			if (effect.type !== 'writer.effect.send.write_request') continue
+			let frame = create(StreamWriteMessage_FromClientSchema, {
+				clientMessage: {
+					case: 'writeRequest',
+					value: create(StreamWriteMessage_WriteRequestSchema, {
+						codec: 1,
+						messages: effect.messages,
+					}),
+				},
+			})
+			expect(
+				BigInt(toBinary(StreamWriteMessage_FromClientSchema, frame).length)
+			).toBeLessThanOrEqual(frameLimit)
+			batches++
+		}
+	}
+	expect(batches).toBe(3)
 })

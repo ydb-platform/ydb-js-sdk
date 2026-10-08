@@ -9,7 +9,6 @@ import {
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
 import { create } from '@bufbuild/protobuf'
-import { once } from 'node:events'
 
 // #region setup
 declare module 'vitest' {
@@ -92,6 +91,7 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	await using writer = createTopicWriter(driver, {
 		topic: testTopicName,
 		producer: testProducerName,
+		maxBufferBytes: BigInt(TOTAL_TRAFFIC) + 16n * 1024n * 1024n,
 		maxInflightCount: TOTAL_BATCHES * BATCH_SIZE,
 	})
 
@@ -105,11 +105,11 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	let rb = 0
 	let ctrl = new AbortController()
 	// linkSignals, not AbortSignal.any (composite signals accumulate listeners).
-	using combined = linkSignals(tc.signal, ctrl.signal, AbortSignal.timeout(25_000))
+	using combined = linkSignals(tc.signal, ctrl.signal)
 	let signal = combined.signal
 
 	// Producer.
-	void (async () => {
+	let producerTask = (async () => {
 		while (wb < TOTAL_TRAFFIC) {
 			if (signal.aborted) break
 
@@ -121,20 +121,19 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 		}
 
 		let start = performance.now()
-		await writer.flush()
+		await writer.flush(tc.signal)
 		console.log(`write took ${performance.now() - start} ms`)
 	})()
 
 	// Consumer.
-	void (async () => {
+	let consumerTask = (async () => {
 		for await (let batch of reader.read({ signal })) {
-			let promise = reader.commit(batch)
+			await reader.commit(batch)
 			rb += MESSAGE_SIZE * batch.length
 
 			// >=, not ==: at-least-once redelivery can overshoot the total, and an
 			// exact-equality trigger would then never fire and hang the test.
 			if (rb >= TOTAL_TRAFFIC) {
-				await promise
 				ctrl.abort()
 				break
 			}
@@ -142,7 +141,7 @@ test('writes and reads concurrently', { timeout: 60_000 }, async (tc) => {
 	})()
 
 	let start = Date.now()
-	await once(ctrl.signal, 'abort')
+	await Promise.all([producerTask, consumerTask])
 	await writer.close()
 	await reader.close()
 

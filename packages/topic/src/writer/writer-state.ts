@@ -49,6 +49,8 @@ export type BufferedMessage = {
 	data: Uint8Array
 	// Original (pre-compression) payload size reported to the server.
 	uncompressedSize: bigint
+	bufferedSize: bigint
+	wireSize: bigint
 	seqNo: bigint
 	createdAt: Date
 	metadataItems?: Record<string, Uint8Array>
@@ -85,6 +87,7 @@ export type WriterCtx = {
 
 	// flush barrier
 	flushRequested: boolean
+	flushRequestId: number
 
 	// The session codec (Codec enum value / custom id) — validated against
 	// InitResponse.supported_codecs: a disallowed codec is fatal at init, before any
@@ -119,7 +122,7 @@ export type WriterEvent =
 	// user (dispatched by the facade)
 	| { type: 'writer.start' }
 	| { type: 'writer.write'; message: BufferedMessage }
-	| { type: 'writer.flush' }
+	| { type: 'writer.flush'; requestId: number }
 	| { type: 'writer.close' }
 	| { type: 'writer.destroy'; reason?: unknown }
 	// internal self-dispatch — fsm has no `always`/`after`, so the send loop is an explicit event
@@ -159,14 +162,14 @@ export type WriterEffect =
 
 export type WriterOutput =
 	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint; nextSeqNo: bigint }
-	// `freedBytes` = compressed bytes that left the window with this ack batch, so
-	// the facade can decrement its byte budget without re-tracking message sizes.
+	// Budget reclaimed by this ack batch and payload bytes for throughput diagnostics.
 	| {
 			type: 'writer.acknowledgments'
 			acknowledgments: Map<bigint, AckStatus>
 			freedBytes: bigint
+			payloadBytes: bigint
 	  }
-	| { type: 'writer.flushed'; lastSeqNo: bigint }
+	| { type: 'writer.flushed'; requestId: number; lastSeqNo: bigint }
 	| { type: 'writer.reconnecting'; attempt: number; error?: unknown }
 	| { type: 'writer.error'; error: unknown }
 	| { type: 'writer.closed'; reason?: unknown }
@@ -192,6 +195,7 @@ export let createWriterCtx = function createWriterCtx(
 		recoveryWindowMs: options?.recoveryWindowMs ?? Infinity,
 
 		flushRequested: false,
+		flushRequestId: 0,
 
 		// 1 = Codec.RAW, the writer default.
 		codec: options?.codec ?? 1,
@@ -273,14 +277,23 @@ let resolveFlushIfDrained = function resolveFlushIfDrained(
 ): void {
 	if (ctx.flushRequested && allDrained(ctx)) {
 		ctx.flushRequested = false
-		runtime.emit({ type: 'writer.flushed', lastSeqNo: ctx.lastSeqNo })
+		runtime.emit({
+			type: 'writer.flushed',
+			requestId: ctx.flushRequestId,
+			lastSeqNo: ctx.lastSeqNo,
+		})
 	}
 }
 
 // Record a flush request. Honored in every live state — a flush issued while the
 // writer is still connecting must resolve once messages drain after init, not be
 // dropped. Resolves immediately when there is nothing pending.
-let requestFlush = function requestFlush(ctx: WriterCtx, runtime: WriterRuntime): void {
+let requestFlush = function requestFlush(
+	ctx: WriterCtx,
+	runtime: WriterRuntime,
+	requestId: number
+): void {
+	ctx.flushRequestId = requestId
 	ctx.flushRequested = true
 	resolveFlushIfDrained(ctx, runtime)
 	// Still pending — kick the send loop to drain it.
@@ -330,9 +343,12 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 
 	for (let i = ctx.bufferStart; i < end; i++) {
 		let message = ctx.messages[i]!
-		let size = BigInt(message.data.length)
+		let size = message.wireSize
 
-		if (batch.length > 0 && batchBytes + size > ctx.limits.maxBatchBytes) {
+		if (batchBytes + size > ctx.limits.maxBatchBytes) {
+			if (batch.length === 0) {
+				throw new Error('Message exceeds the protobuf write frame limit')
+			}
 			break
 		}
 
@@ -385,9 +401,14 @@ let applyInit = function applyInit(
 		ctx.hasEverConnected = true
 	}
 
-	let { recovered, freedBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
+	let { recovered, freedBytes, payloadBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
 	if (recovered.size > 0) {
-		runtime.emit({ type: 'writer.acknowledgments', acknowledgments: recovered, freedBytes })
+		runtime.emit({
+			type: 'writer.acknowledgments',
+			acknowledgments: recovered,
+			freedBytes,
+			payloadBytes,
+		})
 	}
 
 	runtime.emit({
@@ -405,9 +426,10 @@ let applyInit = function applyInit(
 let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx: WriterCtx,
 	serverLastSeqNo: bigint
-): { recovered: Map<bigint, AckStatus>; freedBytes: bigint } {
+): { recovered: Map<bigint, AckStatus>; freedBytes: bigint; payloadBytes: bigint } {
 	let recovered = new Map<bigint, AckStatus>()
 	let freedBytes = 0n
+	let payloadBytes = 0n
 
 	// In-flight seqNos are strictly increasing (assigned in order in formBatch), so
 	// `seqNo <= serverLastSeqNo` splits the in-flight range at one boundary — walk
@@ -419,7 +441,8 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 		if (message.seqNo === 0n || message.seqNo > serverLastSeqNo) {
 			break
 		}
-		freedBytes += BigInt(message.data.length)
+		freedBytes += message.bufferedSize
+		payloadBytes += BigInt(message.data.length)
 		recovered.set(message.seqNo, 'skipped')
 		i += 1
 	}
@@ -428,8 +451,9 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx.bufferLength = ctx.messages.length - i
 	ctx.inflightStart = i
 	ctx.inflightLength = 0
+	compactGarbage(ctx)
 
-	return { recovered, freedBytes }
+	return { recovered, freedBytes, payloadBytes }
 }
 
 // Move server-acknowledged messages out of the in-flight window into garbage.
@@ -440,7 +464,7 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 let acknowledge = function acknowledge(
 	ctx: WriterCtx,
 	acks: WriteAck[]
-): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint } {
+): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint; payloadBytes: bigint } {
 	let status = new Map<bigint, AckStatus>()
 	for (let ack of acks) {
 		status.set(ack.seqNo, ack.status)
@@ -448,6 +472,7 @@ let acknowledge = function acknowledge(
 
 	let acknowledgments = new Map<bigint, AckStatus>()
 	let freedBytes = 0n
+	let payloadBytes = 0n
 	let inflightEnd = ctx.bufferStart
 	while (ctx.inflightStart < inflightEnd) {
 		let message = ctx.messages[ctx.inflightStart]!
@@ -457,14 +482,15 @@ let acknowledge = function acknowledge(
 		}
 
 		acknowledgments.set(message.seqNo, messageStatus)
-		freedBytes += BigInt(message.data.length)
+		freedBytes += message.bufferedSize
+		payloadBytes += BigInt(message.data.length)
 		ctx.inflightStart += 1
 		ctx.inflightLength -= 1
 	}
 
 	compactGarbage(ctx)
 
-	return { acknowledgments, freedBytes }
+	return { acknowledgments, freedBytes, payloadBytes }
 }
 
 // Reclaim the garbage prefix by splicing it out and rebasing the window pointers.
@@ -534,7 +560,7 @@ let terminate = function terminate(
 }
 
 // Free the message window. Called on terminal stop to release payload memory.
-let releaseState = function releaseState(ctx: WriterCtx): void {
+export let releaseState = function releaseState(ctx: WriterCtx): void {
 	ctx.messages = []
 	ctx.bufferStart = 0
 	ctx.bufferLength = 0
@@ -732,7 +758,7 @@ export let writerTransition = function writerTransition(
 					return
 
 				case 'writer.flush':
-					requestFlush(ctx, runtime)
+					requestFlush(ctx, runtime, event.requestId)
 					return
 
 				case 'writer.stream.init_response':
@@ -777,12 +803,13 @@ export let writerTransition = function writerTransition(
 					return pump(ctx, runtime)
 
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBytes, payloadBytes } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
 							freedBytes,
+							payloadBytes,
 						})
 					}
 					resolveFlushIfDrained(ctx, runtime)
@@ -791,7 +818,7 @@ export let writerTransition = function writerTransition(
 				}
 
 				case 'writer.flush':
-					requestFlush(ctx, runtime)
+					requestFlush(ctx, runtime, event.requestId)
 					return
 
 				case 'writer.timer.update_token':
@@ -821,7 +848,7 @@ export let writerTransition = function writerTransition(
 					return
 
 				case 'writer.flush':
-					requestFlush(ctx, runtime)
+					requestFlush(ctx, runtime, event.requestId)
 					return
 
 				// A connect attempt whose init lands here (start_timeout fired just before
@@ -860,12 +887,13 @@ export let writerTransition = function writerTransition(
 		case 'closing': {
 			switch (event.type) {
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBytes, payloadBytes } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
 							freedBytes,
+							payloadBytes,
 						})
 					}
 					resolveFlushIfDrained(ctx, runtime)
@@ -884,7 +912,7 @@ export let writerTransition = function writerTransition(
 					return pump(ctx, runtime)
 
 				case 'writer.flush':
-					requestFlush(ctx, runtime)
+					requestFlush(ctx, runtime, event.requestId)
 					return
 
 				// A reconnect completed mid-close — recover and keep draining. A codec the

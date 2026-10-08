@@ -169,8 +169,10 @@ export type ReaderCtx = {
 	// monotonic grant counter — source of PartitionEntry.grantId
 	grantSeq: number
 
-	// byte flow-control
+	// Retained response bytes survive stream reconnects. Stream credit may be
+	// negative when the server sends an oversized message.
 	inFlightBytes: bigint
+	readCreditBytes: bigint
 
 	limits: ReaderLimits
 }
@@ -373,6 +375,7 @@ export let createReaderCtx = function createReaderCtx(
 		grantSeq: 0,
 
 		inFlightBytes: 0n,
+		readCreditBytes: 0n,
 
 		limits,
 	}
@@ -622,6 +625,7 @@ let readResponse = function readResponse(
 	// exactly bytesSize — several partitions in one response must not each claim the
 	// full size. Emit even when everything was dropped so credit is still released.
 	ctx.inFlightBytes += event.bytesSize
+	ctx.readCreditBytes -= event.bytesSize
 	runtime.emit({ type: 'reader.messages', releaseBytes: event.bytesSize, groups })
 	return []
 }
@@ -1182,15 +1186,27 @@ let recordCommit = function recordCommit(
 	return []
 }
 
-// Replenish exactly the server-accounted size of responses that have fully passed
-// through read(). This keeps the stream's credit window stable even when one response
-// exceeds the initial grant.
-let releaseBytes = function releaseBytes(ctx: ReaderCtx, bytes: bigint): ReaderEffect[] {
+// Retained responses and the current stream's unspent credit share one budget.
+// A new stream has no credit debt from an oversized response on an old stream.
+let replenishReadCredit = function replenishReadCredit(ctx: ReaderCtx): ReaderEffect[] {
+	let bytes = ctx.limits.maxBufferBytes - ctx.inFlightBytes - ctx.readCreditBytes
+	if (bytes <= 0n) {
+		return []
+	}
+	ctx.readCreditBytes += bytes
+	return [readRequestEffect(bytes)]
+}
+
+let releaseBytes = function releaseBytes(
+	ctx: ReaderCtx,
+	bytes: bigint,
+	ready: boolean
+): ReaderEffect[] {
 	ctx.inFlightBytes -= bytes
 	if (ctx.inFlightBytes < 0n) {
 		ctx.inFlightBytes = 0n
 	}
-	return bytes > 0n ? [readRequestEffect(bytes)] : []
+	return ready ? replenishReadCredit(ctx) : []
 }
 
 // ── Terminal / transitions ──────────────────────────────────────────────────────
@@ -1238,6 +1254,7 @@ let releaseState = function releaseState(ctx: ReaderCtx): void {
 	ctx.partitions.clear()
 	ctx.sessionIndex.clear()
 	ctx.inFlightBytes = 0n
+	ctx.readCreditBytes = 0n
 }
 
 // Enter `ready` on a successful init. Unlike the writer there is no seqNo recovery:
@@ -1251,18 +1268,17 @@ let toReady = function toReady(
 	ctx.hasEverConnected = true
 	ctx.attempts = 0
 
-	// Ephemeral session ids from the previous stream are dead; buffered ReadResponses
-	// on it are gone. Reset flow-control and re-issue the full initial credit (the new
-	// stream grants a fresh maxBufferBytes budget, so old pending credit is moot).
+	// The stream's grants expire on reconnect, but responses retained by the facade
+	// still consume the shared buffer budget until read() releases them.
 	ctx.sessionIndex.clear()
-	ctx.inFlightBytes = 0n
+	ctx.readCreditBytes = 0n
 
 	runtime.emit({ type: 'reader.session', sessionId })
 
 	let effects: ReaderEffect[] = [
 		...clearConnectTimersEffects,
 		{ type: 'reader.effect.timer.schedule', which: 'update_token' },
-		readRequestEffect(ctx.limits.maxBufferBytes),
+		...replenishReadCredit(ctx),
 	]
 
 	// Bound the wait for every partition holding pending commits: if the server does
@@ -1292,6 +1308,7 @@ let toReconnecting = function toReconnecting(
 	// recordCommit / forceStopStalledGraceful honest while connecting: nothing may be
 	// sent under an id the next stream never granted.
 	ctx.sessionIndex.clear()
+	ctx.readCreditBytes = 0n
 	if (error !== undefined) {
 		ctx.lastError = error
 	}
@@ -1404,6 +1421,9 @@ export let readerTransition = function readerTransition(
 	// Global: hard destroy from any non-terminal state.
 	if (state !== 'closed' && state !== 'errored' && event.type === 'reader.destroy') {
 		return terminate(ctx, 'closed', event.reason ?? new Error('Reader destroyed'), runtime)
+	}
+	if (state !== 'closed' && state !== 'errored' && event.type === 'reader.read_release') {
+		return { effects: releaseBytes(ctx, event.bytes, state === 'ready') }
 	}
 	if (
 		(state === 'ready' || state === 'closing') &&
@@ -1541,11 +1561,6 @@ export let readerTransition = function readerTransition(
 
 				case 'reader.partition.stop_ready': {
 					let effects = ackPartitionStop(ctx, event, runtime)
-					return { effects }
-				}
-
-				case 'reader.read_release': {
-					let effects = releaseBytes(ctx, event.bytes)
 					return { effects }
 				}
 

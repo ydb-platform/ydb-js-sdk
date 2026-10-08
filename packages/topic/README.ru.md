@@ -88,7 +88,7 @@ await using writer = createTopicWriter(driver, {
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — путь или источники с фильтрами
 - `consumer`: `string` — имя консюмера
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки (встроенные: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — начальное окно чтения на сервере (по умолчанию 8 МиБ); большое сообщение может его превысить
+- `maxBufferBytes?`: `bigint` — бюджет чтения с учётом буферизованных ответов, сохраняемый при переподключении (по умолчанию 8 МиБ); большое сообщение может его превысить
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()`, после него ожидающие коммиты отбрасываются (по умолчанию 30000)
 - `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
@@ -142,7 +142,7 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `tx?`: `TX` — транзакция для записи
 - `producer?`: `string` — id продюсера (по умолчанию генерируется)
 - `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
-- `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
+- `maxBufferBytes?`: `bigint` — бюджет неподтверждённых сжатых данных и метаданных с резервом 256 байт на сообщение и 64 байта на элемент метаданных (по умолчанию 256 МиБ); это не точный предел памяти процесса
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
 - `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
@@ -234,7 +234,7 @@ await using writer = createTopicWriter(driver, {
 
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
-- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
+- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы, включая `TopicTxWriter`
 
 ## Лицензия
 

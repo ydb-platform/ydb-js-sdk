@@ -839,8 +839,17 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		}
 	}
 
-	if (ctx.inFlightBytes < 0n) {
-		throw new Error(`${where}: negative flow-control inFlight=${ctx.inFlightBytes}`)
+	let retainedBytes = sim.unreleased.reduce((total, bytes) => total + bytes, 0n)
+	if (ctx.inFlightBytes !== retainedBytes) {
+		throw new Error(
+			`${where}: retained flow-control bytes ${ctx.inFlightBytes} differ from queued ${retainedBytes}`
+		)
+	}
+
+	if (sim.readerState === 'ready' && ctx.readCreditBytes !== sim.credit) {
+		throw new Error(
+			`${where}: stream credit ${ctx.readCreditBytes} differs from server ${sim.credit}`
+		)
 	}
 
 	// sessionIndex is consistent: every entry points to a partition whose current
@@ -1207,9 +1216,6 @@ let runOne = function runOne(
 			continue
 		}
 
-		// The consumer keeps up and the server grants effectively unlimited credit —
-		// the cooldown drives the system to its fixed point, not the flow-control edge.
-		sim.credit = 1_000_000n
 		while (sim.unreleased.length > 0) {
 			sim.readerEvents.push({ type: 'reader.read_release', bytes: sim.unreleased.shift()! })
 		}
@@ -1226,6 +1232,7 @@ let runOne = function runOne(
 				part.partitionSessionId !== undefined &&
 				part.ready &&
 				!part.stopping &&
+				sim.credit > 0n &&
 				part.deliveredUpTo < part.availableUpTo
 			) {
 				deliver(sim, part, randInt)
