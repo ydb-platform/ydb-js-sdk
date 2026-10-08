@@ -181,6 +181,10 @@ Read flow control uses the server's whole `ReadResponse.bytesSize`; payload leng
 Each partition owns one canonical `pendingRanges` set for unconfirmed commits. `commitWaiters` store only the target offset and promise ID. Server confirmation trims the range set and settles covered waiters; reconnect sends the remaining ranges after the partition start handshake. Application promise boundaries do not determine wire-range ownership.
 
 `bufferedBytes` counts responses not yet fully consumed, including responses retained across reconnects.
+
+The facade queues encoded messages with their partition-session object. Decoding happens only for the messages selected for the next yield, so a paused consumer does not inflate its entire compressed backlog. The owned carry array also covers a suspended iterator; hard/fatal shutdown clears its chunks and the queue. Clean shutdown retains the encoded tail and its codec until the tail is consumed or discarded. Transaction offsets survive an early clean close until the transaction finishes.
+
+Stopped partition entries with no outstanding obligations are forgotten after earlier queued commits have observed their final watermark. Ended partitions remain committable. Runtime faults use the same resource cleanup as protocol termination, including releasing partition state and callback references.
 After the current stream receives its initial grant, releasing a response of `N` bytes returns exactly `N` bytes in one `ReadRequest`, even if the response is split across many application batches.
 For example, a 10 MiB response delivered as 100 batches returns no credit for the first 99 batches and exactly 10 MiB after the last one.
 The protocol permits an oversized response to overdraw the server's allowance; returning that response's full size repays the overdraw without a separate client credit counter.

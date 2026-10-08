@@ -219,6 +219,7 @@ export type ReaderEvent =
 	| { type: 'reader.read_release'; bytes: bigint }
 	| { type: 'reader.close' }
 	| { type: 'reader.destroy'; reason?: unknown }
+	| { type: 'reader.partition.forget'; session: TopicPartitionSession }
 	// transport -> reader
 	| { type: 'reader.stream.init_response'; sessionId: string }
 	| ReaderStreamEvent
@@ -688,8 +689,21 @@ let startPartitionSession = function startPartitionSession(
 	return effects
 }
 
-// Retire a partition session: mark it stopped, drop it from the ephemeral index,
-// and notify the facade. Pending commits stay on the entry for reconcile/gc.
+let queuePartitionCleanup = function queuePartitionCleanup(
+	entry: PartitionEntry,
+	runtime: ReaderRuntime
+): void {
+	if (
+		entry.commitWaiters.length === 0 &&
+		entry.pendingRanges.length === 0 &&
+		entry.requestedCommitOffset === undefined
+	) {
+		// Commits queued behind the stop can still be covered by its watermark.
+		runtime.dispatch({ type: 'reader.partition.forget', session: entry.session })
+	}
+}
+
+// Pending commits stay on the stopped entry until reconciliation completes.
 let markStopped = function markStopped(
 	ctx: ReaderCtx,
 	entry: PartitionEntry,
@@ -706,6 +720,7 @@ let markStopped = function markStopped(
 		reason,
 		session: entry.session,
 	})
+	queuePartitionCleanup(entry, runtime)
 }
 
 let stopPartitionSession = function stopPartitionSession(
@@ -929,6 +944,7 @@ let forceStopStalledGraceful = function forceStopStalledGraceful(
 			partitionKey: key,
 		})
 	}
+	queuePartitionCleanup(entry, runtime)
 	return effects
 }
 
@@ -1191,7 +1207,7 @@ let terminate = function terminate(
 	}
 }
 
-let releaseState = function releaseState(ctx: ReaderCtx): void {
+export let releaseState = function releaseState(ctx: ReaderCtx): void {
 	ctx.partitions.clear()
 	ctx.sessionIndex.clear()
 	ctx.bufferedBytes = 0n
@@ -1411,6 +1427,21 @@ export let readerTransition = function readerTransition(
 	runtime: ReaderRuntime
 ): TransitionResult<ReaderState, ReaderEffect> | void {
 	let state = runtime.state
+
+	if (event.type === 'reader.partition.forget') {
+		let key = partitionKey(event.session.topicPath, event.session.partitionId)
+		let entry = ctx.partitions.get(key)
+		if (
+			entry?.session === event.session &&
+			entry.state === 'stopped' &&
+			entry.commitWaiters.length === 0 &&
+			entry.pendingRanges.length === 0 &&
+			entry.requestedCommitOffset === undefined
+		) {
+			ctx.partitions.delete(key)
+		}
+		return
+	}
 
 	// Global: hard destroy from any non-terminal state.
 	if (state !== 'closed' && state !== 'errored' && event.type === 'reader.destroy') {

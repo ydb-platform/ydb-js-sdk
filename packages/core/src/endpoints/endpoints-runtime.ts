@@ -12,7 +12,7 @@ import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { connectivityState } from '@grpc/grpc-js'
-import { abortable, linkSignals } from '@ydbjs/abortable'
+import { linkSignals } from '@ydbjs/abortable'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { EndpointInfoSchema } from '@ydbjs/api/discovery'
 import type { ListEndpointsResult, EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
@@ -108,7 +108,7 @@ type EndpointsEnv = {
 	backoffMaxMs: number
 
 	ac: AbortController
-	readyDeferred: PromiseWithResolvers<void>
+	readyWaiters: Set<PromiseWithResolvers<void>>
 	closedDeferred: PromiseWithResolvers<void>
 	isFinalized: boolean
 	timers: Map<string, ReturnType<typeof setTimeout>>
@@ -564,10 +564,24 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		this.#machine.signal.throwIfAborted()
 		let state = this.#machine.state
 		if (state === 'closing') throw new Error('Endpoints closed')
-		// The readiness latch retains an initial discovery failure, but a fulfilled
-		// latch cannot report a later close. Check lifecycle on both sides of the wait.
-		let promise = this.#env.readyDeferred.promise
-		await (signal !== undefined ? abortable(signal, promise) : promise)
+		if (this.#env.readyAt === undefined) {
+			let waiter = Promise.withResolvers<void>()
+			let onAbort = () => {
+				this.#env.readyWaiters.delete(waiter)
+				waiter.reject(signal!.reason)
+			}
+			this.#env.readyWaiters.add(waiter)
+			signal?.addEventListener('abort', onAbort, { once: true })
+			try {
+				await waiter.promise
+			} finally {
+				this.#env.readyWaiters.delete(waiter)
+				signal?.removeEventListener('abort', onAbort)
+			}
+		} else {
+			// A close may start before the caller resumes an already-ready pool.
+			await Promise.resolve()
+		}
 		this.#machine.signal.throwIfAborted()
 		state = this.#machine.state
 		if (state === 'closing' || state === 'closed') throw new Error('Endpoints closed')
@@ -615,14 +629,18 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			/* node:coverage ignore start -- backstop for an unrecoverable FSM fault (should never happen) */
 		} catch (error) {
 			dbg.log('endpoints machine faulted: %O', error)
-			env.readyDeferred.reject(error)
+			this.#rejectReadyWaiters(error)
 			/* node:coverage ignore stop */
 		} finally {
 			finalizeEnv(env)
-			// No-ops if already settled; guarantees no awaiter hangs on a fault.
-			env.readyDeferred.reject(new Error('Endpoints closed'))
+			this.#rejectReadyWaiters(this.#machine.signal.reason ?? new Error('Endpoints closed'))
 			env.closedDeferred.resolve()
 		}
+	}
+
+	#rejectReadyWaiters(error: unknown): void {
+		for (let waiter of this.#env.readyWaiters) waiter.reject(error)
+		this.#env.readyWaiters.clear()
 	}
 
 	async #drain(): Promise<void> {
@@ -719,14 +737,15 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					break
 				case 'endpoints.ready':
 					env.readyAt = Date.now()
-					env.readyDeferred.resolve()
+					for (let waiter of env.readyWaiters) waiter.resolve()
+					env.readyWaiters.clear()
 					dc('ydb:driver.ready').publish({
 						driver: env.identity,
 						duration: env.readyAt - env.initAt,
 					})
 					break
 				case 'endpoints.failed':
-					env.readyDeferred.reject(out.error)
+					this.#rejectReadyWaiters(out.error)
 					dc('ydb:driver.failed').publish({
 						driver: env.identity,
 						duration: Date.now() - env.initAt,
@@ -734,7 +753,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					})
 					break
 				case 'endpoints.closed':
-					env.readyDeferred.reject(new Error('Endpoints closed'))
+					this.#rejectReadyWaiters(out.reason)
 					dc('ydb:driver.closed').publish({
 						driver: env.identity,
 						uptime: env.readyAt !== undefined ? Date.now() - env.readyAt : 0,
@@ -851,7 +870,7 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		backoffBaseMs: DEFAULT_BACKOFF_BASE_MS,
 		backoffMaxMs: DEFAULT_BACKOFF_MAX_MS,
 		ac: new AbortController(),
-		readyDeferred: Promise.withResolvers<void>(),
+		readyWaiters: new Set(),
 		closedDeferred: Promise.withResolvers<void>(),
 		isFinalized: false,
 		timers: new Map(),
@@ -862,9 +881,6 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		lastPileStates: [],
 		prevFallbackActive: false,
 	}
-	// Silence unobserved-rejection noise when nobody awaits ready().
-	env.readyDeferred.promise.catch(() => {})
-
 	let ctx = createEndpointsCtx({
 		localityEnabled: config.localityEnabled,
 		preferPrimaryPile: config.preferPrimaryPile,

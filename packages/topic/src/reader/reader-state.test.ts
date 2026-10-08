@@ -948,6 +948,35 @@ test('settles a commit racing a forced stop against the stop watermark', () => {
 	expect(outputs(h, 'reader.commit.rejected')[0]).toMatchObject({ waiterId: 9 })
 })
 
+test('forgets a stopped partition after queued commits consume its watermark', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	ackStart(h, 1n, 10n)
+	message(h, stopMsg(1n, false, 7n))
+	let cleanup = h.dispatched.find((event) => event.type === 'reader.partition.forget')!
+	expect(cleanup).toBeDefined()
+	commit(h, 10n, [{ start: 5n, end: 7n }], 8)
+	expect(outputs(h, 'reader.commit.resolved')).toContainEqual({
+		type: 'reader.commit.resolved',
+		waiterId: 8,
+	})
+	step(h, cleanup)
+	expect(h.ctx.partitions.has(pk(10n))).toBe(false)
+})
+
+test('keeps a regranted partition when cleanup for its old session runs', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	message(h, stopMsg(1n, false))
+	let cleanup = h.dispatched.find((event) => event.type === 'reader.partition.forget')!
+	message(h, startMsg(1n, 10n, 5n))
+	let current = h.ctx.partitions.get(pk(10n))!.session
+	step(h, cleanup)
+	expect(h.ctx.partitions.get(pk(10n))!.session).toBe(current)
+	ackStart(h, 1n, 10n)
+	expect(startResponses(h.effects)).toHaveLength(1)
+})
+
 test('resolves covered commits and holds the remainder on a forced stop', () => {
 	let h = mk()
 	toReadyWithPartition(h)

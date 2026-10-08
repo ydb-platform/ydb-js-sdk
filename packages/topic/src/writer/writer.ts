@@ -425,6 +425,8 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			return
 		}
 		this.#closed = true
+		this.#onAck = undefined
+		this.#codec = RAW_CODEC
 		this.#bufferedBytes = 0n
 		publishClosed(this.#scope)
 		for (let waiter of this.#flushWaiters.values()) {

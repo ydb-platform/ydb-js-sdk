@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { expect, test } from 'vitest'
 import { AsyncPriorityQueue, AsyncQueue } from './queue.ts'
 
@@ -546,4 +548,35 @@ test('take interleaves with the iterator without losing items', async () => {
 	queue.push('b')
 	expect(await queue.take()).toEqual({ value: 'a', done: false })
 	expect((await iterator.next()).value).toBe('b')
+})
+
+test('releases a yielded payload while the iterator waits for its next item', async (tc) => {
+	using queue = new AsyncQueue<Uint8Array>()
+	let iterator = queue[Symbol.asyncIterator]()
+	let collected = false
+	let registry = new FinalizationRegistry<void>(() => {
+		collected = true
+	})
+	let consumePayload = async () => {
+		let payload = new Uint8Array(8 * 1024 * 1024)
+		registry.register(payload.buffer, undefined)
+		queue.push(payload)
+		await iterator.next()
+	}
+	await consumePayload()
+	let pending = iterator.next()
+
+	// The registry callback runs between GC rounds; neither queue nor iterator is discarded.
+	// oxlint-disable-next-line no-unmodified-loop-condition
+	for (let attempt = 0; attempt < 40 && !collected; attempt++) {
+		globalThis.gc!()
+		// oxlint-disable-next-line no-await-in-loop
+		await sleep(10, undefined, { signal: tc.signal })
+	}
+	expect(collected).toBe(true)
+	let next = new Uint8Array([42])
+	queue.push(next)
+	await expect(pending).resolves.toEqual({ value: next, done: false })
+	queue.close()
+	await expect(iterator.next()).resolves.toMatchObject({ done: true })
 })

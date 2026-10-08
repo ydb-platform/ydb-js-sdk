@@ -47,7 +47,7 @@ Global guard: `endpoints.destroy` from any non-terminal state → `closed` (imme
 | idle           | discovery.start                                  | discovering      | run first round                                                 |
 | idle           | pin / invalidate                                 | idle             | rebuild snapshot                                                |
 | idle           | close                                            | closed           | close-before-start                                              |
-| discovering    | round_succeeded                                  | ready / degraded | apply round, ready-latch, arm interval+idle_sweep               |
+| discovering    | round_succeeded                                  | ready / degraded | apply round, settle readiness waiters, arm interval+idle_sweep  |
 | discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                     |
 | discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                               |
 | discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                      |

@@ -102,6 +102,8 @@ await using writer = createTopicWriter(driver, {
 
 `reader.bufferedBytes` exposes the server-accounted bytes currently retained by the reader and not yet fully delivered through `read()`.
 
+Buffered messages remain encoded until `read()` selects them for delivery. `maxBufferBytes` limits server read credit, not decompressed memory or RSS; use `read({ limit })` to bound the number of messages decoded for one batch. A clean `close()` preserves the unread tail, while `destroy()` and terminal errors discard it. Decoding errors surface when the affected message is read.
+
 TopicReaderSource supports partition filters and time‑based selectors:
 
 ```ts

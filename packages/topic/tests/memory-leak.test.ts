@@ -1,103 +1,91 @@
-import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-import * as v8 from 'node:v8'
+import { execFile } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
-import { create } from '@bufbuild/protobuf'
-import {
-	CreateTopicRequestSchema,
-	DropTopicRequestSchema,
-	TopicServiceDefinition,
-} from '@ydbjs/api/topic'
-import { Driver } from '@ydbjs/core'
-import { createTopicReader } from '../src/reader/index.js'
+import { expect, inject, test } from 'vitest'
+import { runMemoryProfile, verifyMemoryProfile } from './memory-profile.ts'
+import type { MemoryReport } from './memory-worker.ts'
 
-let driver = new Driver(inject('connectionString'), {
-	'ydb.sdk.enable_discovery': false,
-})
-await driver.ready()
+let execute = promisify(execFile)
 
-let topicService = driver.createClient(TopicServiceDefinition)
-
-let testTopicName: string
-let testConsumerName: string
-
-beforeEach(async () => {
-	testTopicName = `test-topic-memory-${Date.now()}`
-	testConsumerName = `test-consumer-${Date.now()}`
-
-	await topicService.createTopic(
-		create(CreateTopicRequestSchema, {
-			path: testTopicName,
-			partitioningSettings: {
-				minActivePartitions: 1n,
-				maxActivePartitions: 100n,
+test(
+	'releases topic memory after drain, reconnect and client replacement',
+	{ timeout: Number(process.env['YDB_MEMORY_TIMEOUT_MS'] ?? 180_000) },
+	async (tc) => {
+		await using files = {
+			path: await mkdtemp(join(tmpdir(), 'topic-memory-')),
+			[Symbol.asyncDispose]() {
+				return rm(this.path, { recursive: true, force: true })
 			},
-			consumers: [
-				{
-					name: testConsumerName,
-				},
+		}
+		let bundle = join(files.path, 'memory-worker.mjs')
+		await execute(
+			'bun',
+			[
+				'build',
+				fileURLToPath(new URL('./memory-worker.ts', import.meta.url)),
+				'--target=node',
+				'--conditions=development',
+				`--outfile=${bundle}`,
 			],
-		})
-	)
-})
-
-afterEach(async () => {
-	await topicService.dropTopic(
-		create(DropTopicRequestSchema, {
-			path: testTopicName,
-		})
-	)
-})
-
-// oxlint-disable-next-line
-test.skip('memory leak check', { timeout: 300_000 }, async () => {
-	let initialMemory = process.memoryUsage().heapUsed
-	let iterations = 50_000
-
-	let snapshotPath = v8.writeHeapSnapshot()
-	console.log(`Heap snapshot written to: ${snapshotPath}`)
-
-	for (let i = 0; i < iterations; i++) {
-		// oxlint-disable-next-line no-await-in-loop
-		await using reader = createTopicReader(driver, {
-			topic: testTopicName,
-			consumer: testConsumerName,
-		})
-
-		try {
-			// oxlint-disable-next-line no-await-in-loop
-			for await (let messages of reader.read({
-				signal: AbortSignal.timeout(1), // Very short timeout to trigger more errors
-			})) {
-				await reader.commit(messages)
-			}
-		} catch {
-			// Ignore timeout errors
+			{ signal: tc.signal }
+		)
+		let { report, cuts } = await runMemoryProfile(
+			inject('connectionString'),
+			bundle,
+			join(files.path, 'report.json'),
+			tc.signal
+		)
+		if (process.env['YDB_MEMORY_REPORT_FILE']) {
+			await writeFile(
+				process.env['YDB_MEMORY_REPORT_FILE'],
+				JSON.stringify(report, null, 2) + '\n'
+			)
 		}
-
-		if (i % 5_000 === 0) {
-			if (global.gc) {
-				global.gc()
-			}
-
-			let finalMemory = process.memoryUsage().heapUsed
-			let diff = finalMemory - initialMemory
-
-			console.log(`Memory diff (i=${i}): ${diff / 1024 / 1024} MB`)
-		}
+		let expected = 3 * report.epochs * report.messagesPerEpoch
+		expect(report.accepted).toEqual([expected, expected, expected])
+		verifyMemoryProfile(report, cuts)
 	}
+)
 
-	if (global.gc) {
-		global.gc()
+test('rejects Bun buffer retention even when arrayBuffers reports zero', () => {
+	let report: MemoryReport = {
+		runtime: { name: 'bun', version: 'fixture', supportsActiveResources: false },
+		node: 'compatibility-version',
+		platform: 'fixture',
+		arch: 'fixture',
+		epochs: 9,
+		epochPauseMs: 0,
+		payloadBytes: 32 * 1024,
+		messagesPerEpoch: 128,
+		accepted: [1, 1, 1],
+		acknowledged: [1, 1, 1],
+		delivered: [1, 1, 1],
+		committed: [1, 1, 1],
+		reconnects: { reader: 1, writer: 1 },
+		closedClientsAlive: 0,
+		retainedControlBytes: 0,
+		samples: ['steady', 'reconnect', 'replace'].flatMap((scenario) =>
+			Array.from({ length: 9 }, (_, epoch) => ({
+				phase: 'drained',
+				scenario,
+				epoch,
+				rss: 0,
+				heapUsed: 1024,
+				heapTotal: 1024,
+				external: 0,
+				arrayBuffers: 0,
+				activeResources: [],
+				jsc: { heapSize: 1024, extraMemorySize: 1024, objectCount: 100 },
+			}))
+		),
 	}
-
-	let finalMemory = process.memoryUsage().heapUsed
-	let diff = finalMemory - initialMemory
-
-	console.log(`Memory diff: ${diff / 1024 / 1024} MB`)
-	snapshotPath = v8.writeHeapSnapshot()
-	console.log(`Heap snapshot written to: ${snapshotPath}`)
-
-	// Allow some fluctuation, but it shouldn't be massive
-	// 10MB is a generous buffer for 100 iterations if there's no leak
-	expect(diff).toBeLessThan(10 * 1024 * 1024)
+	expect(() => verifyMemoryProfile(report, 1)).not.toThrow()
+	for (let sample of report.samples) {
+		if (sample.epoch >= 6) sample.jsc!.extraMemorySize += 16 * 1024 * 1024
+	}
+	expect(() => verifyMemoryProfile(report, 1)).toThrow(/jsc.extraMemorySize grew/)
 })

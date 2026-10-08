@@ -17,6 +17,7 @@ import {
 	type TimerRef,
 	createReaderCtx,
 	readerTransition,
+	releaseState,
 } from './reader-state.js'
 import type {
 	TopicReaderOptions,
@@ -124,6 +125,17 @@ let clearTimerByKey = function clearTimerByKey(ctx: FullCtx, key: string): void 
 	}
 }
 
+let finalize = function finalize(ctx: FullCtx, reason: unknown): void {
+	for (let handle of ctx.timers.values()) {
+		clearTimeout(handle)
+	}
+	ctx.timers.clear()
+	releaseState(ctx)
+	delete ctx.onPartitionSessionStart
+	delete ctx.onPartitionSessionStop
+	ctx.transport.destroy(reason)
+}
+
 let mapTransportOutput = function mapTransportOutput(output: TransportOutput): ReaderEvent | null {
 	evdbg.log('transport → reader: %s', output.type)
 	switch (output.type) {
@@ -222,13 +234,6 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 		gracefulShutdownTimeoutMs:
 			options.gracefulShutdownTimeoutMs ?? DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
 		timers: new Map(),
-	}
-	let finalize = (reason: unknown): void => {
-		for (let handle of env.timers.values()) {
-			clearTimeout(handle)
-		}
-		env.timers.clear()
-		transport.destroy(reason)
 	}
 
 	let ctx = createReaderCtx(
@@ -438,10 +443,14 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 				clearTimerByKey(fullCtx, timerKey(effect))
 			},
 
-			'reader.effect.finalize': (_, effect) => finalize(effect.reason),
+			'reader.effect.finalize': (fullCtx, effect) => finalize(fullCtx, effect.reason),
 		},
 	})
-	machine.signal.addEventListener('abort', () => finalize(machine.signal.reason), { once: true })
+	machine.signal.addEventListener(
+		'abort',
+		() => finalize(ctx as FullCtx, machine.signal.reason),
+		{ once: true }
+	)
 
 	machine.ingest(transport.events, mapTransportOutput)
 

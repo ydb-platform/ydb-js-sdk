@@ -5,5 +5,6 @@ export default defineProject({
 		name: 'fsm',
 		include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
 		environment: 'node',
+		execArgv: ['--expose-gc'],
 	},
 })
