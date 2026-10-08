@@ -59,7 +59,6 @@ type CommitBatch = {
 	messages: TopicMessage[]
 	completion: PromiseWithResolvers<void>
 	promise: Promise<void>
-	flushed: boolean
 }
 
 // Bind the read offsets to the transaction via UpdateOffsetsInTransaction, so they
@@ -70,7 +69,8 @@ let commitTxOffsets = async function commitTxOffsets(
 	tx: TX,
 	driver: Driver,
 	consumer: string,
-	updates: TxReadOffsetUpdate[]
+	updates: TxReadOffsetUpdate[],
+	signal?: AbortSignal
 ): Promise<void> {
 	if (updates.length === 0) {
 		return
@@ -116,7 +116,7 @@ let commitTxOffsets = async function commitTxOffsets(
 	dbg.log('committing read offsets in tx %s (%d partitions)', tx.transactionId, updates.length)
 
 	let client = driver.createClient(TopicServiceDefinition, tx.nodeId)
-	let response = await client.updateOffsetsInTransaction(request)
+	let response = await client.updateOffsetsInTransaction(request, signal ? { signal } : undefined)
 	if (response.operation?.status !== StatusIds_StatusCode.SUCCESS) {
 		// YDBError carries the status code and issues, so retry classifiers and user
 		// code can inspect it like every other server-status failure in the package.
@@ -163,17 +163,15 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	// (or a machine fault), then consulted synchronously by read()/commit()/close() to
 	// surface it to the caller — the FSM cannot reject an already-running read() promise.
 	#lastError: unknown = undefined
-	#closed = false
 	#closing = false
 	#reading = false // read() is single-consumer
-	#transactional: boolean
 	#scope: ReaderScope
 	#closedDeferred = Promise.withResolvers<void>()
 
 	constructor(driver: Driver, options: TopicReaderOptions, runtimeOptions?: { tx?: TX }) {
+		options = { ...options }
 		this.#options = options
-		this.#transactional = runtimeOptions?.tx !== undefined
-		if (this.#transactional) {
+		if (runtimeOptions?.tx !== undefined) {
 			this.#txReadOffsets = new Map()
 		}
 		this.#codecs = options.codecMap ?? defaultCodecMap
@@ -198,14 +196,15 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		// #-private state directly instead of going through an exported accessor.
 		if (runtimeOptions?.tx) {
 			let tx = runtimeOptions.tx
-			tx.onCommit(async () => {
+			tx.onCommit(async (signal) => {
 				// Bind the read offsets to the tx; on failure the commit (and thus the
 				// offsets) roll back, and the reader is torn down by onClose below.
 				await commitTxOffsets(
 					tx,
 					driver,
 					options.consumer,
-					txOffsetUpdates(this.#txReadOffsets)
+					txOffsetUpdates(this.#txReadOffsets),
+					signal
 				)
 				// Release the partition once offsets are committed. A tx reader left open
 				// keeps the consumer's partition assigned server-side, so a later reader on
@@ -253,7 +252,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		// The TopicTxReader type hides commit(), but the method still exists on the
 		// runtime object — enforce the boundary for plain-JS callers too: a manual
 		// commit would land outside the transaction and survive its rollback.
-		if (this.#transactional) {
+		if (this.#txReadOffsets !== undefined) {
 			throw new Error(
 				'Tx reader commits offsets via the transaction — commit() is not available'
 			)
@@ -267,8 +266,8 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	}
 
 	async close(): Promise<void> {
-		if (this.#closed) {
-			if (this.#lastError) {
+		if (this.#chunks.isClosed) {
+			if (this.#lastError !== undefined) {
 				throw this.#lastError
 			}
 			return
@@ -281,13 +280,13 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		this.#closing = true
 		this.#runtime.machine.dispatch({ type: 'reader.close' })
 		await this.#closedDeferred.promise
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 	}
 
 	destroy(reason?: unknown): void {
-		if (this.#closed) {
+		if (this.#chunks.isClosed) {
 			return
 		}
 		this.#closing = true
@@ -312,7 +311,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	// Debuggers and util.inspect show the constructor name, which cannot tell a tx
 	// reader apart — the tag makes it render as TopicReader [TopicTxReader] { ... }.
 	get [Symbol.toStringTag](): string {
-		return this.#transactional ? 'TopicTxReader' : 'TopicReader'
+		return this.#txReadOffsets !== undefined ? 'TopicTxReader' : 'TopicReader'
 	}
 
 	async *#readLoop(
@@ -329,7 +328,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 
 		try {
 			for (;;) {
-				if (this.#lastError) {
+				if (this.#lastError !== undefined) {
 					throw this.#lastError
 				}
 				signal?.throwIfAborted()
@@ -420,7 +419,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 					// clean end-of-stream. Any buffered batch above was delivered first, then
 					// we throw. The reader is already torn down (markClosed + FSM finalize):
 					// it is not reusable, and every further read()/commit() throws this too.
-					if (this.#lastError) {
+					if (this.#lastError !== undefined) {
 						throw this.#lastError
 					}
 					return
@@ -501,7 +500,6 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			messages: [],
 			completion,
 			promise: traceCommit(this.#scope, () => completion.promise),
-			flushed: false,
 		}
 		this.#commitBatch = batch
 		queueMicrotask(() => this.#flushCommitBatch(batch))
@@ -509,13 +507,10 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	}
 
 	#flushCommitBatch(batch: CommitBatch): void {
-		if (batch.flushed) {
+		if (this.#commitBatch !== batch) {
 			return
 		}
-		batch.flushed = true
-		if (this.#commitBatch === batch) {
-			this.#commitBatch = undefined
-		}
+		this.#commitBatch = undefined
 		void this.#commitOffsets(batch.messages).then(
 			batch.completion.resolve,
 			batch.completion.reject
@@ -523,10 +518,10 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	}
 
 	async #commitOffsets(messages: TopicMessage[]): Promise<void> {
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
-		if (this.#closed || this.#closing) {
+		if (this.#chunks.isClosed || this.#closing) {
 			throw new Error('Reader is closed — cannot commit')
 		}
 
@@ -720,7 +715,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		}
 
 		// Stream ended; if no reader.closed arrived, the machine faulted — surface it.
-		if (!this.#closed) {
+		if (!this.#chunks.isClosed) {
 			this.#fail(
 				this.#runtime.machine.signal.reason ?? new Error('Reader stopped unexpectedly')
 			)
@@ -728,10 +723,9 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	}
 
 	#markClosed(): void {
-		if (this.#closed) {
+		if (this.#chunks.isClosed) {
 			return
 		}
-		this.#closed = true
 		this.#chunks.close()
 		// #txReadOffsets is deliberately kept: a tx reader closed before the tx commits
 		// still binds the offsets it delivered — clearing here would silently commit
@@ -746,7 +740,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	}
 
 	#fail(error: unknown): void {
-		if (this.#closed) {
+		if (this.#chunks.isClosed) {
 			return
 		}
 		this.#lastError ??= error

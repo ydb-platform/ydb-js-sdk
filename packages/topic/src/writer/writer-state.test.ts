@@ -89,8 +89,8 @@ let readyWithInflight = function readyWithInflight(): WriterCtx {
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 0n },
 		ctx
 	)
-	drive('ready', { type: 'writer.pump' }, ctx)
-	expect(ctx.inflightLength).toBe(2)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
+	expect(ctx.inflightCount).toBe(2)
 	return ctx
 }
 
@@ -171,22 +171,21 @@ test('buffers a write received before connecting', () => {
 	let d = drive('idle', { type: 'writer.write', message: msg(1) }, ctx)
 
 	expect(d.state).toBe('idle')
-	expect(d.ctx.bufferLength).toBe(1)
-	expect(d.ctx.seqNoMode).toBe('auto')
+	expect(d.ctx.messages.length - d.ctx.inflightCount).toBe(1)
+	expect(d.ctx.messages[0]?.seqNo).toBe(0n)
 })
 
-test('records manual mode from a seqNo-carrying write', () => {
+test('retains the user sequence number while buffering', () => {
 	let ctx = ctxWith()
 	drive('idle', { type: 'writer.write', message: msg(1, 5n) }, ctx)
 
-	expect(ctx.seqNoMode).toBe('manual')
 	expect(ctx.lastSeqNo).toBe(5n)
 })
 
 // ── connecting → ready (init + seqno recovery) ──────────────────────────────────
 
 test('recovers the server high-water mark on first init in auto mode', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto' })
+	let ctx = ctxWith()
 	let d = drive(
 		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 42n },
@@ -202,7 +201,8 @@ test('recovers the server high-water mark on first init in auto mode', () => {
 })
 
 test('does not overwrite user seqNo with server value in manual mode', () => {
-	let ctx = ctxWith({ seqNoMode: 'manual', lastSeqNo: 5n })
+	let ctx = ctxWith()
+	drive('connecting', { type: 'writer.write', message: msg(1, 5n) }, ctx)
 	let d = drive(
 		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 100n },
@@ -226,13 +226,13 @@ test('resets the retry counter on successful init', () => {
 // ── auto seqNo assigned at send time ─────────────────────────────────────────────
 
 test('assigns auto seqNos sequentially at send time', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', lastSeqNo: 10n, hasEverConnected: true })
+	let ctx = ctxWith({ lastSeqNo: 10n, hasEverConnected: true })
 	// three buffered auto messages, unnumbered
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(3) }, ctx)
 
-	let d = drive('ready', { type: 'writer.pump' }, ctx)
+	let d = drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 
 	let batch = d.effects.find((e) => e.type === 'writer.effect.send.write_request')
 	expect(
@@ -240,37 +240,36 @@ test('assigns auto seqNos sequentially at send time', () => {
 			batch.type === 'writer.effect.send.write_request' &&
 			batch.messages.map((m) => m.seqNo)
 	).toEqual([11n, 12n, 13n])
-	expect(d.ctx.inflightLength).toBe(3)
-	expect(d.ctx.bufferLength).toBe(0)
+	expect(d.ctx.inflightCount).toBe(3)
+	expect(d.ctx.messages.length - d.ctx.inflightCount).toBe(0)
 	expect(d.ctx.lastSeqNo).toBe(13n)
 })
 
 test('does not send when the inflight window is full', () => {
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
 		limits: { ...limits, maxInflightCount: 1 },
 	})
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
 
-	let first = drive('ready', { type: 'writer.pump' }, ctx)
-	expect(first.ctx.inflightLength).toBe(1)
+	let first = drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
+	expect(first.ctx.inflightCount).toBe(1)
 
-	let second = drive('ready', { type: 'writer.pump' }, ctx)
+	let second = drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 	expect(
 		second.effects.find((e) => e.type === 'writer.effect.send.write_request')
 	).toBeUndefined()
-	expect(second.ctx.bufferLength).toBe(1)
+	expect(second.ctx.messages.length - second.ctx.inflightCount).toBe(1)
 })
 
 // ── acknowledgements ─────────────────────────────────────────────────────────────
 
 test('moves acknowledged messages out of the inflight window', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	let ctx = ctxWith({ hasEverConnected: true, lastSeqNo: 0n })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 
 	let d = drive(
 		'ready',
@@ -284,7 +283,7 @@ test('moves acknowledged messages out of the inflight window', () => {
 		ctx
 	)
 
-	expect(d.ctx.inflightLength).toBe(0)
+	expect(d.ctx.inflightCount).toBe(0)
 	let acks = d.emitted.find((o) => o.type === 'writer.acknowledgments')
 	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
 		'written'
@@ -296,11 +295,11 @@ test('moves acknowledged messages out of the inflight window', () => {
 test('acknowledges only the contiguous prefix on a non-prefix ack set', () => {
 	// Defensive: if the head is unacked, tail acks must not leave the window or fire
 	// callbacks early — nothing is emitted until the head is acked.
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	let ctx = ctxWith({ hasEverConnected: true, lastSeqNo: 0n })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(3) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 
 	let d = drive(
 		'ready',
@@ -314,7 +313,7 @@ test('acknowledges only the contiguous prefix on a non-prefix ack set', () => {
 		ctx
 	)
 
-	expect(d.ctx.inflightLength).toBe(3)
+	expect(d.ctx.inflightCount).toBe(3)
 	expect(d.emitted.find((o) => o.type === 'writer.acknowledgments')).toBeUndefined()
 })
 
@@ -329,11 +328,11 @@ test('flushes immediately when nothing is pending', () => {
 })
 
 test('emits flushed once the buffer drains after a flush request', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	let ctx = ctxWith({ hasEverConnected: true })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
-	expect(ctx.flushRequested).toBe(true)
+	expect(ctx.pendingFlushId).toBe(1)
 
 	let d = drive(
 		'ready',
@@ -342,7 +341,7 @@ test('emits flushed once the buffer drains after a flush request', () => {
 	)
 
 	expect(d.emitted.find((o) => o.type === 'writer.flushed')).toBeDefined()
-	expect(d.ctx.flushRequested).toBe(false)
+	expect(d.ctx.pendingFlushId).toBeUndefined()
 })
 
 // ── reconnect ────────────────────────────────────────────────────────────────────
@@ -416,12 +415,12 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 	// whose init covers all inflight messages drains the window via dedup with NO
 	// write_response. A pending flush must be resolved from the init path — else it
 	// hangs forever, stalling any tx commit awaiting it.
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	let ctx = ctxWith({ hasEverConnected: true, lastSeqNo: 0n })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
-	expect(ctx.flushRequested).toBe(true)
+	expect(ctx.pendingFlushId).toBe(1)
 
 	let d = drive(
 		'connecting',
@@ -434,7 +433,7 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 		requestId: 1,
 		lastSeqNo: 2n,
 	})
-	expect(d.ctx.flushRequested).toBe(false)
+	expect(d.ctx.pendingFlushId).toBeUndefined()
 })
 
 test('fails terminally when the recovery window expires', () => {
@@ -454,11 +453,11 @@ test('fails terminally when the recovery window expires during a connect attempt
 
 test('resends unacked inflight and drops server-acked on reconnect init', () => {
 	// two messages sent (seqNo 1,2); server persisted 1 only.
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true, lastSeqNo: 0n })
+	let ctx = ctxWith({ hasEverConnected: true, lastSeqNo: 0n })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
-	expect(ctx.inflightLength).toBe(2)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
+	expect(ctx.inflightCount).toBe(2)
 
 	let d = drive(
 		'connecting',
@@ -467,8 +466,8 @@ test('resends unacked inflight and drops server-acked on reconnect init', () => 
 	)
 
 	// seqNo 1 dropped (already written), seqNo 2 rewound into the buffer for resend.
-	expect(d.ctx.inflightLength).toBe(0)
-	expect(d.ctx.bufferLength).toBe(1)
+	expect(d.ctx.inflightCount).toBe(0)
+	expect(d.ctx.messages.length - d.ctx.inflightCount).toBe(1)
 	let recovered = d.emitted.find((o) => o.type === 'writer.acknowledgments')
 	expect(
 		recovered &&
@@ -489,19 +488,19 @@ test('closes immediately when nothing is pending', () => {
 
 	expect(d.state).toBe('closed')
 	expect(d.emitted.find((o) => o.type === 'writer.closed')).toBeDefined()
-	expect(effectTypes(d.effects)).toContain('writer.effect.transport.close')
+	expect(effectTypes(d.effects)).toEqual(['writer.effect.finalize'])
 })
 
 test('drains before closing when messages are pending', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	let ctx = ctxWith({ hasEverConnected: true })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 
 	let d = drive('ready', { type: 'writer.close' }, ctx)
-	expect(d.state).toBe('closing')
+	expect(d.state).toBe('ready')
 
 	let done = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 1n, status: 'written' }] },
 		d.ctx
 	)
@@ -547,13 +546,12 @@ test('close during reconnect clears the stale recovery_window timer', () => {
 	// close must cancel it so it cannot cut the graceful drain short — close is bounded by
 	// graceful_timeout, not recoveryWindowMs (mirrors the reader).
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
-		bufferLength: 1,
 		messages: [msg(1)],
 	})
 	let d = drive('reconnecting', { type: 'writer.close' }, ctx)
-	expect(d.state).toBe('closing')
+	expect(d.state).toBe('reconnecting')
+	expect(ctx.closeRequested).toBe(true)
 	expect(d.effects).toContainEqual({
 		type: 'writer.effect.timer.clear',
 		which: 'recovery_window',
@@ -562,12 +560,11 @@ test('close during reconnect clears the stale recovery_window timer', () => {
 
 test('fails when the graceful timeout fires with undelivered messages', () => {
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
-		bufferLength: 1,
+		closeRequested: true,
 		messages: [msg(1)],
 	})
-	let d = drive('closing', { type: 'writer.timer.graceful_timeout' }, ctx)
+	let d = drive('ready', { type: 'writer.timer.graceful_timeout' }, ctx)
 
 	// Undelivered messages on a forced shutdown is a flush failure, not a clean close.
 	expect(d.state).toBe('errored')
@@ -575,8 +572,8 @@ test('fails when the graceful timeout fires with undelivered messages', () => {
 })
 
 test('closes cleanly when the graceful timeout fires with nothing pending', () => {
-	let ctx = ctxWith({ hasEverConnected: true })
-	let d = drive('closing', { type: 'writer.timer.graceful_timeout' }, ctx)
+	let ctx = ctxWith({ hasEverConnected: true, closeRequested: true })
+	let d = drive('ready', { type: 'writer.timer.graceful_timeout' }, ctx)
 
 	expect(d.state).toBe('closed')
 })
@@ -586,8 +583,7 @@ test('destroys from any state, tearing down the transport', () => {
 	let d = drive('ready', { type: 'writer.destroy', reason: new Error('boom') }, ctx)
 
 	expect(d.state).toBe('closed')
-	expect(effectTypes(d.effects)).toContain('writer.effect.transport.close')
-	expect(effectTypes(d.effects)).toContain('writer.effect.finalize')
+	expect(effectTypes(d.effects)).toEqual(['writer.effect.finalize'])
 })
 
 test('ignores events once closed', () => {
@@ -595,7 +591,7 @@ test('ignores events once closed', () => {
 	let d = drive('closed', { type: 'writer.write', message: msg(1) }, ctx)
 
 	expect(d.state).toBe('closed')
-	expect(d.ctx.bufferLength).toBe(0)
+	expect(d.ctx.messages.length - d.ctx.inflightCount).toBe(0)
 })
 
 // ── closing drain: init gate, acks, flush ───────────────────────────────────────
@@ -606,10 +602,10 @@ test('emits acknowledgments for acks landing during the closing drain', () => {
 	// the facade decrements the budget before writer.closed resets it (review WRITER-2).
 	let ctx = readyWithInflight()
 	let d = drive('ready', { type: 'writer.close' }, ctx)
-	expect(d.state).toBe('closing')
+	expect(d.state).toBe('ready')
 
 	let partial = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 1n, status: 'written' }] },
 		ctx
 	)
@@ -618,10 +614,10 @@ test('emits acknowledgments for acks landing during the closing drain', () => {
 	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
 		'written'
 	)
-	expect(partial.state).toBe('closing')
+	expect(partial.state).toBe('ready')
 
 	let final = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 2n, status: 'written' }] },
 		ctx
 	)
@@ -638,11 +634,11 @@ test('orders recovered acks before flushed before closed on a mid-close reconnec
 	// on `flushed` before `closed` rejects the remainder (review WRITER-2 / WRITER-3).
 	let ctx = readyWithInflight()
 	drive('ready', { type: 'writer.close' }, ctx)
-	drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
-	drive('closing', { type: 'writer.stream.disconnected' }, ctx)
+	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
+	drive('ready', { type: 'writer.stream.disconnected' }, ctx)
 
 	let d = drive(
-		'closing',
+		'reconnecting',
 		{ type: 'writer.stream.init_response', sessionId: 's2', lastSeqNo: 2n },
 		ctx
 	)
@@ -670,11 +666,11 @@ test('resolves a flush issued during closing when the ack drains the window', ()
 	let ctx = readyWithInflight()
 	drive('ready', { type: 'writer.close' }, ctx)
 
-	let f = drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
+	let f = drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(f.emitted.filter((o) => o.type === 'writer.flushed')).toHaveLength(0)
 
 	let d = drive(
-		'closing',
+		'ready',
 		{
 			type: 'writer.stream.write_response',
 			acks: [
@@ -693,19 +689,16 @@ test('emits acknowledgments, flushed, closed in that order on the final closing 
 	// The exact emission order on the write_response drain path is load-bearing for
 	// the facade (budget → flush waiter → terminal), see review WRITER-2 / WRITER-3.
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
+		closeRequested: true,
 		lastSeqNo: 2n,
-		flushRequested: true,
+		pendingFlushId: 1,
 		messages: [msg(1, 1n), msg(2, 2n)],
-		bufferStart: 2,
-		bufferLength: 0,
-		inflightStart: 0,
-		inflightLength: 2,
+		inflightCount: 2,
 	})
 
 	let d = drive(
-		'closing',
+		'ready',
 		{
 			type: 'writer.stream.write_response',
 			acks: [
@@ -727,18 +720,15 @@ test('emits acknowledgments, flushed, closed in that order on the final closing 
 test('does not emit flushed on a clean closing drain when no flush was requested', () => {
 	// Regression guard around the closing flush handler: no spurious writer.flushed.
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
+		closeRequested: true,
 		lastSeqNo: 1n,
 		messages: [msg(1, 1n)],
-		bufferStart: 1,
-		bufferLength: 0,
-		inflightStart: 0,
-		inflightLength: 1,
+		inflightCount: 1,
 	})
 
 	let d = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 1n, status: 'written' }] },
 		ctx
 	)
@@ -752,21 +742,18 @@ test('reports each seqNo exactly once when a mid-close init dedups part of the w
 	// rewound, resent, and acked by a write_response. Every seqNo must be reported
 	// exactly once across all acknowledgment emissions — no double count of freed bytes.
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
+		closeRequested: true,
 		lastSeqNo: 2n,
 		messages: [msg(1, 1n), msg(2, 2n)],
-		bufferStart: 2,
-		bufferLength: 0,
-		inflightStart: 0,
-		inflightLength: 2,
+		inflightCount: 2,
 	})
 
 	let seen: bigint[] = []
 	let freed = 0n
 
 	let init = drive(
-		'closing',
+		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's2', lastSeqNo: 1n },
 		ctx
 	)
@@ -776,14 +763,14 @@ test('reports each seqNo exactly once when a mid-close init dedups part of the w
 			freed += out.freedBytes
 		}
 	}
-	expect(init.state).toBe('closing')
+	expect(init.state).toBe('ready')
 
 	// seqNo 2 was rewound into the buffer — resend it
-	let pumped = drive('closing', { type: 'writer.pump' }, ctx)
+	let pumped = drive('ready', { type: 'writer.pump' }, ctx)
 	expect(pumped.effects.some((e) => e.type === 'writer.effect.send.write_request')).toBe(true)
 
 	let acked = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 2n, status: 'written' }] },
 		ctx
 	)
@@ -804,10 +791,10 @@ test('keeps pumping the close drain when the seqNo mark was already recovered', 
 	let ctx = readyWithInflight()
 	drive('ready', { type: 'writer.write', message: msg(3) }, ctx)
 	let d = drive('ready', { type: 'writer.close' }, ctx)
-	expect(d.state).toBe('closing')
+	expect(d.state).toBe('ready')
 	expect(d.dispatched).toContainEqual({ type: 'writer.pump' })
 
-	let pumped = drive('closing', { type: 'writer.pump' }, ctx)
+	let pumped = drive('ready', { type: 'writer.pump' }, ctx)
 	let batch = pumped.effects.find((e) => e.type === 'writer.effect.send.write_request')
 	expect(batch).toBeDefined()
 	// Auto seqNo continues from the recovered mark, never from 0.
@@ -825,26 +812,26 @@ test('suppresses the close drain until the first init recovers the mark', () => 
 	drive('idle', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('idle', { type: 'writer.start' }, ctx)
 	let d = drive('connecting', { type: 'writer.close' }, ctx)
-	expect(d.state).toBe('closing')
+	expect(d.state).toBe('connecting')
 
 	// The pump is gated — nothing is sent with a fabricated seqNo.
-	let gated = drive('closing', { type: 'writer.pump' }, ctx)
+	let gated = drive('connecting', { type: 'writer.pump' }, ctx)
 	expect(gated.effects).toEqual([])
 	expect(ctx.messages[0]!.seqNo).toBe(0n)
 
 	// The init lands mid-close: the server already has 41 messages. The never-sent
 	// buffered message must not be reported as acknowledged/deduplicated locally…
 	let init = drive(
-		'closing',
+		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 41n },
 		ctx
 	)
-	expect(init.state).toBe('closing')
+	expect(init.state).toBe('ready')
 	expect(init.emitted.filter((o) => o.type === 'writer.acknowledgments')).toHaveLength(0)
 	expect(init.dispatched).toContainEqual({ type: 'writer.pump' })
 
 	// …and the drain resumes numbering from the recovered mark.
-	let pumped = drive('closing', { type: 'writer.pump' }, ctx)
+	let pumped = drive('ready', { type: 'writer.pump' }, ctx)
 	let batch = pumped.effects.find((e) => e.type === 'writer.effect.send.write_request')
 	expect(batch).toBeDefined()
 	expect(
@@ -861,26 +848,25 @@ test('holds manual-seqNo messages until first init and sends them unrenumbered',
 	drive('idle', { type: 'writer.start' }, ctx)
 	drive('connecting', { type: 'writer.write', message: msg(1, 7n) }, ctx)
 	drive('connecting', { type: 'writer.write', message: msg(2, 9n) }, ctx)
-	expect(ctx.seqNoMode).toBe('manual')
 
 	let closing = drive('connecting', { type: 'writer.close' }, ctx)
-	expect(closing.state).toBe('closing')
+	expect(closing.state).toBe('connecting')
 
 	// pump before init: gated, nothing on the wire
-	let gated = drive('closing', { type: 'writer.pump' }, ctx)
+	let gated = drive('connecting', { type: 'writer.pump' }, ctx)
 	expect(gated.effects).toHaveLength(0)
-	expect(ctx.inflightLength).toBe(0)
+	expect(ctx.inflightCount).toBe(0)
 
 	// init arrives (server has never seen this producer) — the drain resumes
 	let init = drive(
-		'closing',
+		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 0n },
 		ctx
 	)
-	expect(init.state).toBe('closing')
+	expect(init.state).toBe('ready')
 	expect(init.dispatched).toContainEqual({ type: 'writer.pump' })
 
-	let pumped = drive('closing', { type: 'writer.pump' }, ctx)
+	let pumped = drive('ready', { type: 'writer.pump' }, ctx)
 	let batch = pumped.effects.find((e) => e.type === 'writer.effect.send.write_request')
 	expect(batch).toBeDefined()
 	expect(
@@ -891,7 +877,7 @@ test('holds manual-seqNo messages until first init and sends them unrenumbered',
 
 	// the gate never stalls the drain forever: the final acks complete the close
 	let done = drive(
-		'closing',
+		'ready',
 		{
 			type: 'writer.stream.write_response',
 			acks: [
@@ -913,22 +899,22 @@ test('does not locally dedup never-sent manual messages on a close-racing init',
 	drive('idle', { type: 'writer.start' }, ctx)
 	drive('connecting', { type: 'writer.write', message: msg(1, 5n) }, ctx)
 	drive('connecting', { type: 'writer.close' }, ctx)
-	drive('closing', { type: 'writer.pump' }, ctx)
+	drive('connecting', { type: 'writer.pump' }, ctx)
 
 	// server already has lastSeqNo=100 — greater than the buffered seqNo 5
 	let init = drive(
-		'closing',
+		'connecting',
 		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 100n },
 		ctx
 	)
 
 	// never-sent messages must not be reported as acknowledged/skipped locally
 	expect(init.emitted.filter((o) => o.type === 'writer.acknowledgments')).toHaveLength(0)
-	expect(ctx.bufferLength).toBe(1)
-	expect(init.state).toBe('closing')
+	expect(ctx.messages.length - ctx.inflightCount).toBe(1)
+	expect(init.state).toBe('ready')
 
 	// and the drain proceeds with the user's number
-	let pumped = drive('closing', { type: 'writer.pump' }, ctx)
+	let pumped = drive('ready', { type: 'writer.pump' }, ctx)
 	expect(pumped.effects.find((e) => e.type === 'writer.effect.send.write_request')).toBeDefined()
 })
 
@@ -947,8 +933,8 @@ test('errors the gated close when the first init never arrives', () => {
 		)
 	).toBe(true)
 
-	drive('closing', { type: 'writer.pump' }, ctx)
-	let timedOut = drive('closing', { type: 'writer.timer.graceful_timeout' }, ctx)
+	drive('connecting', { type: 'writer.pump' }, ctx)
+	let timedOut = drive('connecting', { type: 'writer.timer.graceful_timeout' }, ctx)
 
 	expect(timedOut.state).toBe('errored')
 	let types = timedOut.emitted.map((o) => o.type)
@@ -965,19 +951,23 @@ test('defers a flush requested during a gated close until the init unlocks the d
 	drive('connecting', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('connecting', { type: 'writer.close' }, ctx)
 
-	let flushed = drive('closing', { type: 'writer.flush', requestId: 1 }, ctx)
+	let flushed = drive('connecting', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(flushed.emitted).toHaveLength(0) // not drained — must not resolve now
-	expect(ctx.flushRequested).toBe(true)
+	expect(ctx.pendingFlushId).toBe(1)
 
 	// the pump requestFlush dispatched is still gated
-	let gated = drive('closing', { type: 'writer.pump' }, ctx)
+	let gated = drive('connecting', { type: 'writer.pump' }, ctx)
 	expect(gated.effects).toHaveLength(0)
 
 	// init → pump → ack: flush resolves inside the drain
-	drive('closing', { type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 0n }, ctx)
-	drive('closing', { type: 'writer.pump' }, ctx)
+	drive(
+		'connecting',
+		{ type: 'writer.stream.init_response', sessionId: 's1', lastSeqNo: 0n },
+		ctx
+	)
+	drive('ready', { type: 'writer.pump' }, ctx)
 	let acked = drive(
-		'closing',
+		'ready',
 		{ type: 'writer.stream.write_response', acks: [{ seqNo: 1n, status: 'written' }] },
 		ctx
 	)
@@ -991,13 +981,13 @@ test('defers a flush requested during a gated close until the init unlocks the d
 // ── resource / memory ────────────────────────────────────────────────────────────
 
 test('reclaims the message array as acknowledgments accumulate', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	let ctx = ctxWith({ hasEverConnected: true })
 
 	// Write, send and acknowledge many messages one at a time. Garbage compaction
 	// must keep the backing array bounded — a leak would grow it without limit.
 	for (let i = 0; i < 5000; i++) {
 		drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
-		drive('ready', { type: 'writer.pump' }, ctx)
+		drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 		drive(
 			'ready',
 			{
@@ -1012,25 +1002,23 @@ test('reclaims the message array as acknowledgments accumulate', () => {
 })
 
 test('releases the message buffer on destroy', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	let ctx = ctxWith({ hasEverConnected: true })
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
-	drive('ready', { type: 'writer.pump' }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 
 	let d = drive('ready', { type: 'writer.destroy', reason: new Error('x') }, ctx)
 
 	expect(d.state).toBe('closed')
 	expect(d.ctx.messages).toHaveLength(0)
-	expect(d.ctx.bufferLength).toBe(0)
-	expect(d.ctx.inflightLength).toBe(0)
+	expect(d.ctx.messages.length - d.ctx.inflightCount).toBe(0)
+	expect(d.ctx.inflightCount).toBe(0)
 })
 
 test('releases the message buffer on a terminal error', () => {
 	let ctx = ctxWith({
-		seqNoMode: 'auto',
 		hasEverConnected: true,
 		messages: [msg(1)],
-		bufferLength: 1,
 	})
 	let d = drive('reconnecting', { type: 'writer.timer.recovery_window' }, ctx)
 
@@ -1039,10 +1027,10 @@ test('releases the message buffer on a terminal error', () => {
 })
 
 test('releases recovered payloads after every reconnect without normal acknowledgments', () => {
-	let ctx = ctxWith({ seqNoMode: 'auto', hasEverConnected: true })
+	let ctx = ctxWith({ hasEverConnected: true })
 	for (let i = 1; i <= 10; i++) {
 		drive('ready', { type: 'writer.write', message: msg(i) }, ctx)
-		drive('ready', { type: 'writer.pump' }, ctx)
+		drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 		let recovered = drive(
 			'connecting',
 			{ type: 'writer.stream.init_response', sessionId: `s${i}`, lastSeqNo: BigInt(i) },
@@ -1055,8 +1043,8 @@ test('releases recovered payloads after every reconnect without normal acknowled
 			payloadBytes: 1n,
 		})
 		expect(ctx.messages).toHaveLength(0)
-		expect(ctx.bufferLength).toBe(0)
-		expect(ctx.inflightLength).toBe(0)
+		expect(ctx.messages.length - ctx.inflightCount).toBe(0)
+		expect(ctx.inflightCount).toBe(0)
 	}
 })
 
@@ -1081,8 +1069,8 @@ test('splits metadata-heavy batches before the encoded frame exceeds the limit',
 		)
 	}
 	let batches = 0
-	while (ctx.bufferLength > 0) {
-		let result = drive('ready', { type: 'writer.pump' }, ctx)
+	while (ctx.messages.length - ctx.inflightCount > 0) {
+		let result = drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 		for (let effect of result.effects) {
 			if (effect.type !== 'writer.effect.send.write_request') continue
 			let frame = create(StreamWriteMessage_FromClientSchema, {

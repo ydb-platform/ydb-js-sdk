@@ -8,8 +8,7 @@ import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
 
-import { type InitParams, WriterTransport } from './transport.js'
-import type { TransportOutput } from './transport-state.js'
+import { type InitParams, type TransportOutput, WriterTransport } from './transport.js'
 import type { TopicWriterOptions } from './types.js'
 import {
 	type GlobalTimerName,
@@ -41,19 +40,13 @@ let BACKOFF_MAX_MS = 30_000
 type WriterEnv = {
 	// I/O
 	transport: WriterTransport
-	codec: number
 	txIdentity?: { id: string; session: string }
 
 	// timer durations (ms)
-	startTimeoutMs: number
 	flushIntervalMs: number
 	updateTokenIntervalMs: number
 	gracefulShutdownTimeoutMs: number
 
-	// lifecycle
-	ac: AbortController
-	closedDeferred: PromiseWithResolvers<void>
-	isFinalized: boolean
 	// Keyed by GlobalTimerName — string-keyed like the reader, whose keys also
 	// carry a partition suffix (the writer has no partition timers).
 	timers: Map<string, ReturnType<typeof setTimeout>>
@@ -92,7 +85,7 @@ let backoffDelay = function backoffDelay(attempts: number): number {
 let delayFor = function delayFor(ctx: FullCtx, which: GlobalTimerName): number {
 	switch (which) {
 		case 'start_timeout':
-			return ctx.startTimeoutMs
+			return DEFAULT_START_TIMEOUT_MS
 		case 'retry_backoff':
 			return backoffDelay(ctx.attempts)
 		case 'recovery_window':
@@ -148,18 +141,12 @@ let mapTransportOutput = function mapTransportOutput(output: TransportOutput): W
 }
 
 let finalize = function finalize(ctx: FullCtx, reason: unknown): void {
-	if (ctx.isFinalized) {
-		return
-	}
-	ctx.isFinalized = true
 	for (let handle of ctx.timers.values()) {
 		clearTimeout(handle)
 	}
 	ctx.timers.clear()
 	releaseState(ctx)
 	ctx.transport.destroy(reason)
-	ctx.ac.abort(reason)
-	ctx.closedDeferred.resolve()
 }
 
 // Builds the writer FSM and binds its effects to real I/O: transport connect/send,
@@ -175,31 +162,26 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 	}
 
 	let transport = new WriterTransport(driver, initParams)
+	let codec = options.codec?.codec ?? Codec.RAW
 
 	let env: WriterEnv = {
 		// I/O
 		transport,
-		codec: options.codec?.codec ?? Codec.RAW,
 		...(options.tx && {
 			txIdentity: { id: options.tx.transactionId, session: options.tx.sessionId },
 		}),
 
 		// timer durations (ms)
-		startTimeoutMs: DEFAULT_START_TIMEOUT_MS,
 		flushIntervalMs: options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS,
 		updateTokenIntervalMs: options.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS,
 		gracefulShutdownTimeoutMs:
 			options.gracefulShutdownTimeoutMs ?? DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
 
-		// lifecycle
-		ac: new AbortController(),
-		closedDeferred: Promise.withResolvers<void>(),
-		isFinalized: false,
 		timers: new Map(),
 	}
 
 	let requestHeader = create(StreamWriteMessage_WriteRequestSchema, {
-		codec: env.codec,
+		codec,
 		...(env.txIdentity && { tx: create(TransactionIdentitySchema, env.txIdentity) }),
 	})
 	// FromClient wraps WriteRequest in a one-byte tag and, below 48 MiB, a four-byte length.
@@ -215,7 +197,7 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 		{
 			retryOnSchemeError: options.retryOnSchemeError ?? false,
 			recoveryWindowMs: options.recoveryWindowMs ?? DEFAULT_RECOVERY_WINDOW_MS,
-			codec: options.codec?.codec ?? Codec.RAW,
+			codec,
 		}
 	)
 
@@ -243,10 +225,6 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 			'writer.effect.transport.connect': (fullCtx, effect) => {
 				dbg.log('connect (getLastSeqNo=%s)', effect.getLastSeqNo)
 				fullCtx.transport.connect(effect.getLastSeqNo)
-			},
-
-			'writer.effect.transport.close': (fullCtx) => {
-				fullCtx.transport.close()
 			},
 
 			'writer.effect.send.write_request': (fullCtx, effect) => {
@@ -281,7 +259,7 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 
 				clearTimerByKey(fullCtx, which)
 
-				let repeating = which === 'flush_tick' || which === 'update_token'
+				let repeating = which === 'update_token' || which === 'flush_tick'
 				let delay = delayFor(fullCtx, which)
 				let event = timerEvent(which)
 

@@ -13,24 +13,11 @@ import {
 	createWriterCtx,
 	writerTransition,
 } from './writer-state.ts'
-import {
-	type TransportEffect,
-	type TransportEvent,
-	type TransportOutput,
-	type TransportState,
-	transportTransition,
-} from './transport-state.ts'
 import type { WriteAck } from './types.ts'
 
-// Model-based / property test. It wires the two REAL pure transitions
-// (writerTransition + transportTransition) to a protocol-faithful server model
-// and drives them with random sequences of user calls, network events and timer
-// firings, checking a set of invariants after every step. Timers are logical
-// (fired on demand), so races the wall clock never surfaces — e.g. start_timeout
-// firing just before a slow init — are explored deterministically.
-//
-// The point (per "test behavior, not code"): instead of hand-picking scenarios,
-// we assert the CONTRACT holds across the whole reachable space of orderings.
+// The real writer transition runs against an independent server model: messages
+// persist by seqNo, acknowledgments arrive in order, and a stream drop loses pending
+// replies. Logical timers let a watchdog race an init response deterministically.
 
 // Deterministic PRNG so any failure is reproducible from its seed.
 let mulberry32 = function mulberry32(seed: number): () => number {
@@ -46,12 +33,10 @@ let mulberry32 = function mulberry32(seed: number): () => number {
 let NEVER = new AbortController().signal
 
 type Sim = {
-	// FSMs (real transitions, mutable state + ctx)
+	// Real writer transition and its event mailbox
 	writerState: WriterState
 	writerCtx: WriterCtx
-	transportState: TransportState
 	writerEvents: WriterEvent[]
-	transportEvents: TransportEvent[]
 
 	// logical timers
 	armed: Set<GlobalTimerName>
@@ -59,7 +44,6 @@ type Sim = {
 	// transport/network + server model
 	streamOpen: boolean
 	initPending: boolean
-	pendingGetLastSeqNo: boolean // set by the writer's connect effect
 	streamGetLastSeqNo: boolean // captured when a stream opens
 	pendingAcks: WriteAck[] // received on the current stream, not yet delivered
 	persisted: Set<bigint> // server dedup store (survives reconnects)
@@ -87,13 +71,10 @@ let mkSim = function mkSim(maxInflightCount: number, maxBatchBytes: bigint, preS
 	return {
 		writerState: 'idle',
 		writerCtx: createWriterCtx({ maxInflightCount, maxBatchBytes }),
-		transportState: 'idle',
 		writerEvents: [],
-		transportEvents: [],
 		armed: new Set(),
 		streamOpen: false,
 		initPending: false,
-		pendingGetLastSeqNo: false,
 		streamGetLastSeqNo: false,
 		pendingAcks: [],
 		persisted,
@@ -113,7 +94,7 @@ let mkSim = function mkSim(maxInflightCount: number, maxBatchBytes: bigint, preS
 }
 
 let allDrained = function allDrained(ctx: WriterCtx): boolean {
-	return ctx.bufferLength === 0 && ctx.inflightLength === 0
+	return ctx.messages.length === 0
 }
 
 let timerEvent = function timerEvent(which: GlobalTimerName): WriterEvent {
@@ -130,30 +111,6 @@ let timerEvent = function timerEvent(which: GlobalTimerName): WriterEvent {
 			return { type: 'writer.timer.update_token' }
 		case 'graceful_timeout':
 			return { type: 'writer.timer.graceful_timeout' }
-	}
-}
-
-// Mirror of writer-runtime.ts mapTransportOutput (kept trivial + local on purpose).
-let mapTransportOutput = function mapTransportOutput(output: TransportOutput): WriterEvent | null {
-	switch (output.type) {
-		case 'transport.stream.init_response':
-			return {
-				type: 'writer.stream.init_response',
-				sessionId: output.sessionId,
-				lastSeqNo: output.lastSeqNo,
-				...(output.partitionId !== undefined && { partitionId: output.partitionId }),
-			}
-		case 'transport.stream.write_response':
-			return { type: 'writer.stream.write_response', acks: output.acks }
-		case 'transport.stream.token_response':
-			return { type: 'writer.stream.token_response' }
-		case 'transport.stream.disconnected':
-			return {
-				type: 'writer.stream.disconnected',
-				...('error' in output ? { error: output.error } : {}),
-			}
-		default:
-			return null
 	}
 }
 
@@ -196,8 +153,10 @@ let onWriterOutput = function onWriterOutput(sim: Sim, output: WriterOutput): vo
 let applyWriterEffect = function applyWriterEffect(sim: Sim, effect: WriterEffect): void {
 	switch (effect.type) {
 		case 'writer.effect.transport.connect':
-			sim.pendingGetLastSeqNo = effect.getLastSeqNo
-			sim.transportEvents.push({ type: 'transport.connect' })
+			sim.streamOpen = true
+			sim.initPending = true
+			sim.pendingAcks = []
+			sim.streamGetLastSeqNo = effect.getLastSeqNo
 			break
 		case 'writer.effect.send.write_request':
 			// A batch only reaches the server over a live, initialized stream.
@@ -209,11 +168,8 @@ let applyWriterEffect = function applyWriterEffect(sim: Sim, effect: WriterEffec
 			break
 		case 'writer.effect.send.update_token':
 			if (sim.streamOpen && !sim.initPending) {
-				sim.transportEvents.push({ type: 'transport.token' })
+				sim.writerEvents.push({ type: 'writer.stream.token_response' })
 			}
-			break
-		case 'writer.effect.transport.close':
-			sim.transportEvents.push({ type: 'transport.close' })
 			break
 		case 'writer.effect.timer.schedule':
 			// recovery_window is armed once per reconnect saga (runtime guard).
@@ -227,26 +183,23 @@ let applyWriterEffect = function applyWriterEffect(sim: Sim, effect: WriterEffec
 			break
 		case 'writer.effect.finalize':
 			sim.armed.clear()
-			sim.transportEvents.push({ type: 'transport.destroy', reason: effect.reason })
+			closeStream(sim)
 			break
 	}
 }
 
-let applyTransportEffect = function applyTransportEffect(sim: Sim, effect: TransportEffect): void {
-	switch (effect.type) {
-		case 'transport.effect.open_stream':
-			sim.streamOpen = true
-			sim.initPending = true
-			sim.pendingAcks = []
-			sim.streamGetLastSeqNo = sim.pendingGetLastSeqNo
-			break
-		case 'transport.effect.close_stream':
-		case 'transport.effect.finalize':
-			sim.streamOpen = false
-			sim.initPending = false
-			sim.pendingAcks = []
-			break
-	}
+let closeStream = function closeStream(sim: Sim): void {
+	sim.streamOpen = false
+	sim.initPending = false
+	sim.pendingAcks = []
+}
+
+let disconnect = function disconnect(sim: Sim, error?: unknown): void {
+	closeStream(sim)
+	sim.writerEvents.push({
+		type: 'writer.stream.disconnected',
+		...(error !== undefined && { error }),
+	})
 }
 
 let processWriterEvent = function processWriterEvent(sim: Sim, event: WriterEvent): void {
@@ -265,38 +218,13 @@ let processWriterEvent = function processWriterEvent(sim: Sim, event: WriterEven
 	}
 }
 
-let processTransportEvent = function processTransportEvent(sim: Sim, event: TransportEvent): void {
-	let runtime = {
-		state: sim.transportState,
-		signal: NEVER,
-		emit: (output: TransportOutput) => {
-			let mapped = mapTransportOutput(output)
-			if (mapped) {
-				sim.writerEvents.push(mapped)
-			}
-		},
-		dispatch: (next: TransportEvent) => sim.transportEvents.push(next),
-	}
-	let result = transportTransition({}, event, runtime)
-	if (result?.state) {
-		sim.transportState = result.state
-	}
-	for (let effect of result?.effects ?? []) {
-		applyTransportEffect(sim, effect)
-	}
-}
-
 let runToQuiescence = function runToQuiescence(sim: Sim): void {
 	let guard = 0
-	while (sim.writerEvents.length > 0 || sim.transportEvents.length > 0) {
+	while (sim.writerEvents.length > 0) {
 		if (++guard > 200_000) {
 			throw new Error('livelock: quiescence never reached (self-dispatch loop)')
 		}
-		if (sim.writerEvents.length > 0) {
-			processWriterEvent(sim, sim.writerEvents.shift()!)
-		} else {
-			processTransportEvent(sim, sim.transportEvents.shift()!)
-		}
+		processWriterEvent(sim, sim.writerEvents.shift()!)
 	}
 }
 
@@ -311,22 +239,21 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		if (sim.modelBytes !== 0n) {
 			throw new Error(`${where}: terminal but modelBytes=${sim.modelBytes}`)
 		}
+		if (
+			!sim.errored &&
+			!sim.destroyed &&
+			sim.persisted.size !== sim.preSeeded + sim.writtenCount
+		) {
+			throw new Error(
+				`${where}: graceful close lost writes: persisted=${sim.persisted.size}, expected=${sim.preSeeded + sim.writtenCount}`
+			)
+		}
 		return
 	}
 
 	let n = ctx.messages.length
-	if (!(ctx.inflightStart >= 0 && ctx.inflightStart <= ctx.bufferStart && ctx.bufferStart <= n)) {
-		throw new Error(
-			`${where}: pointer invariant broken inflightStart=${ctx.inflightStart} bufferStart=${ctx.bufferStart} len=${n}`
-		)
-	}
-	if (ctx.bufferLength !== n - ctx.bufferStart) {
-		throw new Error(`${where}: bufferLength=${ctx.bufferLength} != ${n - ctx.bufferStart}`)
-	}
-	if (ctx.inflightLength !== ctx.bufferStart - ctx.inflightStart) {
-		throw new Error(
-			`${where}: inflightLength=${ctx.inflightLength} != ${ctx.bufferStart - ctx.inflightStart}`
-		)
+	if (ctx.inflightCount < 0 || ctx.inflightCount > n) {
+		throw new Error(`${where}: invalid in-flight prefix ${ctx.inflightCount} for ${n} messages`)
 	}
 
 	if (ctx.lastSeqNo < sim.prevLastSeqNo) {
@@ -355,25 +282,18 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		}
 	}
 
-	// The byte budget and flush-liveness only apply while the facade budget is
-	// authoritative — i.e. in the live, write-accepting states. The closing drain
-	// keeps emitting acks and resolves a pending flush once drained, but the model's
-	// step generator does not track the drain-vs-terminate race precisely enough to
-	// assert liveness there; the facade also resets #bufferedBytes to 0 on close.
-	if (sim.writerState !== 'closing') {
-		let expected = 0n
-		for (let i = ctx.inflightStart; i < n; i++) {
-			expected += BigInt(ctx.messages[i]!.data.length)
-		}
-		if (sim.modelBytes !== expected) {
-			throw new Error(
-				`${where}: byte budget drift modelBytes=${sim.modelBytes} expected=${expected}`
-			)
-		}
+	let expected = 0n
+	for (let i = 0; i < n; i++) {
+		expected += BigInt(ctx.messages[i]!.data.length)
+	}
+	if (sim.modelBytes !== expected) {
+		throw new Error(
+			`${where}: byte budget drift modelBytes=${sim.modelBytes} expected=${expected}`
+		)
+	}
 
-		if (sim.outstandingFlush && allDrained(ctx)) {
-			throw new Error(`${where}: flush left unresolved though the window is drained`)
-		}
+	if (sim.outstandingFlush && allDrained(ctx)) {
+		throw new Error(`${where}: flush left unresolved though the window is drained`)
 	}
 }
 
@@ -401,22 +321,21 @@ let cooldown = function cooldown(sim: Sim): void {
 			sim.initPending = false
 			sim.sessions++
 			// Healthy recovery in cooldown: always report the true high-water mark.
-			sim.transportEvents.push({
-				type: 'transport.init',
+			sim.writerEvents.push({
+				type: 'writer.stream.init_response',
 				sessionId: `s${sim.sessions}`,
 				lastSeqNo: sim.serverLastSeqNo,
 			})
 			runToQuiescence(sim)
 			continue
 		}
-		if (sim.writerCtx.bufferLength > 0 && sim.armed.has('flush_tick')) {
-			sim.writerEvents.push(timerEvent('flush_tick')) // triggers pump
-		}
+
+		if (sim.armed.has('flush_tick')) sim.writerEvents.push(timerEvent('flush_tick'))
 		runToQuiescence(sim)
 		if (sim.pendingAcks.length > 0) {
 			let acks = sim.pendingAcks
 			sim.pendingAcks = []
-			sim.transportEvents.push({ type: 'transport.write', acks })
+			sim.writerEvents.push({ type: 'writer.stream.write_response', acks })
 			runToQuiescence(sim)
 		}
 	}
@@ -444,10 +363,11 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 	let lastAction = 'start'
 	for (let step = 0; step < cfg.steps && !sim.terminal; step++) {
 		let live =
-			sim.writerState === 'idle' ||
-			sim.writerState === 'connecting' ||
-			sim.writerState === 'ready' ||
-			sim.writerState === 'reconnecting'
+			!sim.writerCtx.closeRequested &&
+			(sim.writerState === 'idle' ||
+				sim.writerState === 'connecting' ||
+				sim.writerState === 'ready' ||
+				sim.writerState === 'reconnecting')
 
 		let actions: Array<{ w: number; name: string; run: () => void }> = []
 
@@ -514,8 +434,8 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 					// and one that reports 0 (messages are resent).
 					let reported =
 						sim.streamGetLastSeqNo || randInt(2) === 0 ? sim.serverLastSeqNo : 0n
-					sim.transportEvents.push({
-						type: 'transport.init',
+					sim.writerEvents.push({
+						type: 'writer.stream.init_response',
 						sessionId: `s${sim.sessions}`,
 						lastSeqNo: reported,
 					})
@@ -530,7 +450,7 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 					// The server acks an in-order prefix of what it received.
 					let k = 1 + randInt(sim.pendingAcks.length)
 					let acks = sim.pendingAcks.splice(0, k)
-					sim.transportEvents.push({ type: 'transport.write', acks })
+					sim.writerEvents.push({ type: 'writer.stream.write_response', acks })
 				},
 			})
 		}
@@ -538,25 +458,17 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 			actions.push({
 				w: 3,
 				name: 'drop',
-				run: () => sim.transportEvents.push({ type: 'transport.ended' }),
+				run: () => disconnect(sim),
 			})
 			actions.push({
 				w: 3,
 				name: 'fail-retryable',
-				run: () =>
-					sim.transportEvents.push({
-						type: 'transport.error',
-						error: new YDBError(StatusIds_StatusCode.UNAVAILABLE, []),
-					}),
+				run: () => disconnect(sim, new YDBError(StatusIds_StatusCode.UNAVAILABLE, [])),
 			})
 			actions.push({
 				w: 1,
 				name: 'fail-fatal',
-				run: () =>
-					sim.transportEvents.push({
-						type: 'transport.error',
-						error: new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []),
-					}),
+				run: () => disconnect(sim, new YDBError(StatusIds_StatusCode.SCHEME_ERROR, [])),
 			})
 		}
 		for (let which of sim.armed) {

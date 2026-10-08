@@ -3,12 +3,12 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
-import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
+import { isRetryableStreamError } from '@ydbjs/retry'
 
 import { TopicPartitionSession } from '../partition-session.js'
 
 // The pure half of the reader: states, context, and a synchronous transition
-// with no I/O. Mirrors writer-state.ts. The transport FSM owns one streamRead
+// with no I/O. Mirrors writer-state.ts. The transport owns one streamRead
 // stream and forwards server frames; the runtime's mapTransportOutput CLASSIFIES
 // them into the typed `reader.stream.*` events below, so this transition works on
 // clean domain events — never raw protobuf.
@@ -16,7 +16,7 @@ import { TopicPartitionSession } from '../partition-session.js'
 // The full transition map (table + diagram) lives in packages/topic/ARCHITECTURE.md —
 // update it in the same commit when you change this dispatch.
 //
-// KEY DESIGN (see project decisions): all reader state is keyed by the STABLE
+// Partition state is keyed by the stable
 // (topicPath, partitionId) pair — partitionKey() — never the ephemeral
 // partitionSessionId (proto: "unique inside one RPC call"). partition_id alone is
 // per-topic, so a multi-topic reader routinely sees the same id from several topics.
@@ -47,30 +47,17 @@ export let partitionKey = function partitionKey(path: string, partitionId: bigin
 	return `${path}|${partitionId}`
 }
 
-// A commit awaiting the server's high-water-mark ack. `targetOffset` controls promise
-// completion; `wireRanges` is only the unshared coverage this commit put (or will put)
-// on the wire. A fully claimed duplicate has no wire ranges but still waits for the
-// server watermark instead of resolving optimistically.
-export type PendingCommit = {
+// Every commit call waits for the server watermark, including repeated requests
+// for ranges already pending on the partition.
+export type CommitWaiter = {
 	targetOffset: bigint
-	wireRanges: OffsetRange[]
 	waiterId: number
 }
 
 // Everything the reader tracks about one partition, keyed by the stable partitionKey.
 export type PartitionEntry = {
-	// identity — stable across reconnects
-	partitionId: bigint
-	path: string
-
-	// current ephemeral grant (replaced on each reconnect/reassign)
-	partitionSessionId: bigint
+	// Each grant creates a new object, even when a new stream reuses the wire id.
 	session: TopicPartitionSession
-	// Identity of the latest grant (start_partition), stamped through the async
-	// onPartitionSessionStart handshake: partition session ids restart at 1 per
-	// stream, so without it a hook completing after a reconnect could answer a NEW
-	// grant that reused the id — the server kills the session for a double response.
-	grantId: number
 	// True from the grant until its start_ready is honored. While set, commits are
 	// buffered (the ack performs the single send — a commit must never hit the wire
 	// twice, nor before the start response), and the reassign gc treats the entry as
@@ -78,7 +65,6 @@ export type PartitionEntry = {
 	ackPending: boolean
 
 	// offset tracking
-	partitionOffsets: OffsetRange
 	partitionCommittedOffset: bigint
 	// A start response requests this offset but does not acknowledge its durability.
 	requestedCommitOffset: bigint | undefined
@@ -88,12 +74,9 @@ export type PartitionEntry = {
 	// (retention, readFrom skips) are attributed to the NEXT delivered message —
 	// and a delivered-but-unacked message is never covered by another message's range.
 	deliveredWatermark: bigint
-	// Offsets already claimed by a sent/buffered commit. Re-sending an overlapping
-	// or rewound range is session-fatal (BAD_REQUEST "double committing is
-	// forbidden"), so every new commit subtracts this coverage first. Rebuilt from
-	// the narrowed pending commits on each grant; compacted as the server watermark
-	// advances.
-	claimedRanges: OffsetRange[]
+	// Requested ranges not yet covered by the server watermark. They belong to the
+	// partition, independently of how many commit promises await their confirmation.
+	pendingRanges: OffsetRange[]
 
 	// lifecycle
 	state: 'active' | 'stopping-graceful' | 'stopped' | 'ended'
@@ -101,7 +84,7 @@ export type PartitionEntry = {
 	// completed; the stop response goes out only when stopReady AND the pending
 	// commits drained (either order), or the per-partition timeout escalates.
 	stopReady: boolean
-	pendingCommits: PendingCommit[]
+	commitWaiters: CommitWaiter[]
 }
 
 // One partition's slice of a ReadResponse — the structural shape the transition
@@ -165,8 +148,6 @@ export type ReaderCtx = {
 	partitions: Map<string, PartitionEntry>
 	// ephemeral partitionSessionId -> partitionKey, rebuilt each stream
 	sessionIndex: Map<bigint, string>
-	// monotonic grant counter — source of PartitionEntry.grantId
-	grantSeq: number
 
 	// Unreleased ReadResponse.bytesSize, including responses retained across reconnects.
 	bufferedBytes: bigint
@@ -243,13 +224,10 @@ export type ReaderEvent =
 	| ReaderStreamEvent
 	| { type: 'reader.stream.disconnected'; error?: unknown }
 	// The async onPartitionSessionStart hook finished (runs detached in the runtime so
-	// user code never blocks the drain loop); carries the hook's offset overrides and
-	// the grantId of the grant it answers (guards against stale completions).
+	// user code never blocks the drain loop); carries the exact session it answers.
 	| {
 			type: 'reader.partition.start_ready'
-			partitionSessionId: bigint
-			partitionKey: string
-			grantId: number
+			session: TopicPartitionSession
 			readOffset?: bigint
 			commitOffset?: bigint
 	  }
@@ -257,8 +235,7 @@ export type ReaderEvent =
 	// response may go out once the pending commits drain too.
 	| {
 			type: 'reader.partition.stop_ready'
-			partitionKey: string
-			grantId: number
+			session: TopicPartitionSession
 	  }
 	// timers
 	| { type: 'reader.timer.start_timeout' }
@@ -291,13 +268,10 @@ export type ReaderEffect =
 			commitOffset?: bigint
 	  }
 	| { type: 'reader.effect.send.update_token' }
-	| { type: 'reader.effect.transport.close' }
 	// Runs the async onPartitionSessionStart callback then sends the response.
 	| {
 			type: 'reader.effect.partition.start_hook'
-			partitionSessionId: bigint
-			partitionKey: string
-			grantId: number
+			session: TopicPartitionSession
 			committedOffset: bigint
 			partitionOffsets: OffsetRange
 	  }
@@ -306,9 +280,7 @@ export type ReaderEffect =
 	// the hook runs — this is the documented "last chance to commit".
 	| {
 			type: 'reader.effect.partition.stop_hook'
-			partitionSessionId: bigint
-			partitionKey: string
-			grantId: number
+			session: TopicPartitionSession
 			committedOffset: bigint
 	  }
 	| ({ type: 'reader.effect.timer.schedule' } & TimerRef)
@@ -368,7 +340,6 @@ export let createReaderCtx = function createReaderCtx(
 
 		partitions: new Map(),
 		sessionIndex: new Map(),
-		grantSeq: 0,
 
 		bufferedBytes: 0n,
 
@@ -395,7 +366,7 @@ export let isRetryableReaderError = function isRetryableReaderError(
 	) {
 		return true
 	}
-	return isRetryableStreamError(error) || isRetryableError(error, false)
+	return isRetryableStreamError(error)
 }
 
 let clearConnectTimersEffects: ReaderEffect[] = [
@@ -496,21 +467,19 @@ let compactCoverage = function compactCoverage(
 // waiterIds to resolve. Used by both the commit-ack path and the reconnect reconcile.
 let drainCommits = function drainCommits(entry: PartitionEntry, committedOffset: bigint): number[] {
 	let resolved: number[] = []
-	let kept: PendingCommit[] = []
-	for (let pending of entry.pendingCommits) {
+	let kept: CommitWaiter[] = []
+	for (let pending of entry.commitWaiters) {
 		if (pending.targetOffset <= committedOffset) {
 			resolved.push(pending.waiterId)
 		} else {
 			kept.push(pending)
 		}
 	}
-	entry.pendingCommits = kept
+	entry.commitWaiters = kept
 	return resolved
 }
 
-// Re-grant reconcile: narrow every pending's wire ranges to server truth, resolve by
-// target watermark, and rebuild the claimed coverage from what is left. Empty wire
-// ranges remain pending when another in-flight commit owns their coverage.
+// Re-grant reconcile preserves only unconfirmed coverage and pending waiters.
 let narrowPendings = function narrowPendings(
 	entry: PartitionEntry,
 	committedOffset: bigint,
@@ -519,10 +488,7 @@ let narrowPendings = function narrowPendings(
 	for (let waiterId of drainCommits(entry, committedOffset)) {
 		runtime.emit({ type: 'reader.commit.resolved', waiterId })
 	}
-	for (let pending of entry.pendingCommits) {
-		pending.wireRanges = compactCoverage(pending.wireRanges, committedOffset)
-	}
-	entry.claimedRanges = mergeRanges(entry.pendingCommits.flatMap((pending) => pending.wireRanges))
+	entry.pendingRanges = compactCoverage(entry.pendingRanges, committedOffset)
 }
 
 // Advance the server-confirmed committed watermark; emits partition.committed (the
@@ -538,13 +504,13 @@ let advanceCommitted = function advanceCommitted(
 	}
 	entry.partitionCommittedOffset = committedOffset
 	entry.session.partitionCommittedOffset = committedOffset
-	entry.claimedRanges = compactCoverage(entry.claimedRanges, committedOffset)
+	entry.pendingRanges = compactCoverage(entry.pendingRanges, committedOffset)
 	if (entry.deliveredWatermark < committedOffset) {
 		entry.deliveredWatermark = committedOffset
 	}
 	runtime.emit({
 		type: 'reader.partition.committed',
-		partitionId: entry.partitionId,
+		partitionId: entry.session.partitionId,
 		committedOffset,
 		session: entry.session,
 	})
@@ -605,7 +571,7 @@ let readResponse = function readResponse(
 		// belong to the app — the soft-stop contract is "finish processing and commit".
 		if (
 			!entry ||
-			entry.partitionSessionId !== partitionData.partitionSessionId ||
+			entry.session.partitionSessionId !== partitionData.partitionSessionId ||
 			entry.state === 'stopped' ||
 			entry.state === 'ended'
 		) {
@@ -632,40 +598,31 @@ let upsertPartitionEntry = function upsertPartitionEntry(
 	event: Extract<ReaderEvent, { type: 'reader.stream.start_partition' }>,
 	session: TopicPartitionSession
 ): PartitionEntry {
-	let { partitionSessionId, partitionId, path, committedOffset, partitionOffsets } = event
+	let { partitionSessionId, partitionId, path, committedOffset } = event
 	let key = partitionKey(path, partitionId)
 
 	let entry = ctx.partitions.get(key)
-	ctx.grantSeq += 1
 	if (entry === undefined) {
 		entry = {
-			partitionId,
-			path,
-
-			partitionSessionId,
 			session,
-			grantId: ctx.grantSeq,
 			ackPending: true,
 
-			partitionOffsets,
 			partitionCommittedOffset: committedOffset,
 			requestedCommitOffset: undefined,
 			deliveredWatermark: committedOffset,
-			claimedRanges: [],
+			pendingRanges: [],
 
 			state: 'active',
 			stopReady: false,
-			pendingCommits: [],
+			commitWaiters: [],
 		}
 		ctx.partitions.set(key, entry)
 	} else {
 		// Reconnect/reassign: drop the superseded session id from the index (so a late
 		// message on the dead session can never misroute), install the fresh session
 		// object + id, keep pending commits for the reconcile in startPartitionSession.
-		ctx.sessionIndex.delete(entry.partitionSessionId)
+		ctx.sessionIndex.delete(entry.session.partitionSessionId)
 		entry.session = session
-		entry.partitionSessionId = partitionSessionId
-		entry.partitionOffsets = partitionOffsets
 		entry.requestedCommitOffset = undefined
 		// Server truth may only move the committed mark forward.
 		if (entry.partitionCommittedOffset < committedOffset) {
@@ -675,7 +632,6 @@ let upsertPartitionEntry = function upsertPartitionEntry(
 		entry.deliveredWatermark = entry.partitionCommittedOffset
 		entry.state = 'active'
 		entry.stopReady = false
-		entry.grantId = ctx.grantSeq
 		entry.ackPending = true
 	}
 	ctx.sessionIndex.set(partitionSessionId, key)
@@ -725,9 +681,7 @@ let startPartitionSession = function startPartitionSession(
 	// onPartitionSessionStart callback, so the runtime sends it from an effect.
 	effects.push({
 		type: 'reader.effect.partition.start_hook',
-		partitionSessionId,
-		partitionKey: key,
-		grantId: entry.grantId,
+		session,
 		committedOffset,
 		partitionOffsets,
 	})
@@ -745,10 +699,10 @@ let markStopped = function markStopped(
 	entry.session.stop()
 	entry.state = 'stopped'
 	entry.requestedCommitOffset = undefined
-	ctx.sessionIndex.delete(entry.partitionSessionId)
+	ctx.sessionIndex.delete(entry.session.partitionSessionId)
 	runtime.emit({
 		type: 'reader.partition.stopped',
-		partitionId: entry.partitionId,
+		partitionId: entry.session.partitionId,
 		reason,
 		session: entry.session,
 	})
@@ -796,7 +750,7 @@ let stopPartitionSession = function stopPartitionSession(
 				partitionKey: key,
 			},
 		]
-		if (entry.pendingCommits.length > 0) {
+		if (entry.commitWaiters.length > 0) {
 			effects.push({
 				type: 'reader.effect.timer.schedule',
 				which: 'partition_reassign_gc',
@@ -816,9 +770,7 @@ let stopPartitionSession = function stopPartitionSession(
 	let effects: ReaderEffect[] = [
 		{
 			type: 'reader.effect.partition.stop_hook',
-			partitionSessionId: event.partitionSessionId,
-			partitionKey: key,
-			grantId: entry.grantId,
+			session: entry.session,
 			committedOffset: entry.partitionCommittedOffset,
 		},
 		{
@@ -838,8 +790,8 @@ let stopPartitionSession = function stopPartitionSession(
 }
 
 // The async onPartitionSessionStart hook finished — answer the server, unless the
-// grant was superseded while the hook ran: grantId pins the exact grant (session ids
-// collide across reconnects — they restart at 1 per stream), and ackPending dedupes
+// grant was superseded while the hook ran: object identity pins the exact grant
+// despite wire ids being reused across streams, and ackPending dedupes
 // a double completion. Only now is the session fully live: the reassign gc is
 // released and the pending commits are sent, strictly AFTER the start response and
 // exactly once (recordCommit buffers while ackPending).
@@ -847,13 +799,14 @@ let ackPartitionStart = function ackPartitionStart(
 	ctx: ReaderCtx,
 	event: Extract<ReaderEvent, { type: 'reader.partition.start_ready' }>
 ): ReaderEffect[] {
-	let entry = ctx.partitions.get(event.partitionKey)
-	if (!entry || entry.grantId !== event.grantId || !entry.ackPending) {
+	let key = partitionKey(event.session.topicPath, event.session.partitionId)
+	let entry = ctx.partitions.get(key)
+	if (!entry || entry.session !== event.session || !entry.ackPending) {
 		return []
 	}
 	if (
 		entry.state !== 'active' ||
-		ctx.sessionIndex.get(entry.partitionSessionId) !== event.partitionKey
+		ctx.sessionIndex.get(entry.session.partitionSessionId) !== key
 	) {
 		return []
 	}
@@ -868,32 +821,27 @@ let ackPartitionStart = function ackPartitionStart(
 	let effects: ReaderEffect[] = [
 		{
 			type: 'reader.effect.send.start_response',
-			partitionSessionId: event.partitionSessionId,
+			partitionSessionId: event.session.partitionSessionId,
 			...(event.readOffset !== undefined && { readOffset: event.readOffset }),
 			...(event.commitOffset !== undefined && { commitOffset: event.commitOffset }),
 		},
 		{
 			type: 'reader.effect.timer.clear',
 			which: 'partition_reassign_gc',
-			partitionKey: event.partitionKey,
+			partitionKey: key,
 		},
 	]
-	// The single send of everything buffered for this partition (reconciled pendings
-	// from before the reconnect and commits issued during the hook window alike) —
-	// each pending replays its exact remaining ranges, never a gap-covering span.
-	for (let pending of entry.pendingCommits) {
-		let ranges = compactCoverage(
-			pending.wireRanges,
-			entry.requestedCommitOffset ?? entry.partitionCommittedOffset
-		)
-		if (ranges.length > 0) {
-			effects.push(commitEffect(entry.partitionSessionId, ranges))
-		}
+	let ranges = compactCoverage(
+		entry.pendingRanges,
+		entry.requestedCommitOffset ?? entry.partitionCommittedOffset
+	)
+	if (ranges.length > 0) {
+		effects.push(commitEffect(entry.session.partitionSessionId, ranges))
 	}
 	if (entry.requestedCommitOffset !== undefined) {
 		effects.push({
 			type: 'reader.effect.send.partition_status',
-			partitionSessionId: entry.partitionSessionId,
+			partitionSessionId: entry.session.partitionSessionId,
 		})
 	}
 	return effects
@@ -901,34 +849,35 @@ let ackPartitionStart = function ackPartitionStart(
 
 // The async onPartitionSessionStop hook finished — the graceful stop may be
 // acknowledged once the pending commits drain too. Guards mirror ackPartitionStart:
-// grantId pins the grant, state pins the phase (a force stop or reconnect while the
+// session identity pins the grant, state pins the phase (a force stop or reconnect while the
 // hook ran makes this a no-op).
 let ackPartitionStop = function ackPartitionStop(
 	ctx: ReaderCtx,
 	event: Extract<ReaderEvent, { type: 'reader.partition.stop_ready' }>,
 	runtime: ReaderRuntime
 ): ReaderEffect[] {
-	let entry = ctx.partitions.get(event.partitionKey)
-	if (!entry || entry.grantId !== event.grantId || entry.state !== 'stopping-graceful') {
+	let key = partitionKey(event.session.topicPath, event.session.partitionId)
+	let entry = ctx.partitions.get(key)
+	if (!entry || entry.session !== event.session || entry.state !== 'stopping-graceful') {
 		return []
 	}
 	entry.stopReady = true
-	if (entry.pendingCommits.length > 0 || entry.requestedCommitOffset !== undefined) {
+	if (entry.commitWaiters.length > 0 || entry.requestedCommitOffset !== undefined) {
 		return []
 	}
-	let sessionId = entry.partitionSessionId
-	let live = ctx.sessionIndex.get(sessionId) === event.partitionKey
+	let sessionId = entry.session.partitionSessionId
+	let live = ctx.sessionIndex.get(sessionId) === key
 	markStopped(ctx, entry, 'graceful', runtime)
 	let effects: ReaderEffect[] = [
 		{
 			type: 'reader.effect.timer.clear',
 			which: 'partition_commit_status',
-			partitionKey: event.partitionKey,
+			partitionKey: key,
 		},
 		{
 			type: 'reader.effect.timer.clear',
 			which: 'partition_graceful_timeout',
-			partitionKey: event.partitionKey,
+			partitionKey: key,
 		},
 	]
 	// Answer only over the stream that asked (session ids restart per stream).
@@ -959,7 +908,7 @@ let forceStopStalledGraceful = function forceStopStalledGraceful(
 	entry.requestedCommitOffset = undefined
 	runtime.emit({
 		type: 'reader.partition.stopped',
-		partitionId: entry.partitionId,
+		partitionId: entry.session.partitionId,
 		reason: 'graceful',
 		session: entry.session,
 	})
@@ -969,11 +918,11 @@ let forceStopStalledGraceful = function forceStopStalledGraceful(
 	// partition — releasing it is session-fatal (BAD_REQUEST) and deleting its index
 	// mapping would silently drop that partition's reads. A stale stop needs no
 	// answer at all: the server re-requests it on the new session if still relevant.
-	if (ctx.sessionIndex.get(entry.partitionSessionId) === key) {
-		ctx.sessionIndex.delete(entry.partitionSessionId)
-		effects.push(stopResponseEffect(entry.partitionSessionId))
+	if (ctx.sessionIndex.get(entry.session.partitionSessionId) === key) {
+		ctx.sessionIndex.delete(entry.session.partitionSessionId)
+		effects.push(stopResponseEffect(entry.session.partitionSessionId))
 	}
-	if (entry.pendingCommits.length > 0) {
+	if (entry.commitWaiters.length > 0) {
 		effects.push({
 			type: 'reader.effect.timer.schedule',
 			which: 'partition_reassign_gc',
@@ -1017,7 +966,7 @@ let commitOffsetResponse = function commitOffsetResponse(
 			entry.state === 'stopping-graceful' &&
 			entry.stopReady &&
 			entry.requestedCommitOffset === undefined &&
-			entry.pendingCommits.length === 0
+			entry.commitWaiters.length === 0
 		) {
 			markStopped(ctx, entry, 'graceful', runtime)
 			effects.push(stopResponseEffect(committed.partitionSessionId), {
@@ -1048,7 +997,7 @@ let endPartitionSession = function endPartitionSession(
 	entry.state = 'ended'
 	runtime.emit({
 		type: 'reader.partition.stopped',
-		partitionId: entry.partitionId,
+		partitionId: entry.session.partitionId,
 		reason: 'ended',
 		session: entry.session,
 	})
@@ -1129,7 +1078,7 @@ let recordCommit = function recordCommit(
 	// remains pending until the server confirms its target watermark.
 	let wireRanges = subtractCovered(
 		requestedRanges,
-		entry.claimedRanges,
+		entry.pendingRanges,
 		entry.partitionCommittedOffset
 	)
 
@@ -1150,8 +1099,8 @@ let recordCommit = function recordCommit(
 		return []
 	}
 
-	entry.pendingCommits.push({ targetOffset, wireRanges, waiterId: event.waiterId })
-	entry.claimedRanges = mergeRanges([...entry.claimedRanges, ...wireRanges])
+	entry.commitWaiters.push({ targetOffset, waiterId: event.waiterId })
+	entry.pendingRanges = mergeRanges([...entry.pendingRanges, ...wireRanges])
 
 	// An initialized stream can commit while retained responses delay its first read request.
 	// initializeSession clears sessionIndex and only start_partition repopulates it, so a commit
@@ -1168,7 +1117,7 @@ let recordCommit = function recordCommit(
 	let sessionLive =
 		(runtime.state === 'ready' ||
 			(runtime.state === 'connecting' && ctx.sessionId !== undefined)) &&
-		ctx.sessionIndex.get(entry.partitionSessionId) === event.partitionKey
+		ctx.sessionIndex.get(entry.session.partitionSessionId) === event.partitionKey
 	let committable =
 		entry.state === 'active' || entry.state === 'stopping-graceful' || entry.state === 'ended'
 	if (sessionLive && committable && !entry.ackPending && wireRanges.length > 0) {
@@ -1176,7 +1125,7 @@ let recordCommit = function recordCommit(
 			wireRanges,
 			entry.requestedCommitOffset ?? entry.partitionCommittedOffset
 		)
-		return ranges.length > 0 ? [commitEffect(entry.partitionSessionId, ranges)] : []
+		return ranges.length > 0 ? [commitEffect(entry.session.partitionSessionId, ranges)] : []
 	}
 	return []
 }
@@ -1224,10 +1173,10 @@ let terminate = function terminate(
 
 	// Reject every outstanding commit exactly once — the facade settles the waiterId.
 	for (let entry of ctx.partitions.values()) {
-		for (let pending of entry.pendingCommits) {
+		for (let pending of entry.commitWaiters) {
 			runtime.emit({ type: 'reader.commit.rejected', waiterId: pending.waiterId, reason })
 		}
-		entry.pendingCommits = []
+		entry.commitWaiters = []
 	}
 
 	runtime.emit({ type: 'reader.closed', reason })
@@ -1238,15 +1187,7 @@ let terminate = function terminate(
 		// Terminal: the runtime seals itself after the finalize effect runs, so the
 		// buffered lifecycle outputs (reader.closed / rejects) are delivered first.
 		final: { reason },
-		effects: [
-			{ type: 'reader.effect.transport.close' },
-			{ type: 'reader.effect.timer.clear', which: 'start_timeout' },
-			{ type: 'reader.effect.timer.clear', which: 'retry_backoff' },
-			{ type: 'reader.effect.timer.clear', which: 'recovery_window' },
-			{ type: 'reader.effect.timer.clear', which: 'update_token' },
-			{ type: 'reader.effect.timer.clear', which: 'graceful_timeout' },
-			{ type: 'reader.effect.finalize', reason },
-		],
+		effects: [{ type: 'reader.effect.finalize', reason }],
 	}
 }
 
@@ -1280,7 +1221,7 @@ let initializeSession = function initializeSession(
 	// the waiters instead of leaving them pending forever. start_partition clears the
 	// timer when the partition does come back.
 	for (let [key, entry] of ctx.partitions) {
-		if (entry.pendingCommits.length > 0) {
+		if (entry.commitWaiters.length > 0) {
 			effects.push({
 				type: 'reader.effect.timer.schedule',
 				which: 'partition_reassign_gc',
@@ -1356,7 +1297,7 @@ let toClosing = function toClosing(
 let hasPendingWork = function hasPendingWork(ctx: ReaderCtx): boolean {
 	for (let entry of ctx.partitions.values()) {
 		if (
-			entry.pendingCommits.length > 0 ||
+			entry.commitWaiters.length > 0 ||
 			entry.requestedCommitOffset !== undefined ||
 			entry.state === 'stopping-graceful'
 		) {
@@ -1376,7 +1317,7 @@ let gcPartition = function gcPartition(ctx: ReaderCtx, key: string, runtime: Rea
 	}
 	// A granted-and-acked session is live — the ack cleared this timer, so a firing
 	// against it is a stale race; ignore it.
-	if (ctx.sessionIndex.get(entry.partitionSessionId) === key && !entry.ackPending) {
+	if (ctx.sessionIndex.get(entry.session.partitionSessionId) === key && !entry.ackPending) {
 		return
 	}
 	// Two reapable cases: the partition was never re-granted on this stream
@@ -1384,16 +1325,16 @@ let gcPartition = function gcPartition(ctx: ReaderCtx, key: string, runtime: Rea
 	// completed (a hung onPartitionSessionStart hook) — either way the waiters would
 	// hang until terminal close. Reject them; keep an un-acked granted entry so a
 	// late start_ready can still answer the server (it just has nothing to re-send).
-	for (let pending of entry.pendingCommits) {
+	for (let pending of entry.commitWaiters) {
 		runtime.emit({
 			type: 'reader.commit.rejected',
 			waiterId: pending.waiterId,
 			reason: new Error(`Partition ${key} reassigned before commit was acknowledged`),
 		})
 	}
-	entry.pendingCommits = []
-	entry.claimedRanges = []
-	if (ctx.sessionIndex.get(entry.partitionSessionId) !== key) {
+	entry.commitWaiters = []
+	entry.pendingRanges = []
+	if (ctx.sessionIndex.get(entry.session.partitionSessionId) !== key) {
 		ctx.partitions.delete(key)
 	}
 }
@@ -1487,13 +1428,13 @@ export let readerTransition = function readerTransition(
 		let entry = ctx.partitions.get(event.partitionKey)
 		if (
 			entry?.requestedCommitOffset !== undefined &&
-			ctx.sessionIndex.get(entry.partitionSessionId) === event.partitionKey
+			ctx.sessionIndex.get(entry.session.partitionSessionId) === event.partitionKey
 		) {
 			return {
 				effects: [
 					{
 						type: 'reader.effect.send.partition_status',
-						partitionSessionId: entry.partitionSessionId,
+						partitionSessionId: entry.session.partitionSessionId,
 					},
 				],
 			}

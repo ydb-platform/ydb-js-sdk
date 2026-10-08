@@ -15,8 +15,6 @@ export type ReaderScope = {
 	topics: string[]
 }
 
-// One-shot config snapshot, published on `opened` so late-joining subscribers still
-// learn the reader's effective configuration.
 export type ReaderConfig = {
 	maxBufferBytes: bigint
 	updateTokenIntervalMs: number

@@ -53,7 +53,7 @@ export type TopicWriterOptions = {
 	maxBufferBytes?: bigint
 	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number
-	// Background flush cadence in ms — bounds how long a small batch waits. Default 1000.
+	// Maximum background wait for a partial batch in ms. Default 1000.
 	flushIntervalMs?: number
 
 	// How often to refresh the auth token on the stream. Default 60s.

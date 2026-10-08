@@ -95,10 +95,9 @@ test('assigns auto seqNos at send time and acknowledges a flush', async () => {
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
+	let flushed = writer.flush()
 	await settle()
 
-	// Eager per-write pumping may split these across batches — assert the seqNos
-	// were assigned sequentially at send time, in order, across all sent writes.
 	let seqNos = stream.sent
 		.filter((m) => m.clientMessage.case === 'writeRequest')
 		.flatMap((m) =>
@@ -108,7 +107,6 @@ test('assigns auto seqNos at send time and acknowledges a flush', async () => {
 		)
 	expect(seqNos).toEqual([1n, 2n])
 
-	let flushed = writer.flush()
 	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
 
 	await expect(flushed).resolves.toBe(2n)
@@ -116,13 +114,19 @@ test('assigns auto seqNos at send time and acknowledges a flush', async () => {
 	await writer.close()
 })
 
-test('generates a producer id when none is provided', async () => {
+test('uses distinct producer identities for independently created default writers', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using _writer = createTopicWriter(driver, { topic: '/t' })
-
-	let stream = await waitForNextStream()
-	let init = await stream.waitForInit()
-	expect(init.producerId).toMatch(/^producer-/)
+	using first = createTopicWriter(driver, { topic: '/t' })
+	using second = createTopicWriter(driver, { topic: '/t' })
+	first.write(bytes(1))
+	second.write(bytes(2))
+	let firstStream = await waitForNextStream()
+	let secondStream = await waitForNextStream()
+	let firstInit = await firstStream.waitForInit()
+	let secondInit = await secondStream.waitForInit()
+	expect(firstInit.producerId).not.toBe('')
+	expect(secondInit.producerId).not.toBe('')
+	expect(secondInit.producerId).not.toBe(firstInit.producerId)
 })
 
 test('continues auto seqNo from the recovered server high-water mark', async () => {
@@ -1583,3 +1587,354 @@ test.each([0n, -1n, 1n << 63n])(
 		expect((await stream.waitForWrite()).messages[0]!.seqNo).toBe(1n)
 	}
 )
+
+test('retains falsy destruction reasons on close and flush', async () => {
+	await Promise.all(
+		[0, false, ''].map(async (reason) => {
+			let { driver } = makeFakeTopicDriver()
+			using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+			writer.write(bytes(1))
+			writer.destroy(reason)
+			await expect(writer.flush()).rejects.toBe(reason)
+			await expect(writer.close()).rejects.toBe(reason)
+		})
+	)
+})
+
+test('sends full in-flight windows without waiting for the flush interval', async () => {
+	// Hold the clock still to distinguish protocol progress from timer-driven sends.
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			maxInflightCount: 1,
+			flushIntervalMs: 2_147_483_647,
+		})
+		writer.write(bytes(1))
+		writer.write(bytes(2))
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await stream.waitForWrite()
+		await settle()
+		let writes = () =>
+			stream.sent.flatMap((frame) =>
+				frame.clientMessage.case === 'writeRequest'
+					? frame.clientMessage.value.messages
+					: []
+			)
+		expect(writes().map((message) => message.seqNo)).toEqual([1n])
+		stream.respond(writeResponse([{ seqNo: 1n }]))
+		await settle()
+		expect(writes().map((message) => message.seqNo)).toEqual([1n, 2n])
+		stream.respond(writeResponse([{ seqNo: 2n }]))
+		await settle()
+		writer.write(bytes(3))
+		await settle()
+		expect(writes().map((message) => message.seqNo)).toEqual([1n, 2n, 3n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test.each(['before', 'after'])(
+	'preserves manual flush results when the first write arrives %s init',
+	async (timing) => {
+		// Control init delivery and lose the first ack to exercise reconnect reconciliation.
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		let acknowledged: Array<[bigint, string]> = []
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			onAck: (seqNo, status) => acknowledged.push([seqNo, status]),
+		})
+		let first = await waitForNextStream()
+		await first.waitForInit()
+		if (timing === 'before') writer.write(bytes(1), { seqNo: 1n })
+		first.respond(initResponse(100n))
+		await settle()
+		if (timing === 'after') writer.write(bytes(1), { seqNo: 1n })
+		let request = await first.waitForWrite()
+		expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
+		let flushed = writer.flush()
+		first.disconnect()
+		let second = await waitForNextStream()
+		second.respond(initResponse(100n))
+		await expect(flushed).resolves.toBe(1n)
+		expect(acknowledged).toEqual([[1n, 'skipped']])
+		writer.write(bytes(2), { seqNo: 2n })
+		let next = await second.waitForWrite()
+		expect(next.messages.map((message) => message.seqNo)).toEqual([2n])
+		let nextFlush = writer.flush()
+		second.respond(writeResponse([{ seqNo: 2n, status: 'skipped' }]))
+		await expect(nextFlush).resolves.toBe(2n)
+	}
+)
+
+test('cancels a stale reconnect backoff when a late init arrives during close', async () => {
+	// The server init must land between the connection watchdog and its retry timer.
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			gracefulShutdownTimeoutMs: 60_000,
+		})
+		writer.write(bytes(1))
+		let closed = writer.close()
+		void closed.catch(() => {})
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		await vi.advanceTimersByTimeAsync(30_000)
+		stream.respond(initResponse(0n))
+		await stream.waitForWrite()
+		await vi.advanceTimersByTimeAsync(50)
+		expect(stream.wasAborted()).toBe(false)
+		stream.respond(writeResponse([{ seqNo: 1n }]))
+		await closed
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('waits for every reconnect init before sending a closing drain', async () => {
+	// Pause the replacement stream before init so closing cannot bypass its handshake.
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+		let first = await waitForNextStream()
+		first.respond(initResponse(0n))
+		writer.write(bytes(1))
+		let flushed = writer.flush()
+		await first.waitForWrite()
+		first.respond(writeResponse([{ seqNo: 1n }]))
+		await flushed
+		first.disconnect()
+		await settle()
+		writer.write(bytes(2))
+		await vi.advanceTimersByTimeAsync(50)
+		let second = await waitForNextStream()
+		await second.waitForInit()
+		let closed = writer.close()
+		void closed.catch(() => {})
+		await settle()
+		expect(
+			second.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		).toHaveLength(0)
+		second.respond(initResponse(1n))
+		let request = await second.waitForWrite()
+		expect(request.messages.map((message) => message.seqNo)).toEqual([2n])
+		second.respond(writeResponse([{ seqNo: 2n }]))
+		await closed
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('flushes isolated messages on their interval even after a long idle period', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		let sent = () =>
+			stream.sent.flatMap((frame) =>
+				frame.clientMessage.case === 'writeRequest'
+					? frame.clientMessage.value.messages.map((message) => message.seqNo)
+					: []
+			)
+		writer.write(bytes(1))
+		await settle()
+		expect(sent()).toEqual([])
+		await vi.advanceTimersByTimeAsync(999)
+		expect(sent()).toEqual([])
+		await vi.advanceTimersByTimeAsync(1)
+		expect(sent()).toEqual([1n])
+		stream.respond(writeResponse([{ seqNo: 1n }]))
+		await settle()
+		await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+		writer.write(bytes(2))
+		await settle()
+		expect(sent()).toEqual([1n])
+		await vi.advanceTimersByTimeAsync(999)
+		expect(sent()).toEqual([1n])
+		await vi.advanceTimersByTimeAsync(1)
+		expect(sent()).toEqual([1n, 2n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('sends a count-full batch before the interval expires', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			maxInflightCount: 2,
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		writer.write(bytes(1))
+		await settle()
+		expect(
+			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		).toHaveLength(0)
+		writer.write(bytes(2))
+		let request = await stream.waitForWrite()
+		expect(request.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('sends a byte-full batch when the next message cannot fit', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		// Two 25 MiB messages cannot share the 48 MiB write frame.
+		writer.write(new Uint8Array(25 * 1024 * 1024))
+		await settle()
+		expect(
+			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		).toHaveLength(0)
+		writer.write(new Uint8Array(25 * 1024 * 1024))
+		let request = await stream.waitForWrite()
+		expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
+		await settle()
+		expect(
+			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		).toHaveLength(1)
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('sends an overdue partial batch as soon as acknowledgments free the window', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			maxInflightCount: 2,
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		writer.write(bytes(1))
+		writer.write(bytes(2))
+		await stream.waitForWrite()
+		writer.write(bytes(3))
+		await vi.advanceTimersByTimeAsync(1000)
+		let sent = () =>
+			stream.sent.flatMap((frame) =>
+				frame.clientMessage.case === 'writeRequest'
+					? frame.clientMessage.value.messages.map((message) => message.seqNo)
+					: []
+			)
+		expect(sent()).toEqual([1n, 2n])
+		stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
+		await settle()
+		expect(sent()).toEqual([1n, 2n, 3n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('flush and close send a partial batch without waiting for its interval', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		writer.write(bytes(1))
+		let flushed = writer.flush()
+		await stream.waitForWrite()
+		stream.respond(writeResponse([{ seqNo: 1n }]))
+		await expect(flushed).resolves.toBe(1n)
+		writer.write(bytes(2))
+		let closed = writer.close()
+		await settle()
+		let sent = stream.sent.flatMap((frame) =>
+			frame.clientMessage.case === 'writeRequest'
+				? frame.clientMessage.value.messages.map((message) => message.seqNo)
+				: []
+		)
+		expect(sent).toEqual([1n, 2n])
+		stream.respond(writeResponse([{ seqNo: 2n }]))
+		await closed
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('retains an overdue batch across reconnect without sending before initialization', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			maxInflightCount: 2,
+			flushIntervalMs: 1000,
+		})
+		let first = await waitForNextStream()
+		first.respond(initResponse(0n))
+		writer.write(bytes(1))
+		writer.write(bytes(2))
+		await first.waitForWrite()
+		writer.write(bytes(3))
+		await vi.advanceTimersByTimeAsync(1000)
+		first.disconnect()
+		await settle()
+		await vi.advanceTimersByTimeAsync(50)
+		let second = await waitForNextStream()
+		await second.waitForInit()
+		await vi.advanceTimersByTimeAsync(1000)
+		expect(
+			second.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		).toHaveLength(0)
+		second.respond(initResponse(2n))
+		await settle()
+		let request = await second.waitForWrite()
+		expect(request.messages.map((message) => message.seqNo)).toEqual([3n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})

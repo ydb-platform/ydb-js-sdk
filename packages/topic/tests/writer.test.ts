@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
@@ -78,6 +80,36 @@ test('writes messages and reads them back in order', async () => {
 
 	expect(contents).toEqual(['Message 1', 'Message 2', 'Message 3'])
 	expect(seqNos).toEqual([1n, 2n, 3n])
+})
+
+test('publishes isolated writes across idle intervals without an explicit flush', async (tc) => {
+	let flushIntervalMs = 20
+	await using writer = createTopicWriter(driver, {
+		topic: testTopicName,
+		producer: testProducerName,
+		flushIntervalMs,
+	})
+	await using reader = createTopicReader(driver, {
+		topic: testTopicName,
+		consumer: testConsumerName,
+	})
+	let messages = reader.read({ limit: 1, signal: tc.signal })[Symbol.asyncIterator]()
+	try {
+		writer.write(encode('first'))
+		let first = await messages.next()
+		expect(first.done).toBe(false)
+		expect(new TextDecoder().decode(first.value![0]!.payload)).toBe('first')
+		await reader.commit(first.value!)
+
+		await sleep(3 * flushIntervalMs, undefined, { signal: tc.signal })
+		writer.write(encode('after idle'))
+		let second = await messages.next()
+		expect(second.done).toBe(false)
+		expect(new TextDecoder().decode(second.value![0]!.payload)).toBe('after idle')
+		await reader.commit(second.value!)
+	} finally {
+		await messages.return?.()
+	}
 })
 
 test(

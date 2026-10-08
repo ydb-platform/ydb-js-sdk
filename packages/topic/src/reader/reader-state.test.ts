@@ -175,11 +175,10 @@ let commit = function commit(
 // Complete the async start handshake for the partition's CURRENT grant — until the
 // ack, commits buffer (ackPending) instead of hitting the wire.
 let ackStart = function ackStart(h: Harness, sessionId: bigint, partitionId: bigint): void {
+	expect(h.ctx.partitions.get(pk(partitionId))!.session.partitionSessionId).toBe(sessionId)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: sessionId,
-		partitionKey: pk(partitionId),
-		grantId: h.ctx.partitions.get(pk(partitionId))!.grantId,
+		session: h.ctx.partitions.get(pk(partitionId))!.session,
 	})
 }
 
@@ -187,8 +186,7 @@ let ackStart = function ackStart(h: Harness, sessionId: bigint, partitionId: big
 let ackStop = function ackStop(h: Harness, partitionId: bigint): void {
 	step(h, {
 		type: 'reader.partition.stop_ready',
-		partitionKey: pk(partitionId),
-		grantId: h.ctx.partitions.get(pk(partitionId))!.grantId,
+		session: h.ctx.partitions.get(pk(partitionId))!.session,
 	})
 }
 
@@ -341,9 +339,7 @@ test('keys same-numbered partitions from different topics separately', () => {
 	expect(h.ctx.sessionIndex.get(2n)).toBe(partitionKey('/b', 1n))
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: partitionKey('/a', 1n),
-		grantId: h.ctx.partitions.get(partitionKey('/a', 1n))!.grantId,
+		session: h.ctx.partitions.get(partitionKey('/a', 1n))!.session,
 	})
 	step(h, {
 		type: 'reader.commit',
@@ -541,10 +537,8 @@ test('sends the commit ranges verbatim and records the pending commit', () => {
 	expect(cs).toHaveLength(1)
 	expect(cs[0]!.ranges).toEqual([{ start: 5n, end: 9n }])
 	let entry = h.ctx.partitions.get(pk(10n))!
-	expect(entry.pendingCommits).toEqual([
-		{ targetOffset: 9n, wireRanges: [{ start: 5n, end: 9n }], waiterId: 1 },
-	])
-	expect(entry.claimedRanges).toEqual([{ start: 5n, end: 9n }])
+	expect(entry.commitWaiters).toEqual([{ targetOffset: 9n, waiterId: 1 }])
+	expect(entry.pendingRanges).toEqual([{ start: 5n, end: 9n }])
 })
 
 test('clamps a commit range below the server committed offset', () => {
@@ -568,7 +562,7 @@ test('resolves without a wire send when the range is fully below the committed o
 	commit(h, 10n, [{ start: 0n, end: 5n }], 7)
 	expect(commitSends(h.effects)).toHaveLength(0)
 	expect(outputs(h, 'reader.commit.resolved').map((o) => o.waiterId)).toEqual([7])
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(0)
 })
 
 test('waits for the server watermark when the range is fully claimed by an earlier commit', () => {
@@ -582,9 +576,9 @@ test('waits for the server watermark when the range is fully claimed by an earli
 	commit(h, 10n, [{ start: 5n, end: 7n }], 2)
 	expect(commitSends(h.effects)).toHaveLength(0)
 	expect(outputs(h, 'reader.commit.resolved')).toHaveLength(0)
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toEqual([
-		{ targetOffset: 7n, wireRanges: [{ start: 5n, end: 7n }], waiterId: 1 },
-		{ targetOffset: 7n, wireRanges: [], waiterId: 2 },
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toEqual([
+		{ targetOffset: 7n, waiterId: 1 },
+		{ targetOffset: 7n, waiterId: 2 },
 	])
 
 	h.emitted.length = 0
@@ -602,12 +596,11 @@ test('subtracts claimed coverage and sends only the remainder', () => {
 	expect(cs).toHaveLength(1)
 	expect(cs[0]!.ranges).toEqual([{ start: 6n, end: 8n }])
 	let entry = h.ctx.partitions.get(pk(10n))!
-	expect(entry.pendingCommits[1]).toEqual({
+	expect(entry.commitWaiters[1]).toEqual({
 		targetOffset: 8n,
-		wireRanges: [{ start: 6n, end: 8n }],
 		waiterId: 2,
 	})
-	expect(entry.claimedRanges).toEqual([{ start: 5n, end: 8n }])
+	expect(entry.pendingRanges).toEqual([{ start: 5n, end: 8n }])
 })
 
 test('merges overlapping and adjacent input ranges before the send', () => {
@@ -639,7 +632,7 @@ test('resolves a commit on a covering commit-offset response', () => {
 	h.emitted.length = 0
 	message(h, commitMsg([[1n, 9n]]))
 	expect(outputs(h, 'reader.commit.resolved')[0]).toMatchObject({ waiterId: 1 })
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(0)
 })
 
 test('keeps a commit pending until the high-water mark reaches its end', () => {
@@ -650,9 +643,9 @@ test('keeps a commit pending until the high-water mark reaches its end', () => {
 	message(h, commitMsg([[1n, 7n]])) // below end 9
 	expect(outputs(h, 'reader.commit.resolved')).toHaveLength(0)
 	let entry = h.ctx.partitions.get(pk(10n))!
-	expect(entry.pendingCommits).toHaveLength(1)
+	expect(entry.commitWaiters).toHaveLength(1)
 	// server-confirmed coverage is compacted away so the claim list stays bounded
-	expect(entry.claimedRanges).toEqual([{ start: 7n, end: 9n }])
+	expect(entry.pendingRanges).toEqual([{ start: 7n, end: 9n }])
 })
 
 test('emits partition.committed with the session on a commit ack', () => {
@@ -668,6 +661,37 @@ test('emits partition.committed with the session on a commit ack', () => {
 })
 
 // ── reconnect reconcile (THE CRUX) ────────────────────────────────────────────────
+
+test('replays partition ranges once while commit callers retain separate watermarks', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	ackStart(h, 1n, 10n)
+	commit(h, 10n, [{ start: 5n, end: 7n }], 1)
+	commit(h, 10n, [{ start: 5n, end: 9n }], 2)
+	commit(h, 10n, [{ start: 12n, end: 13n }], 3)
+	step(h, { type: 'reader.stream.disconnected' })
+	step(h, { type: 'reader.timer.retry_backoff' })
+	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
+	message(h, startMsg(2n, 10n, 6n))
+	ackStart(h, 2n, 10n)
+	expect(commitSends(h.effects)).toEqual([
+		{
+			type: 'reader.effect.send.commit',
+			partitionSessionId: 2n,
+			ranges: [
+				{ start: 6n, end: 9n },
+				{ start: 12n, end: 13n },
+			],
+		},
+	])
+	h.emitted.length = 0
+	message(h, commitMsg([[2n, 7n]]))
+	expect(outputs(h, 'reader.commit.resolved').map((output) => output.waiterId)).toEqual([1])
+	expect(h.ctx.partitions.get(pk(10n))!.pendingRanges).toEqual([
+		{ start: 7n, end: 9n },
+		{ start: 12n, end: 13n },
+	])
+})
 
 test('re-sends an unacked commit on the new session after reconnect', () => {
 	let h = mk()
@@ -697,11 +721,11 @@ test('re-sends an unacked commit on the new session after reconnect', () => {
 	expect(cs).toHaveLength(1)
 	expect(cs[0]!.partitionSessionId).toBe(2n)
 	expect(cs[0]!.ranges).toEqual([{ start: 5n, end: 9n }])
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(1)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(1)
 	expect(outputs(h, 'reader.commit.resolved')).toHaveLength(0)
 })
 
-test('replays each pending commit with its exact remaining ranges on resend', () => {
+test('replays sparse partition ranges without covering unrequested offsets', () => {
 	let h = mk()
 	toReadyWithPartition(h)
 	ackStart(h, 1n, 10n)
@@ -718,7 +742,12 @@ test('replays each pending commit with its exact remaining ranges on resend', ()
 	// One send per pending, ranges verbatim — a gap-covering [5,9) span would commit
 	// the delivered-but-unacked offsets 6 and 7 behind the app's back.
 	let cs = commitSends(h.effects)
-	expect(cs.map((e) => e.ranges)).toEqual([[{ start: 5n, end: 6n }], [{ start: 8n, end: 9n }]])
+	expect(cs.map((e) => e.ranges)).toEqual([
+		[
+			{ start: 5n, end: 6n },
+			{ start: 8n, end: 9n },
+		],
+	])
 })
 
 test('sends a commit under the new session id after a within-stream regrant', () => {
@@ -776,7 +805,7 @@ test('blocks a commit when the reused session id belongs to another partition', 
 	// Partition 10's entry still holds sessionId 1, but that id now belongs to
 	// partition 20 — must buffer, never send under the colliding id.
 	expect(commitSends(h.effects)).toHaveLength(0)
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(1)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(1)
 })
 
 test('resolves a pending commit that the server committed before the reconnect', () => {
@@ -793,7 +822,7 @@ test('resolves a pending commit that the server committed before the reconnect',
 	// server now reports committed 9 (the commit made it durable before the drop)
 	message(h, startMsg(2n, 10n, 9n))
 	expect(outputs(h, 'reader.commit.resolved')[0]).toMatchObject({ waiterId: 1 })
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(0)
 })
 
 test('never rejects a pending commit merely because the stream reconnected', () => {
@@ -818,7 +847,7 @@ test('holds pending commits on a non-graceful stop and schedules a gc timer', ()
 	h.emitted.length = 0
 	message(h, stopMsg(1n, false))
 	expect(h.ctx.partitions.get(pk(10n))!.state).toBe('stopped')
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(1) // held, not rejected
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(1) // held, not rejected
 	expect(outputs(h, 'reader.commit.rejected')).toHaveLength(0)
 	expect(h.effects).toContainEqual({
 		type: 'reader.effect.timer.schedule',
@@ -830,7 +859,7 @@ test('holds pending commits on a non-graceful stop and schedules a gc timer', ()
 test('enters stopping-graceful and runs the stop hook even with no pending commits', () => {
 	let h = mk()
 	toReadyWithPartition(h)
-	let grantId = h.ctx.partitions.get(pk(10n))!.grantId
+	let session = h.ctx.partitions.get(pk(10n))!.session
 	h.emitted.length = 0
 	message(h, stopMsg(1n, true))
 	// The stop response waits for the async onPartitionSessionStop hook even when
@@ -840,9 +869,7 @@ test('enters stopping-graceful and runs the stop hook even with no pending commi
 	expect(outputs(h, 'reader.partition.stopped')).toHaveLength(0)
 	expect(h.effects).toContainEqual({
 		type: 'reader.effect.partition.stop_hook',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId,
+		session,
 		committedOffset: 5n,
 	})
 	expect(h.effects).toContainEqual({
@@ -903,7 +930,7 @@ test('rejects a commit that lost the race with the partition stop', () => {
 	expect(String((rejected[0] as { reason?: unknown }).reason)).toMatch(
 		/stopped or expired partition session/
 	)
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toEqual([])
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toEqual([])
 })
 
 // The same race against a forced stop: offsets the stop's watermark already covers
@@ -934,7 +961,7 @@ test('resolves covered commits and holds the remainder on a forced stop', () => 
 	expect(outputs(h, 'reader.commit.resolved').map((o) => o.waiterId)).toEqual([1])
 	let entry = h.ctx.partitions.get(pk(10n))!
 	expect(entry.state).toBe('stopped')
-	expect(entry.pendingCommits.map((p) => p.waiterId)).toEqual([2])
+	expect(entry.commitWaiters.map((p) => p.waiterId)).toEqual([2])
 	expect(h.effects).toContainEqual({
 		type: 'reader.effect.timer.schedule',
 		which: 'partition_reassign_gc',
@@ -1063,7 +1090,7 @@ test('sends exactly one stop_response when the graceful timer wins the race', ()
 test('drops a late stop_ready after a force stop escalates the graceful stop', () => {
 	let h = mk()
 	toReadyWithPartition(h)
-	let grantId = h.ctx.partitions.get(pk(10n))!.grantId
+	let session = h.ctx.partitions.get(pk(10n))!.session
 	message(h, stopMsg(1n, true))
 	h.emitted.length = 0
 	message(h, stopMsg(1n, false))
@@ -1075,15 +1102,15 @@ test('drops a late stop_ready after a force stop escalates the graceful stop', (
 	})
 	// The stop hook completes after the escalation already gave the partition up: a
 	// stop_response for the released session is session-fatal.
-	step(h, { type: 'reader.partition.stop_ready', partitionKey: pk(10n), grantId })
+	step(h, { type: 'reader.partition.stop_ready', session })
 	expect(h.effects).toEqual([])
 	expect(stopResponses(h.allEffects)).toHaveLength(0)
 })
 
-test('ignores a stop_ready carrying a superseded grant id', () => {
+test('ignores a stop_ready carrying a superseded session object', () => {
 	let h = mk()
 	toReadyWithPartition(h)
-	let staleGrant = h.ctx.partitions.get(pk(10n))!.grantId
+	let staleSession = h.ctx.partitions.get(pk(10n))!.session
 	message(h, stopMsg(1n, true)) // stop hook for the first grant starts running
 	step(h, {
 		type: 'reader.stream.disconnected',
@@ -1091,11 +1118,17 @@ test('ignores a stop_ready carrying a superseded grant id', () => {
 	})
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
-	message(h, startMsg(2n, 10n, 5n)) // fresh grant supersedes the stopping one
+	message(h, startMsg(1n, 10n, 5n)) // the new stream reuses the wire id
+	expect(h.ctx.partitions.get(pk(10n))!.session).not.toBe(staleSession)
+	ackStart(h, 1n, 10n)
+	message(h, stopMsg(1n, true))
 	// The old grant's stop hook completes: it must not stop the fresh grant.
-	step(h, { type: 'reader.partition.stop_ready', partitionKey: pk(10n), grantId: staleGrant })
-	expect(h.ctx.partitions.get(pk(10n))!.state).toBe('active')
+	step(h, { type: 'reader.partition.stop_ready', session: staleSession })
+	expect(h.ctx.partitions.get(pk(10n))!.state).toBe('stopping-graceful')
 	expect(stopResponses(h.allEffects)).toHaveLength(0)
+	ackStop(h, 10n)
+	expect(h.ctx.partitions.get(pk(10n))!.state).toBe('stopped')
+	expect(stopResponses(h.allEffects)).toHaveLength(1)
 })
 
 test('sends the stop response when the graceful timeout fires on the live session', () => {
@@ -1339,7 +1372,7 @@ test('answers a grant exactly once when a stale start_ready from the previous st
 	step(h, { type: 'reader.start' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's1' })
 	message(h, startMsg(1n, 10n, 5n))
-	let staleGrant = h.ctx.partitions.get(pk(10n))!.grantId // hook 1 still running
+	let staleSession = h.ctx.partitions.get(pk(10n))!.session // hook 1 still running
 	step(h, {
 		type: 'reader.stream.disconnected',
 		error: new YDBError(StatusIds_StatusCode.UNAVAILABLE, []),
@@ -1347,17 +1380,16 @@ test('answers a grant exactly once when a stale start_ready from the previous st
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
 	// The new stream grants the same partition under the SAME per-stream id 1 (server
-	// assign ids restart at 1) — only the grantId epoch tells the two hooks apart.
+	// assign ids restart at 1) — the distinct session objects tell the two hooks apart.
 	message(h, startMsg(1n, 10n, 5n))
+	expect(h.ctx.partitions.get(pk(10n))!.session).not.toBe(staleSession)
 	let before = h.allEffects.length
 	// The stale hook (stream 1) completes, then the current one. A second
 	// StartPartitionSessionResponse for one assign id is session-fatal
 	// ("double partition locking", BAD_REQUEST).
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: staleGrant,
+		session: staleSession,
 	})
 	ackStart(h, 1n, 10n)
 	expect(startResponses(h.allEffects.slice(before))).toHaveLength(1)
@@ -1368,9 +1400,7 @@ test('passes readOffset and commitOffset overrides through to the start response
 	toReadyWithPartition(h)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		readOffset: 12n,
 		commitOffset: 10n,
 	})
@@ -1386,9 +1416,7 @@ test('confirms a commitOffset override only from a server watermark', () => {
 	h.emitted.length = 0
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	expect(outputs(h, 'reader.partition.committed')).toHaveLength(0)
@@ -1412,9 +1440,7 @@ test('clamps a subsequent commit at the commitOffset override', () => {
 	toReadyWithPartition(h) // server says committed 5
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	commit(h, 10n, [{ start: 5n, end: 13n }], 1)
@@ -1439,9 +1465,7 @@ test('waits for confirmation of an override covering a pending commit', () => {
 	// Re-sending [5,8) after the override would overlap the server's pending commit.
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 7n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	expect(commitSends(h.effects)).toHaveLength(0)
@@ -1459,9 +1483,7 @@ test('retries status confirmation and stops querying a revoked partition', () =>
 	toReadyWithPartition(h)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	step(h, { type: 'reader.stream.partition_status', partitionSessionId: 1n, committedOffset: 5n })
@@ -1496,9 +1518,7 @@ test('replays ranges suppressed by an unconfirmed override after reconnect', () 
 	toReadyWithPartition(h)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	commit(h, 10n, [{ start: 5n, end: 8n }], 1)
@@ -1530,9 +1550,7 @@ test('drains an unconfirmed start override before closing', () => {
 	toReadyWithPartition(h)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	step(h, { type: 'reader.close' })
@@ -1553,9 +1571,7 @@ test('accepts a stop watermark as confirmation of the start override', () => {
 	toReadyWithPartition(h)
 	step(h, {
 		type: 'reader.partition.start_ready',
-		partitionSessionId: 1n,
-		partitionKey: pk(10n),
-		grantId: h.ctx.partitions.get(pk(10n))!.grantId,
+		session: h.ctx.partitions.get(pk(10n))!.session,
 		commitOffset: 10n,
 	})
 	message(h, stopMsg(1n, true, 10n))
@@ -1592,7 +1608,7 @@ test('does not double-send a commit issued between start_partition and start_rea
 	// one send per pending with its own ranges.
 	ackStart(h, 7n, 10n)
 	let cs = commitSends(h.effects)
-	expect(cs.map((e) => e.ranges)).toEqual([[{ start: 5n, end: 8n }], [{ start: 8n, end: 10n }]])
+	expect(cs.map((e) => e.ranges)).toEqual([[{ start: 5n, end: 10n }]])
 })
 
 test('keeps the reassign gc armed from reconnect until the start_ready ack clears it', () => {
@@ -1648,8 +1664,8 @@ test('bounds pending commits when the start hook never completes', () => {
 	expect(outputs(h, 'reader.commit.rejected').map((o) => o.waiterId)).toEqual([1])
 	// The granted entry survives so a late ack can still answer the server.
 	expect(h.ctx.partitions.has(pk(10n))).toBe(true)
-	expect(h.ctx.partitions.get(pk(10n))!.pendingCommits).toHaveLength(0)
-	expect(h.ctx.partitions.get(pk(10n))!.claimedRanges).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.commitWaiters).toHaveLength(0)
+	expect(h.ctx.partitions.get(pk(10n))!.pendingRanges).toHaveLength(0)
 })
 
 test('reaps a never-re-granted partition on gc and recreates it cleanly on a late grant', () => {
@@ -1671,10 +1687,10 @@ test('reaps a never-re-granted partition on gc and recreates it cleanly on a lat
 	// A LATE grant after the reap creates a fresh entry.
 	message(h, startMsg(9n, 10n, 20n))
 	let entry = h.ctx.partitions.get(pk(10n))!
-	expect(entry.partitionSessionId).toBe(9n)
+	expect(entry.session.partitionSessionId).toBe(9n)
 	expect(entry.state).toBe('active')
 	expect(entry.deliveredWatermark).toBe(20n)
-	expect(entry.pendingCommits).toHaveLength(0)
+	expect(entry.commitWaiters).toHaveLength(0)
 	ackStart(h, 9n, 10n)
 	expect(startResponses(h.effects)).toHaveLength(1)
 })
@@ -1699,8 +1715,10 @@ test('rejects outstanding commits exactly once on destroy and terminates', () =>
 	toReadyWithPartition(h)
 	commit(h, 10n, [{ start: 5n, end: 9n }], 1)
 	h.emitted.length = 0
-	step(h, { type: 'reader.destroy', reason: new Error('boom') })
+	let reason = new Error('boom')
+	step(h, { type: 'reader.destroy', reason })
 	expect(h.state).toBe('closed')
+	expect(h.effects).toEqual([{ type: 'reader.effect.finalize', reason }])
 	expect(outputs(h, 'reader.commit.rejected').filter((r) => r.waiterId === 1)).toHaveLength(1)
 	expect(outputs(h, 'reader.closed')).toHaveLength(1)
 	expect(h.ctx.partitions.size).toBe(0)
@@ -1711,6 +1729,7 @@ test('closes immediately when nothing is pending', () => {
 	toReadyWithPartition(h)
 	step(h, { type: 'reader.close' })
 	expect(h.state).toBe('closed')
+	expect(effectTypes(h.effects)).toEqual(['reader.effect.finalize'])
 })
 
 test('waits for pending commits before closing', () => {

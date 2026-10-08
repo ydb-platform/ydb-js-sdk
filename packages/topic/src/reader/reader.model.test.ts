@@ -2,6 +2,8 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
 
+import type { TopicPartitionSession } from '../partition-session.ts'
+
 import {
 	type OffsetRange,
 	type ReaderCtx,
@@ -10,21 +12,19 @@ import {
 	type ReaderOutput,
 	type ReaderState,
 	createReaderCtx,
-	mergeRanges,
 	partitionKey,
 	readerTransition,
 } from './reader-state.ts'
-import {
-	type TransportEffect,
-	type TransportEvent,
-	type TransportOutput,
-	type TransportState,
-	transportTransition,
-} from './transport-state.ts'
+type TransportEvent =
+	| { type: 'transport.connect' }
+	| { type: 'transport.destroy'; reason?: unknown }
+	| { type: 'transport.init'; sessionId: string }
+	| { type: 'transport.message'; message: unknown }
+	| { type: 'transport.ended' }
+	| { type: 'transport.error'; error: unknown }
 
-// Model-based / property test. It wires the two REAL pure transitions
-// (readerTransition + transportTransition) to a protocol-faithful server model and
-// drives them with random sequences of consumer calls, commits, network events,
+// Model-based / property test. The reader transition runs against an independent
+// connection and server model, driven by consumer calls, commits, network events,
 // server assignments/deliveries (with server-side offset holes)/acks,
 // server-initiated partition stops (graceful AND force) and timer firings —
 // including the per-partition partition_graceful_timeout and partition_reassign_gc
@@ -82,14 +82,6 @@ let modelMerge = function modelMerge(ranges: OffsetRange[]): OffsetRange[] {
 		}
 	}
 	return merged
-}
-
-let rangesLength = function rangesLength(ranges: OffsetRange[]): bigint {
-	let total = 0n
-	for (let range of ranges) {
-		total += range.end - range.start
-	}
-	return total
 }
 
 let clampRanges = function clampRanges(ranges: OffsetRange[], floor: bigint): OffsetRange[] {
@@ -167,7 +159,6 @@ type Waiter = {
 type Sim = {
 	readerState: ReaderState
 	readerCtx: ReaderCtx
-	transportState: TransportState
 	readerEvents: ReaderEvent[]
 	transportEvents: TransportEvent[]
 
@@ -193,8 +184,8 @@ type Sim = {
 
 	// The async onPartitionSessionStop hook: the stop_hook effect queues here and a
 	// randomly interleaved action completes it as reader.partition.stop_ready.
-	pendingStopHooks: { partitionKey: string; grantId: number }[]
-	stopReadyDone: Set<string> // `${partitionKey}#${grantId}` — hook completed for that grant
+	pendingStopHooks: TopicPartitionSession[]
+	stopReadyDone: Set<TopicPartitionSession> // hook completed for that grant
 	gracefulTimeoutFired: Set<string> // partitionKey — the escalation legalizing an early stop_response
 
 	// Session ids are globally unique here (nextSessionId is monotonic), so both sets
@@ -226,7 +217,6 @@ let mkSim = function mkSim(
 	return {
 		readerState: 'idle',
 		readerCtx: createReaderCtx({ maxBufferBytes }),
-		transportState: 'idle',
 		readerEvents: [],
 		transportEvents: [],
 		armed: new Set(),
@@ -508,8 +498,8 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			let entry = sim.readerCtx.partitions.get(part.key)
 			let handshakeDone =
 				entry !== undefined &&
-				sim.stopReadyDone.has(`${part.key}#${entry.grantId}`) &&
-				entry.pendingCommits.length === 0
+				sim.stopReadyDone.has(entry.session) &&
+				entry.commitWaiters.length === 0
 			if (!handshakeDone && !sim.gracefulTimeoutFired.has(part.key)) {
 				throw new Error(
 					`stop_response for ${part.key} before stop_ready and drained commits`
@@ -534,19 +524,14 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			// start_response and re-sends reconciled commits.
 			sim.readerEvents.push({
 				type: 'reader.partition.start_ready',
-				partitionSessionId: effect.partitionSessionId,
-				partitionKey: effect.partitionKey,
-				grantId: effect.grantId,
+				session: effect.session,
 			})
 			break
 		}
 		case 'reader.effect.partition.stop_hook': {
 			// The graceful-stop hook runs detached in the runtime — the model completes
 			// it as a separate, randomly interleaved action (or in the cooldown flush).
-			sim.pendingStopHooks.push({
-				partitionKey: effect.partitionKey,
-				grantId: effect.grantId,
-			})
+			sim.pendingStopHooks.push(effect.session)
 			break
 		}
 		case 'reader.effect.send.start_response': {
@@ -560,9 +545,6 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 			break
 		}
 		case 'reader.effect.send.update_token':
-			break
-		case 'reader.effect.transport.close':
-			sim.transportEvents.push({ type: 'transport.close' })
 			break
 		case 'reader.effect.timer.schedule': {
 			let key =
@@ -586,31 +568,6 @@ let applyReaderEffect = function applyReaderEffect(sim: Sim, effect: ReaderEffec
 	}
 }
 
-let applyTransportEffect = function applyTransportEffect(sim: Sim, effect: TransportEffect): void {
-	switch (effect.type) {
-		case 'transport.effect.open_stream':
-			sim.streamOpen = true
-			sim.initPending = true
-			sim.credit = 0n
-			// Ephemeral assignments — and the sparse per-session commit state — die
-			// with the old stream; only the durable watermark survives.
-			for (let part of sim.partitions) {
-				part.partitionSessionId = undefined
-				part.ready = false
-				part.stopping = false
-				part.deliveredUpTo = part.durableCommitted
-				part.sessionRanges = []
-				part.unackedCommits = 0
-			}
-			break
-		case 'transport.effect.close_stream':
-		case 'transport.effect.finalize':
-			sim.streamOpen = false
-			sim.initPending = false
-			break
-	}
-}
-
 let processReaderEvent = function processReaderEvent(sim: Sim, event: ReaderEvent): void {
 	let runtime = {
 		state: sim.readerState,
@@ -627,32 +584,51 @@ let processReaderEvent = function processReaderEvent(sim: Sim, event: ReaderEven
 	}
 }
 
+// Stream replacement drops ephemeral assignments and sparse commit coverage;
+// only the server's durable watermark survives. Production transport is tested separately.
 let processTransportEvent = function processTransportEvent(sim: Sim, event: TransportEvent): void {
-	let runtime = {
-		state: sim.transportState,
-		signal: NEVER,
-		emit: (output: TransportOutput) => {
-			let mapped: ReaderEvent | null =
-				output.type === 'transport.stream.init_response'
-					? { type: 'reader.stream.init_response', sessionId: output.sessionId }
-					: output.type === 'transport.stream.disconnected'
-						? {
-								type: 'reader.stream.disconnected',
-								...('error' in output ? { error: output.error } : {}),
-							}
-						: classify(output.message)
-			if (mapped) {
-				sim.readerEvents.push(mapped)
+	switch (event.type) {
+		case 'transport.connect':
+			if (sim.terminal) return
+			sim.streamOpen = true
+			sim.initPending = true
+			sim.credit = 0n
+			for (let part of sim.partitions) {
+				part.partitionSessionId = undefined
+				part.ready = false
+				part.stopping = false
+				part.deliveredUpTo = part.durableCommitted
+				part.sessionRanges = []
+				part.unackedCommits = 0
 			}
-		},
-		dispatch: (next: TransportEvent) => sim.transportEvents.push(next),
+			return
+		case 'transport.destroy':
+			sim.streamOpen = false
+			sim.initPending = false
+			return
 	}
-	let result = transportTransition({}, event, runtime)
-	if (result?.state) {
-		sim.transportState = result.state
-	}
-	for (let effect of result?.effects ?? []) {
-		applyTransportEffect(sim, effect)
+	if (!sim.streamOpen || sim.terminal) return
+	switch (event.type) {
+		case 'transport.init':
+			sim.initPending = false
+			sim.readerEvents.push({
+				type: 'reader.stream.init_response',
+				sessionId: event.sessionId,
+			})
+			return
+		case 'transport.message': {
+			let mapped = classify(event.message)
+			if (mapped) sim.readerEvents.push(mapped)
+			return
+		}
+		case 'transport.ended':
+		case 'transport.error':
+			sim.streamOpen = false
+			sim.initPending = false
+			sim.readerEvents.push({
+				type: 'reader.stream.disconnected',
+				...('error' in event ? { error: event.error } : {}),
+			})
 	}
 }
 
@@ -787,7 +763,7 @@ let issueCommit = function issueCommit(sim: Sim, key: string, selected: MirrorMe
 	for (let message of selected) {
 		message.requested = true
 	}
-	let ranges = mergeRanges(selected.map((m) => ({ start: m.start, end: m.end })))
+	let ranges = modelMerge(selected.map((m) => ({ start: m.start, end: m.end })))
 	sim.requestedUnion.set(key, modelMerge([...(sim.requestedUnion.get(key) ?? []), ...ranges]))
 	let waiterId = sim.nextWaiterId++
 	sim.waiters.set(waiterId, {
@@ -817,6 +793,9 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 	let ctx = sim.readerCtx
 
 	if (sim.terminal) {
+		if (sim.armed.size !== 0 || sim.streamOpen) {
+			throw new Error(`${where}: terminal but timers or transport remain live`)
+		}
 		if (ctx.partitions.size !== 0 || ctx.sessionIndex.size !== 0) {
 			throw new Error(`${where}: terminal but ctx not cleared`)
 		}
@@ -870,9 +849,9 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 				`${where}: sessionIndex ${partitionSessionId} -> missing partition ${key}`
 			)
 		}
-		if (entry.partitionSessionId !== partitionSessionId) {
+		if (entry.session.partitionSessionId !== partitionSessionId) {
 			throw new Error(
-				`${where}: stale sessionIndex ${partitionSessionId} -> ${key} (current ${entry.partitionSessionId})`
+				`${where}: stale sessionIndex ${partitionSessionId} -> ${key} (current ${entry.session.partitionSessionId})`
 			)
 		}
 	}
@@ -881,25 +860,20 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		if (entry.deliveredWatermark < entry.partitionCommittedOffset) {
 			throw new Error(`${where}: delivery watermark below committed on ${key}`)
 		}
-		// Wire ranges are normalized and pairwise disjoint. A fully claimed duplicate
-		// legitimately has no wire ranges while its target waits for the same watermark.
-		let all: OffsetRange[] = []
-		for (let pending of entry.pendingCommits) {
+		for (let pending of entry.commitWaiters) {
 			if (pending.targetOffset <= entry.partitionCommittedOffset) {
 				throw new Error(`${where}: confirmed pending target on ${key}`)
 			}
-			assertNormalized(pending.wireRanges, `${where}: pending commit on ${key}`)
-			all.push(...pending.wireRanges)
 		}
-		let union = modelMerge(all)
-		if (rangesLength(union) !== rangesLength(all)) {
-			throw new Error(`${where}: overlapping pending commits on ${key}`)
-		}
-		// Claimed coverage is exactly the pending remainders above the watermark —
-		// the guard recordCommit subtracts to never re-send a claimed offset.
-		let expected = clampRanges(union, entry.partitionCommittedOffset)
-		if (!sameRanges(entry.claimedRanges, expected)) {
-			throw new Error(`${where}: claimedRanges drifted from pending coverage on ${key}`)
+		// Compare against the consumer's original requests, independently of how the
+		// implementation batches their coverage or deduplicates concurrent callers.
+		let requests = Array.from(sim.waiters.values())
+			.filter((waiter) => waiter.partitionKey === key && waiter.state === 'pending')
+			.flatMap((waiter) => waiter.ranges)
+		let expected = clampRanges(modelMerge(requests), entry.partitionCommittedOffset)
+		assertNormalized(entry.pendingRanges, `${where}: pending ranges on ${key}`)
+		if (!sameRanges(entry.pendingRanges, expected)) {
+			throw new Error(`${where}: pending ranges differ from consumer requests on ${key}`)
 		}
 		// The model's independently tracked delivery watermark agrees with the FSM's.
 		let mirror = sim.mirrors.get(key)
@@ -1036,11 +1010,10 @@ let runOne = function runOne(
 				w: 4,
 				run: () => {
 					let hook = sim.pendingStopHooks.splice(i, 1)[0]!
-					sim.stopReadyDone.add(`${hook.partitionKey}#${hook.grantId}`)
+					sim.stopReadyDone.add(hook)
 					sim.readerEvents.push({
 						type: 'reader.partition.stop_ready',
-						partitionKey: hook.partitionKey,
-						grantId: hook.grantId,
+						session: hook,
 					})
 				},
 			})
@@ -1251,11 +1224,10 @@ let runOne = function runOne(
 		runToQuiescence(sim)
 		while (sim.pendingStopHooks.length > 0) {
 			let hook = sim.pendingStopHooks.shift()!
-			sim.stopReadyDone.add(`${hook.partitionKey}#${hook.grantId}`)
+			sim.stopReadyDone.add(hook)
 			sim.readerEvents.push({
 				type: 'reader.partition.stop_ready',
-				partitionKey: hook.partitionKey,
-				grantId: hook.grantId,
+				session: hook,
 			})
 			progressed = true
 		}

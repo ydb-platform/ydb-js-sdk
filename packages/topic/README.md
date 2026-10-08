@@ -148,7 +148,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
 - `maxBufferBytes?`: `bigint` — budget for unacknowledged compressed payloads and metadata, including 256 bytes per message and 64 bytes per metadata item for retained objects (default 256 MiB; not an exact process-memory limit)
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
-- `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
+- `flushIntervalMs?`: `number` — periodic flush of a partially filled batch (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it

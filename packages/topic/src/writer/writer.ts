@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto'
+
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 
 import { type CompressionCodec, RAW_CODEC } from '../codec.js'
 import type { TX } from '../tx.js'
-import { generateProducerId } from './producer-id.js'
 import {
 	type WriterScope,
 	ackBreakdown,
@@ -129,7 +130,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		if (options.producer === '') {
 			throw new Error('producer must be a non-empty string — omit it to get a generated id')
 		}
-		options = { ...options, producer: options.producer ?? generateProducerId() }
+		options = { ...options, producer: options.producer ?? randomUUID() }
 
 		this.#onAck = options.onAck
 		this.#transactional = options.tx !== undefined
@@ -137,8 +138,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
 		this.#scope = { driver: driver.identity, topic: options.topic, producer: options.producer! }
 
-		// One-shot effective-config snapshot for late-joining metrics/traces
-		// subscribers — built from the runtime's own defaults, correct by construction.
+		// Publish the configuration once when the writer is created.
 		publishOpened(this.#scope, {
 			codec: this.#codec.codec,
 			maxInflightCount: options.maxInflightCount ?? DEFAULT_MAX_INFLIGHT_COUNT,
@@ -182,7 +182,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		if (this.#closed || this.#closing) {
 			throw new Error('Writer is closed — cannot write messages')
 		}
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw new Error('Writer has failed — cannot write messages', { cause: this.#lastError })
 		}
 		// Size limit applies to the uncompressed payload.
@@ -247,7 +247,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	}
 
 	async flush(signal?: AbortSignal): Promise<bigint> {
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 		if (this.#closed) {
@@ -282,7 +282,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	async close(signal?: AbortSignal): Promise<void> {
 		if (this.#closed) {
 			// A close that dropped data surfaces the failure even on a repeat call.
-			if (this.#lastError) {
+			if (this.#lastError !== undefined) {
 				throw this.#lastError
 			}
 			return
@@ -296,7 +296,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		await (signal ? abortable(signal, closed) : closed)
 
 		// The graceful drain failed (errored / timed out with undelivered messages).
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 	}

@@ -3,6 +3,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	type StreamReadMessage_FromClient,
 	StreamReadMessage_FromClientSchema,
+	type StreamReadMessage_FromServer,
 	StreamReadMessage_InitRequestSchema,
 	type StreamReadMessage_InitRequest_TopicReadSettings,
 	TopicServiceDefinition,
@@ -11,17 +12,7 @@ import {
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
-import { AsyncPriorityQueue } from '@ydbjs/fsm/queue'
-
-import {
-	type TransportCtx,
-	type TransportEffect,
-	type TransportEvent,
-	type TransportOutput,
-	type TransportState,
-	transportTransition,
-} from './transport-state.js'
+import { AsyncPriorityQueue, AsyncQueue } from '@ydbjs/fsm/queue'
 
 let dbg = loggers.topic.extend('reader').extend('transport')
 
@@ -42,6 +33,11 @@ export type InitParams = {
 	autoPartitioningSupport?: boolean
 }
 
+export type TransportOutput =
+	| { type: 'transport.stream.init_response'; sessionId: string }
+	| { type: 'transport.stream.message'; message: StreamReadMessage_FromServer }
+	| { type: 'transport.stream.disconnected'; error?: unknown }
+
 // Owns one streamRead gRPC stream at a time. Reconnecting the underlying stream
 // is transparent to the reader FSM: each open pushes a fresh init request and the
 // ingest task forwards server messages (verbatim, except the init handshake) as
@@ -50,70 +46,45 @@ export class ReaderTransport {
 	#driver: Driver
 	#params: InitParams
 
-	#machine: MachineRuntime<TransportState, TransportCtx, TransportEvent, TransportOutput>
+	#events = new AsyncQueue<TransportOutput>()
 
 	#streamAC: AbortController | null = null
 	#streamInput: AsyncPriorityQueue<StreamReadMessage_FromClient> | null = null
-	#streamTask: Promise<void> | null = null
 	#tokenPending = false
 
 	constructor(driver: Driver, params: InitParams) {
 		this.#driver = driver
 		this.#params = params
-
-		this.#machine = createMachineRuntime<
-			TransportState,
-			TransportCtx,
-			{},
-			TransportEvent,
-			TransportEffect,
-			TransportOutput
-		>({
-			initialState: 'idle',
-			ctx: {},
-			env: {},
-			transition: transportTransition,
-			effects: {
-				'transport.effect.open_stream': () => {
-					this.#openStream()
-				},
-				'transport.effect.close_stream': async () => {
-					await this.#closeStream()
-				},
-				'transport.effect.finalize': async () => {
-					await this.#closeStream()
-				},
-			},
-		})
 	}
 
 	// The reader FSM ingests this to receive stream lifecycle events.
 	get events(): AsyncIterable<TransportOutput> {
-		return this.#machine
+		return this.#events
 	}
 
 	connect(): void {
-		this.#machine.dispatch({ type: 'transport.connect' })
+		if (!this.#events.isClosed) this.#openStream()
 	}
 
 	// Enqueue a client message (read request, commit, partition-session response)
 	// on the current stream. No-op if the stream is gone — the reader FSM rebuilds
 	// its outgoing state on the next init anyway.
 	send(message: StreamReadMessage_FromClient, priority: number = PRIORITY_DEFAULT): boolean {
-		return this.#push(message, priority)
+		let input = this.#streamInput
+		if (!input) return false
+		input.push(message, priority)
+		return true
 	}
 
 	async sendUpdateToken(): Promise<void> {
-		// Coalesce: keep at most one un-acknowledged update-token queued (see the
-		// writer transport for the rationale) — an interval-driven push on a wedged
-		// stream would otherwise pile up unboundedly.
-		if (this.#tokenPending) {
-			return
-		}
+		let input = this.#streamInput
+		if (!input || this.#tokenPending) return
 		this.#tokenPending = true
 		try {
 			let token = await this.#driver.token
-			let queued = this.#push(
+			// A refresh belongs to the stream that requested it, even across token-provider awaits.
+			if (input !== this.#streamInput) return
+			input.push(
 				create(StreamReadMessage_FromClientSchema, {
 					clientMessage: {
 						case: 'updateTokenRequest',
@@ -122,34 +93,23 @@ export class ReaderTransport {
 				}),
 				PRIORITY_TOKEN
 			)
-			if (!queued) {
-				this.#tokenPending = false // nothing landed on the wire; allow a retry
-			}
 		} catch (error) {
-			this.#tokenPending = false
+			if (input === this.#streamInput) this.#tokenPending = false
 			throw error
 		}
 	}
 
 	close(): void {
-		this.#machine.dispatch({ type: 'transport.close' })
+		this.destroy()
 	}
 
 	destroy(reason?: unknown): void {
-		this.#machine.dispatch({ type: 'transport.destroy', reason })
-	}
-
-	#push(message: StreamReadMessage_FromClient, priority: number): boolean {
-		let input = this.#streamInput
-		if (!input || input.isClosed) {
-			return false
-		}
-		input.push(message, priority)
-		return true
+		this.#closeStream(reason)
+		this.#events.destroy()
 	}
 
 	#openStream(): void {
-		void this.#closeStream()
+		this.#closeStream()
 
 		let ac = new AbortController()
 		let input = new AsyncPriorityQueue<StreamReadMessage_FromClient>()
@@ -169,11 +129,14 @@ export class ReaderTransport {
 			PRIORITY_INIT
 		)
 
-		let dispatch = this.#machine.dispatch.bind(this.#machine)
+		this.#streamAC = ac
+		this.#streamInput = input
+		this.#tokenPending = false
 
-		let task = (async () => {
+		void (async () => {
 			try {
 				await this.#driver.ready(ac.signal)
+				if (ac.signal.aborted) return
 
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
@@ -188,11 +151,7 @@ export class ReaderTransport {
 
 					if (response.status !== StatusIds_StatusCode.SUCCESS) {
 						dbg.log('recv non-success status %d', response.status)
-						dispatch({
-							type: 'transport.error',
-							error: new YDBError(response.status, response.issues),
-						})
-						return
+						throw new YDBError(response.status, response.issues)
 					}
 
 					if (response.serverMessage.case === 'initResponse') {
@@ -200,8 +159,8 @@ export class ReaderTransport {
 							'recv initResponse (sessionId=%s)',
 							response.serverMessage.value.sessionId
 						)
-						dispatch({
-							type: 'transport.init',
+						this.#events.push({
+							type: 'transport.stream.init_response',
 							sessionId: response.serverMessage.value.sessionId,
 						})
 						continue
@@ -211,41 +170,35 @@ export class ReaderTransport {
 						this.#tokenPending = false
 					}
 
-					dispatch({ type: 'transport.message', message: response })
+					this.#events.push({ type: 'transport.stream.message', message: response })
 				}
 
 				dbg.log('stream ended')
-				dispatch({ type: 'transport.ended' })
+				if (!ac.signal.aborted) this.#disconnect()
 			} catch (error) {
 				if (ac.signal.aborted) {
 					return
 				}
 				dbg.log('stream error: %O', error)
-				dispatch({ type: 'transport.error', error })
+				this.#disconnect(error)
 			}
 		})()
-
-		this.#streamAC = ac
-		this.#streamInput = input
-		this.#streamTask = task
-		this.#tokenPending = false // fresh stream — the previous token, if any, is gone
 	}
 
-	async #closeStream(): Promise<void> {
+	#disconnect(error?: unknown): void {
+		this.#closeStream()
+		this.#events.push({
+			type: 'transport.stream.disconnected',
+			...(error !== undefined && { error }),
+		})
+	}
+
+	#closeStream(reason?: unknown): void {
 		let ac = this.#streamAC
 		let input = this.#streamInput
-		let task = this.#streamTask
-
 		this.#streamAC = null
 		this.#streamInput = null
-		this.#streamTask = null
-
-		if (!ac) {
-			return
-		}
-
-		ac.abort(new Error('Stream disposed'))
-		input?.close()
-		await task
+		ac?.abort(reason ?? new Error('Stream disposed'))
+		input?.destroy()
 	}
 }
