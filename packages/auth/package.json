@@ -71,7 +71,7 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",
-		"@grpc/grpc-js": "^1.14.0",
+		"@grpc/grpc-js": "^1.14.5",
 		"@ydbjs/api": "^6.0.7",
 		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/debug": "^6.0.0",
