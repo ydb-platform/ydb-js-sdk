@@ -230,12 +230,12 @@ let runToQuiescence = function runToQuiescence(sim: Sim): void {
 
 let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 	let ctx = sim.writerCtx
-	let bufferedWireBytes = ctx.messages
+	let unsentBytes = ctx.messages
 		.slice(ctx.inflightCount)
-		.reduce((sum, message) => sum + message.wireSize, 0n)
-	if (ctx.bufferedWireBytes !== bufferedWireBytes) {
+		.reduce((sum, message) => sum + BigInt(message.data.length), 0n)
+	if (ctx.unsentBytes !== unsentBytes) {
 		throw new Error(
-			`${where}: buffered wire bytes ${ctx.bufferedWireBytes} differ from queued messages ${bufferedWireBytes}`
+			`${where}: unsent payload bytes ${ctx.unsentBytes} differ from queued messages ${unsentBytes}`
 		)
 	}
 
@@ -394,8 +394,6 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 					let message: BufferedMessage = {
 						data,
 						uncompressedSize: BigInt(size),
-						bufferedSize: BigInt(size),
-						wireSize: BigInt(size),
 						seqNo,
 						createdAt: new Date(0),
 					}

@@ -18,7 +18,6 @@ import {
 	traceFlush,
 } from './diagnostics.js'
 import { MAX_PAYLOAD_BYTES } from './writer-state.js'
-import { MAX_SEQ_NO, messageSizes } from './message-size.js'
 import {
 	DEFAULT_FLUSH_INTERVAL_MS,
 	DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
@@ -35,6 +34,8 @@ import type { OnAckCallback, TopicWriterOptions, WriteExtra } from './types.js'
 // reconnect / terminal events, so it covers the failure paths without the
 // per-message noise (that lives under `ydb:topic:writer:event`).
 let dbg = loggers.topic.extend('writer')
+
+let MAX_SEQ_NO = (1n << 63n) - 1n
 
 // Synchronous seqNo validator, owned by the facade so write() can reject bad
 // input at the call site without racing the FSM's async event queue.
@@ -209,13 +210,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			createdAt,
 			...(metadataItems && { metadataItems }),
 		}
-		let { bufferedSize, wireSize } = messageSizes(message)
-		if (wireSize > this.#runtime.maxMessageBytes) {
-			throw new Error('Message and metadata exceed the protobuf write frame limit')
-		}
+		let bufferedSize = BigInt(payload.length)
 
-		// Fail-fast cap on retained (un-acknowledged) bytes to bound memory. Checked
-		// before the seqNo validator mutates, so a rejected write leaves no state behind.
+		// Check the compressed-payload budget before consuming a sequence number.
 		if (this.#bufferedBytes + bufferedSize > this.#maxBufferBytes) {
 			throw new Error(
 				`Writer buffer is full: ${this.#bufferedBytes + bufferedSize} bytes would exceed the ${this.#maxBufferBytes} byte limit`
@@ -242,7 +239,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 		this.#runtime.machine.dispatch({
 			type: 'writer.write',
-			message: { ...message, seqNo, bufferedSize, wireSize },
+			message: { ...message, seqNo },
 		})
 	}
 
@@ -360,7 +357,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					}
 					publishAcknowledged(
 						this.#scope,
-						ackBreakdown(output.acknowledgments, output.payloadBytes)
+						ackBreakdown(output.acknowledgments, output.freedBytes)
 					)
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {

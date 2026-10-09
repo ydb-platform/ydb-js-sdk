@@ -6,7 +6,6 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test, vi } from 'vitest'
 
-import { MESSAGE_OVERHEAD_BYTES } from './message-size.ts'
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
 import {
@@ -342,7 +341,7 @@ test('throws synchronously when a write would exceed maxBufferBytes', async () =
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
-		maxBufferBytes: MESSAGE_OVERHEAD_BYTES + 4n,
+		maxBufferBytes: 4n,
 	})
 
 	let stream = await waitForNextStream()
@@ -360,7 +359,7 @@ test('reclaims buffer budget once acknowledgments free bytes', async () => {
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
-		maxBufferBytes: MESSAGE_OVERHEAD_BYTES + 3n,
+		maxBufferBytes: 3n,
 	})
 
 	let stream = await waitForNextStream()
@@ -1488,49 +1487,28 @@ test('cleans up the stream and timers when a runtime effect throws', async () =>
 	}
 })
 
-test('includes metadata in the buffer budget before accepting a sequence number', async () => {
+test('charges only compressed payload bytes and restores capacity after acknowledgment', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1024n })
-	expect(() =>
-		writer.write(bytes(), { seqNo: 10n, metadataItems: { trace: new Uint8Array(1024) } })
-	).toThrow(/buffer is full/)
-	writer.write(bytes(1))
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1n })
+	let metadataItems = { trace: new Uint8Array(100) }
+	writer.write(bytes(), { metadataItems })
+	writer.write(bytes(1), { metadataItems })
+	writer.write(bytes())
+	expect(() => writer.write(bytes(2))).toThrow(/buffer is full/)
 	let stream = await waitForNextStream()
 	stream.respond(initResponse(0n))
-	expect((await stream.waitForWrite()).messages[0]!.seqNo).toBe(1n)
-})
-
-test('bounds empty messages and restores capacity after acknowledgment', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1024n })
-	let accepted = 0
-	let rejected: unknown
-	for (; accepted < 100; accepted++) {
-		try {
-			writer.write(bytes())
-		} catch (error) {
-			rejected = error
-			break
-		}
-	}
-	expect(rejected).toMatchObject({ message: expect.stringMatching(/buffer is full/) })
-	expect(accepted).toBeGreaterThan(0)
-	expect(accepted).toBeLessThan(100)
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	await settle()
 	let flushed = writer.flush()
-	stream.respond(
-		writeResponse(Array.from({ length: accepted }, (_, i) => ({ seqNo: BigInt(i + 1) })))
-	)
+	let request = await stream.waitForWrite()
+	expect(request.messages.map((message) => message.data.length)).toEqual([0, 1, 0])
+	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }, { seqNo: 3n }]))
 	await flushed
-	expect(() => writer.write(bytes())).not.toThrow()
+	expect(() => writer.write(bytes(3))).not.toThrow()
 })
 
-test('restores the full metadata budget when reconnect initialization acknowledges a message', async () => {
+test('restores the payload budget when reconnect initialization acknowledges a message', async () => {
 	// The fake drops the response after persistence, then reports the recovered seqNo.
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 512n })
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1n })
 	let metadataItems = { trace: new Uint8Array(100) }
 	let first = await waitForNextStream()
 	first.respond(initResponse(0n))
@@ -1559,20 +1537,6 @@ test('snapshots metadata and avoids retaining a larger backing buffer', async ()
 	let message = (await stream.waitForWrite()).messages[0]!
 	expect(message.data.buffer.byteLength).toBe(3)
 	expect(message.metadataItems).toMatchObject([{ key: 'trace', value: bytes(7) }])
-})
-
-test('rejects a compressed frame that exceeds the protobuf limit', async () => {
-	let { driver } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, {
-		topic: '/t',
-		producer: 'p',
-		codec: {
-			codec: 99,
-			compress: () => new Uint8Array(48 * 1024 * 1024),
-			decompress: (data) => data,
-		},
-	})
-	expect(() => writer.write(bytes(1))).toThrow(/protobuf write frame limit/)
 })
 
 test.each([0n, -1n, 1n << 63n])(
@@ -1817,7 +1781,7 @@ test('sends a byte-full batch when the next message cannot fit', async () => {
 		let stream = await waitForNextStream()
 		stream.respond(initResponse(0n))
 		await settle()
-		// Two 25 MiB messages cannot share the 48 MiB write frame.
+		// Two 25 MiB payloads exceed the 48 MiB batch target.
 		writer.write(new Uint8Array(25 * 1024 * 1024))
 		await settle()
 		expect(

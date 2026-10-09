@@ -17,16 +17,16 @@ import type { AckStatus, WriteAck } from './types.js'
 // with no I/O. Everything here mutates `ctx` in place and returns the next
 // state + a list of effects for the runtime to execute — see writer-runtime.ts
 // for the I/O side. The buffer is a sliding window (see WriterCtx) and byte
-// budgeting lives in the facade, so the transition only counts messages.
+// admission budgeting lives in the facade; the transition owns batching.
 //
 // The full transition map (table + diagram) lives in packages/topic/ARCHITECTURE.md —
 // update it in the same commit when you change this dispatch.
 
 let dbg = loggers.topic.extend('writer')
 
-// Hard service limits (bytes).
-export const MAX_BATCH_BYTES = 48n * 1024n * 1024n // one WriteRequest frame stays under 48MiB
-export const MAX_PAYLOAD_BYTES = 48n * 1024n * 1024n // single message payload cap
+// Payload limits leave headroom for protocol framing.
+export const MAX_BATCH_BYTES = 48n * 1024n * 1024n // compressed-payload batch target
+export const MAX_PAYLOAD_BYTES = 48n * 1024n * 1024n // single uncompressed payload cap
 
 // ── State / context ─────────────────────────────────────────────────────────────
 
@@ -42,8 +42,6 @@ export type BufferedMessage = {
 	data: Uint8Array
 	// Original (pre-compression) payload size reported to the server.
 	uncompressedSize: bigint
-	bufferedSize: bigint
-	wireSize: bigint
 	seqNo: bigint
 	createdAt: Date
 	metadataItems?: Record<string, Uint8Array>
@@ -88,8 +86,8 @@ export type WriterCtx = {
 
 	messages: BufferedMessage[]
 	inflightCount: number
-	// Sum of wireSize in the unsent suffix; avoids rescanning a partial batch on every write.
-	bufferedWireBytes: bigint
+	// Sum of compressed payload bytes in the unsent suffix; avoids rescanning a partial batch on every write.
+	unsentBytes: bigint
 
 	limits: WriterLimits
 }
@@ -148,12 +146,11 @@ export type WriterEffect =
 
 export type WriterOutput =
 	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint; nextSeqNo: bigint }
-	// Budget reclaimed by this ack batch and payload bytes for throughput diagnostics.
+	// Compressed payload bytes reclaimed by this ACK batch.
 	| {
 			type: 'writer.acknowledgments'
 			acknowledgments: Map<bigint, AckStatus>
 			freedBytes: bigint
-			payloadBytes: bigint
 	  }
 	| { type: 'writer.flushed'; requestId: number; lastSeqNo: bigint }
 	| { type: 'writer.reconnecting'; attempt: number; error?: unknown }
@@ -187,7 +184,7 @@ export let createWriterCtx = function createWriterCtx(
 
 		messages: [],
 		inflightCount: 0,
-		bufferedWireBytes: 0n,
+		unsentBytes: 0n,
 
 		limits,
 	}
@@ -328,7 +325,7 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 		!ctx.closeRequested &&
 		ctx.pendingFlushId === undefined &&
 		ctx.messages.length - ctx.inflightCount < available &&
-		ctx.bufferedWireBytes < ctx.limits.maxBatchBytes
+		ctx.unsentBytes < ctx.limits.maxBatchBytes
 	) {
 		return []
 	}
@@ -336,9 +333,8 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 	let count = 0
 	let batchBytes = 0n
 	for (let i = ctx.inflightCount; i < ctx.messages.length; i++) {
-		let size = ctx.messages[i]!.wireSize
-		if (batchBytes + size > ctx.limits.maxBatchBytes) {
-			if (count === 0) throw new Error('Message exceeds the protobuf write frame limit')
+		let size = BigInt(ctx.messages[i]!.data.length)
+		if (count > 0 && batchBytes + size > ctx.limits.maxBatchBytes) {
 			break
 		}
 		count++
@@ -358,7 +354,7 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 		batch.push(toMessageData(message))
 	}
 	ctx.inflightCount += count
-	ctx.bufferedWireBytes -= batchBytes
+	ctx.unsentBytes -= batchBytes
 	if (ctx.inflightCount === ctx.messages.length) ctx.batchDue = false
 	return batch
 }
@@ -389,13 +385,12 @@ let applyInit = function applyInit(
 		ctx.hasEverConnected = true
 	}
 
-	let { recovered, freedBytes, payloadBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
+	let { recovered, freedBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
 	if (recovered.size > 0) {
 		runtime.emit({
 			type: 'writer.acknowledgments',
 			acknowledgments: recovered,
 			freedBytes,
-			payloadBytes,
 		})
 	}
 
@@ -414,10 +409,9 @@ let applyInit = function applyInit(
 let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx: WriterCtx,
 	serverLastSeqNo: bigint
-): { recovered: Map<bigint, AckStatus>; freedBytes: bigint; payloadBytes: bigint } {
+): { recovered: Map<bigint, AckStatus>; freedBytes: bigint } {
 	let recovered = new Map<bigint, AckStatus>()
 	let freedBytes = 0n
-	let payloadBytes = 0n
 
 	// In-flight seqNos are strictly increasing (assigned in order in formBatch), so
 	// `seqNo <= serverLastSeqNo` splits the in-flight range at one boundary — walk
@@ -429,21 +423,20 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 		if (message.seqNo === 0n || message.seqNo > serverLastSeqNo) {
 			break
 		}
-		freedBytes += message.bufferedSize
-		payloadBytes += BigInt(message.data.length)
+		freedBytes += BigInt(message.data.length)
 		recovered.set(message.seqNo, 'skipped')
 		i += 1
 	}
 
 	let resend = i < ctx.inflightCount
 	for (let j = i; j < inflightEnd; j++) {
-		ctx.bufferedWireBytes += ctx.messages[j]!.wireSize
+		ctx.unsentBytes += BigInt(ctx.messages[j]!.data.length)
 	}
 	ctx.messages.splice(0, i)
 	ctx.inflightCount = 0
 	ctx.batchDue = ctx.messages.length > 0 && (ctx.batchDue || resend)
 
-	return { recovered, freedBytes, payloadBytes }
+	return { recovered, freedBytes }
 }
 
 // Remove server-acknowledged messages from the in-flight prefix.
@@ -454,7 +447,7 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 let acknowledge = function acknowledge(
 	ctx: WriterCtx,
 	acks: WriteAck[]
-): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint; payloadBytes: bigint } {
+): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint } {
 	let status = new Map<bigint, AckStatus>()
 	for (let ack of acks) {
 		status.set(ack.seqNo, ack.status)
@@ -462,7 +455,6 @@ let acknowledge = function acknowledge(
 
 	let acknowledgments = new Map<bigint, AckStatus>()
 	let freedBytes = 0n
-	let payloadBytes = 0n
 	let count = 0
 	while (count < ctx.inflightCount) {
 		let message = ctx.messages[count]!
@@ -472,15 +464,14 @@ let acknowledge = function acknowledge(
 		}
 
 		acknowledgments.set(message.seqNo, messageStatus)
-		freedBytes += message.bufferedSize
-		payloadBytes += BigInt(message.data.length)
+		freedBytes += BigInt(message.data.length)
 		count += 1
 	}
 
 	ctx.messages.splice(0, count)
 	ctx.inflightCount -= count
 
-	return { acknowledgments, freedBytes, payloadBytes }
+	return { acknowledgments, freedBytes }
 }
 
 // Append a message to the buffer. Total by design — seqNo-mode validation
@@ -497,7 +488,7 @@ let enqueue = function enqueue(ctx: WriterCtx, message: BufferedMessage): void {
 	}
 
 	ctx.messages.push(message)
-	ctx.bufferedWireBytes += message.wireSize
+	ctx.unsentBytes += BigInt(message.data.length)
 }
 
 // ── Terminal / transitions ──────────────────────────────────────────────────────
@@ -536,7 +527,7 @@ let terminate = function terminate(
 export let releaseState = function releaseState(ctx: WriterCtx): void {
 	ctx.messages = []
 	ctx.inflightCount = 0
-	ctx.bufferedWireBytes = 0n
+	ctx.unsentBytes = 0n
 	ctx.batchDue = false
 	ctx.pendingFlushId = undefined
 }
@@ -753,13 +744,12 @@ export let writerTransition = function writerTransition(
 				case 'writer.pump':
 					return pump(ctx, runtime)
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes, payloadBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
 							freedBytes,
-							payloadBytes,
 						})
 					}
 					let closed = finishDrain(ctx, runtime)

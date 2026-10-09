@@ -148,7 +148,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
 - `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — budget for unacknowledged compressed payloads and metadata, including 256 bytes per message and 64 bytes per metadata item for retained objects (default 256 MiB; not an exact process-memory limit)
+- `maxBufferBytes?`: `bigint` — limit for unacknowledged payload bytes after compression (default 256 MiB); metadata and JavaScript object overhead are not included
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
 - `flushIntervalMs?`: `number` — periodic flush of a partially filled batch (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)

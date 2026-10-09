@@ -1,4 +1,4 @@
-import { create, toBinary } from '@bufbuild/protobuf'
+import { create } from '@bufbuild/protobuf'
 import {
 	Codec,
 	StreamWriteMessage_WriteRequestSchema,
@@ -55,7 +55,6 @@ type WriterEnv = {
 type FullCtx = WriterCtx & WriterEnv
 
 export type WriterRuntime = {
-	maxMessageBytes: bigint
 	machine: MachineRuntime<WriterState, WriterCtx, WriterEvent, WriterOutput>
 }
 
@@ -180,19 +179,10 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 		timers: new Map(),
 	}
 
-	let requestHeader = create(StreamWriteMessage_WriteRequestSchema, {
-		codec,
-		...(env.txIdentity && { tx: create(TransactionIdentitySchema, env.txIdentity) }),
-	})
-	// FromClient wraps WriteRequest in a one-byte tag and, below 48 MiB, a four-byte length.
-	let maxMessageBytes =
-		MAX_BATCH_BYTES -
-		BigInt(toBinary(StreamWriteMessage_WriteRequestSchema, requestHeader).length) -
-		5n
 	let ctx = createWriterCtx(
 		{
 			maxInflightCount: options.maxInflightCount ?? DEFAULT_MAX_INFLIGHT_COUNT,
-			maxBatchBytes: maxMessageBytes,
+			maxBatchBytes: MAX_BATCH_BYTES,
 		},
 		{
 			retryOnSchemeError: options.retryOnSchemeError ?? false,
@@ -298,5 +288,5 @@ export function createWriterRuntime(driver: Driver, options: TopicWriterOptions)
 
 	machine.dispatch({ type: 'writer.start' })
 
-	return { machine, maxMessageBytes }
+	return { machine }
 }
