@@ -589,7 +589,9 @@ let processReaderEvent = function processReaderEvent(sim: Sim, event: ReaderEven
 let processTransportEvent = function processTransportEvent(sim: Sim, event: TransportEvent): void {
 	switch (event.type) {
 		case 'transport.connect':
-			if (sim.terminal) return
+			if (sim.terminal) {
+				return
+			}
 			sim.streamOpen = true
 			sim.initPending = true
 			sim.credit = 0n
@@ -607,7 +609,9 @@ let processTransportEvent = function processTransportEvent(sim: Sim, event: Tran
 			sim.initPending = false
 			return
 	}
-	if (!sim.streamOpen || sim.terminal) return
+	if (!sim.streamOpen || sim.terminal) {
+		return
+	}
 	switch (event.type) {
 		case 'transport.init':
 			sim.initPending = false
@@ -618,7 +622,9 @@ let processTransportEvent = function processTransportEvent(sim: Sim, event: Tran
 			return
 		case 'transport.message': {
 			let mapped = classify(event.message)
-			if (mapped) sim.readerEvents.push(mapped)
+			if (mapped) {
+				sim.readerEvents.push(mapped)
+			}
 			return
 		}
 		case 'transport.ended':
