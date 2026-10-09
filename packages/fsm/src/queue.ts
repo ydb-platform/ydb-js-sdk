@@ -145,9 +145,8 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	// thus swallow) an item. For a bounded wait compose the deadline at the call site:
 	// linkSignals(signal, AbortSignal.timeout(ms)).
 	async take(signal?: AbortSignal): Promise<IteratorResult<T>> {
-		signal?.throwIfAborted()
-
 		for (;;) {
+			signal?.throwIfAborted()
 			if (this.#destroyed) {
 				return { value: undefined as never, done: true }
 			}

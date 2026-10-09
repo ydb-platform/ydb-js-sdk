@@ -3,6 +3,19 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, test } from 'vitest'
 import { AsyncPriorityQueue, AsyncQueue } from './queue.ts'
 
+test('cancellation after resume leaves the buffered item available to the next take', async () => {
+	using queue = new AsyncQueue<number>()
+	let controller = new AbortController()
+	let reason = new Error('Cancelled before dequeue')
+	queue.pause()
+	queue.push(1)
+	let pending = queue.take(controller.signal)
+	queue.resume()
+	controller.abort(reason)
+	await expect(pending).rejects.toBe(reason)
+	expect(await queue.take()).toEqual({ done: false, value: 1 })
+})
+
 test('processes priority items in descending order', async () => {
 	let queue = new AsyncPriorityQueue<number>()
 

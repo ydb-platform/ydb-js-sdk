@@ -1232,18 +1232,14 @@ let initializeSession = function initializeSession(
 		{ type: 'reader.effect.timer.schedule', which: 'update_token' },
 	]
 
-	// Bound the wait for every partition holding pending commits: if the server does
-	// not re-grant it on this stream (rebalanced to another reader), the gc rejects
-	// the waiters instead of leaving them pending forever. start_partition clears the
-	// timer when the partition does come back.
-	for (let [key, entry] of ctx.partitions) {
-		if (entry.commitWaiters.length > 0) {
-			effects.push({
-				type: 'reader.effect.timer.schedule',
-				which: 'partition_reassign_gc',
-				partitionKey: key,
-			})
-		}
+	// A retained message can be committed after init. Bound every old grant until
+	// its start handshake completes, including grants with no pending commit yet.
+	for (let key of ctx.partitions.keys()) {
+		effects.push({
+			type: 'reader.effect.timer.schedule',
+			which: 'partition_reassign_gc',
+			partitionKey: key,
+		})
 	}
 
 	let reading = startReading(ctx)
@@ -1351,6 +1347,7 @@ let gcPartition = function gcPartition(ctx: ReaderCtx, key: string, runtime: Rea
 	entry.commitWaiters = []
 	entry.pendingRanges = []
 	if (ctx.sessionIndex.get(entry.session.partitionSessionId) !== key) {
+		entry.session.stop()
 		ctx.partitions.delete(key)
 	}
 }

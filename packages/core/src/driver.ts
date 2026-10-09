@@ -224,8 +224,6 @@ export class Driver implements Disposable, AsyncDisposable {
 	#identity!: DriverIdentity
 
 	constructor(connectionString: string, userOptions: Readonly<DriverOptions> = defaultOptions) {
-		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, userOptions)
-
 		this.#initAt = performance.now()
 
 		this.cs = this.#parseConnectionString(connectionString)

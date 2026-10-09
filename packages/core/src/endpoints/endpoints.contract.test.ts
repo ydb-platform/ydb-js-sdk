@@ -250,10 +250,78 @@ test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
 	expect(conn.endpoint.nodeId).toBe(9n)
 })
 
+test.for([false, true])(
+	'keeps pinned and discovered channels separate (pin first: %s)',
+	async (pinFirst, tc) => {
+		// Discovery and pin publication order must be controlled independently of network timing.
+		await using h = setup([endpoint(1)])
+		await h.pool.ready(tc.signal)
+		h.pool.pin(1n, 'direct-node', 2137)
+		await settle()
+		let direct = () => h.pool.acquireNode(1n, { hard: true })
+		let first = pinFirst ? direct() : h.pool.acquire(1n)
+		let second = pinFirst ? h.pool.acquire(1n) : direct()
+		expect(first.endpoint.address).toBe(pinFirst ? 'direct-node:2137' : 'node-1:2136')
+		expect(second.endpoint.address).toBe(pinFirst ? 'node-1:2136' : 'direct-node:2137')
+		await h.pool.close()
+		expect(h.connections.materialized).toHaveLength(2)
+		expect(h.connections.materialized.every((connection) => connection.closed)).toBe(true)
+	}
+)
+
 test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	expect(() => h.pool.acquireNode(99n, { hard: true })).toThrow(EndpointsUnavailableError)
+})
+
+test('invalidating a pin preserves the discovered channel for the same node', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	let discovered = h.pool.acquire(1n)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	h.pool.acquireNode(1n, { hard: true })
+	h.pool.invalidate(1n)
+	await settle()
+	expect(h.pool.acquire(1n)).toBe(discovered)
+	expect(h.connections.materialized.map((connection) => connection.closed)).toEqual([false, true])
+})
+
+test('retiring discovery preserves the pinned channel for the same node', async (tc) => {
+	await using h = setup([endpoint(1), endpoint(2)], { retiredGraceMs: 0 })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	let pinned = h.pool.acquireNode(1n, { hard: true })
+	h.discovery.push(discoveryResult([endpoint(2)]))
+	h.pool.forceRediscovery()
+	await settle()
+	h.machine.dispatch({ type: 'endpoints.timer.idle_sweep' })
+	await settle()
+	expect(h.pool.acquireNode(1n, { hard: true })).toBe(pinned)
+	expect(h.connections.materialized.map((connection) => connection.closed)).toEqual([true, false])
+})
+
+test('close waits for a busy pin when its discovered channel was never opened', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	h.pool.acquireNode(1n, { hard: true })
+	h.pool.callStarted(1n)
+	let closed = false
+	let closing = h.pool.close().then(() => {
+		closed = true
+		return closed
+	})
+	await settle()
+	expect(closed).toBe(false)
+	expect(h.connections.materialized[0]!.closed).toBe(false)
+	h.pool.callEnded(1n)
+	await closing
+	expect(h.connections.materialized[0]!.closed).toBe(true)
 })
 
 test('direct-IO: invalidate makes a pinned node unreachable', async (tc) => {

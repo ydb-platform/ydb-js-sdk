@@ -195,11 +195,12 @@ export type EndpointsEffect =
 	| ({ type: 'endpoints.effect.timer.clear' } & TimerRef)
 	// Retire-to-drain: keep the channel open, move it to the drain-watch set.
 	| { type: 'endpoints.effect.retire_channel'; nodeId: bigint }
-	// Physically close and drop the channel. `store` scopes which materialized
-	// channel is dropped: 'pinned' closes only the pin (an invalidate must not
-	// tear down a discovered channel that shares the same nodeId); 'any' (default)
-	// closes whichever store holds it.
-	| { type: 'endpoints.effect.close_channel'; nodeId: bigint; store?: 'any' | 'pinned' }
+	// Retirement and pin invalidation close their own store; shutdown closes both.
+	| {
+			type: 'endpoints.effect.close_channel'
+			nodeId: bigint
+			store?: 'any' | 'discovered' | 'pinned'
+	  }
 	// Begin the graceful close drain: close idle channels now and wait for
 	// in-flight streams to finish (bounded by the close deadline). Runtime-only.
 	| { type: 'endpoints.effect.begin_close_drain' }
@@ -410,7 +411,11 @@ let applyRound = function applyRound(
 		// (A brief flap keeps the same address and is absorbed by retire-drain.)
 		let newAddress = `${ep.host}:${ep.port}`
 		if (existing.address !== newAddress) {
-			effects.push({ type: 'endpoints.effect.close_channel', nodeId: ep.nodeId })
+			effects.push({
+				type: 'endpoints.effect.close_channel',
+				nodeId: ep.nodeId,
+				store: 'discovered',
+			})
 		}
 
 		// Refresh surface fields (location/pile/load/dial info can change).
@@ -803,7 +808,13 @@ export let endpointsTransition = function endpointsTransition(
 						reason: 'idle',
 					})
 					return {
-						effects: [{ type: 'endpoints.effect.close_channel', nodeId: event.nodeId }],
+						effects: [
+							{
+								type: 'endpoints.effect.close_channel',
+								nodeId: event.nodeId,
+								store: 'discovered',
+							},
+						],
 					}
 				}
 				case 'endpoints.pin':
