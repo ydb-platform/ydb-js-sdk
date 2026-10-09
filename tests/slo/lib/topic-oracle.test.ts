@@ -363,3 +363,25 @@ test('rejects invalid profile dimensions before creating a run', () => {
 		).toThrow(RangeError)
 	}
 })
+
+test('keeps exact duplicate checks after a long committed prefix and offset gaps', () => {
+	let oracle = makeOracle(1, 64)
+	for (let sequence = 1; sequence <= 100_000; sequence++) {
+		oracle.accept(0, sequence)
+		let offset = 2n ** 60n + BigInt(sequence + (sequence > 50_000 ? 7 : 0))
+		oracle.commit([oracle.observe(message(oracle, 0, sequence, offset))])
+		oracle.acknowledge(0, sequence)
+	}
+	expect(oracle.complete).toBe(true)
+	expect(oracle.retainedEntries).toBe(2)
+	oracle.commit([oracle.observe(message(oracle, 0, 1, 2n ** 60n + 1n))])
+	expect(oracle.snapshot().totals).toMatchObject({
+		delivered: 100_000,
+		committed: 100_000,
+		duplicates: 1,
+	})
+	expect(() => oracle.observe(message(oracle, 0, 1, 2n ** 60n + 2n))).toThrow(
+		'duplicate publication'
+	)
+	expect(oracle.complete).toBe(false)
+})

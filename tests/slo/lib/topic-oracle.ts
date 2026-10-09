@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { TopicOffsets } from './topic-offsets.ts'
+
 export type TopicOracleOptions = {
 	runId: string
 	partitions: number
@@ -49,13 +51,13 @@ export type TopicOracleSnapshot = {
 type ProducerState = {
 	accepted: number
 	acknowledged: number
-	offsets: Map<number, bigint>
+	offsets: TopicOffsets
 	committed: Set<number>
+	committedThrough: number
 	duplicates: number
 	nextObserved: number
 	lastOffset: bigint | undefined
 	confirmedOffset: bigint
-	nextConfirmation: number
 }
 
 let HEADER_BYTES = 56
@@ -96,13 +98,13 @@ export class TopicOracle {
 		this.#producers = Array.from({ length: options.partitions }, () => ({
 			accepted: 0,
 			acknowledged: 0,
-			offsets: new Map(),
+			offsets: new TopicOffsets(),
 			committed: new Set(),
+			committedThrough: 0,
 			duplicates: 0,
 			nextObserved: 1,
 			lastOffset: undefined,
 			confirmedOffset: 0n,
-			nextConfirmation: 1,
 		}))
 	}
 
@@ -242,7 +244,7 @@ export class TopicOracle {
 			}
 		}
 		for (let { partition, sequence } of observed) {
-			this.#producers[partition]!.committed.add(sequence)
+			this.#commit(this.#producers[partition]!, sequence)
 		}
 	}
 
@@ -253,6 +255,13 @@ export class TopicOracle {
 		}
 	}
 
+	get retainedEntries(): number {
+		return this.#producers.reduce(
+			(sum, state) => sum + state.offsets.rangeCount + state.committed.size,
+			0
+		)
+	}
+
 	get complete(): boolean {
 		return (
 			this.#failureCount === 0 &&
@@ -261,7 +270,7 @@ export class TopicOracle {
 					state.accepted > 0 &&
 					state.acknowledged === state.accepted &&
 					state.offsets.size === state.accepted &&
-					state.committed.size === state.accepted
+					state.committedThrough === state.accepted
 			)
 		)
 	}
@@ -286,7 +295,7 @@ export class TopicOracle {
 				accepted: state.accepted,
 				acknowledged: state.acknowledged,
 				delivered: state.offsets.size,
-				committed: state.committed.size,
+				committed: state.committedThrough + state.committed.size,
 				duplicates: state.duplicates,
 			}
 			let missing: TopicOracleSnapshot['producers'][number]['missing'] = {
@@ -294,30 +303,23 @@ export class TopicOracle {
 				uncommitted: [],
 				acknowledgedUndelivered: [],
 			}
-			let acknowledgedUndelivered = 0
-			let uncertain = 0
-			for (let sequence = 1; sequence <= state.accepted; sequence++) {
-				if (!state.offsets.has(sequence)) {
-					if (missing.undelivered.length < MAX_EXAMPLES)
-						missing.undelivered.push(sequence)
-					if (sequence <= state.acknowledged) {
-						acknowledgedUndelivered++
-						if (missing.acknowledgedUndelivered.length < MAX_EXAMPLES)
-							missing.acknowledgedUndelivered.push(sequence)
-					} else {
-						uncertain++
-					}
-				} else if (
-					!state.committed.has(sequence) &&
-					missing.uncommitted.length < MAX_EXAMPLES
-				) {
+			missing.undelivered = state.offsets.missing(1, state.accepted).examples
+			let acknowledgedMissing = state.offsets.missing(1, state.acknowledged)
+			missing.acknowledgedUndelivered = acknowledgedMissing.examples
+			let acknowledgedUndelivered = acknowledgedMissing.count
+			let uncertain = state.offsets.missing(state.acknowledged + 1, state.accepted).count
+			for (
+				let sequence = state.committedThrough + 1;
+				sequence < state.nextObserved && missing.uncommitted.length < MAX_EXAMPLES;
+				sequence++
+			) {
+				if (state.offsets.has(sequence) && !state.committed.has(sequence))
 					missing.uncommitted.push(sequence)
-				}
 			}
 			let waiting: TopicOraclePending = {
 				unacknowledged: state.accepted - state.acknowledged,
 				undelivered: state.accepted - state.offsets.size,
-				uncommitted: state.offsets.size - state.committed.size,
+				uncommitted: state.offsets.size - counts.committed,
 				acknowledgedUndelivered,
 				uncertain,
 			}
@@ -356,13 +358,19 @@ export class TopicOracle {
 		// Successful observations are ordered; each record crosses this cursor once.
 		// A watermark cannot substitute for observing a missing business sequence.
 		for (;;) {
-			let offset = state.offsets.get(state.nextConfirmation)
+			let sequence = state.committedThrough + 1
+			let offset = state.offsets.get(sequence)
 			if (offset === undefined || offset >= state.confirmedOffset) {
 				return
 			}
-			state.committed.add(state.nextConfirmation)
-			state.nextConfirmation++
+			this.#commit(state, sequence)
 		}
+	}
+
+	#commit(state: ProducerState, sequence: number): void {
+		if (sequence <= state.committedThrough) return
+		state.committed.add(sequence)
+		while (state.committed.delete(state.committedThrough + 1)) state.committedThrough++
 	}
 
 	#sequence(sequence: number): void {

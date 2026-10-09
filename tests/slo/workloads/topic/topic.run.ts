@@ -22,6 +22,7 @@ import type { TopicMessage } from '@ydbjs/topic/message'
 import * as hdr from 'hdr-histogram-js'
 
 import { RateLimiter } from '../../lib/rate-limiter.ts'
+import { TopicStability } from '../../lib/topic-stability.ts'
 import { isPartitionRevokedError } from '../../lib/topic-errors.ts'
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import { meterProvider, registerLatencyGauges } from '../../lib/telemetry.ts'
@@ -41,6 +42,49 @@ let messageBytes = integer('size', 1024, 64, 8 * 1024 * 1024)
 let rps = integer('rps', 100, 1, 100_000)
 let drainTimeoutMs = integer('drainTimeoutMs', 120_000, 1, 600_000)
 let stallTimeoutMs = integer('stallTimeoutMs', 120_000, 1, 600_000)
+let retentionSeconds = integer('retentionSeconds', 86400, 600, 86400)
+let stabilityEnabled = params['stability'] === 'true'
+if (params['stability'] !== undefined && !['true', 'false'].includes(params['stability']))
+	throw new Error('stability must be true or false')
+let stabilityWarmupMs = integer('warmupSeconds', 300, 0, 3600) * 1000
+let stabilityWindowMs = integer('windowSeconds', 300, 10, 3600) * 1000
+let jsc: { heapStats(): { heapSize: number; extraMemorySize: number } } | undefined
+if (process.versions['bun']) {
+	let module = 'bun:jsc'
+	jsc = await import(module)
+}
+let memorySample = () => {
+	let memory = process.memoryUsage()
+	let native = jsc?.heapStats()
+	return native
+		? { rss: memory.rss, heapSize: native.heapSize, extraMemorySize: native.extraMemorySize }
+		: {
+				rss: memory.rss,
+				heapUsed: memory.heapUsed,
+				external: memory.external,
+				arrayBuffers: memory.arrayBuffers,
+			}
+}
+let stability = stabilityEnabled
+	? new TopicStability({
+			warmupMs: stabilityWarmupMs,
+			windowMs: stabilityWindowMs,
+			rps,
+			memoryGrowthBytes: jsc
+				? {
+						rss: 256 * 1024 ** 2,
+						heapSize: 64 * 1024 ** 2,
+						extraMemorySize: 64 * 1024 ** 2,
+					}
+				: {
+						rss: 256 * 1024 ** 2,
+						heapUsed: 64 * 1024 ** 2,
+						external: 64 * 1024 ** 2,
+						arrayBuffers: 32 * 1024 ** 2,
+					},
+		})
+	: undefined
+let stabilityResult: ReturnType<TopicStability['finish']> | undefined
 let runId = randomUUID()
 let topic = `${params['topic'] ?? 'slo-topic'}-${runId}`
 let consumer = 'slo-consumer'
@@ -73,6 +117,13 @@ let fail = function fail(error: unknown): void {
 	abortReader(error)
 }
 installSafetyHandlers('log', (_, error) => fail(error))
+let observeLatency = (start: number) => {
+	try {
+		stability?.recordLatency(performance.now() - start)
+	} catch (error) {
+		fail(error)
+	}
+}
 
 let meter = meterProvider.getMeter('topic-integrity')
 let operations = meter.createCounter('sdk_operations_total')
@@ -90,13 +141,16 @@ for (let operation_type of ['write', 'read'] as const) {
 meter
 	.createObservableGauge('sdk_memory_usage', { unit: 'bytes', valueType: ValueType.INT })
 	.addCallback((r) => {
-		let memory = process.memoryUsage()
-		for (let type of ['rss', 'heapUsed', 'external', 'arrayBuffers'] as const)
-			r.observe(memory[type], { worker: name, type })
+		for (let [type, value] of Object.entries(memorySample()))
+			r.observe(value, { worker: name, type })
 	})
 meter.createObservableGauge('sdk_topic_messages', { valueType: ValueType.INT }).addCallback((r) => {
 	for (let [state, count] of Object.entries(oracle.snapshot().totals)) r.observe(count, { state })
 })
+
+meter
+	.createObservableGauge('sdk_topic_verifier_entries', { valueType: ValueType.INT })
+	.addCallback((r) => r.observe(oracle.retainedEntries))
 
 using _ = abortOnStop(producing)
 let progress: ReturnType<typeof setInterval> | undefined
@@ -198,6 +252,7 @@ try {
 					await writer.flush(io.signal)
 					oracle.acknowledge(partition, targets[partition]!)
 					operations.add(1, { operation_type: 'write', operation_status: 'success' })
+					observeLatency(start)
 					latency.write.recordValue(Math.round((performance.now() - start) * 1000))
 				} catch (error) {
 					operations.add(1, { operation_type: 'write', operation_status: 'error' })
@@ -265,6 +320,7 @@ try {
 					operation_type: 'read',
 					operation_status: committedBatch ? 'success' : 'error',
 				})
+				if (committedBatch) observeLatency(start)
 				if (committedBatch)
 					latency.read.recordValue(Math.round((performance.now() - start) * 1000))
 				activeRead = false
@@ -283,6 +339,7 @@ try {
 	let lastAck = Array<number>(partitions).fill(Date.now())
 	let lastCommit = [...lastAck]
 	let ticks = 0
+	let producingAt = performance.now()
 	progress = setInterval(() => {
 		let snapshot = oracle.snapshot()
 		let now = Date.now()
@@ -303,6 +360,19 @@ try {
 				fail(new Error(`Writer partition ${p} acknowledgment progress stalled`))
 			if (now - lastCommit[p]! > stallTimeoutMs)
 				fail(new Error(`Reader partition ${p} delivery/commit progress stalled`))
+		}
+		if (phase === 'producing' && stability) {
+			try {
+				let window = stability.observe({
+					elapsedMs: performance.now() - producingAt,
+					accepted: snapshot.totals.accepted,
+					committed: snapshot.totals.committed,
+					memory: memorySample(),
+				})
+				if (window) console.info('[topic.stability] %s', JSON.stringify(window))
+			} catch (error) {
+				fail(error)
+			}
 		}
 		previous = snapshot.producers
 		if (++ticks % 10 === 0)
@@ -333,6 +403,10 @@ try {
 			codec,
 			drainTimeoutMs,
 			stallTimeoutMs,
+			retentionSeconds,
+			stability: stabilityEnabled,
+			stabilityWarmupMs,
+			stabilityWindowMs,
 		})
 	)
 	try {
@@ -372,6 +446,7 @@ try {
 		await Promise.all(writers.map((writer) => writer.close(io.signal)))
 		await reader.close()
 		io.signal.throwIfAborted()
+		stabilityResult = stability?.finish()
 		phase = 'complete'
 		let dropped = await service.dropTopic(create(DropTopicRequestSchema, { path: topic }), {
 			signal: io.signal,
@@ -412,6 +487,9 @@ let summary = {
 	startedAt: new Date(startedAt).toISOString(),
 	elapsedMs: Date.now() - startedAt,
 	reconnects,
+	runtime: { name: jsc ? 'bun' : 'node', version: process.versions['bun'] ?? process.version },
+	stability: stabilityResult,
+	drainedMemory: memorySample(),
 }
 let success = failure === undefined && summary.complete && phase === 'complete'
 console.info('[topic.result] %s', JSON.stringify({ success, ...summary }))
