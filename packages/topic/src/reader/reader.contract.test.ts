@@ -4,7 +4,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Codec } from '@ydbjs/api/topic'
 import type { StreamReadMessage_FromServer } from '@ydbjs/api/topic'
 import { YDBError } from '@ydbjs/error'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { ZSTD_CODEC } from '../codec.ts'
 import type { TopicMessage } from '../message.ts'
@@ -20,7 +20,6 @@ import {
 	settle,
 	startPartitionSession,
 	stopPartitionSession,
-	updateTokenResponse,
 } from './reader.fixtures.ts'
 
 // End-to-end wiring of the reader facade against a fake streamRead: driver ↔ transport
@@ -1655,30 +1654,32 @@ test('keeps refreshing the token on the new stream after a reconnect', async () 
 	expect(update.token).toBe('fake-token')
 })
 
-test('coalesces update-token requests until one is acknowledged', async () => {
-	// The token interval fires on a schedule with no inflight gate. If the stream is
-	// open but the server never acks, un-coalesced pushes would pile token frames into
-	// the stream queue indefinitely (a slow long-lived leak). With coalescing, at most
-	// one un-acknowledged token is ever queued.
+test('coalesces credential acquisition and refreshes without an ACK for the previous token', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let pending = Promise.withResolvers<string>()
+	let token = vi
+		.spyOn(driver, 'token', 'get')
+		.mockReturnValueOnce(pending.promise)
+		.mockResolvedValue('renewed-token')
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
-		updateTokenIntervalMs: 5, // fire many times quickly
+		updateTokenIntervalMs: 5,
 	})
-
 	let stream = await primeStream(reader, waitForNextStream)
 
-	// Let the token interval fire many times without ever sending updateTokenResponse.
 	await new Promise((resolve) => setTimeout(resolve, 60))
+	expect(token).toHaveBeenCalledTimes(1)
 
-	let tokenFrames = () =>
-		stream.sent.filter((m) => m.clientMessage.case === 'updateTokenRequest').length
-	expect(tokenFrames()).toBe(1)
-
-	// The ack clears the pending flag — the next tick sends a fresh refresh.
-	stream.respond(updateTokenResponse())
-	await expect.poll(tokenFrames, { timeout: 5000 }).toBeGreaterThanOrEqual(2)
+	pending.resolve('unchanged-token')
+	expect((await stream.waitForUpdateToken()).token).toBe('unchanged-token')
+	await expect
+		.poll(() =>
+			stream.sent
+				.filter((message) => message.clientMessage.case === 'updateTokenRequest')
+				.map((message) => (message.clientMessage.value as { token: string }).token)
+		)
+		.toContain('renewed-token')
 })
 
 test('closes gracefully and aborts the underlying stream', async () => {

@@ -1,6 +1,11 @@
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { StreamWriteMessage_FromServerSchema } from '@ydbjs/api/topic'
+import {
+	type StreamReadMessage_FromClient,
+	type StreamReadMessage_FromServer,
+	StreamWriteMessage_FromServerSchema,
+} from '@ydbjs/api/topic'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 import { expect, test, vi } from 'vitest'
 
 import {
@@ -92,22 +97,25 @@ for (let [name, make] of Object.entries(transports)) {
 		expect(current.wasAborted()).toBe(false)
 	})
 
-	test(`${name} keeps the current token pending when an old refresh fails`, async () => {
+	test(`${name} keeps current token acquisition pending when an old refresh fails`, async () => {
 		using fixture = make()
 		let oldToken = Promise.withResolvers<string>()
+		let currentToken = Promise.withResolvers<string>()
 		let token = vi
 			.spyOn(fixture.driver, 'token', 'get')
 			.mockReturnValueOnce(oldToken.promise)
-			.mockResolvedValue('current-token')
+			.mockReturnValue(currentToken.promise)
 		fixture.connect()
 		await fixture.nextStream()
 		let oldRefresh = fixture.transport.sendUpdateToken().catch(() => {})
 		fixture.connect()
 		let current = await fixture.nextStream()
-		await fixture.transport.sendUpdateToken()
+		let currentRefresh = fixture.transport.sendUpdateToken()
 		oldToken.reject(new Error('Old credentials request failed'))
 		await oldRefresh
 		await fixture.transport.sendUpdateToken()
+		currentToken.resolve('current-token')
+		await currentRefresh
 		await settle()
 		expect(token).toHaveBeenCalledTimes(2)
 		expect(
@@ -115,7 +123,7 @@ for (let [name, make] of Object.entries(transports)) {
 		).toHaveLength(1)
 	})
 
-	test(`${name} coalesces refreshes until the server acknowledges the token`, async () => {
+	test(`${name} coalesces concurrent token requests`, async () => {
 		using fixture = make()
 		let token = vi.spyOn(fixture.driver, 'token', 'get').mockResolvedValue('token')
 		fixture.connect()
@@ -176,3 +184,57 @@ for (let [name, make] of Object.entries(transports)) {
 		expect(createClient).not.toHaveBeenCalled()
 	})
 }
+
+test('reader sends a new token when the server does not acknowledge an unchanged token', async () => {
+	using fixture = transports.reader()
+	vi.spyOn(fixture.driver, 'token', 'get')
+		.mockResolvedValueOnce('unchanged-token')
+		.mockResolvedValue('renewed-token')
+	fixture.connect()
+	let stream = await fixture.nextStream()
+
+	await fixture.transport.sendUpdateToken()
+	await settle()
+	await fixture.transport.sendUpdateToken()
+	await settle()
+
+	expect(
+		stream.sent
+			.filter((message) => message.clientMessage.case === 'updateTokenRequest')
+			.map((message) => message.clientMessage.value)
+	).toMatchObject([{ token: 'unchanged-token' }, { token: 'renewed-token' }])
+})
+
+test('reader bounds queued token refreshes while outgoing requests are blocked', async () => {
+	let fake = makeReaderDriver()
+	let responses = new AsyncQueue<StreamReadMessage_FromServer>()
+	let requests: AsyncIterable<StreamReadMessage_FromClient> | undefined
+	vi.spyOn(fake.driver, 'createClient').mockReturnValue({
+		streamRead(input: AsyncIterable<StreamReadMessage_FromClient>) {
+			requests = input
+			return responses
+		},
+	} as never)
+	let token = vi.spyOn(fake.driver, 'token', 'get').mockResolvedValue('token')
+	let transport = new ReaderTransport(fake.driver, { consumer: 'c', topicsReadSettings: [] })
+	using _ = {
+		[Symbol.dispose]() {
+			transport.destroy()
+			responses.destroy()
+		},
+	}
+	transport.connect()
+	await settle()
+
+	await transport.sendUpdateToken()
+	await transport.sendUpdateToken()
+	await transport.sendUpdateToken()
+	expect(token).toHaveBeenCalledTimes(1)
+
+	let iterator = requests![Symbol.asyncIterator]()
+	expect((await iterator.next()).value.clientMessage.case).toBe('initRequest')
+	expect((await iterator.next()).value.clientMessage.case).toBe('updateTokenRequest')
+	await transport.sendUpdateToken()
+	expect(token).toHaveBeenCalledTimes(2)
+	await iterator.return?.()
+})

@@ -202,6 +202,7 @@ test('redelivers messages dequeued by an aborted read()', async (tc) => {
 	expect(redelivered).toEqual([0n, 1n, 2n, 3n, 4n])
 	// Both response boundaries completed in the yielded batch, so their exact combined
 	// server-accounted size is returned only now.
+	await settle()
 	expect(readRequests(stream.sent)).toEqual([1000n, 500n])
 	expect(reader.bufferedBytes).toBe(0n)
 })
