@@ -1,16 +1,9 @@
-import { create, toBinary } from '@bufbuild/protobuf'
-import {
-	StreamWriteMessage_FromClientSchema,
-	StreamWriteMessage_WriteRequestSchema,
-} from '@ydbjs/api/topic'
 import { expect, test } from 'vitest'
 
 import type { TransitionRuntime } from '@ydbjs/fsm'
 import { YDBError } from '@ydbjs/error'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { ClientError, Status } from 'nice-grpc'
-
-import { messageSizes } from './message-size.ts'
 
 import {
 	type BufferedMessage,
@@ -32,9 +25,9 @@ let limits: WriterLimits = {
 
 let ctxWith = function ctxWith(overrides: Partial<WriterCtx> = {}): WriterCtx {
 	let ctx = { ...createWriterCtx(limits), ...overrides }
-	ctx.bufferedWireBytes = ctx.messages
+	ctx.unsentBytes = ctx.messages
 		.slice(ctx.inflightCount)
-		.reduce((sum, message) => sum + message.wireSize, 0n)
+		.reduce((sum, message) => sum + BigInt(message.data.length), 0n)
 	return ctx
 }
 
@@ -42,8 +35,6 @@ let msg = function msg(byte: number, seqNo = 0n): BufferedMessage {
 	return {
 		data: new Uint8Array([byte]),
 		uncompressedSize: 1n,
-		bufferedSize: 1n,
-		wireSize: 1n,
 		seqNo,
 		createdAt: new Date(0),
 	}
@@ -89,10 +80,11 @@ test('checks batch readiness with linear work while small writes accumulate', ()
 	let sent: WriterEffect[] = []
 	for (let i = 0; i < count; i++) {
 		let message = msg(i)
-		Object.defineProperty(message, 'wireSize', {
+		let payload = message.data
+		Object.defineProperty(message, 'data', {
 			get() {
 				sizeReads++
-				return 1n
+				return payload
 			},
 		})
 		drive('ready', { type: 'writer.write', message }, ctx)
@@ -106,7 +98,7 @@ test('checks batch readiness with linear work while small writes accumulate', ()
 		messages: { length: count },
 	})
 	expect(ctx.inflightCount).toBe(count)
-	expect(sizeReads).toBeLessThanOrEqual(count * 2)
+	expect(sizeReads).toBeLessThanOrEqual(count * 3)
 })
 
 // Drive to ready with two unacked in-flight messages (seqNos 1, 2).
@@ -1071,7 +1063,6 @@ test('releases recovered payloads after every reconnect without normal acknowled
 			type: 'writer.acknowledgments',
 			acknowledgments: new Map([[BigInt(i), 'skipped']]),
 			freedBytes: 1n,
-			payloadBytes: 1n,
 		})
 		expect(ctx.messages).toHaveLength(0)
 		expect(ctx.messages.length - ctx.inflightCount).toBe(0)
@@ -1079,45 +1070,30 @@ test('releases recovered payloads after every reconnect without normal acknowled
 	}
 })
 
-test('splits metadata-heavy batches before the encoded frame exceeds the limit', () => {
-	let frameLimit = 128n
-	let ctx = ctxWith({
-		hasEverConnected: true,
-		limits: { maxInflightCount: 1000, maxBatchBytes: frameLimit - 7n },
-	})
-	for (let i = 0; i < 3; i++) {
-		let message = {
-			data: new Uint8Array(50),
-			uncompressedSize: 50n,
-			seqNo: 0n,
-			createdAt: new Date(0),
-			metadataItems: { trace: new Uint8Array(20) },
-		}
+test('fills a 48 MiB payload batch without charging metadata or framing', () => {
+	let ctx = ctxWith()
+	let payload = new Uint8Array(24 * 1024 * 1024)
+	for (let i = 0; i < 2; i++) {
 		drive(
 			'ready',
-			{ type: 'writer.write', message: { ...message, ...messageSizes(message) } },
+			{
+				type: 'writer.write',
+				message: {
+					data: payload,
+					uncompressedSize: BigInt(payload.length),
+					seqNo: 0n,
+					createdAt: new Date(0),
+					metadataItems: { trace: new Uint8Array(256) },
+				},
+			},
 			ctx
 		)
 	}
-	let batches = 0
-	while (ctx.messages.length - ctx.inflightCount > 0) {
-		let result = drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
-		for (let effect of result.effects) {
-			if (effect.type !== 'writer.effect.send.write_request') continue
-			let frame = create(StreamWriteMessage_FromClientSchema, {
-				clientMessage: {
-					case: 'writeRequest',
-					value: create(StreamWriteMessage_WriteRequestSchema, {
-						codec: 1,
-						messages: effect.messages,
-					}),
-				},
-			})
-			expect(
-				BigInt(toBinary(StreamWriteMessage_FromClientSchema, frame).length)
-			).toBeLessThanOrEqual(frameLimit)
-			batches++
-		}
-	}
-	expect(batches).toBe(3)
+	let result = drive('ready', { type: 'writer.pump' }, ctx)
+	expect(result.effects).toHaveLength(1)
+	expect(result.effects[0]).toMatchObject({
+		type: 'writer.effect.send.write_request',
+		messages: { length: 2 },
+	})
+	expect(ctx.unsentBytes).toBe(0n)
 })
