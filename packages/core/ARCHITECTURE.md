@@ -42,32 +42,31 @@ context, so a 10k-node cluster is one machine with two maps.
 
 Global guard: `endpoints.destroy` from any non-terminal state → `closed` (immediate).
 
-| State          | Event                                            | →                | Notes                                                                                                                   |
-| -------------- | ------------------------------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| idle           | discovery.start                                  | discovering      | run first round                                                                                                         |
-| idle           | pin                                              | idle             | rebuild snapshot                                                                                                        |
-| idle           | close                                            | closed           | close-before-start                                                                                                      |
-| discovering    | round_succeeded                                  | ready / degraded | apply round, ready-latch, arm interval+idle_sweep                                                                       |
-| discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                                                                             |
-| discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                                                                                       |
-| discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                                                                              |
-| discovering    | timer.discovery_backoff                          | discovering      | run round                                                                                                               |
-| discovering    | close                                            | closing/closed   | graceful drain                                                                                                          |
-| ready/degraded | round_succeeded                                  | ready / degraded | apply round (revive/add/retire + blanket un-ban)                                                                        |
-| ready/degraded | round_succeeded (0 endpoints)                    | —                | rejected — keep last snapshot/registry, arm backoff                                                                     |
-| ready/degraded | round_failed                                     | ready/degraded   | background failure is **never** terminal; arm backoff                                                                   |
-| ready/degraded | discovery.force / timer.interval / timer.backoff | —                | single-flight (dropped while a round is in flight)                                                                      |
-| ready/degraded | rpc_failed                                       | ready / degraded | ban active→pessimized; force a round if `>threshold` pessimized                                                         |
-| ready/degraded | rpc_ok                                           | ready / degraded | optimistic un-ban pessimized→active                                                                                     |
-| ready/degraded | timer.idle_sweep                                 | —                | emit idle_sweep effect                                                                                                  |
-| ready/degraded | channel_closeable                                | —                | drop a retired channel, emit `removed{idle}`                                                                            |
-| ready/degraded | pin                                              | —                | update pins, rebuild snapshot                                                                                           |
-| ready/degraded | close                                            | closing/closed   | freeze routing, begin drain (immediate if nothing registered)                                                           |
-| closing        | channel_closeable                                | closing/closed   | close a drained channel; finalize when the last one goes                                                                |
-| closing        | timer.close_deadline                             | closed           | force-close the rest                                                                                                    |
-| any live       | release_pin                                      | same / closed    | remove one lease; the last lease removes the pin and closes its channel; finish a closing pool when no endpoints remain |
-| any live       | invalidate                                       | same / closed    | release all leases for the node and remove its pin; closing never restores routing                                      |
-| closed         | \*                                               | closed           | ignored                                                                                                                 |
+| State          | Event                                            | →                | Notes                                                                                                |
+| -------------- | ------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| idle           | discovery.start                                  | discovering      | run first round                                                                                      |
+| idle           | pin                                              | idle             | rebuild snapshot                                                                                     |
+| idle           | close                                            | closed           | close-before-start                                                                                   |
+| discovering    | round_succeeded                                  | ready / degraded | apply round, ready-latch, arm interval+idle_sweep                                                    |
+| discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                                                          |
+| discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                                                                    |
+| discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                                                           |
+| discovering    | timer.discovery_backoff                          | discovering      | run round                                                                                            |
+| discovering    | close                                            | closing/closed   | graceful drain                                                                                       |
+| ready/degraded | round_succeeded                                  | ready / degraded | apply round (revive/add/retire + blanket un-ban)                                                     |
+| ready/degraded | round_succeeded (0 endpoints)                    | —                | rejected — keep last snapshot/registry, arm backoff                                                  |
+| ready/degraded | round_failed                                     | ready/degraded   | background failure is **never** terminal; arm backoff                                                |
+| ready/degraded | discovery.force / timer.interval / timer.backoff | —                | single-flight (dropped while a round is in flight)                                                   |
+| ready/degraded | rpc_failed                                       | ready / degraded | ban active→pessimized; force a round if `>threshold` pessimized                                      |
+| ready/degraded | rpc_ok                                           | ready / degraded | optimistic un-ban pessimized→active                                                                  |
+| ready/degraded | timer.idle_sweep                                 | —                | emit idle_sweep effect                                                                               |
+| ready/degraded | channel_closeable                                | —                | drop a retired channel, emit `removed{idle}`                                                         |
+| ready/degraded | pin                                              | —                | update pins, rebuild snapshot                                                                        |
+| ready/degraded | close                                            | closing/closed   | freeze routing, begin drain (immediate if nothing registered)                                        |
+| closing        | channel_closeable                                | closing/closed   | close a drained channel; finalize when the last one goes                                             |
+| closing        | timer.close_deadline                             | closed           | force-close the rest                                                                                 |
+| any live       | invalidate                                       | same / closed    | decrement the pin reference count; remove it at zero; finish a closing pool when no endpoints remain |
+| closed         | \*                                               | closed           | ignored                                                                                              |
 
 On `close`, routing is frozen (an empty snapshot is emitted so `acquire()` throws
 rather than vending a channel), then the runtime's `begin_close_drain` effect
@@ -148,9 +147,9 @@ reached through `Driver.createClient(service, target)`:
   for a server-named node from a topic `PartitionLocation`); the returned client
   is `Disposable`. Its RPCs wait until the pin's routing snapshot is published. Clients pinning the same node own separate leases; disposing the last lease unpins the node. Repeated disposal is a no-op, and disposal uses the original nodeId even if the caller mutates the target object.
 
-The FSM's pinned entry owns the set of client lease IDs. `pin` adds an owner; `release_pin` removes that owner and removes the route only when the set becomes empty. `invalidate` removes all owners of a node. Repeated or stale releases are ignored by the transition.
+The FSM's pinned entry holds a reference count. `pin` increments it, preserving existing references when the address or generation changes. `invalidate` decrements it and removes the route only at zero. A disposable client handle sends at most one invalidation, so repeated disposal cannot decrement another client's reference.
 
-The facade holds a flat map of per-client completion handles. `pin(nodeId, host, port, {generation})` returns a disposable handle whose `ready(signal)` waits for `pin_applied` after snapshot publication. Disposal rejects that client's pending wait and dispatches `release_pin`; the facade neither counts owners nor decides when to remove a route. `pin_released` invalidates handles when the FSM removes their leases. Pins stay **outside** the balanced tiers.
+The facade holds a flat map of per-client completion handles. `pin(nodeId, host, port, {generation})` returns a disposable handle whose `ready(signal)` waits for `pin_applied` after snapshot publication. Disposal removes the handle once, rejects its pending wait and dispatches `invalidate`; the FSM decides whether the remaining count permits removing the route. Pins stay **outside** the balanced tiers.
 
 ### Diagnostics
 

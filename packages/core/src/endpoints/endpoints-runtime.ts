@@ -485,7 +485,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	#env: EndpointsEnv
 	// RCU read plane — swapped by reference in #consume, read (never mutated) by acquire.
 	#snapshot: RoutingSnapshot = EMPTY_SNAPSHOT
-	// Client completion handles; the FSM owns endpoint leases.
+	// Client completion handles; the FSM owns pin reference counts.
 	#pinCompletions = new Map<symbol, PromiseWithResolvers<void>>()
 
 	constructor(
@@ -596,15 +596,11 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 				if (!this.#pinCompletions.has(leaseId)) throw new Error('Endpoint pin disposed')
 			},
 			[Symbol.dispose]: () => {
-				this.#pinCompletions.delete(leaseId)
+				if (!this.#pinCompletions.delete(leaseId)) return
 				applied.reject(new Error('Endpoint pin disposed'))
-				this.#machine.dispatch({ type: 'endpoints.release_pin', nodeId, leaseId })
+				this.#machine.dispatch({ type: 'endpoints.invalidate', nodeId })
 			},
 		}
-	}
-
-	invalidate(nodeId: bigint): void {
-		this.#machine.dispatch({ type: 'endpoints.invalidate', nodeId })
 	}
 
 	forceRediscovery(): void {
@@ -693,12 +689,6 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			switch (out.type) {
 				case 'endpoints.pin_applied':
 					this.#pinCompletions.get(out.leaseId)?.resolve()
-					break
-				case 'endpoints.pin_released':
-					this.#pinCompletions
-						.get(out.leaseId)
-						?.reject(new Error('Endpoint pin disposed'))
-					this.#pinCompletions.delete(out.leaseId)
 					break
 				case 'endpoints.snapshot':
 					this.#snapshot = out.snapshot
