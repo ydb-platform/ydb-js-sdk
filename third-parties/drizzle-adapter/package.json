@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/drizzle-adapter",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "YDB adapter for Drizzle ORM.",
 	"keywords": [
 		"database",
@@ -61,10 +61,10 @@
 		"check:surface": "node scripts/check-package-surface.mjs"
 	},
 	"dependencies": {
-		"@ydbjs/api": "^6.0.6",
-		"@ydbjs/core": "^6.3.0",
-		"@ydbjs/query": "^6.1.0",
-		"@ydbjs/value": "^6.0.7"
+		"@ydbjs/api": "^7.0.0",
+		"@ydbjs/core": "^7.0.0",
+		"@ydbjs/query": "^6.3.1",
+		"@ydbjs/value": "^6.0.9"
 	},
 	"peerDependencies": {
 		"drizzle-orm": "^0.45.2"
