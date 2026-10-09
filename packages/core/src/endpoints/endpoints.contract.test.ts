@@ -270,13 +270,14 @@ test('direct-IO: invalidate makes a pinned node unreachable', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
-	h.pool.pin(9n, 'node-9', 2136)
-	await settle()
+	using pin = h.pool.pin(9n, 'node-9', 2136)
+	await pin.ready(tc.signal)
 	expect(h.pool.acquireNode(9n).endpoint.nodeId).toBe(9n)
 
 	h.pool.invalidate(9n)
 	await settle()
 	expect(() => h.pool.acquireNode(9n, { hard: true })).toThrow(EndpointsUnavailableError)
+	await expect(pin.ready(tc.signal)).rejects.toThrow('Endpoint pin disposed')
 })
 
 test('acquire before ready throws EndpointsUnavailableError', async () => {

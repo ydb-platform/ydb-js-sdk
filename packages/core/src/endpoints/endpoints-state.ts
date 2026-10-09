@@ -106,7 +106,7 @@ export type EndpointsConfig = {
 // handles, no timers, no clock.
 export type EndpointsCtx = {
 	byNodeId: Map<bigint, EndpointEntry>
-	pinned: Map<bigint, EndpointEntry>
+	pinned: Map<bigint, EndpointEntry & { leases: Set<symbol> }>
 
 	attempts: number
 	lastError: unknown
@@ -182,6 +182,7 @@ export type EndpointsEvent =
 			generation: number
 	  }
 	| { type: 'endpoints.invalidate'; nodeId: bigint }
+	| { type: 'endpoints.release_pin'; nodeId: bigint; leaseId: symbol }
 	// The runtime observed a channel become closeable (drained / broken / past
 	// grace, or fully drained during close) and asks the FSM to drop it. During
 	// closing, dropping the last channel finalizes.
@@ -216,7 +217,8 @@ export type EndpointsEffect =
 // ── Outputs ─────────────────────────────────────────────────────────────────
 export type EndpointsOutput =
 	| { type: 'endpoints.snapshot'; snapshot: RoutingSnapshot }
-	| { type: 'endpoints.pin_applied'; nodeId: bigint; leaseId: symbol }
+	| { type: 'endpoints.pin_applied'; leaseId: symbol }
+	| { type: 'endpoints.pin_released'; leaseId: symbol }
 	| { type: 'endpoints.ready' }
 	| {
 			type: 'endpoints.discovery_completed'
@@ -580,7 +582,10 @@ let applyPin = function applyPin(
 ): Result | void {
 	let address = `${event.host}:${event.port}`
 	let prev = ctx.pinned.get(event.nodeId)
+	let leases = prev?.leases ?? new Set<symbol>()
+	leases.add(event.leaseId)
 	ctx.pinned.set(event.nodeId, {
+		leases,
 		nodeId: event.nodeId,
 		host: event.host,
 		port: event.port,
@@ -597,7 +602,7 @@ let applyPin = function applyPin(
 	})
 	rebuild(ctx, runtime)
 	// Readiness follows the snapshot in the facade's output queue.
-	runtime.emit({ type: 'endpoints.pin_applied', nodeId: event.nodeId, leaseId: event.leaseId })
+	runtime.emit({ type: 'endpoints.pin_applied', leaseId: event.leaseId })
 	// Re-pinning the same node to a new address/generation must drop the old
 	// pinned channel so the next acquire dials the new target.
 	if (prev !== undefined && (prev.address !== address || prev.generation !== event.generation)) {
@@ -617,10 +622,32 @@ let applyInvalidate = function applyInvalidate(
 	let entry = ctx.pinned.get(nodeId)
 	if (entry === undefined) return
 	ctx.pinned.delete(nodeId)
+	for (let leaseId of entry.leases) {
+		runtime.emit({ type: 'endpoints.pin_released', leaseId })
+	}
+	let close: EndpointsEffect = { type: 'endpoints.effect.close_channel', nodeId, store: 'pinned' }
+	if (runtime.state === 'closing') {
+		if (ctx.byNodeId.size === 0 && ctx.pinned.size === 0) {
+			let result = terminate(ctx, new Error('Endpoints closed'), runtime)
+			return { ...result, effects: [close, ...(result.effects ?? [])] }
+		}
+		return { effects: [close] }
+	}
 	rebuild(ctx, runtime)
 	// Close only the pinned channel — a discovered channel sharing this nodeId
 	// stays live (invalidating a pin must not abort healthy discovered streams).
-	return { effects: [{ type: 'endpoints.effect.close_channel', nodeId, store: 'pinned' }] }
+	return { effects: [close] }
+}
+
+let releasePin = function releasePin(
+	ctx: EndpointsCtx,
+	event: Extract<EndpointsEvent, { type: 'endpoints.release_pin' }>,
+	runtime: EndpointsTransitionRuntime
+): Result | void {
+	let entry = ctx.pinned.get(event.nodeId)
+	if (!entry?.leases.delete(event.leaseId)) return
+	runtime.emit({ type: 'endpoints.pin_released', leaseId: event.leaseId })
+	if (entry.leases.size === 0) return applyInvalidate(ctx, event.nodeId, runtime)
 }
 
 // ── Transition ──────────────────────────────────────────────────────────────
@@ -635,6 +662,12 @@ export let endpointsTransition = function endpointsTransition(
 	if (state !== 'closed' && event.type === 'endpoints.destroy') {
 		return terminate(ctx, event.reason ?? new Error('Endpoints destroyed'), runtime)
 	}
+	if (state !== 'closed' && event.type === 'endpoints.release_pin') {
+		return releasePin(ctx, event, runtime)
+	}
+	if (state !== 'closed' && event.type === 'endpoints.invalidate') {
+		return applyInvalidate(ctx, event.nodeId, runtime)
+	}
 
 	switch (state) {
 		case 'idle':
@@ -647,8 +680,6 @@ export let endpointsTransition = function endpointsTransition(
 					}
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.invalidate':
-					return applyInvalidate(ctx, event.nodeId, runtime)
 				case 'endpoints.close':
 					return terminate(ctx, new Error('Endpoints closed'), runtime)
 				default:
@@ -700,8 +731,6 @@ export let endpointsTransition = function endpointsTransition(
 					return { effects: [{ type: 'endpoints.effect.run_discovery_round' }] }
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.invalidate':
-					return applyInvalidate(ctx, event.nodeId, runtime)
 				case 'endpoints.close':
 					return toClosing(ctx, runtime)
 				default:
@@ -821,8 +850,6 @@ export let endpointsTransition = function endpointsTransition(
 				}
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.invalidate':
-					return applyInvalidate(ctx, event.nodeId, runtime)
 				case 'endpoints.close':
 					return toClosing(ctx, runtime)
 				default:

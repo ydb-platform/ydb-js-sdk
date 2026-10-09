@@ -271,6 +271,62 @@ test('pin adds a pinned entry and rebuilds the snapshot', () => {
 	expect(outputs(h, 'endpoints.snapshot')).toHaveLength(1)
 })
 
+test('releases a shared pin only after its last owner leaves', () => {
+	let h = toReady([ep(1)])
+	let first = pinEv(9n)
+	let second = pinEv(9n)
+	step(h, first)
+	step(h, second)
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: first.leaseId })
+	expect(h.ctx.pinned.has(9n)).toBe(true)
+	expect(effectTypes(h)).not.toContain('endpoints.effect.close_channel')
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: first.leaseId })
+	expect(h.ctx.pinned.has(9n)).toBe(true)
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: second.leaseId })
+	expect(h.ctx.pinned.has(9n)).toBe(false)
+	expect(h.effects).toEqual([
+		{ type: 'endpoints.effect.close_channel', nodeId: 9n, store: 'pinned' },
+	])
+})
+
+test('a stale release cannot remove a new pin for the same node', () => {
+	let h = toReady([ep(1)])
+	let first = pinEv(9n)
+	step(h, first)
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: first.leaseId })
+	let next = { ...pinEv(9n), host: 'replacement', generation: 2 }
+	step(h, next)
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: first.leaseId })
+	expect(h.ctx.pinned.get(9n)?.host).toBe('replacement')
+	expect(h.effects).toEqual([])
+})
+
+test('releasing the last pin finishes a closing pool with no discovered nodes', () => {
+	let h = harness()
+	step(h, { type: 'endpoints.discovery.start' })
+	let pin = pinEv(9n)
+	step(h, pin)
+	step(h, { type: 'endpoints.close' })
+	expect(h.state).toBe('closing')
+	step(h, { type: 'endpoints.release_pin', nodeId: 9n, leaseId: pin.leaseId })
+	expect(h.state).toBe('closed')
+	expect(h.ctx.pinned.size).toBe(0)
+	expect(effectTypes(h)).toContain('endpoints.effect.close_channel')
+})
+
+test('invalidation releases every client of a shared pin', () => {
+	let h = toReady([ep(1)])
+	let first = pinEv(9n)
+	let second = pinEv(9n)
+	step(h, first)
+	step(h, second)
+	step(h, { type: 'endpoints.invalidate', nodeId: 9n })
+	expect(outputs(h, 'endpoints.pin_released').map((output) => output.leaseId)).toEqual([
+		first.leaseId,
+		second.leaseId,
+	])
+})
+
 test('invalidate removes a pin and closes its channel', () => {
 	let h = toReady([ep(1)])
 	step(h, {
@@ -533,7 +589,7 @@ test('uses the fresh address for a revived node', () => {
 
 // ── unhandled events / direct-IO while discovering ───────────────────────────
 
-let pinEv = function pinEv(nodeId: bigint): EndpointsEvent {
+let pinEv = function pinEv(nodeId: bigint): Extract<EndpointsEvent, { type: 'endpoints.pin' }> {
 	return {
 		type: 'endpoints.pin',
 		leaseId: Symbol('test pin'),

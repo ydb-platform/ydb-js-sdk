@@ -485,8 +485,8 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	#env: EndpointsEnv
 	// RCU read plane — swapped by reference in #consume, read (never mutated) by acquire.
 	#snapshot: RoutingSnapshot = EMPTY_SNAPSHOT
-	// Readiness resolves at publication; ownership lasts until the client disposes.
-	#pinLeases = new Map<bigint, Map<symbol, PromiseWithResolvers<void>>>()
+	// Client completion handles; the FSM owns endpoint leases.
+	#pinCompletions = new Map<symbol, PromiseWithResolvers<void>>()
 
 	constructor(
 		machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>
@@ -572,16 +572,11 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		this.#machine.signal.throwIfAborted()
 		if (this.#machine.state === 'closing')
 			throw new EndpointsUnavailableError('Endpoints closed')
-		let owners = this.#pinLeases.get(nodeId)
-		if (!owners) {
-			owners = new Map()
-			this.#pinLeases.set(nodeId, owners)
-		}
 		let leaseId = Symbol('endpoint pin')
 		let applied = Promise.withResolvers<void>()
 		// A client may be disposed without ever issuing an RPC.
 		void applied.promise.catch(() => {})
-		owners.set(leaseId, applied)
+		this.#pinCompletions.set(leaseId, applied)
 		this.#machine.dispatch({
 			type: 'endpoints.pin',
 			leaseId,
@@ -598,23 +593,17 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			ready: async (signal) => {
 				await (signal ? abortable(signal, applied.promise) : applied.promise)
 				this.#machine.signal.throwIfAborted()
-				if (!owners.has(leaseId)) throw new Error('Endpoint pin disposed')
+				if (!this.#pinCompletions.has(leaseId)) throw new Error('Endpoint pin disposed')
 			},
 			[Symbol.dispose]: () => {
-				if (!owners.delete(leaseId)) return
+				this.#pinCompletions.delete(leaseId)
 				applied.reject(new Error('Endpoint pin disposed'))
-				if (owners.size === 0) this.invalidate(nodeId)
+				this.#machine.dispatch({ type: 'endpoints.release_pin', nodeId, leaseId })
 			},
 		}
 	}
 
 	invalidate(nodeId: bigint): void {
-		let owners = this.#pinLeases.get(nodeId)
-		if (owners) {
-			for (let owner of owners.values()) owner.reject(new Error('Endpoint pin invalidated'))
-			owners.clear()
-			this.#pinLeases.delete(nodeId)
-		}
 		this.#machine.dispatch({ type: 'endpoints.invalidate', nodeId })
 	}
 
@@ -686,19 +675,16 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			/* node:coverage ignore stop */
 		} finally {
 			finalizeEnv(env)
-			this.#clearPins(this.#machine.signal.reason ?? new Error('Endpoints closed'))
+			this.#rejectPinCompletions(this.#machine.signal.reason ?? new Error('Endpoints closed'))
 			// No-ops if already settled; guarantees no awaiter hangs on a fault.
 			env.readyDeferred.reject(new Error('Endpoints closed'))
 			env.closedDeferred.resolve()
 		}
 	}
 
-	#clearPins(reason: unknown): void {
-		for (let owners of this.#pinLeases.values()) {
-			for (let owner of owners.values()) owner.reject(reason)
-			owners.clear()
-		}
-		this.#pinLeases.clear()
+	#rejectPinCompletions(reason: unknown): void {
+		for (let completion of this.#pinCompletions.values()) completion.reject(reason)
+		this.#pinCompletions.clear()
 	}
 
 	async #drain(): Promise<void> {
@@ -706,7 +692,13 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		for await (let out of this.#machine) {
 			switch (out.type) {
 				case 'endpoints.pin_applied':
-					this.#pinLeases.get(out.nodeId)?.get(out.leaseId)?.resolve()
+					this.#pinCompletions.get(out.leaseId)?.resolve()
+					break
+				case 'endpoints.pin_released':
+					this.#pinCompletions
+						.get(out.leaseId)
+						?.reject(new Error('Endpoint pin disposed'))
+					this.#pinCompletions.delete(out.leaseId)
 					break
 				case 'endpoints.snapshot':
 					this.#snapshot = out.snapshot
@@ -813,7 +805,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					})
 					break
 				case 'endpoints.closed':
-					this.#clearPins(out.reason)
+					this.#rejectPinCompletions(out.reason)
 					env.readyDeferred.reject(new Error('Endpoints closed'))
 					dc('ydb:driver.closed').publish({
 						driver: env.identity,
