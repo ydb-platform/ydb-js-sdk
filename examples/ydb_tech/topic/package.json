@@ -1,0 +1,16 @@
+{
+	"name": "@ydbjs/ydb-tech-topic",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"start": "node dist/main.js"
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "2.12.0",
+		"@ydbjs/api": "file:../../../packages/api",
+		"@ydbjs/core": "file:../../../packages/core",
+		"@ydbjs/topic": "file:../../../packages/topic"
+	}
+}

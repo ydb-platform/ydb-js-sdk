@@ -24,6 +24,15 @@
 	},
 	"plugins": ["node", "import", "vitest", "promise", "typescript", "oxc"],
 	"ignorePatterns": ["**/node_modules/**", "**/dist/**"],
+	"overrides": [
+		{
+			"files": ["examples/ydb_tech/**"],
+			"rules": {
+				"no-await-in-loop": "off",
+				"no-underscore-dangle": ["warn", { "allow": ["_msg", "_batch"] }]
+			}
+		}
+	],
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn",
