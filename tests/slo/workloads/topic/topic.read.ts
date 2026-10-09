@@ -3,6 +3,8 @@ import { parentPort, workerData } from 'node:worker_threads'
 
 import { ValueType } from '@opentelemetry/api'
 import { Driver } from '@ydbjs/core'
+
+import { createTopicAuth } from '../../lib/topic-auth.ts'
 import { type TopicPartitionSession, createTopicReader } from '@ydbjs/topic/reader'
 import type { TopicMessage } from '@ydbjs/topic/message'
 import * as hdr from 'hdr-histogram-js'
@@ -16,7 +18,11 @@ import { type TopicWorkerControl, type TopicWorkerData, abortOnStop } from '../.
 
 let options = workerData as TopicWorkerData
 let { name, topic, consumer, partitions, stallTimeoutMs } = options
-let { memory, stability, runtime } = await createTopicMemory(options.params, options.rps)
+let { memory, stability, runtime } = await createTopicMemory(
+	options.params,
+	options.rps,
+	options.maxPendingMessages
+)
 let stabilityResult: ReturnType<NonNullable<typeof stability>['finish']> | undefined
 let oracle = new TopicOracle(options)
 let producing = new AbortController()
@@ -28,6 +34,7 @@ let finalCheckpoint = false
 let expectedReadStop = false
 let activeRead = false
 let reconnects = 0
+let tokenRenewal: ReturnType<ReturnType<typeof createTopicAuth>['finish']>
 let abortReader: (error: unknown) => void = () => {}
 let fail = (error: unknown) => {
 	failure ??= error instanceof Error ? error : new Error(String(error))
@@ -38,7 +45,9 @@ let fail = (error: unknown) => {
 	parentPort!.postMessage({ type: 'result', success: false, error: failure.message })
 }
 let finishRead = () => {
-	if (!finalCheckpoint) return
+	if (!finalCheckpoint) {
+		return
+	}
 	if (oracle.snapshot().producers.some((producer) => producer.delivered > producer.accepted)) {
 		fail(new Error('Reader delivered beyond the final writer checkpoint'))
 		return
@@ -50,7 +59,9 @@ let finishRead = () => {
 }
 installSafetyHandlers('log', (kind, error) => fail(error ?? kind))
 let observeLatency = (start: number) => {
-	if (producing.signal.aborted) return
+	if (producing.signal.aborted) {
+		return
+	}
 	try {
 		stability?.recordLatency(performance.now() - start)
 	} catch (error) {
@@ -59,7 +70,9 @@ let observeLatency = (start: number) => {
 }
 
 parentPort!.on('message', (message: TopicWorkerControl) => {
-	if (message.type !== 'checkpoint') return
+	if (message.type !== 'checkpoint') {
+		return
+	}
 	try {
 		oracle.updateWriter(message.checkpoint)
 		finalCheckpoint ||= message.final
@@ -69,6 +82,11 @@ parentPort!.on('message', (message: TopicWorkerControl) => {
 	}
 })
 let meter = meterProvider.getMeter('topic-read-meter')
+meter.createObservableCounter('sdk_process_cpu_time', { unit: 's' }).addCallback((result) => {
+	for (let [mode, microseconds] of Object.entries(process.cpuUsage())) {
+		result.observe(microseconds / 1_000_000, { mode })
+	}
+})
 let operations = meter.createCounter('sdk_operations_total')
 let attempts = meter.createCounter('sdk_retry_attempts_total')
 let latency = hdr.build({ highestTrackableValue: 600_000_000, numberOfSignificantValueDigits: 3 })
@@ -76,10 +94,19 @@ registerLatencyGauges(meter, latency, { operation_type: 'read', operation_status
 meter
 	.createObservableGauge('sdk_memory_usage', { unit: 'bytes', valueType: ValueType.INT })
 	.addCallback((r) => {
-		for (let [type, value] of Object.entries(memory())) r.observe(value, { worker: name, type })
+		for (let [type, value] of Object.entries(memory())) {
+			r.observe(value, { worker: name, type })
+		}
 	})
 meter.createObservableGauge('sdk_topic_messages', { valueType: ValueType.INT }).addCallback((r) => {
-	for (let [state, count] of Object.entries(oracle.snapshot().totals)) r.observe(count, { state })
+	for (let [state, count] of Object.entries(oracle.snapshot().totals)) {
+		r.observe(count, { state })
+	}
+})
+meter.createObservableGauge('sdk_topic_pending', { valueType: ValueType.INT }).addCallback((r) => {
+	for (let [state, count] of Object.entries(oracle.snapshot().pending)) {
+		r.observe(count, { state })
+	}
 })
 meter
 	.createObservableGauge('sdk_topic_verifier_entries', { valueType: ValueType.INT })
@@ -87,13 +114,21 @@ meter
 let progress: ReturnType<typeof setInterval> | undefined
 let startup = setTimeout(() => fail(new Error('Reader startup timed out')), 60_000)
 try {
-	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+	using auth = createTopicAuth(
+		process.env['YDB_CONNECTION_STRING']!,
+		options.params['auth'] === 'login'
+	)
+	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!, auth.options)
 	await driver.ready(io.signal)
 	let reconnect = channel('ydb:topic.reader.reconnecting')
 	let onReconnect = (event: unknown) => {
-		if ((event as { driver: unknown }).driver !== driver.identity) return
+		if ((event as { driver: unknown }).driver !== driver.identity) {
+			return
+		}
 		reconnects++
-		if (activeRead) attempts.add(1, { operation_type: 'read' })
+		if (activeRead) {
+			attempts.add(1, { operation_type: 'read' })
+		}
 	}
 	reconnect.subscribe(onReconnect)
 	// oxlint-disable-next-line no-shadow
@@ -105,6 +140,12 @@ try {
 	let confirm = (partition: bigint, offset: bigint) => {
 		try {
 			oracle.confirmCommittedOffset(Number(partition), offset)
+			if (options.rps === 0) {
+				parentPort!.postMessage({
+					type: 'committed',
+					counts: oracle.snapshot().producers.map((producer) => producer.committed),
+				})
+			}
 			finishRead()
 		} catch (error) {
 			fail(error)
@@ -134,9 +175,14 @@ try {
 					elapsedMs: performance.now() - producingAt,
 					started: Math.max(snapshot.totals.accepted, snapshot.totals.delivered),
 					completed: snapshot.totals.committed,
+					...(options.rps === 0 && {
+						available: snapshot.pending.acknowledgedUndelivered,
+					}),
 					memory: memory(),
 				})
-				if (window) console.info('[topic.read.stability] %s', JSON.stringify(window))
+				if (window) {
+					console.info('[topic.read.stability] %s', JSON.stringify(window))
+				}
 			} catch (error) {
 				fail(error)
 			}
@@ -147,21 +193,27 @@ try {
 				producer.committed > previous[partition]!.committed ||
 				(producer.pending.acknowledgedUndelivered === 0 &&
 					producer.pending.uncommitted === 0)
-			)
+			) {
 				lastCommit[partition] = Date.now()
-			if (Date.now() - lastCommit[partition]! > stallTimeoutMs)
+			}
+			if (Date.now() - lastCommit[partition]! > stallTimeoutMs) {
 				fail(new Error(`Reader partition ${partition} delivery/commit progress stalled`))
+			}
 		}
 		previous = snapshot.producers
-		if (++ticks % 10 === 0)
+		if (++ticks % 10 === 0) {
 			console.info(
 				'[topic.progress] %s',
 				JSON.stringify({ ...snapshot.totals, pending: snapshot.pending, reconnects })
 			)
+		}
 	}, 1000)
 	clearTimeout(startup)
 	let iterator = reader
-		.read({ batchWindowMs: 1000, signal: reading.signal })
+		.read({
+			...(options.rps > 0 ? { batchWindowMs: 1000 } : { limit: 1000 }),
+			signal: reading.signal,
+		})
 		// oxlint-disable-next-line no-unexpected-multiline
 		[Symbol.asyncIterator]()
 	try {
@@ -171,15 +223,18 @@ try {
 			let start = performance.now()
 			// oxlint-disable-next-line no-await-in-loop
 			let result = await iterator.next()
-			if (result.done) throw new Error('Reader ended before reconciliation')
+			if (result.done) {
+				throw new Error('Reader ended before reconciliation')
+			}
 			let groups = new Map<
 				TopicPartitionSession,
 				{ messages: TopicMessage[]; observed: TopicObservation[] }
 			>()
 			for (let message of result.value) {
 				let session = message.partitionSession.deref()
-				if (!session || message.offset === undefined)
+				if (!session || message.offset === undefined) {
 					throw new Error('Delivered message has no partition or offset')
+				}
 				let observed = oracle.observe({
 					payload: message.payload,
 					producer: message.producer,
@@ -201,14 +256,23 @@ try {
 					// oxlint-disable-next-line no-await-in-loop
 					await reader.commit(group.messages)
 					oracle.commit(group.observed)
+					if (options.rps === 0) {
+						parentPort!.postMessage({
+							type: 'committed',
+							counts: oracle
+								.snapshot()
+								.producers.map((producer) => producer.committed),
+						})
+					}
 				} catch (error) {
 					let revoked = isPartitionRevokedError(error)
 					if (
 						reading.signal.aborted ||
 						!revoked ||
 						group.messages.every((message) => message.alive)
-					)
+					) {
 						throw error
+					}
 					committedBatch = false
 				}
 			}
@@ -233,9 +297,11 @@ try {
 		await iterator.return?.()
 	}
 	io.signal.throwIfAborted()
-	if (!finalCheckpoint || !oracle.complete)
+	if (!finalCheckpoint || !oracle.complete) {
 		throw new Error('Reader stopped before final reconciliation')
+	}
 	await reader.close()
+	tokenRenewal = auth.finish()
 	stabilityResult = stability?.finish()
 } catch (error) {
 	fail(error)
@@ -258,6 +324,7 @@ parentPort!.postMessage({
 	summary: oracle.snapshot(),
 	reconnects,
 	stability: stabilityResult,
+	tokenRenewal,
 	runtime,
 	drainedMemory: memory(),
 })

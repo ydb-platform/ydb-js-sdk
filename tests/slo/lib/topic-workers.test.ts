@@ -14,6 +14,8 @@ let data = {
 	partitions: 1,
 	messageBytes: 64,
 	rps: 100,
+	maxPendingMessages: 1000,
+	writerCount: 1,
 	codec: 'raw',
 	drainTimeoutMs: 2000,
 	stallTimeoutMs: 2000,
@@ -62,7 +64,7 @@ test('forwards checkpoints and drains both workers when stop precedes their star
 	await using files = await fixture()
 	let results = await runTopicWorkers(files.urls, data, AbortSignal.abort())
 	expect(results.read.summary).toEqual(summary)
-	expect(results.write.checkpoint).toEqual(checkpoint)
+	expect(results.write[0]!.checkpoint).toEqual(checkpoint)
 })
 
 test('fails when a worker exits without a result', async () => {
@@ -127,4 +129,54 @@ test('rejects a final writer checkpoint with missing acknowledgments', async () 
 	await expect(runTopicWorkers(files.urls, data, AbortSignal.abort())).rejects.toThrow(
 		'did not acknowledge'
 	)
+})
+
+test('combines disjoint producer checkpoints and relays reader commits to every producer', async () => {
+	let write = `
+import { parentPort, workerData } from 'node:worker_threads'
+let stopped = false
+let committed = false
+function finish() {
+	if (!stopped || !committed) return
+	let counts = workerData.writerIndex === 0 ? [10, 0, 30] : [0, 20, 0]
+	let checkpoint = { accepted: counts, acknowledged: counts }
+	parentPort.postMessage({ type: 'checkpoint', checkpoint })
+	parentPort.postMessage({ type: 'result', success: true, checkpoint, reconnects: 0 })
+	parentPort.close()
+}
+parentPort.on('message', (message) => {
+	if (message.type === 'stop') stopped = true
+	if (message.type === 'committed') {
+		if (JSON.stringify(message.counts) !== '[1,2,3]') throw new Error('Lost partition commits')
+		committed = true
+	}
+	finish()
+})`
+	let read = `
+import { parentPort } from 'node:worker_threads'
+parentPort.postMessage({ type: 'committed', counts: [1, 2, 3] })
+parentPort.on('message', (message) => {
+	if (!message.final) return
+	if (JSON.stringify(message.checkpoint.accepted) !== '[10,20,30]') throw new Error('Missing producer')
+	let producers = [10, 20, 30].map((count) => ({ accepted: count, acknowledged: count, delivered: count, committed: count }))
+	parentPort.postMessage({ type: 'result', success: true, reconnects: 0, summary: { complete: true, failureCount: 0, producers } })
+	parentPort.close()
+})`
+	await using files = await fixture(read, write)
+	let results = await runTopicWorkers(
+		files.urls,
+		{ ...data, partitions: 3, writerCount: 2 },
+		AbortSignal.abort()
+	)
+	expect(results.write).toHaveLength(2)
+	expect(results.read.summary?.producers.map((producer) => producer.committed)).toEqual([
+		10, 20, 30,
+	])
+})
+
+test('rejects two producer workers claiming the same partitions', async () => {
+	await using files = await fixture(reader, writer.replaceAll('[10]', '[10,10]'))
+	await expect(
+		runTopicWorkers(files.urls, { ...data, partitions: 2, writerCount: 2 }, AbortSignal.abort())
+	).rejects.toThrow('Writer did not acknowledge every accepted message')
 })

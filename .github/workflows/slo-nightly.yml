@@ -55,7 +55,7 @@ jobs:
 
   stability:
     needs: profile
-    name: Topic stability (${{ matrix.name }}, TLS)
+    name: Topic stability (${{ matrix.name }})
     runs-on: large-runner-js-sdk
     timeout-minutes: 300
     strategy:
@@ -90,22 +90,29 @@ jobs:
           npm run build
           docker build --pull --build-arg "image=$IMAGE" \
             -t ydb-topic-nightly tests/slo
-      - name: Run sustained TLS workload
+      - name: Run sustained topic workload
         id: slo
-        uses: ydb-platform/ydb-slo-action/init@447d908df8d270aa3b5455f3c7014008b4280440
+        uses: ydb-platform/ydb-slo-action/init@5f1a9a687673226632a33eb361edfe86693a5143
+        env:
+          WORKLOAD_CPU_LIMIT: 6
+          WORKLOAD_MEMORY_LIMIT: 12G
         timeout-minutes: 275
         with:
-          workload_name: nightly-topic-${{ matrix.name }}-tls
+          workload_name: nightly-topic-${{ matrix.name }}
           workload_duration: ${{ needs.profile.outputs.duration }}
           workload_current_ref: ${{ github.sha }}
           workload_current_image: ydb-topic-nightly
           workload_current_command: >-
             --worker=topic.run
             --topic.run.partitions=24
-            --topic.run.rps=500
+            --topic.run.rps=0
+            --topic.run.writers=4
+            --topic.run.inFlight=8192
             --topic.run.size=32768
             --topic.run.codec=mixed
-            --topic.run.retentionSeconds=600
+            --topic.run.writeSpeedBytesPerSecond=52428800
+            --topic.run.retentionStorageMb=512
+            --topic.run.auth=login
             --topic.run.drainTimeoutMs=50000
             --topic.run.stability=true
           tls: true
@@ -136,7 +143,7 @@ jobs:
               metrics = json.load(response)
           (root / 'committed-metric.json').write_text(json.dumps(metrics))
           assert metrics['status'] == 'success' and metrics['data']['result']
-          query = '{__name__=~"sdk_memory_usage.*|sdk_topic_messages|sdk_topic_verifier_entries|sdk_operation_latency_p99_seconds",ref="' + os.environ['SDK_REF'] + '"}'
+          query = '{__name__=~"sdk_memory_usage.*|sdk_topic_messages|sdk_topic_pending|sdk_process_cpu_time.*|sdk_topic_verifier_entries|sdk_operation_latency_p99_seconds",ref="' + os.environ['SDK_REF'] + '"}'
           params = {'query': query, 'start': datetime.fromisoformat(container['state']['StartedAt'].replace('Z', '+00:00')).timestamp(), 'end': finished, 'step': 30}
           url = os.environ['PROMETHEUS_URL'] + '/api/v1/query_range?' + urllib.parse.urlencode(params)
           with urllib.request.urlopen(url, timeout=30) as response:
@@ -147,6 +154,9 @@ jobs:
           assert container['state']['ExitCode'] == 0 and not container['state']['OOMKilled']
           assert result['success'] and result['complete'] and result['phase'] == 'complete'
           assert result['stability']['windows'] >= 2
+          assert result['tokenRenewal']['read']['renewed'] > 0
+          assert len(result['tokenRenewal']['write']) == 4
+          assert all(worker['renewed'] > 0 for worker in result['tokenRenewal']['write'])
           totals = result['totals']
           assert totals['accepted'] > 0
           assert len({totals[k] for k in ['accepted', 'acknowledged', 'delivered', 'committed']}) == 1

@@ -1,6 +1,10 @@
 import { TopicStability } from './topic-stability.ts'
 
-export async function createTopicMemory(params: Record<string, string>, rps: number) {
+export async function createTopicMemory(
+	params: Record<string, string>,
+	rps: number,
+	maxPendingMessages: number
+) {
 	let jsc: { heapStats(): { heapSize: number; extraMemorySize: number } } | undefined
 	if (process.versions['bun']) {
 		let module = 'bun:jsc'
@@ -24,6 +28,7 @@ export async function createTopicMemory(params: Record<string, string>, rps: num
 					warmupMs: Number(params['warmupSeconds'] ?? 300) * 1000,
 					windowMs: Number(params['windowSeconds'] ?? 300) * 1000,
 					rps,
+					...(rps === 0 && { maxPendingMessages }),
 					memoryGrowthBytes: jsc
 						? {
 								rss: 256 * 1024 ** 2,
