@@ -15,6 +15,7 @@ async function pinFixture() {
 	let direct = createServer()
 	let discoveryPort = 0
 	let calls = 0
+
 	discovery.add(
 		{
 			listEndpoints: DiscoveryServiceDefinition.listEndpoints,
@@ -42,6 +43,7 @@ async function pinFixture() {
 			},
 		}
 	)
+
 	direct.add(
 		{ whoAmI: DiscoveryServiceDefinition.whoAmI },
 		{
@@ -51,9 +53,11 @@ async function pinFixture() {
 			},
 		}
 	)
+
 	discoveryPort = await discovery.listen('127.0.0.1:0')
 	let port = await direct.listen('127.0.0.1:0')
 	let driver = new Driver(`grpc://127.0.0.1:${discoveryPort}/local`)
+
 	return {
 		driver,
 		discoveryPort,
@@ -73,6 +77,7 @@ test.for([true, false])(
 	async (hard, tc) => {
 		await using fixture = await pinFixture()
 		await fixture.driver.ready(tc.signal)
+
 		using client = fixture.driver.createClient(DiscoveryServiceDefinition, {
 			...fixture.target,
 			hard,
@@ -85,17 +90,22 @@ test.for([true, false])(
 test('disposing one client preserves another client pin to the same node', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using first = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	using second = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	await setImmediate()
 	await first.whoAmI({}, { signal: tc.signal })
+
 	first[Symbol.dispose]()
 	first[Symbol.dispose]()
 	await setImmediate()
+
 	let response = await second.whoAmI({}, { signal: tc.signal })
 	expect(response.operation?.id).toBe('direct')
+
 	second[Symbol.dispose]()
 	await setImmediate()
+
 	using unpinned = fixture.driver.createClient(DiscoveryServiceDefinition, {
 		nodeId: 9n,
 		hard: true,
@@ -106,12 +116,15 @@ test('disposing one client preserves another client pin to the same node', async
 test('disposing before the first RPC releases the original target after caller mutation', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using client = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
+
 	fixture.target.nodeId = 10n
 	client[Symbol.dispose]()
 	await setImmediate()
 	await expect(client.whoAmI({}, { signal: tc.signal })).rejects.toThrow('Endpoint pin disposed')
 	expect(fixture.calls).toBe(0)
+
 	using unpinned = fixture.driver.createClient(DiscoveryServiceDefinition, {
 		nodeId: 9n,
 		hard: true,
@@ -122,7 +135,9 @@ test('disposing before the first RPC releases the original target after caller m
 test('closing the driver rejects an RPC waiting for its pin', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using client = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
+
 	let pending = client.whoAmI({}, { signal: tc.signal })
 	fixture.driver.close()
 	await expect(pending).rejects.toThrow(/Endpoints (destroyed|closed)/)
@@ -132,11 +147,14 @@ test('closing the driver rejects an RPC waiting for its pin', async (tc) => {
 test('cancelling the first RPC leaves the client pin available for another call', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using client = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	let controller = new AbortController()
+
 	let pending = client.whoAmI({}, { signal: controller.signal })
 	controller.abort(new Error('Caller cancelled'))
 	await expect(pending).rejects.toThrow(/aborted|Caller cancelled/i)
+
 	let response = await client.whoAmI({}, { signal: tc.signal })
 	expect(response.operation?.id).toBe('direct')
 	expect(fixture.calls).toBe(1)
@@ -145,15 +163,18 @@ test('cancelling the first RPC leaves the client pin available for another call'
 test('disposing an older client preserves a replacement pin address', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using first = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	await setImmediate()
 	await first.whoAmI({}, { signal: tc.signal })
+
 	using replacement = fixture.driver.createClient(DiscoveryServiceDefinition, {
 		...fixture.target,
 		endpoint: { host: '127.0.0.1', port: fixture.discoveryPort, generation: 1 },
 	})
 	let response = await replacement.whoAmI({}, { signal: tc.signal })
 	expect(response.operation?.id).toBe('discovery')
+
 	first[Symbol.dispose]()
 	await setImmediate()
 	response = await replacement.whoAmI({}, { signal: tc.signal })
@@ -163,13 +184,18 @@ test('disposing an older client preserves a replacement pin address', async (tc)
 test('disposing a retired handle again preserves a newly created pin', async (tc) => {
 	await using fixture = await pinFixture()
 	await fixture.driver.ready(tc.signal)
+
 	using first = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	await first.whoAmI({}, { signal: tc.signal })
+
 	first[Symbol.dispose]()
+
 	using next = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
 	await next.whoAmI({}, { signal: tc.signal })
+
 	first[Symbol.dispose]()
 	await setImmediate()
+
 	let response = await next.whoAmI({}, { signal: tc.signal })
 	expect(response.operation?.id).toBe('direct')
 })
