@@ -328,7 +328,6 @@ test('rejects invalid acceptance acknowledgments observations and commits', () =
 	expect(() => skipped.accept(0, 2)).toThrow('expected 1')
 	let unaccepted = makeOracle()
 	expect(() => unaccepted.acknowledge(0, 1)).toThrow('invalid acknowledged watermark')
-	expect(() => unaccepted.observe(message(unaccepted, 0, 1))).toThrow('unaccepted')
 	expect(() => unaccepted.commit([{ partition: 0, sequence: 1 }])).toThrow('unobserved')
 	for (let invalid of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
 		let oracle = makeOracle()
@@ -362,4 +361,35 @@ test('rejects invalid profile dimensions before creating a run', () => {
 			() => new TopicOracle({ runId: 'test', partitions: 1, messageBytes: 128, ...invalid })
 		).toThrow(RangeError)
 	}
+})
+
+test('reconciles delivery that arrives before its writer checkpoint', () => {
+	let oracle = makeOracle()
+	oracle.commit([oracle.observe(message(oracle, 0, 1))])
+	expect(oracle.complete).toBe(false)
+	oracle.updateWriter({ accepted: [1], acknowledged: [0] })
+	expect(oracle.complete).toBe(false)
+	oracle.updateWriter({ accepted: [1], acknowledged: [1] })
+	expect(oracle.complete).toBe(true)
+})
+
+test('rejects regressing malformed and unacknowledged writer checkpoints', () => {
+	for (let checkpoint of [
+		{ accepted: [], acknowledged: [] },
+		{ accepted: [0], acknowledged: [0] },
+		{ accepted: [2], acknowledged: [0] },
+		{ accepted: [1], acknowledged: [2] },
+	]) {
+		let oracle = makeOracle()
+		oracle.updateWriter({ accepted: [1], acknowledged: [1] })
+		expect(() => oracle.updateWriter(checkpoint)).toThrow(/writer checkpoint|partition count/i)
+		expect(oracle.complete).toBe(false)
+	}
+})
+
+test('never accepts delivery beyond the final writer count', () => {
+	let oracle = makeOracle()
+	oracle.commit([oracle.observe(message(oracle, 0, 1)), oracle.observe(message(oracle, 0, 2))])
+	oracle.updateWriter({ accepted: [1], acknowledged: [1] })
+	expect(oracle.complete).toBe(false)
 })
