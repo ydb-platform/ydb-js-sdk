@@ -20,7 +20,9 @@ let capturingWriter = function capturingWriter(
 		onAck:
 			owner === 'onAck'
 				? (seqNo) => {
-						if (captured[0] !== 0) throw new Error('Unexpected callback state')
+						if (captured[0] !== 0) {
+							throw new Error('Unexpected callback state')
+						}
 						acks.push(seqNo)
 					}
 				: (seqNo) => {
@@ -31,7 +33,9 @@ let capturingWriter = function capturingWriter(
 				? {
 						codec: RAW_CODEC.codec,
 						compress(data) {
-							if (captured[0] !== 0) throw new Error('Unexpected codec state')
+							if (captured[0] !== 0) {
+								throw new Error('Unexpected codec state')
+							}
 							return data
 						},
 						decompress: RAW_CODEC.decompress,

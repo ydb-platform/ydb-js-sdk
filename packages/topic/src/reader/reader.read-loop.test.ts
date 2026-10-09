@@ -432,7 +432,9 @@ test('returns the server response size once after all 100 message batches are de
 		expect(readRequests(stream.sent)).toEqual(
 			lastBatch ? [maxBufferBytes, responseBytes] : [maxBufferBytes]
 		)
-		if (lastBatch) break
+		if (lastBatch) {
+			break
+		}
 	}
 	expect(deliveredBatches).toBe(100)
 })

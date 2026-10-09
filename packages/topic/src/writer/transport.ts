@@ -84,12 +84,17 @@ export class WriterTransport {
 	}
 
 	connect(getLastSeqNo: boolean): void {
-		if (!this.#events.isClosed) this.#openStream(getLastSeqNo)
+		if (!this.#events.isClosed) {
+			this.#openStream(getLastSeqNo)
+		}
 	}
 
 	sendBatch(request: StreamWriteMessage_WriteRequest): void {
 		let input = this.#streamInput
-		if (!input) return
+		if (!input) {
+			return
+		}
+
 		input.push(
 			create(StreamWriteMessage_FromClientSchema, {
 				clientMessage: { case: 'writeRequest', value: request },
@@ -100,12 +105,20 @@ export class WriterTransport {
 
 	async sendUpdateToken(): Promise<void> {
 		let input = this.#streamInput
-		if (!input || this.#tokenPending) return
+		if (!input || this.#tokenPending) {
+			return
+		}
+
 		this.#tokenPending = true
+
 		try {
 			let token = await this.#driver.token
+
 			// A refresh belongs to the stream that requested it, even across token-provider awaits.
-			if (input !== this.#streamInput) return
+			if (input !== this.#streamInput) {
+				return
+			}
+
 			input.push(
 				create(StreamWriteMessage_FromClientSchema, {
 					clientMessage: {
@@ -116,7 +129,10 @@ export class WriterTransport {
 				PRIORITY_TOKEN
 			)
 		} catch (error) {
-			if (input === this.#streamInput) this.#tokenPending = false
+			if (input === this.#streamInput) {
+				this.#tokenPending = false
+			}
+
 			throw error
 		}
 	}
@@ -166,7 +182,9 @@ export class WriterTransport {
 		void (async () => {
 			try {
 				await this.#driver.ready(ac.signal)
-				if (ac.signal.aborted) return
+				if (ac.signal.aborted) {
+					return
+				}
 
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
@@ -215,6 +233,7 @@ export class WriterTransport {
 									acks.map((a) => a.seqNo)
 								)
 							}
+
 							this.#events.push({ type: 'transport.stream.write_response', acks })
 							break
 						}
@@ -230,7 +249,9 @@ export class WriterTransport {
 				}
 
 				dbg.log('stream ended')
-				if (!ac.signal.aborted) this.#disconnect()
+				if (!ac.signal.aborted) {
+					this.#disconnect()
+				}
 			} catch (error) {
 				if (ac.signal.aborted) {
 					return

@@ -182,9 +182,11 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			}),
 			...(options.onCommittedOffset && { onCommittedOffset: options.onCommittedOffset }),
 		}
+
 		if (runtimeOptions?.tx !== undefined) {
 			this.#txReadOffsets = new Map()
 		}
+
 		this.#codecs = options.codecMap ?? defaultCodecMap
 		this.#scope = {
 			driver: driver.identity,
@@ -258,6 +260,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				`batchWindowMs must be a non-negative finite number, got ${batchWindowMs}`
 			)
 		}
+
 		return this.#readLoop(limit, batchWindowMs, options?.signal)
 	}
 
@@ -270,11 +273,13 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				'Tx reader commits offsets via the transaction — commit() is not available'
 			)
 		}
+
 		let batch = this.#commitBatch ?? this.#createCommitBatch()
 		let messages = Array.isArray(input) ? input : [input]
 		for (let message of messages) {
 			batch.messages.push(message)
 		}
+
 		return batch.promise
 	}
 
@@ -290,6 +295,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		if (this.#commitBatch) {
 			this.#flushCommitBatch(this.#commitBatch)
 		}
+
 		this.#closing = true
 		this.#runtime.machine.dispatch({ type: 'reader.close' })
 		await this.#closedDeferred.promise
@@ -303,6 +309,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			this.#discardBuffers()
 			return
 		}
+
 		this.#closing = true
 		let error = reason ?? new Error('Reader destroyed')
 		this.#lastError ??= error
@@ -340,6 +347,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		if (this.#reading) {
 			throw new Error('read() is already in progress — the reader is single-consumer')
 		}
+
 		this.#reading = true
 
 		try {
@@ -388,24 +396,33 @@ export class TopicReader implements AsyncDisposable, Disposable {
 							if (signal?.aborted) {
 								throw signal.reason
 							}
+
 							if (waitSignal?.aborted) {
 								break
 							}
+
 							throw error
 						}
+
 						if (this.#lastError !== undefined) {
-							if (!result.done) result.value.messages.length = 0
+							if (!result.done) {
+								result.value.messages.length = 0
+							}
+
 							throw this.#lastError
 						}
+
 						if (result.done) {
 							closed = true
 							break
 						}
+
 						let chunk = this.#filterChunk(result.value)
 						if (chunk) {
 							chunks.push(chunk)
 							batchLength += chunk.messages.length
 						}
+
 						if (
 							(limit !== undefined && batchLength >= limit) ||
 							batchWindowMs === undefined
@@ -418,11 +435,14 @@ export class TopicReader implements AsyncDisposable, Disposable {
 						while (chunks.length > 0) {
 							signal?.throwIfAborted()
 							let batch = this.#takeBatch(chunks, limit)
-							if (this.#lastError !== undefined) throw this.#lastError
+							if (this.#lastError !== undefined) {
+								throw this.#lastError
+							}
 							growTxOffsets(this.#txReadOffsets, batch.messages)
 							if (batch.releaseBytes > 0n) {
 								this.#releaseReadBytes(batch.releaseBytes)
 							}
+
 							if (batch.messages.length > 0) {
 								yield batch.messages
 							}
@@ -453,7 +473,9 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		}
 		publishBufferChanged(this.#scope, this.#bufferedBytes)
 		this.#runtime.machine.dispatch({ type: 'reader.read_release', bytes })
-		if (this.#chunks.isClosed && this.#bufferedBytes === 0n) this.#codecs = defaultCodecMap
+		if (this.#chunks.isClosed && this.#bufferedBytes === 0n) {
+			this.#codecs = defaultCodecMap
+		}
 	}
 
 	// Remove up to `limit` messages while retaining the response boundary. Credit for
@@ -478,11 +500,13 @@ export class TopicReader implements AsyncDisposable, Disposable {
 					remaining--
 				}
 			}
+
 			if (chunk.messages.length === 0) {
 				releaseBytes += chunk.releaseBytes
 				chunks.shift()
 			}
 		}
+
 		return { messages, releaseBytes }
 	}
 
@@ -494,6 +518,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			this.#releaseReadBytes(chunk.releaseBytes)
 			return undefined
 		}
+
 		return chunk
 	}
 
@@ -507,6 +532,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				this.#carry.splice(i, 1)
 			}
 		}
+
 		return this.#carry
 	}
 
@@ -517,6 +543,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			completion,
 			promise: traceCommit(this.#scope, () => completion.promise),
 		}
+
 		this.#commitBatch = batch
 		queueMicrotask(() => this.#flushCommitBatch(batch))
 		return batch
@@ -526,6 +553,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		if (this.#commitBatch !== batch) {
 			return
 		}
+
 		this.#commitBatch = undefined
 		void this.#commitOffsets(batch.messages).then(
 			batch.completion.resolve,
@@ -537,6 +565,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
+
 		if (this.#chunks.isClosed || this.#closing) {
 			throw new Error('Reader is closed — cannot commit')
 		}
@@ -597,9 +626,11 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				errors.push(result.reason)
 			}
 		}
+
 		if (errors.length === 1) {
 			throw errors[0]
 		}
+
 		if (errors.length > 1) {
 			throw new AggregateError(errors, 'Cannot commit one or more partitions')
 		}
@@ -613,13 +644,17 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				case 'reader.messages': {
 					// tx read-offset tracking happens at read() yield time, not here — a tx
 					// must never bind offsets of messages the consumer never saw.
-					if (this.#lastError !== undefined) break
+					if (this.#lastError !== undefined) {
+						break
+					}
+
 					let messages: Chunk['messages'] = []
 					for (let group of output.groups) {
 						for (let message of group.messages) {
 							messages.push({ ...message, session: group.session })
 						}
 					}
+
 					this.#bufferedBytes += output.releaseBytes
 					publishBufferChanged(this.#scope, this.#bufferedBytes)
 					this.#chunks.push({ messages, releaseBytes: output.releaseBytes })
@@ -741,8 +776,11 @@ export class TopicReader implements AsyncDisposable, Disposable {
 			this.#discardBuffers()
 		} else {
 			this.#chunks.close()
-			if (this.#bufferedBytes === 0n) this.#codecs = defaultCodecMap
+			if (this.#bufferedBytes === 0n) {
+				this.#codecs = defaultCodecMap
+			}
 		}
+
 		this.#callbacks = {}
 		// #txReadOffsets is deliberately kept: a tx reader closed before the tx commits
 		// still binds the offsets it delivered — clearing here would silently commit
@@ -752,6 +790,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		for (let waiter of this.#waiters.values()) {
 			waiter.reject(this.#lastError ?? new Error('Reader closed'))
 		}
+
 		this.#waiters.clear()
 		this.#closedDeferred.resolve()
 	}

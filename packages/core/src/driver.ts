@@ -5,7 +5,7 @@ import * as tls from 'node:tls'
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { credentials } from '@grpc/grpc-js'
-import { linkSignals } from '@ydbjs/abortable'
+import { abortable, linkSignals } from '@ydbjs/abortable'
 import {
 	DiscoveryServiceDefinition,
 	EndpointInfoSchema,
@@ -61,15 +61,15 @@ export type { DriverHooks, EndpointInfo }
  * For topic direct read/write: the server hands out a `PartitionLocation`
  * (`node_id` + `generation`) per partition; pass it here to reach that exact
  * node. When `endpoint` is given the node is pinned on create (so it is
- * reachable even before the next discovery round) and unpinned on the returned
- * client's `[Symbol.dispose]` — use `using`/`await using`.
+ * reachable even before the next discovery round). RPCs wait for pin publication;
+ * the pin is released after the last owning client's `[Symbol.dispose]`.
  */
 export type ClientTarget = {
 	/** Exact node to route to (a discovery nodeId, or a PartitionLocation node_id). */
 	nodeId: bigint
 	/**
 	 * Pin this endpoint for `nodeId` — for a server-named node that may not be in
-	 * the current discovery snapshot. Unpinned when the client is disposed.
+	 * the current discovery snapshot. Shared until the last owning client is disposed.
 	 */
 	endpoint?: {
 		host: string
@@ -364,39 +364,67 @@ export class Driver implements Disposable, AsyncDisposable {
 		let hard = typeof target === 'object' ? (target.hard ?? false) : false
 		dbg.log('creating client for %s (node %o, hard %o)', service.fullName, nodeId, hard)
 
-		// Pin a server-named endpoint so a hard client can reach it before the next
-		// discovery round; the pin is released on the client's dispose.
-		let pinned = false
-		if (typeof target === 'object' && target.endpoint !== undefined && this.#endpoints) {
-			this.#endpoints.pool.pin(target.nodeId, target.endpoint.host, target.endpoint.port, {
+		let pool = this.#endpoints?.pool
+		let pinReady: Promise<void> | undefined
+		let disposed = false
+
+		if (typeof target === 'object' && target.endpoint !== undefined && pool) {
+			if (this.#closed) {
+				throw new Error('Driver is closed')
+			}
+
+			pinReady = pool.pin(target.nodeId, target.endpoint.host, target.endpoint.port, {
 				location: target.endpoint.location,
 				sslTargetNameOverride: target.endpoint.sslTargetNameOverride,
 				generation: target.endpoint.generation,
 			})
-			pinned = true
 		}
 
 		let channel = this.#connection.channel
-		if (this.#endpoints) {
+		if (pool) {
 			channel = new BalancedChannel(
-				this.#endpoints.pool,
+				pool,
 				this.options.hooks,
 				nodeId,
 				hard
 			) as unknown as Channel
 		}
 
-		let client = createClientFactory().use(this.#middleware).create(service, channel, {
+		let factory = createClientFactory().use(this.#middleware)
+		if (pinReady) {
+			let ready = pinReady
+
+			factory = factory.use(async function* (call, options) {
+				await (options.signal ? abortable(options.signal, ready) : ready)
+
+				if (disposed) {
+					throw new Error('Endpoint pin disposed')
+				}
+
+				return yield* call.next(call.request, options)
+			})
+		}
+
+		let client = factory.create(service, channel, {
 			'*': this.options.channelOptions,
 		})
 
-		if (typeof target !== 'object') return client
+		if (typeof target !== 'object') {
+			return client
+		}
 
 		// Object targets are Disposable — unpin on dispose (no-op if not pinned).
-		let endpoints = this.#endpoints
 		return Object.assign(client as object, {
 			[Symbol.dispose]: () => {
-				if (pinned) endpoints?.pool.invalidate(target.nodeId)
+				if (disposed) {
+					return
+				}
+
+				disposed = true
+
+				if (pinReady) {
+					pool!.invalidate(nodeId!)
+				}
 			},
 		}) as Client<Service>
 	}

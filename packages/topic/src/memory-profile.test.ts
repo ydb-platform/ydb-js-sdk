@@ -35,8 +35,11 @@ async function proxyFixture(signal: AbortSignal, certificateName?: string, trust
 	let dispose = async () => {
 		server.forceShutdown()
 		for (let [key, value] of environment) {
-			if (value === undefined) delete process.env[key]
-			else process.env[key] = value
+			if (value === undefined) {
+				delete process.env[key]
+			} else {
+				process.env[key] = value
+			}
 		}
 		await rm(directory, { recursive: true, force: true })
 	}
@@ -70,7 +73,9 @@ async function proxyFixture(signal: AbortSignal, certificateName?: string, trust
 			credentials = ServerCredentials.createSsl(null, [
 				{ private_key: await readFile(key), cert_chain: await readFile(cert) },
 			])
-			if (trusted) process.env['GRPC_DEFAULT_SSL_ROOTS_FILE_PATH'] = cert
+			if (trusted) {
+				process.env['GRPC_DEFAULT_SSL_ROOTS_FILE_PATH'] = cert
+			}
 		}
 		process.env['no_grpc_proxy'] = 'localhost'
 		process.env['no_proxy'] = 'localhost'
@@ -86,8 +91,11 @@ async function proxyFixture(signal: AbortSignal, certificateName?: string, trust
 		)
 		let port = await new Promise<number>((resolve, reject) => {
 			server.bindAsync('localhost:0', credentials, (error, boundPort) => {
-				if (error) reject(error)
-				else resolve(boundPort)
+				if (error) {
+					reject(error)
+				} else {
+					resolve(boundPort)
+				}
 			})
 		})
 		let worker = join(directory, 'worker.cjs')

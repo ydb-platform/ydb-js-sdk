@@ -63,7 +63,9 @@ export class ReaderTransport {
 	}
 
 	connect(): void {
-		if (!this.#events.isClosed) this.#openStream()
+		if (!this.#events.isClosed) {
+			this.#openStream()
+		}
 	}
 
 	// Enqueue a client message (read request, commit, partition-session response)
@@ -71,19 +73,30 @@ export class ReaderTransport {
 	// its outgoing state on the next init anyway.
 	send(message: StreamReadMessage_FromClient, priority: number = PRIORITY_DEFAULT): boolean {
 		let input = this.#streamInput
-		if (!input) return false
+		if (!input) {
+			return false
+		}
+
 		input.push(message, priority)
 		return true
 	}
 
 	async sendUpdateToken(): Promise<void> {
 		let input = this.#streamInput
-		if (!input || this.#tokenPending) return
+		if (!input || this.#tokenPending) {
+			return
+		}
+
 		this.#tokenPending = true
+
 		try {
 			let token = await this.#driver.token
+
 			// A refresh belongs to the stream that requested it, even across token-provider awaits.
-			if (input !== this.#streamInput) return
+			if (input !== this.#streamInput) {
+				return
+			}
+
 			input.push(
 				create(StreamReadMessage_FromClientSchema, {
 					clientMessage: {
@@ -94,7 +107,10 @@ export class ReaderTransport {
 				PRIORITY_TOKEN
 			)
 		} catch (error) {
-			if (input === this.#streamInput) this.#tokenPending = false
+			if (input === this.#streamInput) {
+				this.#tokenPending = false
+			}
+
 			throw error
 		}
 	}
@@ -136,7 +152,9 @@ export class ReaderTransport {
 		void (async () => {
 			try {
 				await this.#driver.ready(ac.signal)
-				if (ac.signal.aborted) return
+				if (ac.signal.aborted) {
+					return
+				}
 
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
@@ -174,7 +192,9 @@ export class ReaderTransport {
 				}
 
 				dbg.log('stream ended')
-				if (!ac.signal.aborted) this.#disconnect()
+				if (!ac.signal.aborted) {
+					this.#disconnect()
+				}
 			} catch (error) {
 				if (ac.signal.aborted) {
 					return

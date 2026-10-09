@@ -269,6 +269,15 @@ test.for([false, true])(
 	}
 )
 
+test('publishes an explicit pin while initial discovery is still pending', async () => {
+	let discovery = makeFakeDiscovery()
+	discovery.hang()
+	await using h = makeEndpointPool({ discovery })
+	await h.pool.pin(9n, 'direct-node', 2136)
+	expect(h.machine.state).toBe('discovering')
+	expect(h.pool.acquireNode(9n, { hard: true }).endpoint.address).toBe('direct-node:2136')
+})
+
 test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
@@ -324,12 +333,11 @@ test('close waits for a busy pin when its discovered channel was never opened', 
 	expect(h.connections.materialized[0]!.closed).toBe(true)
 })
 
-test('direct-IO: invalidate makes a pinned node unreachable', async (tc) => {
+test('releasing the last pin makes an undiscovered node unreachable', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
-	h.pool.pin(9n, 'node-9', 2136)
-	await settle()
+	await h.pool.pin(9n, 'node-9', 2136)
 	expect(h.pool.acquireNode(9n).endpoint.nodeId).toBe(9n)
 
 	h.pool.invalidate(9n)
@@ -593,12 +601,12 @@ test('mapDiscoveryResult maps every PileState_State to its status', () => {
 	])
 })
 
-test('invalidate closes a materialized pinned channel', async (tc) => {
+test('releasing the last pin closes its materialized channel', async (tc) => {
 	let connections = makeFakeConnectionFactory()
 	await using h = setup([endpoint(1)], { connections })
 	await h.pool.ready(tc.signal)
 
-	h.pool.pin(9n, 'node-9', 2136)
+	await h.pool.pin(9n, 'node-9', 2136)
 	await settle()
 	h.pool.acquireNode(9n) // materialize the pinned channel
 	expect(connections.byNode(9n)!.closed).toBe(false)
