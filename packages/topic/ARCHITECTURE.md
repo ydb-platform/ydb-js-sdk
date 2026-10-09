@@ -54,7 +54,7 @@ stateDiagram-v2
 
 `messages` retains accepted, unacknowledged messages in order. `inflightCount` separates the sent prefix from the unsent suffix. Acknowledgments remove a prefix; reconnect removes the server-confirmed prefix and makes the remainder eligible for resend. Automatic sequence numbers are assigned only on sending, after the initial server watermark has been recovered. Manual numbers are validated by the facade and retained unchanged.
 
-Each message stores its memory-budget cost and its protobuf contribution, including metadata and framing. These quantities have different purposes: the former bounds retained data, the latter prevents oversized write frames. Diagnostics report compressed payload bytes independently of either limit.
+The facade counts unacknowledged compressed payload bytes for `maxBufferBytes`. The FSM caches the compressed payload bytes in the unsent suffix for constant-time batch readiness checks. Batching targets 48 MiB of compressed payload; protocol framing and metadata do not reduce this payload budget. Diagnostics report the same compressed payload bytes.
 
 A batch is full when it fills the available `maxInflightCount` slots, reaches the byte cap, or the next queued message cannot fit within that cap. Full batches send immediately. A partial batch waits for `flushIntervalMs`, unless an explicit `flush()` or `close()` requires draining it. `batchDue` records that the timer expired while messages were waiting: if in-flight messages occupy the window, their ACK must release the overdue batch without another timer delay. Resends after reconnect are also immediately eligible once InitResponse arrives.
 
