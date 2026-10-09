@@ -14,6 +14,7 @@ import {
 	makeFakeTopicDriver,
 	settle,
 	tick,
+	track,
 	writeResponse,
 } from './writer.fixtures.ts'
 import { createTopicTxWriter, createTopicWriter } from './writer.ts'
@@ -195,12 +196,11 @@ test('does not fail a pending flush across a retryable reconnect', async () => {
 	await first.waitForWrite()
 
 	let flushed = writer.flush()
-	let settledEarly = false
-	void flushed.then(() => (settledEarly = true)).catch(() => (settledEarly = true))
+	let flush = track(flushed)
 
 	first.disconnect()
 	await settle()
-	expect(settledEarly).toBe(false)
+	expect(flush.settled).toBe(false)
 
 	let second = await waitForNextStream()
 	await second.waitForInit()
@@ -286,15 +286,15 @@ test('drains buffered messages before a graceful close resolves', async () => {
 	writer.write(bytes(1))
 	await stream.waitForWrite()
 
-	let closed = false
-	let closing = writer.close().then(() => (closed = true))
+	let closing = writer.close()
+	let closingState = track(closing)
 
 	await settle()
-	expect(closed).toBe(false)
+	expect(closingState.settled).toBe(false)
 
 	stream.respond(writeResponse([{ seqNo: 1n }]))
 	await closing
-	expect(closed).toBe(true)
+	expect(closingState.settled).toBe(true)
 })
 
 test('rejects pending flush when destroyed', async () => {
@@ -482,8 +482,8 @@ test('keeps draining a graceful close across a mid-close reconnect', async () =>
 	writer.write(bytes(1))
 	await first.waitForWrite()
 
-	let closed = false
-	let closing = writer.close().then(() => (closed = true))
+	let closing = writer.close()
+	let closingState = track(closing)
 
 	// Stream drops mid-close before the ack — the writer must reconnect and resend.
 	first.disconnect()
@@ -497,7 +497,7 @@ test('keeps draining a graceful close across a mid-close reconnect', async () =>
 	second.respond(writeResponse([{ seqNo: 1n }]))
 
 	await closing
-	expect(closed).toBe(true)
+	expect(closingState.settled).toBe(true)
 })
 
 test('publishes a reconnecting diagnostics event on a retryable disconnect', async () => {

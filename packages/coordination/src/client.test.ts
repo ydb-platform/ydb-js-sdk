@@ -95,10 +95,6 @@ test('does not hang when the external signal is already aborted by the time the 
 	let stream = await firstStreamP
 	stream.respond(sessionStartedResponse(1n))
 
-	let outcome = await Promise.race([
-		iterating.then(() => 'completed' as const),
-		new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 2000)),
-	])
-
-	expect(outcome).toBe('completed')
+	// The generator must finish, not hang on the synchronous-abort race.
+	await expect(iterating).resolves.toBeUndefined()
 }, 10_000)

@@ -11,6 +11,7 @@ import {
 import { Driver } from '@ydbjs/core'
 
 import { type TopicReader, createTopicReader } from '../src/reader/index.js'
+import { type Settlement, track } from '../src/reader/reader.fixtures.js'
 import { createTopicWriter } from '../src/writer/index.js'
 
 // First real-server rebalance coverage. A second read session on the same consumer
@@ -65,19 +66,6 @@ let waitUntil = async function waitUntil(predicate: () => boolean, ms: number): 
 	return predicate()
 }
 
-// Every commit() must settle — a hung commit is the failure mode this test guards
-// against. Handlers are attached immediately so a rejection is never unhandled.
-type CommitOutcome = { state: 'pending' | 'resolved' | 'rejected'; reason?: unknown }
-
-let trackCommit = function trackCommit(outcomes: CommitOutcome[], promise: Promise<void>): void {
-	let outcome: CommitOutcome = { state: 'pending' }
-	outcomes.push(outcome)
-	promise.then(
-		() => Object.assign(outcome, { state: 'resolved' as const }),
-		(reason: unknown) => Object.assign(outcome, { state: 'rejected' as const, reason })
-	)
-}
-
 let decoder = new TextDecoder()
 
 // Read continuously, committing every delivered batch (so a rebalance races real
@@ -85,7 +73,7 @@ let decoder = new TextDecoder()
 let runReadLoop = function runReadLoop(
 	reader: TopicReader,
 	received: Set<number>,
-	commits: CommitOutcome[],
+	commits: Settlement[],
 	errorBox: { error?: unknown },
 	signal: AbortSignal
 ): void {
@@ -96,7 +84,8 @@ let runReadLoop = function runReadLoop(
 					received.add(Number(decoder.decode(message.payload)))
 				}
 				if (batch.length > 0) {
-					trackCommit(commits, reader.commit(batch))
+					// track() handles the rejection so a reassign-race commit is never unhandled.
+					commits.push(track(reader.commit(batch)))
 				}
 			}
 		} catch (error) {
@@ -137,7 +126,7 @@ test(
 
 		let receivedA = new Set<number>()
 		let receivedB = new Set<number>()
-		let commits: CommitOutcome[] = []
+		let commits: Settlement[] = []
 		let errA: { error?: unknown } = {}
 		let errB: { error?: unknown } = {}
 
@@ -191,12 +180,12 @@ test(
 
 		// Every commit() settles — resolved, or rejected with the documented
 		// reassign-race errors. A pending commit here means a hang.
-		let settled = await waitUntil(() => commits.every((c) => c.state !== 'pending'), 10_000)
+		let settled = await waitUntil(() => commits.every((c) => c.settled), 10_000)
 		expect(settled, 'every commit() promise settled').toBe(true)
 		let documentedRejection =
 			/reassigned before commit was acknowledged|stopped or expired partition session|No active partition/
 		let undocumentedRejections = commits
-			.filter((outcome) => outcome.state === 'rejected')
+			.filter((outcome) => outcome.rejected)
 			.map((outcome) => String((outcome.reason as Error).message))
 			.filter((message) => !documentedRejection.test(message))
 		expect(undocumentedRejections).toEqual([])
