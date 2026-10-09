@@ -28,7 +28,7 @@ selects a `RoutingSnapshot` ref (pure), and lazily materializes a channel. The o
 per-RPC dispatch is a fire-and-forget `penalize()` / `recover()` (enqueue only;
 handled off the hot path). Reads never dispatch; writes never happen inline.
 
-The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache.
+The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache, even when a pin and discovery share a nodeId. Discovery retirement and pin invalidation each close only their own channel; pool shutdown drains and closes both.
 
 ### States (discovery lifecycle)
 

@@ -104,6 +104,13 @@ let primeStream = async function primeStream(
 	return stream
 }
 
+test.for([0n, -1n])('rejects an unusable read-credit window of %s bytes', (maxBufferBytes) => {
+	let { driver } = makeFakeTopicDriver()
+	expect(() => new TopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes })).toThrow(
+		/maxBufferBytes must be positive/
+	)
+})
+
 test('requests the full buffer as read credit after init', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, {

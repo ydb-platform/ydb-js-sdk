@@ -52,7 +52,9 @@ export class GrpcConnection implements Connection {
 			...channelOptions,
 			// Required when the TLS certificate CN doesn't match the gRPC endpoint
 			// address (common in YDB deployments behind a load balancer).
-			'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
+			...(endpoint.sslTargetNameOverride && {
+				'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
+			}),
 		})
 	}
 
