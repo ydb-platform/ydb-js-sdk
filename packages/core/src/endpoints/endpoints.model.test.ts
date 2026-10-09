@@ -173,7 +173,6 @@ let runOne = function runOne(seed: number, steps: number): void {
 			let nodeId = BigInt(6 + Math.floor(rng() * 4))
 			apply(sim, {
 				type: 'endpoints.pin',
-				leaseId: Symbol('test pin'),
 				nodeId,
 				host: `p${nodeId}`,
 				port: 2136,

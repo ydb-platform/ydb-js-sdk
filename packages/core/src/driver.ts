@@ -34,7 +34,6 @@ import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
 	type DiscoveryResult,
-	type EndpointPin,
 	type EndpointPool,
 	type EndpointsRuntime,
 	type ListEndpoints,
@@ -374,26 +373,26 @@ export class Driver implements Disposable, AsyncDisposable {
 		let hard = typeof target === 'object' ? (target.hard ?? false) : false
 		dbg.log('creating client for %s (node %o, hard %o)', service.fullName, nodeId, hard)
 
-		// A server-named endpoint may be absent from discovery. Each client owns a lease.
-		let pin: EndpointPin | undefined
-		if (typeof target === 'object' && target.endpoint !== undefined && this.#endpoints) {
-			if (this.#closed) throw new Error('Driver is closed')
-			pin = this.#endpoints.pool.pin(
-				target.nodeId,
-				target.endpoint.host,
-				target.endpoint.port,
-				{
-					location: target.endpoint.location,
-					sslTargetNameOverride: target.endpoint.sslTargetNameOverride,
-					generation: target.endpoint.generation,
-				}
-			)
+		let pool = this.#endpoints?.pool
+		let pinReady: Promise<void> | undefined
+		let disposed = false
+
+		if (typeof target === 'object' && target.endpoint !== undefined && pool) {
+			if (this.#closed) {
+				throw new Error('Driver is closed')
+			}
+
+			pinReady = pool.pin(target.nodeId, target.endpoint.host, target.endpoint.port, {
+				location: target.endpoint.location,
+				sslTargetNameOverride: target.endpoint.sslTargetNameOverride,
+				generation: target.endpoint.generation,
+			})
 		}
 
 		let channel = this.#connection.channel
-		if (this.#endpoints) {
+		if (pool) {
 			channel = new BalancedChannel(
-				this.#endpoints.pool,
+				pool,
 				this.options.hooks,
 				nodeId,
 				hard
@@ -401,23 +400,40 @@ export class Driver implements Disposable, AsyncDisposable {
 		}
 
 		let factory = createClientFactory().use(this.#middleware)
-		if (pin) {
-			let lease = pin
+		if (pinReady) {
+			let ready = pinReady
+
 			factory = factory.use(async function* (call, options) {
-				await lease.ready(options.signal)
+				await (options.signal ? abortable(options.signal, ready) : ready)
+
+				if (disposed) {
+					throw new Error('Endpoint pin disposed')
+				}
+
 				return yield* call.next(call.request, options)
 			})
 		}
+
 		let client = factory.create(service, channel, {
 			'*': this.options.channelOptions,
 		})
 
-		if (typeof target !== 'object') return client
+		if (typeof target !== 'object') {
+			return client
+		}
 
 		// Object targets are Disposable — unpin on dispose (no-op if not pinned).
 		return Object.assign(client as object, {
 			[Symbol.dispose]: () => {
-				pin?.[Symbol.dispose]()
+				if (disposed) {
+					return
+				}
+
+				disposed = true
+
+				if (pinReady) {
+					pool!.invalidate(nodeId!)
+				}
 			},
 		}) as Client<Service>
 	}
