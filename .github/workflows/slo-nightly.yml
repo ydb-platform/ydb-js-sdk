@@ -40,10 +40,10 @@ jobs:
           if not 1200 <= duration <= 14400:
               raise SystemExit('Duration must be 1200–14400 seconds')
           runtimes = [
-              {'name': 'node22', 'image': 'node:22-bookworm', 'command': 'node'},
-              {'name': 'node24', 'image': 'node:24-bookworm', 'command': 'node'},
-              {'name': 'node26', 'image': 'node:26-bookworm', 'command': 'node'},
-              {'name': 'bun', 'image': 'oven/bun:1', 'command': 'bun'},
+              {'name': 'node22', 'image': 'node:22-bookworm'},
+              {'name': 'node24', 'image': 'node:24-bookworm'},
+              {'name': 'node26', 'image': 'node:26-bookworm'},
+              {'name': 'bun', 'image': 'oven/bun:1'},
           ]
           selected = [r for r in runtimes if os.environ['RUNTIME'] in ('all', r['name'])]
           if not selected:
@@ -85,11 +85,10 @@ jobs:
       - name: Build workload
         env:
           IMAGE: ${{ matrix.image }}
-          RUNTIME: ${{ matrix.command }}
         run: |
           npm ci
           npm run build
-          docker build --pull --build-arg "image=$IMAGE" --build-arg "runtime=$RUNTIME" \
+          docker build --pull --build-arg "image=$IMAGE" \
             -t ydb-topic-nightly tests/slo
       - name: Run sustained TLS workload
         id: slo

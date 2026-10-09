@@ -2,13 +2,12 @@
 ARG image="node"
 
 FROM ${image}
-ARG runtime="node"
-ENV SLO_RUNTIME=${runtime} TOPIC_RESULT_FILE=/tmp/topic-result.json
+ENV TOPIC_RESULT_FILE=/tmp/topic-result.json
 WORKDIR /usr/src/app
 
 COPY package.json dist/ ./
 
-ENTRYPOINT ["/bin/sh", "-c", "exec \"$SLO_RUNTIME\" index.js \"$@\"", "--"]
+ENTRYPOINT ["node", "index.js"]
 CMD [ \
 	"--setup=kv.setup", "--kv.setup.prefill=1000", \
 	"--teardown=kv.teardown", \
