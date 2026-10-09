@@ -266,7 +266,7 @@ test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	expect(() => h.pool.acquireNode(99n, { hard: true })).toThrow(EndpointsUnavailableError)
 })
 
-test('direct-IO: invalidate makes a pinned node unreachable', async (tc) => {
+test('disposing the last pin makes an undiscovered node unreachable', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
@@ -274,7 +274,7 @@ test('direct-IO: invalidate makes a pinned node unreachable', async (tc) => {
 	await pin.ready(tc.signal)
 	expect(h.pool.acquireNode(9n).endpoint.nodeId).toBe(9n)
 
-	h.pool.invalidate(9n)
+	pin[Symbol.dispose]()
 	await settle()
 	expect(() => h.pool.acquireNode(9n, { hard: true })).toThrow(EndpointsUnavailableError)
 	await expect(pin.ready(tc.signal)).rejects.toThrow('Endpoint pin disposed')
@@ -534,17 +534,17 @@ test('mapDiscoveryResult maps every PileState_State to its status', () => {
 	])
 })
 
-test('invalidate closes a materialized pinned channel', async (tc) => {
+test('disposing the last pin closes its materialized channel', async (tc) => {
 	let connections = makeFakeConnectionFactory()
 	await using h = setup([endpoint(1)], { connections })
 	await h.pool.ready(tc.signal)
 
-	h.pool.pin(9n, 'node-9', 2136)
+	using pin = h.pool.pin(9n, 'node-9', 2136)
 	await settle()
 	h.pool.acquireNode(9n) // materialize the pinned channel
 	expect(connections.byNode(9n)!.closed).toBe(false)
 
-	h.pool.invalidate(9n)
+	pin[Symbol.dispose]()
 	await settle()
 	expect(connections.byNode(9n)!.closed).toBe(true)
 })

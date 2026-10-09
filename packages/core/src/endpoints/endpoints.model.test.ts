@@ -101,7 +101,7 @@ let checkInvariants = function checkInvariants(sim: Sim, seed: number, stepIndex
 
 	let snapshot = buildSnapshot(ctx)
 	for (let entry of ctx.pinned.values()) {
-		expect(entry.leases.size, `${label} pin owners`).toBeGreaterThan(0)
+		expect(entry.references, `${label} pin owners`).toBeGreaterThan(0)
 	}
 
 	// The precomputed count must always match the actual pessimized set.
@@ -183,12 +183,6 @@ let runOne = function runOne(seed: number, steps: number): void {
 				ipV6: [],
 				generation: stepIndex,
 			})
-		} else if (roll < 0.91) {
-			let nodeId = pick(rng, pinnedIds)
-			if (nodeId !== undefined) {
-				let leaseId = pick(rng, [...sim.ctx.pinned.get(nodeId)!.leases])!
-				apply(sim, { type: 'endpoints.release_pin', nodeId, leaseId })
-			}
 		} else if (roll < 0.94) {
 			let id = pick(rng, pinnedIds)
 			if (id !== undefined) apply(sim, { type: 'endpoints.invalidate', nodeId: id })
