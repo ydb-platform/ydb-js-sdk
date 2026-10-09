@@ -93,7 +93,7 @@ jobs:
             -t ydb-topic-nightly tests/slo
       - name: Run sustained TLS workload
         id: slo
-        uses: ydb-platform/ydb-slo-action/init@16cc2c08bc5385bca92981d49bb17ad485fe01a1
+        uses: ydb-platform/ydb-slo-action/init@447d908df8d270aa3b5455f3c7014008b4280440
         timeout-minutes: 275
         with:
           workload_name: nightly-topic-${{ matrix.name }}-tls
