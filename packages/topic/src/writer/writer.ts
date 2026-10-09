@@ -200,16 +200,6 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 		let uncompressedSize = BigInt(data.length)
 		let payload = this.#codec.compress(data)
-		let metadataItems = extra?.metadataItems
-			? Object.fromEntries(Object.entries(extra.metadataItems))
-			: undefined
-		let message = {
-			data: payload,
-			uncompressedSize,
-			seqNo: 0n,
-			createdAt,
-			...(metadataItems && { metadataItems }),
-		}
 		let bufferedSize = BigInt(payload.length)
 
 		// Check the compressed-payload budget before consuming a sequence number.
@@ -226,20 +216,29 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			('resizable' in backing && backing.resizable) ||
 			('growable' in backing && backing.growable)
 		) {
-			message.data = new Uint8Array(payload)
+			payload = new Uint8Array(payload)
 		}
-		if (metadataItems) {
-			message.metadataItems = Object.fromEntries(
-				Object.entries(metadataItems).map(([key, value]) => [key, new Uint8Array(value)])
-			)
-		}
+		let metadataItems = extra?.metadataItems
+			? Object.fromEntries(
+					Object.entries(extra.metadataItems).map(([key, value]) => [
+						key,
+						new Uint8Array(value),
+					])
+				)
+			: undefined
 
 		let seqNo = this.#validator.validate(extra?.seqNo)
 		this.#bufferedBytes += bufferedSize
 
 		this.#runtime.machine.dispatch({
 			type: 'writer.write',
-			message: { ...message, seqNo },
+			message: {
+				data: payload,
+				uncompressedSize,
+				seqNo,
+				createdAt,
+				...(metadataItems && { metadataItems }),
+			},
 		})
 	}
 

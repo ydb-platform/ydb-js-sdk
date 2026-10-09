@@ -172,6 +172,9 @@ export class TopicReader implements AsyncDisposable, Disposable {
 	#closedDeferred = Promise.withResolvers<void>()
 
 	constructor(driver: Driver, options: TopicReaderOptions, runtimeOptions?: { tx?: TX }) {
+		if (options.maxBufferBytes !== undefined && options.maxBufferBytes <= 0n) {
+			throw new RangeError('maxBufferBytes must be positive')
+		}
 		options = { ...options }
 		this.#callbacks = {
 			...(options.onPartitionSessionStop && {

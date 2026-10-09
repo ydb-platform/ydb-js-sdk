@@ -169,7 +169,7 @@ Helper resolution: `terminate(s, reason)` → `s` with `final:{reason}`; emits
 `reader.error` (when `errored`), `reader.commit.rejected` for every pending commit,
 `reader.closed`; clears ctx and runs `finalize`, which owns timer and transport cleanup.
 `initializeSession` records the server session ID, clears connection timers and `sessionIndex`, and retains `bufferedBytes`; it emits `reader.session` and schedules `update_token`. A positive initial `maxBufferBytes - bufferedBytes` grant enters `ready`; otherwise the reader stays `connecting`.
-It arms `partition_reassign_gc:key` for every partition holding pending commits.
+It arms `partition_reassign_gc:key` for every retained partition, including those whose messages may be committed after reconnect.
 `toReconnecting(err)` → `reconnecting`: clear `sessionIndex` and the current `sessionId`, retain `bufferedBytes`; emits `reader.reconnecting` and schedules `retry_backoff` (+`recovery_window` iff finite).
 `toClosing` → `closing` iff pending work exists, else terminate(closed, 'Reader closed').
 `advanceCommitted(entry, offset)` — the single point where the server-confirmed

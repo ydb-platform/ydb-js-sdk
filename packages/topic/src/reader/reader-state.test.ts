@@ -1674,6 +1674,27 @@ test('keeps the reassign gc armed from reconnect until the start_ready ack clear
 	})
 })
 
+test('bounds a commit submitted after reconnect when its partition is not reassigned', () => {
+	let h = mk()
+	toReadyWithPartition(h)
+	ackStart(h, 1n, 10n)
+	let session = h.ctx.partitions.get(pk(10n))!.session
+	step(h, { type: 'reader.stream.disconnected' })
+	step(h, { type: 'reader.timer.retry_backoff' })
+	step(h, { type: 'reader.stream.init_response', sessionId: 's2' })
+	let cleanup = h.effects.filter(
+		(effect) =>
+			effect.type === 'reader.effect.timer.schedule' &&
+			effect.which === 'partition_reassign_gc'
+	)
+	commit(h, 10n, [{ start: 5n, end: 6n }], 1)
+	expect(cleanup).toHaveLength(1)
+	step(h, { type: 'reader.timer.partition_reassign_gc', partitionKey: pk(10n) })
+	expect(outputs(h, 'reader.commit.rejected').map((output) => output.waiterId)).toEqual([1])
+	expect(h.ctx.partitions.has(pk(10n))).toBe(false)
+	expect(session.isStopped).toBe(true)
+})
+
 test('bounds pending commits when the start hook never completes', () => {
 	let h = mk()
 	toReadyWithPartition(h)
