@@ -248,10 +248,15 @@ test('cancels a pending transaction-offset request with the commit hook signal',
 		updateOffsetsInTransaction(_request: unknown, options?: { signal?: AbortSignal }) {
 			entered.resolve()
 			let signal = options?.signal
-			if (!signal) return Promise.reject(new Error('Missing transaction commit signal'))
+			if (!signal) {
+				return Promise.reject(new Error('Missing transaction commit signal'))
+			}
 			return new Promise((_, reject) => {
-				if (signal.aborted) reject(signal.reason)
-				else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+				if (signal.aborted) {
+					reject(signal.reason)
+				} else {
+					signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+				}
 			})
 		},
 	})

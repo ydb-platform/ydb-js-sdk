@@ -1616,10 +1616,14 @@ test.each(['before', 'after'])(
 		})
 		let first = await waitForNextStream()
 		await first.waitForInit()
-		if (timing === 'before') writer.write(bytes(1), { seqNo: 1n })
+		if (timing === 'before') {
+			writer.write(bytes(1), { seqNo: 1n })
+		}
 		first.respond(initResponse(100n))
 		await settle()
-		if (timing === 'after') writer.write(bytes(1), { seqNo: 1n })
+		if (timing === 'after') {
+			writer.write(bytes(1), { seqNo: 1n })
+		}
 		let request = await first.waitForWrite()
 		expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
 		let flushed = writer.flush()

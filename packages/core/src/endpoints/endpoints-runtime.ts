@@ -444,6 +444,8 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 	#env: EndpointsEnv
 	// RCU read plane — swapped by reference in #consume, read (never mutated) by acquire.
 	#snapshot: RoutingSnapshot = EMPTY_SNAPSHOT
+	// Pin commands and their confirmations are processed in FIFO order.
+	#pendingPins: PromiseWithResolvers<void>[] = []
 
 	constructor(
 		machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>
@@ -525,7 +527,18 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			ipV6?: string[] | undefined
 			generation?: number | undefined
 		} = {}
-	): void {
+	): Promise<void> {
+		this.#machine.signal.throwIfAborted()
+
+		if (this.#machine.state === 'closing') {
+			throw new EndpointsUnavailableError('Endpoints closed')
+		}
+
+		let applied = Promise.withResolvers<void>()
+		// A client may be disposed without ever issuing an RPC.
+		void applied.promise.catch(() => {})
+		this.#pendingPins.push(applied)
+
 		this.#machine.dispatch({
 			type: 'endpoints.pin',
 			nodeId,
@@ -537,6 +550,8 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			ipV6: opts.ipV6 ?? [],
 			generation: opts.generation ?? 0,
 		})
+
+		return applied.promise
 	}
 
 	invalidate(nodeId: bigint): void {
@@ -618,20 +633,37 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			/* node:coverage ignore stop */
 		} finally {
 			finalizeEnv(env)
-			this.#rejectReadyWaiters(this.#machine.signal.reason ?? new Error('Endpoints closed'))
+			let reason = this.#machine.signal.reason ?? new Error('Endpoints closed')
+
+			this.#rejectReadyWaiters(reason)
+			this.#rejectPendingPins(reason)
 			env.closedDeferred.resolve()
 		}
 	}
 
 	#rejectReadyWaiters(error: unknown): void {
-		for (let waiter of this.#env.readyWaiters) waiter.reject(error)
+		for (let waiter of this.#env.readyWaiters) {
+			waiter.reject(error)
+		}
+
 		this.#env.readyWaiters.clear()
+	}
+
+	#rejectPendingPins(reason: unknown): void {
+		for (let pending of this.#pendingPins) {
+			pending.reject(reason)
+		}
+
+		this.#pendingPins.length = 0
 	}
 
 	async #drain(): Promise<void> {
 		let env = this.#env
 		for await (let out of this.#machine) {
 			switch (out.type) {
+				case 'endpoints.pin_applied':
+					this.#pendingPins.shift()?.resolve()
+					break
 				case 'endpoints.snapshot':
 					this.#snapshot = out.snapshot
 					// Snapshot rebuilds fire only when the routable set changes, so
@@ -738,7 +770,10 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					})
 					break
 				case 'endpoints.closed':
-					this.#rejectReadyWaiters(out.reason)
+					let reason = this.#machine.signal.reason ?? new Error('Endpoints closed')
+
+					this.#rejectReadyWaiters(reason)
+					this.#rejectPendingPins(reason)
 					dc('ydb:driver.closed').publish({
 						driver: env.identity,
 						uptime: env.readyAt !== undefined ? Date.now() - env.readyAt : 0,

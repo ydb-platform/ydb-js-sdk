@@ -179,7 +179,9 @@ test('decodes only requested messages from a compressed response', async (tc) =>
 			})),
 		})
 	)
-	if (response.serverMessage.case !== 'readResponse') throw new Error('Expected read response')
+	if (response.serverMessage.case !== 'readResponse') {
+		throw new Error('Expected read response')
+	}
 	for (let partition of response.serverMessage.value.partitionData) {
 		for (let batch of partition.batches) {
 			for (let message of batch.messageData) message.uncompressedSize = 262144n

@@ -353,9 +353,13 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 		}
 		batch.push(toMessageData(message))
 	}
+
 	ctx.inflightCount += count
 	ctx.unsentBytes -= batchBytes
-	if (ctx.inflightCount === ctx.messages.length) ctx.batchDue = false
+	if (ctx.inflightCount === ctx.messages.length) {
+		ctx.batchDue = false
+	}
+
 	return batch
 }
 
@@ -382,6 +386,7 @@ let applyInit = function applyInit(
 		if (!manual && serverLastSeqNo > ctx.lastSeqNo) {
 			ctx.lastSeqNo = serverLastSeqNo
 		}
+
 		ctx.hasEverConnected = true
 	}
 
@@ -432,6 +437,7 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 	for (let j = i; j < inflightEnd; j++) {
 		ctx.unsentBytes += BigInt(ctx.messages[j]!.data.length)
 	}
+
 	ctx.messages.splice(0, i)
 	ctx.inflightCount = 0
 	ctx.batchDue = ctx.messages.length > 0 && (ctx.batchDue || resend)
@@ -505,6 +511,7 @@ let terminate = function terminate(
 		ctx.lastError = reason
 		runtime.emit({ type: 'writer.error', error: reason })
 	}
+
 	runtime.emit({ type: 'writer.closed', reason })
 
 	// Drop any still-buffered/in-flight messages so their payloads can be GC'd —
@@ -565,9 +572,11 @@ let codecRejectedByTopic = function codecRejectedByTopic(
 	if (!supportedCodecs || supportedCodecs.length === 0) {
 		return undefined
 	}
+
 	if (supportedCodecs.includes(ctx.codec)) {
 		return undefined
 	}
+
 	return new Error(
 		`Codec ${ctx.codec} is not allowed by the topic (supported codecs: ${supportedCodecs.join(', ')})`
 	)
@@ -585,10 +594,13 @@ let toReady = function toReady(
 	if (codecError) {
 		return terminate(ctx, 'errored', codecError, runtime)
 	}
+
 	ctx.attempts = 0
 	applyInit(ctx, event.sessionId, event.lastSeqNo, runtime)
 	let closed = finishDrain(ctx, runtime)
-	if (closed) return closed
+	if (closed) {
+		return closed
+	}
 
 	runtime.dispatch({ type: 'writer.pump' })
 
@@ -612,6 +624,7 @@ let toReconnecting = function toReconnecting(
 	if (error !== undefined) {
 		ctx.lastError = error
 	}
+
 	runtime.emit({
 		type: 'writer.reconnecting',
 		attempt: ctx.attempts,
@@ -630,6 +643,7 @@ let toReconnecting = function toReconnecting(
 	if (!ctx.closeRequested && Number.isFinite(ctx.recoveryWindowMs)) {
 		effects.push({ type: 'writer.effect.timer.schedule', which: 'recovery_window' })
 	}
+
 	return { state: 'reconnecting', effects }
 }
 
@@ -641,6 +655,7 @@ let finishDrain = function finishDrain(
 	if (ctx.closeRequested && allDrained(ctx)) {
 		return terminate(ctx, 'closed', new Error('Writer closed'), runtime)
 	}
+
 	return undefined
 }
 
@@ -658,18 +673,32 @@ export let writerTransition = function writerTransition(
 	runtime: WriterRuntime
 ): TransitionResult<WriterState, WriterEffect> | void {
 	let state = runtime.state
-	if (state === 'closed' || state === 'errored') return ignored(state, event)
+	if (state === 'closed' || state === 'errored') {
+		return ignored(state, event)
+	}
 
 	switch (event.type) {
 		case 'writer.destroy':
 			return terminate(ctx, 'closed', event.reason ?? new Error('Writer destroyed'), runtime)
 		case 'writer.close': {
-			if (ctx.closeRequested) return
+			if (ctx.closeRequested) {
+				return
+			}
+
 			ctx.closeRequested = true
 			let closed = finishDrain(ctx, runtime)
-			if (closed) return closed
-			if (state === 'idle') runtime.dispatch({ type: 'writer.start' })
-			if (state === 'ready') runtime.dispatch({ type: 'writer.pump' })
+			if (closed) {
+				return closed
+			}
+
+			if (state === 'idle') {
+				runtime.dispatch({ type: 'writer.start' })
+			}
+
+			if (state === 'ready') {
+				runtime.dispatch({ type: 'writer.pump' })
+			}
+
 			return {
 				effects: [
 					{ type: 'writer.effect.timer.clear', which: 'recovery_window' },
@@ -678,19 +707,32 @@ export let writerTransition = function writerTransition(
 			}
 		}
 		case 'writer.write':
-			if (ctx.closeRequested) return ignored(state, event)
+			if (ctx.closeRequested) {
+				return ignored(state, event)
+			}
+
 			enqueue(ctx, event.message)
-			if (state === 'ready') runtime.dispatch({ type: 'writer.pump' })
+			if (state === 'ready') {
+				runtime.dispatch({ type: 'writer.pump' })
+			}
 			return
 		case 'writer.flush':
 			requestFlush(ctx, runtime, event.requestId)
 			return
 		case 'writer.timer.flush_tick':
-			if (ctx.messages.length > ctx.inflightCount) ctx.batchDue = true
-			if (state === 'ready') return pump(ctx, runtime)
+			if (ctx.messages.length > ctx.inflightCount) {
+				ctx.batchDue = true
+			}
+
+			if (state === 'ready') {
+				return pump(ctx, runtime)
+			}
 			return
 		case 'writer.timer.graceful_timeout':
-			if (!ctx.closeRequested) return ignored(state, event)
+			if (!ctx.closeRequested) {
+				return ignored(state, event)
+			}
+
 			if (!allDrained(ctx)) {
 				return terminate(
 					ctx,
@@ -699,13 +741,16 @@ export let writerTransition = function writerTransition(
 					runtime
 				)
 			}
+
 			return finishDrain(ctx, runtime)
 	}
 
 	switch (state) {
 		case 'idle':
-			if (event.type === 'writer.start')
+			if (event.type === 'writer.start') {
 				return { state: 'connecting', effects: connectEffects(ctx) }
+			}
+
 			return ignored(state, event)
 
 		case 'connecting':
@@ -714,21 +759,36 @@ export let writerTransition = function writerTransition(
 				case 'writer.stream.init_response':
 					return toReady(ctx, event, runtime)
 				case 'writer.timer.start_timeout':
-					if (state === 'connecting') return toReconnecting(ctx, undefined, runtime)
+					if (state === 'connecting') {
+						return toReconnecting(ctx, undefined, runtime)
+					}
+
 					return ignored(state, event)
 				case 'writer.timer.retry_backoff':
-					if (state !== 'reconnecting') return ignored(state, event)
+					if (state !== 'reconnecting') {
+						return ignored(state, event)
+					}
+
 					ctx.attempts += 1
 					return { state: 'connecting', effects: connectEffects(ctx) }
 				case 'writer.stream.disconnected':
 					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
-					if (state === 'connecting') return toReconnecting(ctx, event.error, runtime)
-					if (event.error !== undefined) ctx.lastError = event.error
+
+					if (state === 'connecting') {
+						return toReconnecting(ctx, event.error, runtime)
+					}
+
+					if (event.error !== undefined) {
+						ctx.lastError = event.error
+					}
 					return
 				case 'writer.timer.recovery_window':
-					if (ctx.closeRequested) return ignored(state, event)
+					if (ctx.closeRequested) {
+						return ignored(state, event)
+					}
+
 					return terminate(
 						ctx,
 						'errored',
@@ -752,8 +812,12 @@ export let writerTransition = function writerTransition(
 							freedBytes,
 						})
 					}
+
 					let closed = finishDrain(ctx, runtime)
-					if (closed) return closed
+					if (closed) {
+						return closed
+					}
+
 					runtime.dispatch({ type: 'writer.pump' })
 					return
 				}
@@ -765,6 +829,7 @@ export let writerTransition = function writerTransition(
 					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
+
 					return toReconnecting(ctx, event.error, runtime)
 				default:
 					return ignored(state, event)

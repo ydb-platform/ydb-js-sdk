@@ -338,7 +338,9 @@ let cooldown = function cooldown(sim: Sim): void {
 			continue
 		}
 
-		if (sim.armed.has('flush_tick')) sim.writerEvents.push(timerEvent('flush_tick'))
+		if (sim.armed.has('flush_tick')) {
+			sim.writerEvents.push(timerEvent('flush_tick'))
+		}
 		runToQuiescence(sim)
 		if (sim.pendingAcks.length > 0) {
 			let acks = sim.pendingAcks
