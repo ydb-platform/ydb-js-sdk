@@ -153,6 +153,14 @@ export function verifyMemoryProfile(report: MemoryReport, cuts: number): void {
 		}
 		let mean = (samples: MemorySample[], metric: (sample: MemorySample) => number) =>
 			samples.reduce((sum, sample) => sum + metric(sample), 0) / samples.length
+
+		// RSS includes allocator reserves that GC need not return to the OS.
+		assert(
+			mean(tail, (sample) => sample.rss) - mean(head, (sample) => sample.rss) <=
+				64 * 1024 * 1024,
+			`${scenario} rss grew beyond 64 MiB: ${JSON.stringify(measured)}`
+		)
+
 		assert(
 			mean(tail, heap) - mean(head, heap) < 8 * 1024 * 1024,
 			`${scenario} ${heapMetric} grew beyond 8 MiB: ${JSON.stringify(measured)}`
