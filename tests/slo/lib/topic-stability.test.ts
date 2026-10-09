@@ -11,8 +11,8 @@ let monitor = () =>
 	})
 let sample = (seconds: number, memory = { rss: 1000, heapUsed: 100 }): StabilitySample => ({
 	elapsedMs: seconds * 1000,
-	accepted: seconds * 100,
-	committed: seconds * 100,
+	started: seconds * 100,
+	completed: seconds * 100,
 	memory,
 })
 
@@ -40,14 +40,14 @@ test('rejects backpressure that throttles generation below the declared load', (
 	let check = monitor()
 	expect(() => {
 		for (let second = 0; second <= 30; second++)
-			check.observe({ ...sample(second), accepted: second * 50, committed: second * 50 })
+			check.observe({ ...sample(second), started: second * 50, completed: second * 50 })
 	}).toThrow('Throughput below')
 })
 
 test('rejects a reader backlog even when writers sustain the declared load', () => {
 	let check = monitor()
 	check.observe(sample(10))
-	expect(() => check.observe({ ...sample(11), committed: 0 })).toThrow('Backlog exceeds')
+	expect(() => check.observe({ ...sample(11), completed: 0 })).toThrow('Backlog exceeds')
 })
 
 test('rejects missing counters missing samples and excessive latency', () => {

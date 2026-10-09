@@ -152,6 +152,28 @@ export class TopicOracle {
 		state.acknowledged = Math.max(state.acknowledged, through)
 	}
 
+	updateWriter(checkpoint: { accepted: number[]; acknowledged: number[] }): void {
+		if (
+			checkpoint.accepted.length !== this.#producers.length ||
+			checkpoint.acknowledged.length !== this.#producers.length
+		)
+			this.#reject('Writer checkpoint has the wrong partition count')
+		for (let [partition, state] of this.#producers.entries()) {
+			let accepted = checkpoint.accepted[partition]!
+			let acknowledged = checkpoint.acknowledged[partition]!
+			if (
+				!Number.isSafeInteger(accepted) ||
+				!Number.isSafeInteger(acknowledged) ||
+				accepted < state.accepted ||
+				acknowledged < state.acknowledged ||
+				acknowledged > accepted
+			)
+				this.#reject(`Partition ${partition}: invalid writer checkpoint`)
+			state.accepted = accepted
+			state.acknowledged = acknowledged
+		}
+	}
+
 	observe(message: {
 		payload: Uint8Array
 		producer: string
@@ -190,9 +212,6 @@ export class TopicOracle {
 					`Partition ${partition} sequence ${sequence}: payload corruption at byte ${i}`
 				)
 			}
-		}
-		if (sequence > state.accepted) {
-			this.#reject(`Partition ${partition}: observed unaccepted sequence ${sequence}`)
 		}
 		let previousOffset = state.offsets.get(sequence)
 		if (previousOffset !== undefined) {
@@ -318,7 +337,7 @@ export class TopicOracle {
 			}
 			let waiting: TopicOraclePending = {
 				unacknowledged: state.accepted - state.acknowledged,
-				undelivered: state.accepted - state.offsets.size,
+				undelivered: Math.max(0, state.accepted - state.offsets.size),
 				uncommitted: state.offsets.size - counts.committed,
 				acknowledgedUndelivered,
 				uncertain,

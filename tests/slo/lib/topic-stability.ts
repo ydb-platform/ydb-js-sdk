@@ -1,7 +1,7 @@
 export type StabilitySample = {
 	elapsedMs: number
-	accepted: number
-	committed: number
+	started: number
+	completed: number
 	memory: Record<string, number>
 }
 
@@ -42,11 +42,11 @@ export class TopicStability {
 		if (
 			!Number.isFinite(sample.elapsedMs) ||
 			sample.elapsedMs <= this.#lastElapsedMs ||
-			!Number.isSafeInteger(sample.accepted) ||
-			!Number.isSafeInteger(sample.committed) ||
-			sample.accepted < 0 ||
-			sample.committed < 0 ||
-			sample.committed > sample.accepted
+			!Number.isSafeInteger(sample.started) ||
+			!Number.isSafeInteger(sample.completed) ||
+			sample.started < 0 ||
+			sample.completed < 0 ||
+			sample.completed > sample.started
 		)
 			this.#fail('Invalid stability sample')
 		if (this.#lastElapsedMs >= warmupMs && sample.elapsedMs - this.#lastElapsedMs > 10_000)
@@ -59,27 +59,27 @@ export class TopicStability {
 		if (sample.memory['rss']! > 2 * 1024 ** 3)
 			this.#fail('RSS exceeds the 2 GiB stability budget')
 		if (sample.elapsedMs < warmupMs) return
-		if (sample.accepted - sample.committed > rps * 10)
+		if (sample.started - sample.completed > rps * 10)
 			this.#fail(
-				`Backlog exceeds 10 seconds of traffic: ${sample.accepted - sample.committed}`
+				`Backlog exceeds 10 seconds of traffic: ${sample.started - sample.completed}`
 			)
 		this.#first ??= sample
 		for (let key of Object.keys(memoryGrowthBytes))
 			this.#minimum[key] = Math.min(this.#minimum[key] ?? Infinity, sample.memory[key]!)
 		let durationMs = sample.elapsedMs - this.#first.elapsedMs
 		if (durationMs < windowMs) return
-		let acceptedPerSecond = ((sample.accepted - this.#first.accepted) * 1000) / durationMs
-		let committedPerSecond = ((sample.committed - this.#first.committed) * 1000) / durationMs
-		let pending = sample.accepted - sample.committed
+		let startedPerSecond = ((sample.started - this.#first.started) * 1000) / durationMs
+		let completedPerSecond = ((sample.completed - this.#first.completed) * 1000) / durationMs
+		let pending = sample.started - sample.completed
 		let growth = Object.fromEntries(
 			Object.keys(memoryGrowthBytes).map((key) => [
 				key,
 				this.#minimum[key]! - (this.#baseline?.[key] ?? this.#minimum[key]!),
 			])
 		)
-		if (acceptedPerSecond < rps * 0.9 || committedPerSecond < rps * 0.9)
+		if (startedPerSecond < rps * 0.9 || completedPerSecond < rps * 0.9)
 			this.#fail(
-				`Throughput below 90% of ${rps} messages/s: accepted=${acceptedPerSecond}, committed=${committedPerSecond}`
+				`Throughput below 90% of ${rps} messages/s: started=${startedPerSecond}, completed=${completedPerSecond}`
 			)
 		for (let [key, limit] of Object.entries(memoryGrowthBytes)) {
 			if (growth[key]! > limit)
@@ -89,8 +89,8 @@ export class TopicStability {
 		this.#windows++
 		let result = {
 			elapsedMs: sample.elapsedMs,
-			acceptedPerSecond,
-			committedPerSecond,
+			startedPerSecond,
+			completedPerSecond,
 			pending,
 			minimum: this.#minimum,
 			growth,
