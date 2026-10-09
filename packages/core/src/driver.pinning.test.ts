@@ -173,3 +173,21 @@ test('disposing a retired handle again preserves a newly created pin', async (tc
 	let response = await next.whoAmI({}, { signal: tc.signal })
 	expect(response.operation?.id).toBe('direct')
 })
+
+test('keeps pin confirmations ordered when an earlier client is disposed', async (tc) => {
+	await using fixture = await pinFixture()
+	await fixture.driver.ready(tc.signal)
+
+	using first = fixture.driver.createClient(DiscoveryServiceDefinition, fixture.target)
+	using second = fixture.driver.createClient(DiscoveryServiceDefinition, {
+		nodeId: 10n,
+		hard: true,
+		endpoint: { host: '127.0.0.1', port: fixture.discoveryPort },
+	})
+
+	first[Symbol.dispose]()
+	let response = await second.whoAmI({}, { signal: tc.signal })
+
+	expect(response.operation?.id).toBe('discovery')
+	expect(fixture.calls).toBe(0)
+})

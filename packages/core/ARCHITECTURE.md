@@ -145,11 +145,11 @@ reached through `Driver.createClient(service, target)`:
   `hard: true` every RPC goes to `nodeId` or fails (never substitutes). With
   `endpoint` the node is **pinned** (reachable before the next discovery round,
   for a server-named node from a topic `PartitionLocation`); the returned client
-  is `Disposable`. Its RPCs wait until the pin's routing snapshot is published. Clients pinning the same node own separate leases; disposing the last lease unpins the node. Repeated disposal is a no-op, and disposal uses the original nodeId even if the caller mutates the target object.
+  is `Disposable`. Its RPCs wait until the pin's routing snapshot is published. Clients pinning the same node share its reference count; disposing the last client unpins the node. Repeated disposal is a no-op, and disposal uses the original nodeId even if the caller mutates the target object.
 
 The FSM's pinned entry holds a reference count. `pin` increments it, preserving existing references when the address or generation changes. `invalidate` decrements it and removes the route only at zero. A disposable client handle sends at most one invalidation, so repeated disposal cannot decrement another client's reference.
 
-The facade holds a flat map of per-client completion handles. `pin(nodeId, host, port, {generation})` returns a disposable handle whose `ready(signal)` waits for `pin_applied` after snapshot publication. Disposal removes the handle once, rejects its pending wait and dispatches `invalidate`; the FSM decides whether the remaining count permits removing the route. Pins stay **outside** the balanced tiers.
+The internal `pin(nodeId, host, port, {generation})` returns a promise that resolves after routing snapshot publication. The facade queues pending promises in command order and resolves one for each `pin_applied` output. Client disposal queues `invalidate` after its `pin`; it does not remove a pending confirmation. The existing driver's disposable client owns release and guards repeated disposal. RPC cancellation stops only that call's wait. Pins stay **outside** the balanced tiers.
 
 ### Diagnostics
 

@@ -476,17 +476,13 @@ export type EndpointsRuntime = {
 	pool: EndpointPool
 }
 
-export type EndpointPin = Disposable & {
-	ready(signal?: AbortSignal): Promise<void>
-}
-
 export class EndpointPool implements Disposable, AsyncDisposable {
 	#machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>
 	#env: EndpointsEnv
 	// RCU read plane — swapped by reference in #consume, read (never mutated) by acquire.
 	#snapshot: RoutingSnapshot = EMPTY_SNAPSHOT
-	// Client completion handles; the FSM owns pin reference counts.
-	#pinCompletions = new Map<symbol, PromiseWithResolvers<void>>()
+	// Pin commands and their confirmations are processed in FIFO order.
+	#pendingPins: PromiseWithResolvers<void>[] = []
 
 	constructor(
 		machine: MachineRuntime<EndpointsState, EndpointsCtx, EndpointsEvent, EndpointsOutput>
@@ -568,18 +564,20 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			ipV6?: string[] | undefined
 			generation?: number | undefined
 		} = {}
-	): EndpointPin {
+	): Promise<void> {
 		this.#machine.signal.throwIfAborted()
-		if (this.#machine.state === 'closing')
+
+		if (this.#machine.state === 'closing') {
 			throw new EndpointsUnavailableError('Endpoints closed')
-		let leaseId = Symbol('endpoint pin')
+		}
+
 		let applied = Promise.withResolvers<void>()
 		// A client may be disposed without ever issuing an RPC.
 		void applied.promise.catch(() => {})
-		this.#pinCompletions.set(leaseId, applied)
+		this.#pendingPins.push(applied)
+
 		this.#machine.dispatch({
 			type: 'endpoints.pin',
-			leaseId,
 			nodeId,
 			host,
 			port,
@@ -589,18 +587,12 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			ipV6: opts.ipV6 ?? [],
 			generation: opts.generation ?? 0,
 		})
-		return {
-			ready: async (signal) => {
-				await (signal ? abortable(signal, applied.promise) : applied.promise)
-				this.#machine.signal.throwIfAborted()
-				if (!this.#pinCompletions.has(leaseId)) throw new Error('Endpoint pin disposed')
-			},
-			[Symbol.dispose]: () => {
-				if (!this.#pinCompletions.delete(leaseId)) return
-				applied.reject(new Error('Endpoint pin disposed'))
-				this.#machine.dispatch({ type: 'endpoints.invalidate', nodeId })
-			},
-		}
+
+		return applied.promise
+	}
+
+	invalidate(nodeId: bigint): void {
+		this.#machine.dispatch({ type: 'endpoints.invalidate', nodeId })
 	}
 
 	forceRediscovery(): void {
@@ -671,16 +663,19 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 			/* node:coverage ignore stop */
 		} finally {
 			finalizeEnv(env)
-			this.#rejectPinCompletions(this.#machine.signal.reason ?? new Error('Endpoints closed'))
+			this.#rejectPendingPins(this.#machine.signal.reason ?? new Error('Endpoints closed'))
 			// No-ops if already settled; guarantees no awaiter hangs on a fault.
 			env.readyDeferred.reject(new Error('Endpoints closed'))
 			env.closedDeferred.resolve()
 		}
 	}
 
-	#rejectPinCompletions(reason: unknown): void {
-		for (let completion of this.#pinCompletions.values()) completion.reject(reason)
-		this.#pinCompletions.clear()
+	#rejectPendingPins(reason: unknown): void {
+		for (let pending of this.#pendingPins) {
+			pending.reject(reason)
+		}
+
+		this.#pendingPins.length = 0
 	}
 
 	async #drain(): Promise<void> {
@@ -688,7 +683,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		for await (let out of this.#machine) {
 			switch (out.type) {
 				case 'endpoints.pin_applied':
-					this.#pinCompletions.get(out.leaseId)?.resolve()
+					this.#pendingPins.shift()?.resolve()
 					break
 				case 'endpoints.snapshot':
 					this.#snapshot = out.snapshot
@@ -795,7 +790,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					})
 					break
 				case 'endpoints.closed':
-					this.#rejectPinCompletions(out.reason)
+					this.#rejectPendingPins(out.reason)
 					env.readyDeferred.reject(new Error('Endpoints closed'))
 					dc('ydb:driver.closed').publish({
 						driver: env.identity,

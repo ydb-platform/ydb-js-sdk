@@ -250,12 +250,11 @@ test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
 	expect(conn.endpoint.nodeId).toBe(9n)
 })
 
-test('publishes an explicit pin while initial discovery is still pending', async (tc) => {
+test('publishes an explicit pin while initial discovery is still pending', async () => {
 	let discovery = makeFakeDiscovery()
 	discovery.hang()
 	await using h = makeEndpointPool({ discovery })
-	using pin = h.pool.pin(9n, 'direct-node', 2136)
-	await pin.ready(tc.signal)
+	await h.pool.pin(9n, 'direct-node', 2136)
 	expect(h.machine.state).toBe('discovering')
 	expect(h.pool.acquireNode(9n, { hard: true }).endpoint.address).toBe('direct-node:2136')
 })
@@ -266,18 +265,16 @@ test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	expect(() => h.pool.acquireNode(99n, { hard: true })).toThrow(EndpointsUnavailableError)
 })
 
-test('disposing the last pin makes an undiscovered node unreachable', async (tc) => {
+test('releasing the last pin makes an undiscovered node unreachable', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
-	using pin = h.pool.pin(9n, 'node-9', 2136)
-	await pin.ready(tc.signal)
+	await h.pool.pin(9n, 'node-9', 2136)
 	expect(h.pool.acquireNode(9n).endpoint.nodeId).toBe(9n)
 
-	pin[Symbol.dispose]()
+	h.pool.invalidate(9n)
 	await settle()
 	expect(() => h.pool.acquireNode(9n, { hard: true })).toThrow(EndpointsUnavailableError)
-	await expect(pin.ready(tc.signal)).rejects.toThrow('Endpoint pin disposed')
 })
 
 test('acquire before ready throws EndpointsUnavailableError', async () => {
@@ -534,17 +531,17 @@ test('mapDiscoveryResult maps every PileState_State to its status', () => {
 	])
 })
 
-test('disposing the last pin closes its materialized channel', async (tc) => {
+test('releasing the last pin closes its materialized channel', async (tc) => {
 	let connections = makeFakeConnectionFactory()
 	await using h = setup([endpoint(1)], { connections })
 	await h.pool.ready(tc.signal)
 
-	using pin = h.pool.pin(9n, 'node-9', 2136)
+	await h.pool.pin(9n, 'node-9', 2136)
 	await settle()
 	h.pool.acquireNode(9n) // materialize the pinned channel
 	expect(connections.byNode(9n)!.closed).toBe(false)
 
-	pin[Symbol.dispose]()
+	h.pool.invalidate(9n)
 	await settle()
 	expect(connections.byNode(9n)!.closed).toBe(true)
 })
