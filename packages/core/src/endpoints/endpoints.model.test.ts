@@ -100,6 +100,9 @@ let checkInvariants = function checkInvariants(sim: Sim, seed: number, stepIndex
 	}
 
 	let snapshot = buildSnapshot(ctx)
+	for (let entry of ctx.pinned.values()) {
+		expect(entry.references, `${label} pin owners`).toBeGreaterThan(0)
+	}
 
 	// The precomputed count must always match the actual pessimized set.
 	expect(snapshot.pessimizedCount, `${label} pessimizedCount`).toBe(pessimizedCount)
