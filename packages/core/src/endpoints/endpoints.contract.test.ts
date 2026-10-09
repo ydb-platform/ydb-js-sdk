@@ -250,6 +250,16 @@ test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
 	expect(conn.endpoint.nodeId).toBe(9n)
 })
 
+test('publishes an explicit pin while initial discovery is still pending', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.hang()
+	await using h = makeEndpointPool({ discovery })
+	using pin = h.pool.pin(9n, 'direct-node', 2136)
+	await pin.ready(tc.signal)
+	expect(h.machine.state).toBe('discovering')
+	expect(h.pool.acquireNode(9n, { hard: true }).endpoint.address).toBe('direct-node:2136')
+})
+
 test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)

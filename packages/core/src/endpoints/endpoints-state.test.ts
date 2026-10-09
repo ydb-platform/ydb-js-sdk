@@ -257,6 +257,7 @@ test('pin adds a pinned entry and rebuilds the snapshot', () => {
 	let h = toReady([ep(1)])
 	step(h, {
 		type: 'endpoints.pin',
+		leaseId: Symbol('test pin'),
 		nodeId: 9n,
 		host: 'n9',
 		port: 2136,
@@ -274,6 +275,7 @@ test('invalidate removes a pin and closes its channel', () => {
 	let h = toReady([ep(1)])
 	step(h, {
 		type: 'endpoints.pin',
+		leaseId: Symbol('test pin'),
 		nodeId: 9n,
 		host: 'n9',
 		port: 2136,
@@ -448,6 +450,7 @@ test('re-pinning a node to a new address drops the old pinned channel', () => {
 	let h = toReady([ep(1)])
 	let pinEvent = (host: string, generation: number): EndpointsEvent => ({
 		type: 'endpoints.pin',
+		leaseId: Symbol('test pin'),
 		nodeId: 9n,
 		host,
 		port: 2136,
@@ -533,6 +536,7 @@ test('uses the fresh address for a revived node', () => {
 let pinEv = function pinEv(nodeId: bigint): EndpointsEvent {
 	return {
 		type: 'endpoints.pin',
+		leaseId: Symbol('test pin'),
 		nodeId,
 		host: `p${nodeId}`,
 		port: 2136,

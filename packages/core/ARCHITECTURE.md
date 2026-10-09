@@ -144,12 +144,9 @@ reached through `Driver.createClient(service, target)`:
   `hard: true` every RPC goes to `nodeId` or fails (never substitutes). With
   `endpoint` the node is **pinned** (reachable before the next discovery round,
   for a server-named node from a topic `PartitionLocation`); the returned client
-  is `Disposable` and unpins on dispose.
+  is `Disposable`. Its RPCs wait until the pin's routing snapshot is published. Clients pinning the same node own separate leases; disposing the last lease unpins the node. Repeated disposal is a no-op, and disposal uses the original nodeId even if the caller mutates the target object.
 
-Internally these map to the pool primitives `pin(nodeId, host, port, {generation})`,
-`acquireNode(nodeId, {hard})`, and `invalidate(nodeId)`, over a `#pinned` map
-**outside** the balanced tiers. Generation tracking and the two-stream ordered-ack
-protocol live in the topic-reader FSM, not here.
+Internally `pin(nodeId, host, port, {generation})` returns a disposable lease with an awaitable `ready(signal)` method. The facade resolves it after consuming the `pin_applied` output following the routing snapshot. `acquireNode(nodeId, {hard})` selects the route; `invalidate(nodeId)` removes the final lease's pin. The registry keeps pins in a separate map **outside** the balanced tiers.
 
 ### Diagnostics
 

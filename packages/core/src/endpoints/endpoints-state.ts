@@ -171,6 +171,7 @@ export type EndpointsEvent =
 	// Direct-IO pins (server-named node_ids possibly outside ListEndpoints).
 	| {
 			type: 'endpoints.pin'
+			leaseId: symbol
 			nodeId: bigint
 			host: string
 			port: number
@@ -215,6 +216,7 @@ export type EndpointsEffect =
 // ── Outputs ─────────────────────────────────────────────────────────────────
 export type EndpointsOutput =
 	| { type: 'endpoints.snapshot'; snapshot: RoutingSnapshot }
+	| { type: 'endpoints.pin_applied'; nodeId: bigint; leaseId: symbol }
 	| { type: 'endpoints.ready' }
 	| {
 			type: 'endpoints.discovery_completed'
@@ -594,6 +596,8 @@ let applyPin = function applyPin(
 		generation: event.generation,
 	})
 	rebuild(ctx, runtime)
+	// Readiness follows the snapshot in the facade's output queue.
+	runtime.emit({ type: 'endpoints.pin_applied', nodeId: event.nodeId, leaseId: event.leaseId })
 	// Re-pinning the same node to a new address/generation must drop the old
 	// pinned channel so the next acquire dials the new target.
 	if (prev !== undefined && (prev.address !== address || prev.generation !== event.generation)) {
