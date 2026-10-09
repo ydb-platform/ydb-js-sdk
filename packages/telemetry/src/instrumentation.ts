@@ -51,7 +51,7 @@ export class YdbInstrumentation extends InstrumentationBase<YdbInstrumentationCo
 		})
 		this.#traces.enable()
 
-		this.#metrics = new YdbMetricsPipeline(this.meter)
+		this.#metrics = new YdbMetricsPipeline(this.meter, this._diag)
 		this.#metrics.enable()
 
 		this.#propagatorHandle = addClientMiddleware(propagator)

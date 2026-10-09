@@ -18,6 +18,12 @@ export let ATTR_YDB_DISCOVERY_REMOVED_COUNT = 'ydb.discovery.removed_count'
 export let ATTR_YDB_DISCOVERY_TOTAL_COUNT = 'ydb.discovery.total_count'
 /** seconds */
 export let ATTR_YDB_DISCOVERY_DURATION = 'ydb.discovery.duration'
+// The location the server reports for itself (`ListEndpointsResult.self_location`).
+// Not bridge-specific — it also drives ordinary locality tiering — so it is set
+// on any cluster that reports one, and dropped only when the server omits it.
+export let ATTR_YDB_DISCOVERY_SELF_LOCATION = 'ydb.discovery.self_location'
+// Bridge (2DC) only: absent when no pile has status PRIMARY.
+export let ATTR_YDB_DISCOVERY_PRIMARY_PILE = 'ydb.discovery.primary_pile'
 
 export let ATTR_YDB_RETRY_ATTEMPT = 'ydb.retry.attempt'
 /** seconds — wait observed before this attempt started; `0` for attempt 1. */
