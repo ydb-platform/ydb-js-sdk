@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/value",
-	"version": "6.0.8",
+	"version": "6.0.9",
 	"description": "Type-safe conversion and manipulation of YDB values and types. Encode/decode between native JS and YDB, with full support for primitives and complex types.",
 	"keywords": [
 		"conversion",
@@ -88,7 +88,7 @@
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",
 		"@date-fns/tz": "^1.4.1",
-		"@ydbjs/api": "^6.0.7",
+		"@ydbjs/api": "^7.0.0",
 		"date-fns": "^4.1.0",
 		"proposal-decimal": "^20250613.0.0"
 	},
