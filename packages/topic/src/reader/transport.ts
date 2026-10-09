@@ -158,7 +158,7 @@ export class ReaderTransport {
 
 				let stream = this.#driver
 					.createClient(TopicServiceDefinition)
-					.streamRead(input, { signal: ac.signal })
+					.streamRead(this.#requests(input), { signal: ac.signal })
 
 				dbg.log('stream opened (consumer=%s)', this.#params.consumer)
 
@@ -184,10 +184,6 @@ export class ReaderTransport {
 						continue
 					}
 
-					if (response.serverMessage.case === 'updateTokenResponse') {
-						this.#tokenPending = false
-					}
-
 					this.#events.push({ type: 'transport.stream.message', message: response })
 				}
 
@@ -203,6 +199,19 @@ export class ReaderTransport {
 				this.#disconnect(error)
 			}
 		})()
+	}
+
+	async *#requests(input: AsyncPriorityQueue<StreamReadMessage_FromClient>) {
+		for await (let request of input) {
+			// Read sessions may ignore unchanged tokens, so coalesce until send, not ACK.
+			if (
+				input === this.#streamInput &&
+				request.clientMessage.case === 'updateTokenRequest'
+			) {
+				this.#tokenPending = false
+			}
+			yield request
+		}
 	}
 
 	#disconnect(error?: unknown): void {
