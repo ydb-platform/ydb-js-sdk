@@ -70,8 +70,8 @@ export type WriterCtx = {
 	// transition owns whether to arm the `recovery_window` timer based on this.
 	recoveryWindowMs: number
 
-	// Highest pending flush call processed by the FSM, not the newest facade call.
-	pendingFlushId: number | undefined
+	// Each flush captures its last accepted message; calls at the same boundary share one completion.
+	flushes: Map<BufferedMessage, number>
 	closeRequested: boolean
 	// A partial batch is due after its timer fires or after an interrupted stream.
 	batchDue: boolean
@@ -173,7 +173,7 @@ export let createWriterCtx = function createWriterCtx(
 		retryOnSchemeError: options?.retryOnSchemeError ?? false,
 		recoveryWindowMs: options?.recoveryWindowMs ?? Infinity,
 
-		pendingFlushId: undefined,
+		flushes: new Map(),
 		closeRequested: false,
 		batchDue: false,
 
@@ -199,39 +199,37 @@ let canSend = function canSend(ctx: WriterCtx): boolean {
 	)
 }
 
-// Resolve a pending flush the moment the window is empty. Every path that can
-// drain the buffer (a write_response ack, or a reconnect whose init dedups all
-// in-flight messages) must call this — otherwise a flush that drains via the
-// dedup path never emits writer.flushed and the caller hangs forever.
-let resolveFlushIfDrained = function resolveFlushIfDrained(
-	ctx: WriterCtx,
-	runtime: WriterRuntime
-): void {
-	let requestId = ctx.pendingFlushId
-	if (requestId !== undefined && allDrained(ctx)) {
-		ctx.pendingFlushId = undefined
-		runtime.emit({
-			type: 'writer.flushed',
-			requestId,
-			lastSeqNo: ctx.lastSeqNo,
-		})
-	}
-}
-
-// Record a flush request. Honored in every live state — a flush issued while the
-// writer is still connecting must resolve once messages drain after init, not be
-// dropped. Resolves immediately when there is nothing pending.
 let requestFlush = function requestFlush(
 	ctx: WriterCtx,
 	runtime: WriterRuntime,
 	requestId: number
 ): void {
-	ctx.pendingFlushId = requestId
-	resolveFlushIfDrained(ctx, runtime)
-	// Still pending — kick the send loop to drain it.
-	if (ctx.pendingFlushId !== undefined) {
-		runtime.dispatch({ type: 'writer.pump' })
+	let last = ctx.messages.at(-1)
+	if (!last) {
+		runtime.emit({ type: 'writer.flushed', requestId, lastSeqNo: ctx.lastSeqNo })
+		return
 	}
+
+	ctx.flushes.set(last, requestId)
+	runtime.dispatch({ type: 'writer.pump' })
+}
+
+// Auto sequence numbers are assigned at send time, so a flush follows message identity until ACK.
+let removeAcknowledged = function removeAcknowledged(
+	ctx: WriterCtx,
+	count: number
+): WriterOutput[] {
+	let completed: WriterOutput[] = []
+	for (let message of ctx.messages.splice(0, count)) {
+		let requestId = ctx.flushes.get(message)
+		if (requestId !== undefined) {
+			ctx.flushes.delete(message)
+			completed.push({ type: 'writer.flushed', requestId, lastSeqNo: message.seqNo })
+		}
+	}
+	ctx.inflightCount -= count
+
+	return completed
 }
 
 // One stream attempt: open the transport and arm its watchdog. Shared by every
@@ -273,7 +271,7 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 	if (
 		!ctx.batchDue &&
 		!ctx.closeRequested &&
-		ctx.pendingFlushId === undefined &&
+		ctx.flushes.size === 0 &&
 		ctx.messages.length - ctx.inflightCount < available &&
 		ctx.unsentBytes < ctx.limits.maxBatchBytes
 	) {
@@ -340,7 +338,7 @@ let applyInit = function applyInit(
 		ctx.hasEverConnected = true
 	}
 
-	let { recovered, freedBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
+	let { recovered, freedBytes, flushed } = dropAckedAndRewind(ctx, serverLastSeqNo)
 	if (recovered.size > 0) {
 		runtime.emit({
 			type: 'writer.acknowledgments',
@@ -355,6 +353,9 @@ let applyInit = function applyInit(
 		lastSeqNo: ctx.lastSeqNo,
 		nextSeqNo: ctx.lastSeqNo + 1n,
 	})
+	for (let output of flushed) {
+		runtime.emit(output)
+	}
 }
 
 // Drop in-flight messages the server already persisted (seqNo <= serverLastSeqNo),
@@ -364,7 +365,7 @@ let applyInit = function applyInit(
 let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx: WriterCtx,
 	serverLastSeqNo: bigint
-): { recovered: Map<bigint, AckStatus>; freedBytes: bigint } {
+): { recovered: Map<bigint, AckStatus>; freedBytes: bigint; flushed: WriterOutput[] } {
 	let recovered = new Map<bigint, AckStatus>()
 	let freedBytes = 0n
 
@@ -388,11 +389,11 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 		ctx.unsentBytes += BigInt(ctx.messages[j]!.data.length)
 	}
 
-	ctx.messages.splice(0, i)
+	let flushed = removeAcknowledged(ctx, i)
 	ctx.inflightCount = 0
 	ctx.batchDue = ctx.messages.length > 0 && (ctx.batchDue || resend)
 
-	return { recovered, freedBytes }
+	return { recovered, freedBytes, flushed }
 }
 
 // Remove server-acknowledged messages from the in-flight prefix.
@@ -403,7 +404,7 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 let acknowledge = function acknowledge(
 	ctx: WriterCtx,
 	acks: WriteAck[]
-): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint } {
+): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint; flushed: WriterOutput[] } {
 	let status = new Map<bigint, AckStatus>()
 	for (let ack of acks) {
 		status.set(ack.seqNo, ack.status)
@@ -424,10 +425,9 @@ let acknowledge = function acknowledge(
 		count += 1
 	}
 
-	ctx.messages.splice(0, count)
-	ctx.inflightCount -= count
+	let flushed = removeAcknowledged(ctx, count)
 
-	return { acknowledgments, freedBytes }
+	return { acknowledgments, freedBytes, flushed }
 }
 
 // Append a message to the buffer. Total by design — seqNo-mode validation
@@ -486,7 +486,7 @@ export let releaseState = function releaseState(ctx: WriterCtx): void {
 	ctx.inflightCount = 0
 	ctx.unsentBytes = 0n
 	ctx.batchDue = false
-	ctx.pendingFlushId = undefined
+	ctx.flushes.clear()
 }
 
 // Drain buffered messages into the in-flight prefix, one batch per event.
@@ -603,7 +603,6 @@ let finishDrain = function finishDrain(
 	ctx: WriterCtx,
 	runtime: WriterRuntime
 ): TransitionResult<WriterState, WriterEffect> | undefined {
-	resolveFlushIfDrained(ctx, runtime)
 	if (ctx.closeRequested && allDrained(ctx)) {
 		return terminate(ctx, 'closed', new Error('Writer closed'), runtime)
 	}
@@ -756,13 +755,17 @@ export let writerTransition = function writerTransition(
 				case 'writer.pump':
 					return pump(ctx, runtime)
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBytes, flushed } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
 							freedBytes,
 						})
+					}
+
+					for (let output of flushed) {
+						runtime.emit(output)
 					}
 
 					let closed = finishDrain(ctx, runtime)

@@ -57,7 +57,9 @@ type Sim = {
 	assigned: WeakMap<BufferedMessage, bigint> // detect renumbering
 	prevLastSeqNo: bigint
 	modelBytes: bigint // facade-style un-acked byte budget
-	outstandingFlush: boolean
+	acknowledgedCount: number
+	nextFlushId: number
+	flushBoundaries: Map<number, number>
 	errored: boolean
 	destroyed: boolean
 	terminal: boolean
@@ -86,7 +88,9 @@ let mkSim = function mkSim(maxInflightCount: number, maxBatchBytes: bigint, preS
 		assigned: new WeakMap(),
 		prevLastSeqNo: 0n,
 		modelBytes: 0n,
-		outstandingFlush: false,
+		acknowledgedCount: 0,
+		nextFlushId: 0,
+		flushBoundaries: new Map(),
 		errored: false,
 		destroyed: false,
 		terminal: false,
@@ -132,9 +136,20 @@ let serverReceive = function serverReceive(sim: Sim, seqNo: bigint): void {
 let onWriterOutput = function onWriterOutput(sim: Sim, output: WriterOutput): void {
 	switch (output.type) {
 		case 'writer.flushed':
-			sim.outstandingFlush = false
+			for (let [id, acceptedCount] of sim.flushBoundaries) {
+				if (id > output.requestId) {
+					break
+				}
+				if (sim.acknowledgedCount < acceptedCount) {
+					throw new Error(
+						`flush ${id} completed before its ${acceptedCount} writes were acknowledged`
+					)
+				}
+				sim.flushBoundaries.delete(id)
+			}
 			break
 		case 'writer.acknowledgments':
+			sim.acknowledgedCount += output.acknowledgments.size
 			sim.modelBytes -= output.freedBytes
 			if (sim.modelBytes < 0n) {
 				sim.modelBytes = 0n
@@ -300,8 +315,12 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		)
 	}
 
-	if (sim.outstandingFlush && allDrained(ctx)) {
-		throw new Error(`${where}: flush left unresolved though the window is drained`)
+	for (let [id, acceptedCount] of sim.flushBoundaries) {
+		if (sim.acknowledgedCount >= acceptedCount) {
+			throw new Error(
+				`${where}: flush ${id} unresolved after its ${acceptedCount} writes were acknowledged`
+			)
+		}
 	}
 }
 
@@ -408,8 +427,9 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 				w: 3,
 				name: 'flush',
 				run: () => {
-					sim.outstandingFlush = true
-					sim.writerEvents.push({ type: 'writer.flush', requestId: 1 })
+					let requestId = ++sim.nextFlushId
+					sim.flushBoundaries.set(requestId, sim.writtenCount)
+					sim.writerEvents.push({ type: 'writer.flush', requestId })
 				},
 			})
 			actions.push({
