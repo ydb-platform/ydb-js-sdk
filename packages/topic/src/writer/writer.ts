@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isPromise } from 'node:util/types'
 
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
@@ -179,6 +180,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		}
 	}
 
+	/** RAW buffers may be shared by writes; keep their bytes unchanged until all corresponding ACKs. */
 	write(data: Uint8Array, extra?: WriteExtra): void {
 		if (this.#closed || this.#closing) {
 			throw new Error('Writer is closed — cannot write messages')
@@ -242,6 +244,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		})
 	}
 
+	/** Waits for the whole queue to drain, including writes accepted while this call is pending. */
 	async flush(signal?: AbortSignal): Promise<bigint> {
 		if (this.#lastError !== undefined) {
 			throw this.#lastError
@@ -361,7 +364,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {
 							try {
-								this.#onAck(seqNo, status)
+								let result: unknown = this.#onAck(seqNo, status)
+								if (isPromise(result)) {
+									void result.catch((error) => dbg.log('onAck threw: %O', error))
+								}
 							} catch (error) {
 								// User callback errors are logged and ignored — a throwing
 								// callback must never break the writer.

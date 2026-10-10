@@ -1,3 +1,5 @@
+import { isPromise } from 'node:util/types'
+
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
@@ -707,10 +709,15 @@ export class TopicReader implements AsyncDisposable, Disposable {
 						// Callback errors are logged via dbg and ignored — a throwing user
 						// callback must never break the machine.
 						try {
-							this.#callbacks.onCommittedOffset(
+							let result: unknown = this.#callbacks.onCommittedOffset(
 								output.session,
 								output.committedOffset
 							)
+							if (isPromise(result)) {
+								void result.catch((error) =>
+									dbg.log('onCommittedOffset threw: %O', error)
+								)
+							}
 						} catch (error) {
 							dbg.log('onCommittedOffset threw: %O', error)
 						}

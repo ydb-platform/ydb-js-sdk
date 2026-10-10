@@ -1,15 +1,13 @@
 import { create } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	type StreamWriteMessage_WriteRequest_MessageData,
 	StreamWriteMessage_WriteRequest_MessageDataSchema,
 } from '@ydbjs/api/topic'
 import { loggers } from '@ydbjs/debug'
-import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
-import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
-import { ClientError, Status } from 'nice-grpc'
+
+import { isRetryableTopicError } from '../retry.js'
 
 import type { AckStatus, WriteAck } from './types.js'
 
@@ -75,7 +73,7 @@ export type WriterCtx = {
 	// Highest pending flush call processed by the FSM, not the newest facade call.
 	pendingFlushId: number | undefined
 	closeRequested: boolean
-	// A partial batch is due after its timer fires or after an interrupted send.
+	// A partial batch is due after its timer fires or after an interrupted stream.
 	batchDue: boolean
 
 	// The session codec (Codec enum value / custom id) — validated against
@@ -188,54 +186,6 @@ export let createWriterCtx = function createWriterCtx(
 
 		limits,
 	}
-}
-
-// A stream error is retryable when the writer should reconnect transparently.
-// Topic writes are idempotent (dedup by producerId+seqNo), so we use the
-// idempotent classification — unlike the plain stream classifier, this retries
-// the "conditionally" YDB statuses (SESSION_EXPIRED, UNDETERMINED, TIMEOUT).
-// A clean stream end with no error object is also retryable (server-side reconnect).
-// SCHEME_ERROR is fatal unless `retryOnSchemeError` is set (wait for topic creation).
-export let isRetryableWriterError = function isRetryableWriterError(
-	error: unknown,
-	retryOnSchemeError = false
-): boolean {
-	if (error === undefined || error === null) {
-		return true
-	}
-
-	if (isPayloadTooLargeError(error)) {
-		return false
-	}
-
-	if (
-		retryOnSchemeError &&
-		error instanceof YDBError &&
-		error.code === StatusIds_StatusCode.SCHEME_ERROR
-	) {
-		return true
-	}
-
-	return isRetryableStreamError(error) || isRetryableError(error, true)
-}
-
-// A size-limit rejection is deterministic — resending the same oversized frame can
-// only fail again, so it must be fatal (Go demotes this case explicitly). Every
-// size rejection observed against a real server (tests/writer-protocol.test.ts) is
-// a gRPC ClientError RESOURCE_EXHAUSTED whose details carry a size complaint:
-//   server frame cap: 'Received message larger than max (66060326 vs. 64000000)'
-//   client send cap:  'Attempted to send message with a size larger than 67108864'
-// (grpc-js receive paths use the same 'larger than' wording). The code alone is not
-// enough — RESOURCE_EXHAUSTED also covers genuine throttling, which SHOULD be
-// retried — so the details text narrows it. Everything else the server could send
-// (e.g. a YDBError BAD_REQUEST issue) is already non-retryable via the generic
-// classifier and needs no special case here.
-let isPayloadTooLargeError = function isPayloadTooLargeError(error: unknown): boolean {
-	return (
-		error instanceof ClientError &&
-		error.code === Status.RESOURCE_EXHAUSTED &&
-		/larger than/i.test(error.details)
-	)
 }
 
 let allDrained = function allDrained(ctx: WriterCtx): boolean {
@@ -624,6 +574,8 @@ let toReconnecting = function toReconnecting(
 	if (error !== undefined) {
 		ctx.lastError = error
 	}
+	// Reconnecting must not restart the batching delay for already accepted messages.
+	ctx.batchDue = ctx.messages.length > 0
 
 	runtime.emit({
 		type: 'writer.reconnecting',
@@ -772,7 +724,7 @@ export let writerTransition = function writerTransition(
 					ctx.attempts += 1
 					return { state: 'connecting', effects: connectEffects(ctx) }
 				case 'writer.stream.disconnected':
-					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
+					if (!isRetryableTopicError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
 
@@ -826,7 +778,7 @@ export let writerTransition = function writerTransition(
 				case 'writer.stream.token_response':
 					return
 				case 'writer.stream.disconnected':
-					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
+					if (!isRetryableTopicError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
 

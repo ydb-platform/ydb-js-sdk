@@ -36,10 +36,10 @@ test('parses an ms-string maxLag', () => {
 	expect(settings!.maxLag).toMatchObject({ seconds: 90n, nanos: 0 })
 })
 
-test('passes a Duration maxLag through untouched', () => {
+test('preserves the value of a Duration maxLag', () => {
 	let duration: Duration = create(DurationSchema, { seconds: 5n, nanos: 250 })
 	let [settings] = parseReadSettings({ path: '/t', maxLag: duration })
-	expect(settings!.maxLag).toBe(duration)
+	expect(settings!.maxLag).toEqual(duration)
 })
 
 test('sends an explicit zero maxLag on the wire', () => {

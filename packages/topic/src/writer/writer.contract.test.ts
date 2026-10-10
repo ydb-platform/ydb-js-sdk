@@ -5,6 +5,7 @@ import { Codec } from '@ydbjs/api/topic'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test, vi } from 'vitest'
+import { ClientError, Status } from 'nice-grpc'
 
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
@@ -187,7 +188,16 @@ test('resends unacked messages after a transparent reconnect', async () => {
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([2n])
 })
 
-test('does not fail a pending flush across a retryable reconnect', async () => {
+test.for([
+	{ name: 'clean end', error: undefined },
+	{
+		name: 'server deadline',
+		error: new ClientError('/stream', Status.DEADLINE_EXCEEDED, 'deadline'),
+	},
+	{ name: 'server timeout', error: new YDBError(StatusIds_StatusCode.TIMEOUT, []) },
+	{ name: 'expired session', error: new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []) },
+	{ name: 'indeterminate result', error: new YDBError(StatusIds_StatusCode.UNDETERMINED, []) },
+])('preserves the pending flush across $name', async ({ error }, tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
@@ -199,11 +209,17 @@ test('does not fail a pending flush across a retryable reconnect', async () => {
 	writer.write(bytes(1))
 	await first.waitForWrite()
 
-	let flushed = writer.flush()
+	let flushed = writer.flush(tc.signal)
 	let settledEarly = false
 	void flushed.then(() => (settledEarly = true)).catch(() => (settledEarly = true))
 
-	first.disconnect()
+	if (error instanceof YDBError) {
+		first.respond(failureResponse(error.code))
+	} else if (error) {
+		first.fail(error)
+	} else {
+		first.disconnect()
+	}
 	await settle()
 	expect(settledEarly).toBe(false)
 
@@ -1905,4 +1921,158 @@ test('retains an overdue batch across reconnect without sending before initializ
 		vi.clearAllTimers()
 		vi.useRealTimers()
 	}
+})
+
+test('sends a buffered partial batch despite reconnects shorter than the flush interval', async () => {
+	// Each stream ends before its flush tick, making timer postponement deterministic.
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			flushIntervalMs: 1000,
+		})
+		let stream = await waitForNextStream()
+		let streams = [stream]
+		stream.respond(initResponse(0n))
+		await settle()
+		writer.write(bytes(1))
+
+		for (let attempt = 0; attempt < 3; attempt++) {
+			// oxlint-disable-next-line no-await-in-loop
+			await vi.advanceTimersByTimeAsync(450)
+			stream.disconnect()
+			// oxlint-disable-next-line no-await-in-loop
+			await settle()
+			// oxlint-disable-next-line no-await-in-loop
+			await vi.advanceTimersByTimeAsync(50)
+			// oxlint-disable-next-line no-await-in-loop
+			stream = await waitForNextStream()
+			streams.push(stream)
+			stream.respond(initResponse(0n))
+			// oxlint-disable-next-line no-await-in-loop
+			await settle()
+		}
+
+		let sent = streams.flatMap((connection) =>
+			connection.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
+		)
+		expect(sent.length).toBeGreaterThan(0)
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('handles a rejected async onAck without delaying flush', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let observer = Promise.withResolvers<void>()
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		onAck: async () => {
+			await observer.promise
+			throw new Error('Asynchronous ACK observer failed')
+		},
+	})
+	writer.write(bytes(1))
+	let flushed = writer.flush()
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await stream.waitForWrite()
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await expect(flushed).resolves.toBe(1n)
+	observer.resolve()
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	await expect(writer.close()).resolves.toBeUndefined()
+})
+
+// The fake withholds each ACK independently of later writes.
+test('waits for later writes before completing a pending flush', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxInflightCount: 1 })
+	let stream = await waitForNextStream()
+	await stream.waitForInit()
+	stream.respond(initResponse(0n))
+
+	writer.write(bytes(1))
+	let completed = false
+	let flushed = writer.flush(tc.signal).then((seqNo) => {
+		completed = true
+		return seqNo
+	})
+	await stream.waitForWrite()
+
+	writer.write(bytes(2))
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await settle()
+
+	expect(completed).toBe(false)
+	let requests = stream.sent.flatMap((frame) =>
+		frame.clientMessage.case === 'writeRequest' ? frame.clientMessage.value.messages : []
+	)
+	expect(requests.map((message) => message.seqNo)).toEqual([1n, 2n])
+
+	stream.respond(writeResponse([{ seqNo: 2n }]))
+	await expect(flushed).resolves.toBe(2n)
+})
+
+test('borrows a whole RAW buffer and permits reuse after acknowledgment', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let stream = await waitForNextStream()
+	await stream.waitForInit()
+	stream.respond(initResponse(0n))
+
+	let payload = bytes(1, 2, 3)
+	writer.write(payload)
+	let flushed = writer.flush(tc.signal)
+	let first = await stream.waitForWrite()
+	expect(first.messages[0]!.data).toBe(payload)
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await flushed
+
+	payload.fill(4)
+	writer.write(payload)
+	let reused = writer.flush(tc.signal)
+	await settle()
+	let requests = stream.sent.flatMap((frame) =>
+		frame.clientMessage.case === 'writeRequest' ? frame.clientMessage.value.messages : []
+	)
+	expect(requests[1]!.seqNo).toBe(2n)
+	expect([...requests[1]!.data]).toEqual([4, 4, 4])
+
+	stream.respond(writeResponse([{ seqNo: 2n }]))
+	await expect(reused).resolves.toBe(2n)
+})
+
+// Controlled ACKs keep both writes pending across the same reconnect.
+test('resends concurrent writes that share one unchanged RAW buffer', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let first = await waitForNextStream()
+	await first.waitForInit()
+	first.respond(initResponse(0n))
+
+	let payload = bytes(1, 2, 3)
+	writer.write(payload)
+	writer.write(payload)
+	let flushed = writer.flush(tc.signal)
+	await first.waitForWrite()
+	first.disconnect()
+
+	let replacement = await waitForNextStream()
+	await replacement.waitForInit()
+	replacement.respond(initResponse(0n))
+	let resent = await replacement.waitForWrite()
+	expect(resent.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
+	expect(resent.messages.map((message) => [...message.data])).toEqual([
+		[1, 2, 3],
+		[1, 2, 3],
+	])
+	expect(resent.messages.every((message) => message.data === payload)).toBe(true)
+
+	replacement.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
+	await expect(flushed).resolves.toBe(2n)
 })
