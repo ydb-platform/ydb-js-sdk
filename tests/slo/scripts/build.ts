@@ -11,6 +11,7 @@
 
 import { Glob } from 'bun'
 import path from 'node:path'
+import { rm } from 'node:fs/promises'
 
 let slo = path.resolve(import.meta.dir, '..')
 
@@ -20,6 +21,8 @@ for await (let file of new Glob('workloads/*/*.ts').scan({ cwd: slo })) {
 }
 
 console.log('building %d entries → dist/', entrypoints.length)
+
+await rm(path.join(slo, 'dist'), { recursive: true, force: true })
 
 let result = await Bun.build({
 	entrypoints,

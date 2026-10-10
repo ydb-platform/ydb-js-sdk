@@ -34,10 +34,6 @@ meter
 		r.observe(u.arrayBuffers, { worker: 'main', type: 'arrayBuffers' })
 	})
 
-installSafetyHandlers('log', (kind, _err) => {
-	sdk_process_errors_total.add(1, { worker: 'main', kind })
-})
-
 // ---- CLI parsing ----------------------------------------------------------
 type Parsed = {
 	setup: string | undefined
@@ -121,15 +117,35 @@ function resolveWorker(name: string): URL {
 
 // ---- Global state ---------------------------------------------------------
 let cli = parseArgv(process.argv.slice(2))
-let DURATION = parseInt(process.env['WORKLOAD_DURATION'] || '60', 10)
+let DURATION = Number(process.env['WORKLOAD_DURATION'] || '60')
+let topicProfile = cli.workers.includes('topic.run')
+let drainTimeoutMs = Number(cli.params.get('topic.run')?.['drainTimeoutMs'] ?? '120000')
+if (!Number.isFinite(DURATION) || DURATION < 0) {
+	console.error('[index] WORKLOAD_DURATION must be a non-negative number of seconds')
+	process.exit(2)
+}
+if (topicProfile && cli.workers.length !== 1) {
+	console.error('[index] topic.run must be the only workload worker')
+	process.exit(2)
+}
+if (
+	topicProfile &&
+	(!Number.isInteger(drainTimeoutMs) || drainTimeoutMs < 1 || drainTimeoutMs > 2_147_478_647)
+) {
+	console.error('[index] topic.run.drainTimeoutMs must be a positive timer duration')
+	process.exit(2)
+}
+let runFailed = false
 
 let ctrl = new AbortController()
 process.on('SIGINT', () => {
 	console.error('[index] SIGINT, aborting')
+	if (topicProfile) runFailed = true
 	ctrl.abort()
 })
 process.on('SIGTERM', () => {
 	console.error('[index] SIGTERM, aborting')
+	if (topicProfile) runFailed = true
 	ctrl.abort()
 })
 
@@ -143,67 +159,119 @@ function broadcastStop() {
 }
 ctrl.signal.addEventListener('abort', broadcastStop, { once: true })
 
+function failTopic(reason: string): void {
+	console.error(`[index] topic run failed: ${reason}`)
+	runFailed = true
+	ctrl.abort()
+}
+
+installSafetyHandlers('log', (kind, _err) => {
+	sdk_process_errors_total.add(1, { worker: 'main', kind })
+	if (topicProfile) failTopic(`supervisor ${kind}`)
+})
+
 // ---- Phase helpers --------------------------------------------------------
 function runOnce(name: string): Promise<number> {
 	let url = resolveWorker(name)
 	let data: WorkerData = { name, params: cli.params.get(name) ?? {} }
 	let worker = new Worker(url, { workerData: data })
 
-	return new Promise<number>((resolve) => {
-		let settled = false
-		let settle = (code: number) => {
-			if (settled) return
-			settled = true
-			resolve(code)
-		}
-		worker.on('error', (err) => {
-			console.error(`[index] worker ${name} error:`, err)
-			settle(1)
-		})
-		worker.on('exit', (code) => settle(code ?? 1))
+	let exited = Promise.withResolvers<number>()
+	let timer = topicProfile
+		? setTimeout(() => {
+				failTopic(`phase ${name} exceeded 60000ms`)
+				void worker
+					.terminate()
+					.catch((error) => console.error(`[index] cannot terminate ${name}:`, error))
+			}, 60_000)
+		: undefined
+	timer?.unref()
+	worker.on('error', (err) => {
+		console.error(`[index] worker ${name} error:`, err)
+		if (topicProfile) failTopic(`phase ${name} errored`)
 	})
+	worker.once('exit', (code) => {
+		clearTimeout(timer)
+		exited.resolve(code ?? 1)
+	})
+	return exited.promise
 }
 
-const RESTART_CAP = 3
-const RESTART_WINDOW_MS = 60_000
-const BACKOFF_MS = [250, 500, 1000]
-
-let runFailed = false
+let RESTART_CAP = 3
+let RESTART_WINDOW_MS = 60_000
+let BACKOFF_MS = [250, 500, 1000]
 
 async function runForever(name: string): Promise<void> {
 	let url = resolveWorker(name)
 	let data: WorkerData = { name, params: cli.params.get(name) ?? {} }
-
 	let restartTimestamps: number[] = []
 
 	while (!ctrl.signal.aborted) {
 		let worker = new Worker(url, { workerData: data })
 		console.log(`[index] spawned ${name}`)
+		let successfulResult = false
 
-		// oxlint-disable-next-line no-await-in-loop
-		let exitCode: number = await new Promise((resolve) => {
-			let settled = false
-			let settle = (c: number) => {
-				if (settled) return
-				settled = true
-				resolve(c)
+		let exited = Promise.withResolvers<number>()
+		let killer: ReturnType<typeof setTimeout> | undefined
+		let onAbort = () => {
+			let timeoutMs = topicProfile ? drainTimeoutMs + 5000 : 5000
+			killer = setTimeout(() => {
+				console.error(`[index] ${name} did not exit in ${timeoutMs}ms, terminating`)
+				if (topicProfile) failTopic('forced worker termination')
+				void worker
+					.terminate()
+					.catch((error) => console.error(`[index] cannot terminate ${name}:`, error))
+			}, timeoutMs)
+			killer.unref()
+		}
+		worker.on('message', (message: unknown) => {
+			if (
+				!topicProfile ||
+				!message ||
+				typeof message !== 'object' ||
+				!('type' in message) ||
+				message.type !== 'workload-result'
+			)
+				return
+			if (!('success' in message) || message.success !== true) {
+				console.error('[index] unsuccessful worker result:', message)
+				failTopic('worker reported an unsuccessful result')
+				return
 			}
-			worker.on('error', (err) => {
-				console.error(`[index] ${name} error:`, err)
-				settle(1)
-			})
-			worker.on('exit', (c) => settle(c ?? 1))
-
-			let onAbort = () => {
-				let killer = setTimeout(() => {
-					console.error(`[index] ${name} did not exit in 5s, terminating`)
-					worker.terminate().catch(() => {})
-				}, 5000)
-				killer.unref()
+			if (!ctrl.signal.aborted) {
+				failTopic('worker reported success before shutdown')
+				return
 			}
-			if (ctrl.signal.aborted) onAbort()
-			else ctrl.signal.addEventListener('abort', onAbort, { once: true })
+			if (
+				!('summary' in message) ||
+				!message.summary ||
+				typeof message.summary !== 'object'
+			) {
+				failTopic('worker success result is missing its summary')
+				return
+			}
+			if (!runFailed) successfulResult = true
 		})
+		worker.on('error', (err) => {
+			console.error(`[index] ${name} error:`, err)
+			if (topicProfile) failTopic('worker error')
+		})
+		worker.once('exit', (code) => {
+			clearTimeout(killer)
+			ctrl.signal.removeEventListener('abort', onAbort)
+			exited.resolve(code ?? 1)
+		})
+		if (ctrl.signal.aborted) onAbort()
+		else ctrl.signal.addEventListener('abort', onAbort, { once: true })
+		// oxlint-disable-next-line no-await-in-loop
+		let exitCode = await exited.promise
+
+		if (topicProfile) {
+			if (!ctrl.signal.aborted) failTopic(`worker exited unexpectedly with code ${exitCode}`)
+			if (exitCode !== 0) failTopic(`worker exited with code ${exitCode}`)
+			if (!successfulResult) failTopic('worker exited without a successful drain result')
+			return
+		}
 
 		if (ctrl.signal.aborted) {
 			console.log(`[index] ${name} exited (${exitCode}) during shutdown`)
@@ -246,11 +314,14 @@ if (cli.setup) {
 // Phase: run
 if (!runFailed && cli.workers.length > 0) {
 	console.log(`[index] run: duration=${DURATION}s, workers=${cli.workers.join(',')}`)
-	let durationTimer = setTimeout(() => {
-		console.log('[index] duration elapsed, stopping workers')
-		ctrl.abort()
-	}, DURATION * 1000)
-	durationTimer.unref()
+	let durationTimer =
+		DURATION > 0
+			? setTimeout(() => {
+					console.log('[index] duration elapsed, stopping workers')
+					ctrl.abort()
+				}, DURATION * 1000)
+			: undefined
+	durationTimer?.unref()
 
 	await Promise.all(cli.workers.map((name) => runForever(name)))
 	clearTimeout(durationTimer)

@@ -21,7 +21,11 @@ export default defineConfig({
 						label: 'uni',
 						color: 'yellow',
 					},
-					include: ['packages/*/src/**/*.test.ts', 'third-parties/*/src/**/*.test.ts'],
+					include: [
+						'packages/*/src/**/*.test.ts',
+						'third-parties/*/src/**/*.test.ts',
+						'tests/slo/**/*.test.ts',
+					],
 					environment: 'node',
 					setupFiles: ['./vitest.setup.polyfills.ts'],
 					execArgv: ['--expose-gc'],

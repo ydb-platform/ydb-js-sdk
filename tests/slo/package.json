@@ -3,9 +3,9 @@
 	"type": "module",
 	"private": true,
 	"scripts": {
-		"build": "bun run ./scripts/build.ts",
+		"build": "tsc --noEmit && bun run ./scripts/build.ts",
 		"start:kv": "node --env-file=.env ./dist/index.js --setup=kv.setup --kv.setup.prefill=1000 --teardown=kv.teardown --worker=kv.read --kv.read.rps=1000 --kv.read.keyspace=1000 --worker=kv.write --kv.write.rps=100 --kv.write.keyspace=1000",
-		"start:topic": "node --env-file=.env ./dist/index.js --setup=topic.setup --topic.setup.partitions=10 --worker=topic.write --topic.write.rps=100 --topic.write.partitions=10 --worker=topic.read --teardown=topic.teardown"
+		"start:topic": "node --env-file=.env ./dist/index.js --worker=topic.run --topic.run.partitions=10 --topic.run.rps=100 --topic.run.size=1024 --topic.run.codec=mixed"
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",

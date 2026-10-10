@@ -1,0 +1,16 @@
+{
+	"extends": ["//"],
+	"tasks": {
+		"build": {
+			"inputs": [
+				"index.ts",
+				"instrument.ts",
+				"lib/**/*.ts",
+				"workloads/**/*.ts",
+				"scripts/build.ts",
+				"package.json",
+				"tsconfig.json"
+			]
+		}
+	}
+}

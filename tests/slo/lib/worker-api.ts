@@ -50,3 +50,22 @@ export async function runPaced(
 	}
 	await Promise.allSettled(inflight)
 }
+
+export type TopicWorkerData = {
+	name: string
+	runId: string
+	topic: string
+	consumer: string
+	partitions: number
+	messageBytes: number
+	rps: number
+	codec: string
+	drainTimeoutMs: number
+	stallTimeoutMs: number
+	params: Record<string, string>
+}
+
+export type TopicWriteCheckpoint = { accepted: number[]; acknowledged: number[] }
+export type TopicWorkerControl =
+	| { type: 'stop' }
+	| { type: 'checkpoint'; checkpoint: TopicWriteCheckpoint; final: boolean }
