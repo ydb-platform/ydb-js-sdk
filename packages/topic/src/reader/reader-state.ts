@@ -33,6 +33,7 @@ let dbg = loggers.topic.extend('reader')
 export type ReaderState =
 	| 'idle'
 	| 'connecting'
+	| 'waiting-credit'
 	| 'ready'
 	| 'reconnecting'
 	| 'closing'
@@ -132,9 +133,6 @@ export type ReaderLimits = {
 
 // Pure logical context — mutated synchronously inside the transition only.
 export type ReaderCtx = {
-	// connection identity
-	sessionId: string | undefined
-
 	// reconnect bookkeeping (mirrors the writer)
 	attempts: number
 	lastError: unknown
@@ -333,8 +331,6 @@ export let createReaderCtx = function createReaderCtx(
 	options?: { retryOnSchemeError?: boolean; recoveryWindowMs?: number }
 ): ReaderCtx {
 	return {
-		sessionId: undefined,
-
 		attempts: 0,
 		lastError: undefined,
 		retryOnSchemeError: options?.retryOnSchemeError ?? false,
@@ -1140,8 +1136,7 @@ let recordCommit = function recordCommit(
 	// buffered too: the ack performs the single send — sending here AND there would
 	// put the same range on the wire twice, which is session-fatal.
 	let sessionLive =
-		(runtime.state === 'ready' ||
-			(runtime.state === 'connecting' && ctx.sessionId !== undefined)) &&
+		(runtime.state === 'ready' || runtime.state === 'waiting-credit') &&
 		ctx.sessionIndex.get(entry.session.partitionSessionId) === event.partitionKey
 	let committable =
 		entry.state === 'active' || entry.state === 'stopping-graceful' || entry.state === 'ended'
@@ -1161,7 +1156,7 @@ let startReading = function startReading(
 	let bytes = ctx.limits.maxBufferBytes - ctx.bufferedBytes
 	return bytes > 0n
 		? { state: 'ready', effects: [readRequestEffect(bytes)] }
-		: { state: 'connecting' }
+		: { state: 'waiting-credit' }
 }
 
 let releaseBytes = function releaseBytes(
@@ -1178,7 +1173,7 @@ let releaseBytes = function releaseBytes(
 		// The facade releases each complete response once, using its server-supplied bytesSize.
 		return { effects: released > 0n ? [readRequestEffect(released)] : [] }
 	}
-	if (state === 'connecting' && ctx.sessionId !== undefined) {
+	if (state === 'waiting-credit') {
 		return startReading(ctx)
 	}
 }
@@ -1220,17 +1215,15 @@ export let releaseState = function releaseState(ctx: ReaderCtx): void {
 	ctx.partitions.clear()
 	ctx.sessionIndex.clear()
 	ctx.bufferedBytes = 0n
-	ctx.sessionId = undefined
 }
 
-// Initialize the session before granting read credit; retained responses may keep
-// the reader connecting while partition control and commits already run.
+// Initialize the session before granting read credit; retained responses may delay
+// the first read grant while partition control and commits already run.
 let initializeSession = function initializeSession(
 	ctx: ReaderCtx,
 	sessionId: string,
 	runtime: ReaderRuntime
 ): TransitionResult<ReaderState, ReaderEffect> {
-	ctx.sessionId = sessionId
 	ctx.attempts = 0
 	ctx.sessionIndex.clear()
 
@@ -1265,7 +1258,6 @@ let toReconnecting = function toReconnecting(
 	// recordCommit / forceStopStalledGraceful honest while connecting: nothing may be
 	// sent under an id the next stream never granted.
 	ctx.sessionIndex.clear()
-	ctx.sessionId = undefined
 	if (error !== undefined) {
 		ctx.lastError = error
 	}
@@ -1457,9 +1449,7 @@ export let readerTransition = function readerTransition(
 		return releaseBytes(ctx, event.bytes, state)
 	}
 	if (
-		(state === 'ready' ||
-			state === 'closing' ||
-			(state === 'connecting' && ctx.sessionId !== undefined)) &&
+		(state === 'ready' || state === 'closing' || state === 'waiting-credit') &&
 		event.type === 'reader.timer.partition_commit_status'
 	) {
 		let entry = ctx.partitions.get(event.partitionKey)
@@ -1506,9 +1496,6 @@ export let readerTransition = function readerTransition(
 
 		case 'connecting':
 		case 'reconnecting': {
-			if (state === 'connecting' && ctx.sessionId !== undefined) {
-				return sessionTransition(ctx, event, runtime)
-			}
 			switch (event.type) {
 				case 'reader.stream.init_response':
 					return initializeSession(ctx, event.sessionId, runtime)
@@ -1576,6 +1563,7 @@ export let readerTransition = function readerTransition(
 		}
 
 		case 'ready':
+		case 'waiting-credit':
 			return sessionTransition(ctx, event, runtime)
 
 		case 'closing': {
