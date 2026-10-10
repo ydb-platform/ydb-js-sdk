@@ -14,12 +14,8 @@ export class RateLimiter {
 		if (this.#intervalMs === 0) return
 
 		let now = performance.now()
-		let reservedAt: number
-		if (now >= this.#next) {
-			reservedAt = now
-		} else {
-			reservedAt = this.#next
-		}
+		// Recover timer overshoot without replaying an unbounded backlog after a pause.
+		let reservedAt = Math.max(this.#next, now - this.#intervalMs)
 		this.#next = reservedAt + this.#intervalMs
 
 		let delay = reservedAt - now

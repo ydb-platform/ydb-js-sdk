@@ -1,0 +1,176 @@
+name: Nightly topic stability
+
+on:
+  schedule:
+    - cron: '17 22 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Duration in seconds (1200–14400, including warmup)'
+        type: number
+        default: 14400
+      runtime:
+        description: Runtime
+        type: choice
+        options: [all, node22, node24, node26, bun]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topic-nightly
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.profile.outputs.duration }}
+      matrix: ${{ steps.profile.outputs.matrix }}
+    steps:
+      - id: profile
+        env:
+          DURATION: ${{ github.event_name == 'schedule' && '14400' || format('{0}', inputs.duration) }}
+          RUNTIME: ${{ inputs.runtime || 'all' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          duration = int(os.environ['DURATION'])
+          if not 1200 <= duration <= 14400:
+              raise SystemExit('Duration must be 1200–14400 seconds')
+          runtimes = [
+              {'name': 'node22', 'image': 'node:22-bookworm'},
+              {'name': 'node24', 'image': 'node:24-bookworm'},
+              {'name': 'node26', 'image': 'node:26-bookworm'},
+              {'name': 'bun', 'image': 'oven/bun:1'},
+          ]
+          selected = [r for r in runtimes if os.environ['RUNTIME'] in ('all', r['name'])]
+          if not selected:
+              raise SystemExit('Unknown runtime')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'duration={duration}\n')
+              output.write('matrix=' + json.dumps({'include': selected}) + '\n')
+          PY
+
+  stability:
+    needs: profile
+    name: Topic stability (${{ matrix.name }})
+    runs-on: large-runner-js-sdk
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.profile.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.10'
+      - name: Prepare runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libatomic1
+          sudo curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.48.2/yq_linux_amd64 -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          sudo mkdir -p /usr/local/lib/docker/cli-plugins
+          sudo curl -fsSL https://github.com/docker/buildx/releases/download/v0.30.1/buildx-v0.30.1.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx
+          sudo curl -fsSL https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+          sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-compose
+          yq --version
+          docker compose version
+          docker buildx version
+      - name: Build workload
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          npm ci
+          npm run build
+          docker build --pull --build-arg "image=$IMAGE" \
+            -t ydb-topic-nightly tests/slo
+      - name: Run sustained topic workload
+        id: slo
+        uses: ydb-platform/ydb-slo-action/init@5f1a9a687673226632a33eb361edfe86693a5143
+        env:
+          WORKLOAD_CPU_LIMIT: 6
+          WORKLOAD_MEMORY_LIMIT: 12G
+        timeout-minutes: 275
+        with:
+          workload_name: nightly-topic-${{ matrix.name }}
+          workload_duration: ${{ needs.profile.outputs.duration }}
+          workload_current_ref: ${{ github.sha }}
+          workload_current_image: ydb-topic-nightly
+          workload_current_command: >-
+            --worker=topic.run
+            --topic.run.partitions=24
+            --topic.run.rps=0
+            --topic.run.writers=4
+            --topic.run.inFlight=8192
+            --topic.run.size=32768
+            --topic.run.codec=mixed
+            --topic.run.writeSpeedBytesPerSecond=52428800
+            --topic.run.retentionStorageMb=512
+            --topic.run.auth=login
+            --topic.run.drainTimeoutMs=50000
+            --topic.run.stability=true
+          tls: true
+          disable_compose_profiles: chaos,extra-nodes
+          fail_on_workload_error: true
+      - name: Capture and verify result
+        if: always()
+        env:
+          PROMETHEUS_URL: ${{ steps.slo.outputs.ydb-prometheus-url }}
+          SDK_REF: ${{ github.sha }}
+        run: |
+          mkdir -p .slo/extra
+          git rev-parse HEAD > .slo/extra/sdk-commit.txt
+          docker inspect ydb-workload-current \
+            --format '{"image":{{json .Image}},"state":{{json .State}}}' > .slo/extra/container.json
+          docker logs ydb-workload-current > .slo/extra/workload.log 2>&1
+          docker cp ydb-workload-current:/tmp/topic-result.json .slo/extra/topic-result.json || echo 'Missing final result; verification will fail.'
+          python3 - <<'PY'
+          import json, os, time, urllib.parse, urllib.request
+          from datetime import datetime
+          from pathlib import Path
+          root = Path('.slo/extra')
+          container = json.loads((root / 'container.json').read_text())
+          query = 'sdk_topic_messages{state="committed",ref="' + os.environ['SDK_REF'] + '"}'
+          finished = datetime.fromisoformat(container['state']['FinishedAt'].replace('Z', '+00:00')).timestamp() if container['state']['Status'] == 'exited' else time.time()
+          url = os.environ['PROMETHEUS_URL'] + '/api/v1/query?' + urllib.parse.urlencode({'query': query, 'time': finished})
+          with urllib.request.urlopen(url, timeout=30) as response:
+              metrics = json.load(response)
+          (root / 'committed-metric.json').write_text(json.dumps(metrics))
+          assert metrics['status'] == 'success' and metrics['data']['result']
+          query = '{__name__=~"sdk_memory_usage.*|sdk_topic_messages|sdk_topic_pending|sdk_process_cpu_time.*|sdk_topic_verifier_entries|sdk_operation_latency_p99_seconds",ref="' + os.environ['SDK_REF'] + '"}'
+          params = {'query': query, 'start': datetime.fromisoformat(container['state']['StartedAt'].replace('Z', '+00:00')).timestamp(), 'end': finished, 'step': 30}
+          url = os.environ['PROMETHEUS_URL'] + '/api/v1/query_range?' + urllib.parse.urlencode(params)
+          with urllib.request.urlopen(url, timeout=30) as response:
+              history = json.load(response)
+          (root / 'metrics-history.json').write_text(json.dumps(history))
+          assert history['status'] == 'success' and history['data']['result']
+          result = json.loads((root / 'topic-result.json').read_text())
+          assert container['state']['ExitCode'] == 0 and not container['state']['OOMKilled']
+          assert result['success'] and result['complete'] and result['phase'] == 'complete'
+          assert result['stability']['windows'] >= 2
+          assert result['tokenRenewal']['read']['renewed'] > 0
+          assert len(result['tokenRenewal']['write']) == 4
+          assert all(worker['renewed'] > 0 for worker in result['tokenRenewal']['write'])
+          totals = result['totals']
+          assert totals['accepted'] > 0
+          assert len({totals[k] for k in ['accepted', 'acknowledged', 'delivered', 'committed']}) == 1
+          assert all(value == 0 for value in result['pending'].values())
+          assert container['state']['Status'] == 'exited'
+          assert sum(float(s['value'][1]) for s in metrics['data']['result']) == totals['committed']
+          print(json.dumps({'runtime': result['runtime'], 'totals': totals, 'stability': result['stability']}, indent=2))
+          PY
+      - name: Preserve nightly evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-topic-${{ matrix.name }}-evidence
+          path: .slo/extra/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

@@ -32,6 +32,7 @@ export type OpAttrs = {
 }
 
 export type FinOpAttrs = {
+	worker?: string
 	operation_type: 'read' | 'write'
 	operation_status: 'success' | 'error'
 }

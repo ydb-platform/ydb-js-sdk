@@ -13,6 +13,8 @@ import {
 } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 
+import { createTopicAuth } from '../../lib/topic-auth.ts'
+
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import { type TopicWorkerResult, runTopicWorkers } from '../../lib/topic-workers.ts'
 import { type WorkerData, abortOnStop } from '../../lib/worker-api.ts'
@@ -26,20 +28,35 @@ let integer = function integer(key: string, fallback: number, min: number, max: 
 	return value
 }
 let partitions = integer('partitions', 10, 1, 100)
+let writerCount = integer('writers', 1, 1, partitions)
 let messageBytes = integer('size', 1024, 64, 8 * 1024 * 1024)
-let rps = integer('rps', 100, 1, 100_000)
+let rps = integer('rps', 100, 0, 100_000)
+let maxPendingMessages = integer('inFlight', 8192, partitions, 1_000_000)
 let drainTimeoutMs = integer('drainTimeoutMs', 120_000, 1, 600_000)
 let stallTimeoutMs = integer('stallTimeoutMs', 120_000, 1, 600_000)
+let writeSpeedBytesPerSecond = integer('writeSpeedBytesPerSecond', 0, 0, 1024 ** 3)
+let retentionSeconds = integer('retentionSeconds', 86400, 600, 86400)
+let retentionStorageMb = integer('retentionStorageMb', 0, 0, 1024 * 1024)
+integer('warmupSeconds', 300, 0, 3600)
+integer('windowSeconds', 300, 10, 3600)
+if (params['stability'] !== undefined && !['true', 'false'].includes(params['stability'])) {
+	throw new Error('stability must be true or false')
+}
 let runId = randomUUID()
 let topic = `${params['topic'] ?? 'slo-topic'}-${runId}`
 let consumer = 'slo-consumer'
+if (params['auth'] !== undefined && params['auth'] !== 'login') {
+	throw new Error('auth must be login when specified')
+}
+
 let codec = params['codec'] ?? 'mixed'
-if (codec !== 'mixed' && !['raw', 'gzip', 'zstd'].includes(codec))
+if (codec !== 'mixed' && !['raw', 'gzip', 'zstd'].includes(codec)) {
 	throw new Error(`Unsupported codec: ${codec}`)
+}
 let stopping = new AbortController()
 let io = new AbortController()
 let failure: Error | undefined
-let results: { read: TopicWorkerResult; write: TopicWorkerResult } | undefined
+let results: { read: TopicWorkerResult; write: TopicWorkerResult[] } | undefined
 let startedAt = Date.now()
 let phase = 'starting'
 let fail = (error: unknown) => {
@@ -53,12 +70,17 @@ installSafetyHandlers('log', (_, error) => fail(error))
 using _ = abortOnStop(stopping)
 let startup = setTimeout(() => fail(new Error('Topic startup timed out')), 60_000)
 try {
-	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+	using auth = createTopicAuth(process.env['YDB_CONNECTION_STRING']!, params['auth'] === 'login')
+	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!, auth.options)
 	await driver.ready(io.signal)
 	let service = driver.createClient(TopicServiceDefinition)
 	let created = await service.createTopic(
 		create(CreateTopicRequestSchema, {
 			path: topic,
+			partitionWriteSpeedBytesPerSecond: BigInt(writeSpeedBytesPerSecond),
+			...(retentionStorageMb > 0
+				? { retentionStorageMb: BigInt(retentionStorageMb) }
+				: { retentionPeriod: { seconds: BigInt(retentionSeconds), nanos: 0 } }),
 			partitioningSettings: {
 				minActivePartitions: BigInt(partitions),
 				maxActivePartitions: BigInt(partitions),
@@ -82,6 +104,8 @@ try {
 			topic,
 			partitions,
 			rps,
+			maxPendingMessages,
+			writerCount,
 			messageBytes,
 			codec,
 			drainTimeoutMs,
@@ -100,6 +124,8 @@ try {
 			partitions,
 			messageBytes,
 			rps,
+			maxPendingMessages,
+			writerCount,
 			codec,
 			drainTimeoutMs,
 			stallTimeoutMs,
@@ -111,8 +137,9 @@ try {
 	let dropped = await service.dropTopic(create(DropTopicRequestSchema, { path: topic }), {
 		signal: io.signal,
 	})
-	if (!dropped.operation?.ready || dropped.operation.status !== StatusIds_StatusCode.SUCCESS)
+	if (!dropped.operation?.ready || dropped.operation.status !== StatusIds_StatusCode.SUCCESS) {
 		throw new Error(`Topic cleanup failed: ${dropped.operation?.status}`)
+	}
 	phase = 'complete'
 } catch (error) {
 	fail(error)
@@ -121,13 +148,40 @@ try {
 }
 let summary = {
 	...results?.read.summary,
+	errors: failure ? [failure.message] : (results?.read.summary?.errors ?? []),
 	topic,
 	codec,
 	rps,
+	maxPendingMessages,
 	phase,
 	startedAt: new Date(startedAt).toISOString(),
 	elapsedMs: Date.now() - startedAt,
-	reconnects: { writer: results?.write.reconnects ?? 0, reader: results?.read.reconnects ?? 0 },
+	runtime: results?.read.runtime,
+	stability:
+		results?.read.stability && results.write.every((writer) => writer.stability)
+			? {
+					windows: Math.min(
+						results.read.stability.windows,
+						...results.write.map((writer) => writer.stability!.windows)
+					),
+					workers: {
+						read: results.read.stability,
+						write: results.write.map((writer) => writer.stability),
+					},
+				}
+			: undefined,
+	tokenRenewal: {
+		read: results?.read.tokenRenewal,
+		write: results?.write.map((writer) => writer.tokenRenewal),
+	},
+	drainedMemory: {
+		read: results?.read.drainedMemory,
+		write: results?.write.map((writer) => writer.drainedMemory),
+	},
+	reconnects: {
+		writer: results?.write.reduce((sum, writer) => sum + writer.reconnects, 0) ?? 0,
+		reader: results?.read.reconnects ?? 0,
+	},
 }
 let success = !failure && summary.complete === true && phase === 'complete'
 console.info('[topic.result] %s', JSON.stringify({ success, ...summary }))
