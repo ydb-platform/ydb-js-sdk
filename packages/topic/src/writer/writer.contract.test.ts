@@ -7,7 +7,7 @@ import { YDBError } from '@ydbjs/error'
 import { expect, test, vi } from 'vitest'
 import { ClientError, Status } from 'nice-grpc'
 
-import { GZIP_CODEC } from '../codec.ts'
+import { GZIP_CODEC, RAW_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
 import {
 	failureResponse,
@@ -1988,35 +1988,75 @@ test('handles a rejected async onAck without delaying flush', async () => {
 	await expect(writer.close()).resolves.toBeUndefined()
 })
 
-// The fake withholds each ACK independently of later writes.
-test('waits for later writes before completing a pending flush', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxInflightCount: 1 })
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
+// Controlled ACKs separate flush boundaries even when all writes share a stream and batch.
+test.for([
+	{ mode: 'auto', recovery: 'ack' },
+	{ mode: 'auto', recovery: 'resend' },
+	{ mode: 'auto', recovery: 'dedup' },
+	{ mode: 'manual', recovery: 'ack' },
+	{ mode: 'manual', recovery: 'resend' },
+	{ mode: 'manual', recovery: 'dedup' },
+])(
+	'settles each flush at its captured write boundary ($mode, $recovery)',
+	async ({ mode, recovery }, tc) => {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			maxInflightCount: 3,
+		})
+		let seq = mode === 'manual' ? [10n, 20n, 30n] : [1n, 2n, 3n]
+		writer.write(bytes(1), mode === 'manual' ? { seqNo: seq[0] } : undefined)
+		let firstDone = false
+		let first = writer.flush(tc.signal).then((seqNo) => {
+			firstDone = true
+			return seqNo
+		})
+		let sameBoundary = writer.flush(tc.signal)
+		writer.write(bytes(2), mode === 'manual' ? { seqNo: seq[1] } : undefined)
+		let secondDone = false
+		let second = writer.flush(tc.signal).then((seqNo) => {
+			secondDone = true
+			return seqNo
+		})
+		writer.write(bytes(3), mode === 'manual' ? { seqNo: seq[2] } : undefined)
 
-	writer.write(bytes(1))
-	let completed = false
-	let flushed = writer.flush(tc.signal).then((seqNo) => {
-		completed = true
-		return seqNo
-	})
-	await stream.waitForWrite()
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		stream.respond(initResponse(0n))
+		await stream.waitForWrite()
 
-	writer.write(bytes(2))
-	stream.respond(writeResponse([{ seqNo: 1n }]))
-	await settle()
+		if (recovery !== 'ack') {
+			stream.disconnect()
+			stream = await waitForNextStream()
+			await stream.waitForInit()
+			stream.respond(initResponse(recovery === 'dedup' ? seq[0]! : 0n))
+			await stream.waitForWrite()
+		}
+		if (recovery !== 'dedup') {
+			stream.respond(writeResponse([{ seqNo: seq[0]! }]))
+		}
+		await settle()
 
-	expect(completed).toBe(false)
-	let requests = stream.sent.flatMap((frame) =>
-		frame.clientMessage.case === 'writeRequest' ? frame.clientMessage.value.messages : []
-	)
-	expect(requests.map((message) => message.seqNo)).toEqual([1n, 2n])
+		expect(firstDone).toBe(true)
+		expect(secondDone).toBe(false)
+		await expect(first).resolves.toBe(seq[0])
+		await expect(sameBoundary).resolves.toBe(seq[0])
 
-	stream.respond(writeResponse([{ seqNo: 2n }]))
-	await expect(flushed).resolves.toBe(2n)
-})
+		stream.respond(writeResponse([{ seqNo: seq[1]! }]))
+		await expect(second).resolves.toBe(seq[1])
+		let thirdDone = false
+		let third = writer.flush(tc.signal).then((seqNo) => {
+			thirdDone = true
+			return seqNo
+		})
+		await settle()
+		expect(thirdDone).toBe(false)
+		stream.respond(writeResponse([{ seqNo: seq[2]! }]))
+		await expect(third).resolves.toBe(seq[2])
+		await writer.close()
+	}
+)
 
 test('borrows a whole RAW buffer and permits reuse after acknowledgment', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
@@ -2048,9 +2088,12 @@ test('borrows a whole RAW buffer and permits reuse after acknowledgment', async 
 })
 
 // Controlled ACKs keep both writes pending across the same reconnect.
-test('resends concurrent writes that share one unchanged RAW buffer', async (tc) => {
+test.for([
+	{ name: 'RAW', codec: RAW_CODEC },
+	{ name: 'GZIP', codec: GZIP_CODEC },
+])('resends writes sharing one unchanged input buffer with $name', async ({ codec }, tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec })
 	let first = await waitForNextStream()
 	await first.waitForInit()
 	first.respond(initResponse(0n))
@@ -2067,11 +2110,12 @@ test('resends concurrent writes that share one unchanged RAW buffer', async (tc)
 	replacement.respond(initResponse(0n))
 	let resent = await replacement.waitForWrite()
 	expect(resent.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
-	expect(resent.messages.map((message) => [...message.data])).toEqual([
+	expect(resent.messages.map((message) => [...codec.decompress(message.data)])).toEqual([
 		[1, 2, 3],
 		[1, 2, 3],
 	])
-	expect(resent.messages.every((message) => message.data === payload)).toBe(true)
+	expect([...payload]).toEqual([1, 2, 3])
+	expect(resent.messages.every((message) => message.data === payload)).toBe(codec === RAW_CODEC)
 
 	replacement.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
 	await expect(flushed).resolves.toBe(2n)

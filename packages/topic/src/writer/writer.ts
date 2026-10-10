@@ -244,7 +244,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		})
 	}
 
-	/** Waits for the whole queue to drain, including writes accepted while this call is pending. */
+	/** Waits for ACKs of writes accepted before this call; later writes do not extend the wait. */
 	async flush(signal?: AbortSignal): Promise<bigint> {
 		if (this.#lastError !== undefined) {
 			throw this.#lastError
