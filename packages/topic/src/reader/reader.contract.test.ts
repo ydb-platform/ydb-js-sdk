@@ -1,10 +1,13 @@
+import { create } from '@bufbuild/protobuf'
+import { DurationSchema, TimestampSchema } from '@bufbuild/protobuf/wkt'
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Codec } from '@ydbjs/api/topic'
 import type { StreamReadMessage_FromServer } from '@ydbjs/api/topic'
 import { YDBError } from '@ydbjs/error'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
+import { ClientError, Status } from 'nice-grpc'
 
 import { ZSTD_CODEC } from '../codec.ts'
 import type { TopicMessage } from '../message.ts'
@@ -20,7 +23,6 @@ import {
 	settle,
 	startPartitionSession,
 	stopPartitionSession,
-	updateTokenResponse,
 } from './reader.fixtures.ts'
 
 // End-to-end wiring of the reader facade against a fake streamRead: driver ↔ transport
@@ -103,6 +105,13 @@ let primeStream = async function primeStream(
 	await stream.waitForReadRequest()
 	return stream
 }
+
+test.for([0n, -1n])('rejects an unusable read-credit window of %s bytes', (maxBufferBytes) => {
+	let { driver } = makeFakeTopicDriver()
+	expect(() => new TopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes })).toThrow(
+		/maxBufferBytes must be positive/
+	)
+})
 
 test('requests the full buffer as read credit after init', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
@@ -199,7 +208,16 @@ test('resolves commit() when the server acknowledges the offset', async (tc) => 
 	await expect(commit).resolves.toBeUndefined()
 })
 
-test('does not reject commit() across a reconnect and resolves it on the new session', async (tc) => {
+test.for([
+	{ name: 'clean end', error: undefined },
+	{
+		name: 'server deadline',
+		error: new ClientError('/stream', Status.DEADLINE_EXCEEDED, 'deadline'),
+	},
+	{ name: 'server timeout', error: new YDBError(StatusIds_StatusCode.TIMEOUT, []) },
+	{ name: 'expired session', error: new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []) },
+	{ name: 'indeterminate result', error: new YDBError(StatusIds_StatusCode.UNDETERMINED, []) },
+])('preserves the pending commit across $name', async ({ error }, tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
@@ -222,10 +240,17 @@ test('does not reject commit() across a reconnect and resolves it on the new ses
 	)
 	let messages = await collect(reader, 3, tc.signal)
 	let commit = reader.commit(messages[2]!)
+	void commit.catch(() => {})
 	await a.waitForCommit()
 
 	// The stream drops before the ack. The reader must NOT reject the in-flight commit.
-	a.disconnect()
+	if (error instanceof YDBError) {
+		a.respond(failureResponse(error.code))
+	} else if (error) {
+		a.fail(error)
+	} else {
+		a.disconnect()
+	}
 
 	// Session B: same partition, fresh session id, committed still 0. The reconcile must
 	// re-send the pending [2, 3) verbatim on the new session id — never a widened span.
@@ -1648,30 +1673,32 @@ test('keeps refreshing the token on the new stream after a reconnect', async () 
 	expect(update.token).toBe('fake-token')
 })
 
-test('coalesces update-token requests until one is acknowledged', async () => {
-	// The token interval fires on a schedule with no inflight gate. If the stream is
-	// open but the server never acks, un-coalesced pushes would pile token frames into
-	// the stream queue indefinitely (a slow long-lived leak). With coalescing, at most
-	// one un-acknowledged token is ever queued.
+test('coalesces credential acquisition and refreshes without an ACK for the previous token', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let pending = Promise.withResolvers<string>()
+	let token = vi
+		.spyOn(driver, 'token', 'get')
+		.mockReturnValueOnce(pending.promise)
+		.mockResolvedValue('renewed-token')
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
-		updateTokenIntervalMs: 5, // fire many times quickly
+		updateTokenIntervalMs: 5,
 	})
-
 	let stream = await primeStream(reader, waitForNextStream)
 
-	// Let the token interval fire many times without ever sending updateTokenResponse.
 	await new Promise((resolve) => setTimeout(resolve, 60))
+	expect(token).toHaveBeenCalledTimes(1)
 
-	let tokenFrames = () =>
-		stream.sent.filter((m) => m.clientMessage.case === 'updateTokenRequest').length
-	expect(tokenFrames()).toBe(1)
-
-	// The ack clears the pending flag — the next tick sends a fresh refresh.
-	stream.respond(updateTokenResponse())
-	await expect.poll(tokenFrames, { timeout: 5000 }).toBeGreaterThanOrEqual(2)
+	pending.resolve('unchanged-token')
+	expect((await stream.waitForUpdateToken()).token).toBe('unchanged-token')
+	await expect
+		.poll(() =>
+			stream.sent
+				.filter((message) => message.clientMessage.case === 'updateTokenRequest')
+				.map((message) => (message.clientMessage.value as { token: string }).token)
+		)
+		.toContain('renewed-token')
 })
 
 test('closes gracefully and aborts the underlying stream', async () => {
@@ -1685,4 +1712,29 @@ test('closes gracefully and aborts the underlying stream', async () => {
 	await reader.close()
 	await settle()
 	expect(stream.wasAborted()).toBe(true)
+})
+
+test('keeps the configured source filters when caller-owned options change', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let source = {
+		path: '/t',
+		partitionIds: [1n],
+		maxLag: create(DurationSchema, { seconds: 10n }),
+		readFrom: create(TimestampSchema, { seconds: 20n }),
+	}
+	using reader = createTopicReader(driver, { topic: source, consumer: 'c' })
+	source.partitionIds.push(2n)
+	source.maxLag.seconds = 100n
+	source.readFrom.seconds = 200n
+	let first = await waitForNextStream()
+	let init = await first.waitForInit()
+	expect(init.topicsReadSettings).toMatchObject([
+		{ path: '/t', partitionIds: [1n], maxLag: { seconds: 10n }, readFrom: { seconds: 20n } },
+	])
+	first.respond(initResponse('first'))
+	await first.waitForReadRequest()
+	first.disconnect()
+	let replacement = await waitForNextStream()
+	expect((await replacement.waitForInit()).topicsReadSettings).toEqual(init.topicsReadSettings)
+	await reader.close()
 })

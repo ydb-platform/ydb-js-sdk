@@ -212,10 +212,6 @@ export class Driver implements Disposable, AsyncDisposable {
 	#middleware: ClientMiddleware
 	#discoveryClient: Client<typeof DiscoveryServiceDefinition> | undefined
 
-	// Ready latch for the discovery-DISABLED path only (resolved immediately at
-	// construction, rejected on close). The enabled path delegates to the pool.
-	#ready: PromiseWithResolvers<void> = Promise.withResolvers<void>()
-
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
 
 	#libraries: Set<string> = new Set()
@@ -228,13 +224,7 @@ export class Driver implements Disposable, AsyncDisposable {
 	#identity!: DriverIdentity
 
 	constructor(connectionString: string, userOptions: Readonly<DriverOptions> = defaultOptions) {
-		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, userOptions)
-
 		this.#initAt = performance.now()
-
-		// close() rejects #ready to unblock awaiters; silence unhandled
-		// rejection when no one observes the promise.
-		this.#ready.promise.catch(() => {})
 
 		this.cs = this.#parseConnectionString(connectionString)
 		this.options = this.#mergeOptions(userOptions)
@@ -324,11 +314,12 @@ export class Driver implements Disposable, AsyncDisposable {
 		using linkedSignal = linkSignals(signal, AbortSignal.timeout(timeout))
 
 		try {
+			linkedSignal.signal.throwIfAborted()
+			if (this.#closed) throw new Error('Driver is closed')
 			if (this.#endpoints) {
 				await this.#endpoints.pool.ready(linkedSignal.signal)
-			} else {
-				await abortable(linkedSignal.signal, this.#ready.promise)
 			}
+			if (this.#closed) throw new Error('Driver is closed')
 
 			dbg.log('driver is ready')
 		} catch (error) {
@@ -463,7 +454,6 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	#markReadyDisabled(): void {
-		this.#ready.resolve()
 		this.#readyAt = performance.now()
 
 		let duration = this.#readyAt - this.#initAt
@@ -473,8 +463,6 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	#markClosedDisabled(): void {
-		this.#ready.reject(new Error('driver closed'))
-
 		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
 		dc('ydb:driver.closed').publish({ driver: this.identity, uptime })
 

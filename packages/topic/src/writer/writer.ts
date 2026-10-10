@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto'
+import { isPromise } from 'node:util/types'
+
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 
 import { type CompressionCodec, RAW_CODEC } from '../codec.js'
 import type { TX } from '../tx.js'
-import { generateProducerId } from './producer-id.js'
 import {
 	type WriterScope,
 	ackBreakdown,
@@ -34,6 +36,8 @@ import type { OnAckCallback, TopicWriterOptions, WriteExtra } from './types.js'
 // per-message noise (that lives under `ydb:topic:writer:event`).
 let dbg = loggers.topic.extend('writer')
 
+let MAX_SEQ_NO = (1n << 63n) - 1n
+
 // Synchronous seqNo validator, owned by the facade so write() can reject bad
 // input at the call site without racing the FSM's async event queue.
 class SeqNoValidator {
@@ -43,6 +47,9 @@ class SeqNoValidator {
 	// Returns the message seqNo (0n means "assign at send time" in auto mode).
 	validate(userSeqNo: bigint | undefined): bigint {
 		let provided = userSeqNo !== undefined
+		if (provided && (userSeqNo! < 1n || userSeqNo! > MAX_SEQ_NO)) {
+			throw new RangeError('seqNo must be a positive int64')
+		}
 
 		if (this.#mode === null) {
 			this.#mode = provided ? 'manual' : 'auto'
@@ -81,7 +88,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	#codec: CompressionCodec
 	#runtime: WriterRuntime
 	#validator = new SeqNoValidator()
-	#flushWaiters: Array<PromiseWithResolvers<bigint>> = []
+	#flushWaiters = new Map<number, PromiseWithResolvers<bigint>>()
+	// Per-writer flush call order, independent of message seqNos and gRPC requests.
+	#nextFlushId = 0
 
 	// Byte budget mirrored here so write() can reject a full buffer synchronously,
 	// ahead of the FSM's async mailbox. Incremented on write, decremented as the
@@ -123,7 +132,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		if (options.producer === '') {
 			throw new Error('producer must be a non-empty string — omit it to get a generated id')
 		}
-		options = { ...options, producer: options.producer ?? generateProducerId() }
+		options = { ...options, producer: options.producer ?? randomUUID() }
 
 		this.#onAck = options.onAck
 		this.#transactional = options.tx !== undefined
@@ -131,8 +140,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
 		this.#scope = { driver: driver.identity, topic: options.topic, producer: options.producer! }
 
-		// One-shot effective-config snapshot for late-joining metrics/traces
-		// subscribers — built from the runtime's own defaults, correct by construction.
+		// Publish the configuration once when the writer is created.
 		publishOpened(this.#scope, {
 			codec: this.#codec.codec,
 			maxInflightCount: options.maxInflightCount ?? DEFAULT_MAX_INFLIGHT_COUNT,
@@ -172,11 +180,12 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		}
 	}
 
+	/** RAW buffers may be shared by writes; keep their bytes unchanged until all corresponding ACKs. */
 	write(data: Uint8Array, extra?: WriteExtra): void {
 		if (this.#closed || this.#closing) {
 			throw new Error('Writer is closed — cannot write messages')
 		}
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw new Error('Writer has failed — cannot write messages', { cause: this.#lastError })
 		}
 		// Size limit applies to the uncompressed payload.
@@ -186,17 +195,39 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			)
 		}
 
+		let createdAt = new Date(extra?.createdAt?.getTime() ?? Date.now())
+		if (!Number.isFinite(createdAt.getTime())) {
+			throw new RangeError('createdAt must be a valid date')
+		}
+
 		let uncompressedSize = BigInt(data.length)
 		let payload = this.#codec.compress(data)
 		let bufferedSize = BigInt(payload.length)
 
-		// Fail-fast cap on retained (un-acknowledged) bytes to bound memory. Checked
-		// before the seqNo validator mutates, so a rejected write leaves no state behind.
+		// Check the compressed-payload budget before consuming a sequence number.
 		if (this.#bufferedBytes + bufferedSize > this.#maxBufferBytes) {
 			throw new Error(
 				`Writer buffer is full: ${this.#bufferedBytes + bufferedSize} bytes would exceed the ${this.#maxBufferBytes} byte limit`
 			)
 		}
+
+		// Copy short or growable views so accepted data cannot retain an unbudgeted backing allocation.
+		let backing = payload.buffer
+		if (
+			payload.byteLength !== backing.byteLength ||
+			('resizable' in backing && backing.resizable) ||
+			('growable' in backing && backing.growable)
+		) {
+			payload = new Uint8Array(payload)
+		}
+		let metadataItems = extra?.metadataItems
+			? Object.fromEntries(
+					Object.entries(extra.metadataItems).map(([key, value]) => [
+						key,
+						new Uint8Array(value),
+					])
+				)
+			: undefined
 
 		let seqNo = this.#validator.validate(extra?.seqNo)
 		this.#bufferedBytes += bufferedSize
@@ -207,14 +238,15 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 				data: payload,
 				uncompressedSize,
 				seqNo,
-				createdAt: extra?.createdAt ?? new Date(),
-				...(extra?.metadataItems && { metadataItems: extra.metadataItems }),
+				createdAt,
+				...(metadataItems && { metadataItems }),
 			},
 		})
 	}
 
+	/** Waits for ACKs of writes accepted before this call; later writes do not extend the wait. */
 	async flush(signal?: AbortSignal): Promise<bigint> {
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 		if (this.#closed) {
@@ -224,8 +256,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		// One span per flush covers batching + server acks + any reconnect in between.
 		return traceFlush(this.#scope, async () => {
 			let waiter = Promise.withResolvers<bigint>()
-			this.#flushWaiters.push(waiter)
-			this.#runtime.machine.dispatch({ type: 'writer.flush' })
+			let requestId = ++this.#nextFlushId
+			this.#flushWaiters.set(requestId, waiter)
+			this.#runtime.machine.dispatch({ type: 'writer.flush', requestId })
 
 			if (!signal) {
 				return waiter.promise
@@ -238,11 +271,8 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 				// waiter so it neither lingers in #flushWaiters — which would grow
 				// unbounded when a long-lived signal is threaded into many flush() calls
 				// — nor later rejects unhandled when the writer terminates. If the FSM
-				// already removed it (error/closed), indexOf is -1 and this is a no-op.
-				let index = this.#flushWaiters.indexOf(waiter)
-				if (index !== -1) {
-					this.#flushWaiters.splice(index, 1)
-				}
+				// already removed it (error/closed), deletion is a no-op.
+				this.#flushWaiters.delete(requestId)
 				throw error
 			}
 		})
@@ -251,7 +281,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	async close(signal?: AbortSignal): Promise<void> {
 		if (this.#closed) {
 			// A close that dropped data surfaces the failure even on a repeat call.
-			if (this.#lastError) {
+			if (this.#lastError !== undefined) {
 				throw this.#lastError
 			}
 			return
@@ -265,7 +295,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		await (signal ? abortable(signal, closed) : closed)
 
 		// The graceful drain failed (errored / timed out with undelivered messages).
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 	}
@@ -278,9 +308,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#closing = true
 		let error = reason ?? new Error('Writer destroyed')
 		this.#lastError = error
-		for (let waiter of this.#flushWaiters.splice(0)) {
+		for (let waiter of this.#flushWaiters.values()) {
 			waiter.reject(error)
 		}
+		this.#flushWaiters.clear()
 
 		this.#runtime.machine.dispatch({ type: 'writer.destroy', reason: error })
 	}
@@ -333,7 +364,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {
 							try {
-								this.#onAck(seqNo, status)
+								let result: unknown = this.#onAck(seqNo, status)
+								if (isPromise(result)) {
+									void result.catch((error) => dbg.log('onAck threw: %O', error))
+								}
 							} catch (error) {
 								// User callback errors are logged and ignored — a throwing
 								// callback must never break the writer.
@@ -344,7 +378,12 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					break
 
 				case 'writer.flushed':
-					for (let waiter of this.#flushWaiters.splice(0)) {
+					// Later calls can register while this completion waits in the output queue.
+					for (let [requestId, waiter] of this.#flushWaiters) {
+						if (requestId > output.requestId) {
+							break
+						}
+						this.#flushWaiters.delete(requestId)
 						waiter.resolve(output.lastSeqNo)
 					}
 					break
@@ -358,9 +397,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					dbg.log('errored: %O', output.error)
 					this.#lastError = output.error
 					publishErrored(this.#scope, output.error)
-					for (let waiter of this.#flushWaiters.splice(0)) {
+					for (let waiter of this.#flushWaiters.values()) {
 						waiter.reject(output.error)
 					}
+					this.#flushWaiters.clear()
 					break
 
 				case 'writer.closed':
@@ -387,11 +427,14 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			return
 		}
 		this.#closed = true
+		this.#onAck = undefined
+		this.#codec = RAW_CODEC
 		this.#bufferedBytes = 0n
 		publishClosed(this.#scope)
-		for (let waiter of this.#flushWaiters.splice(0)) {
+		for (let waiter of this.#flushWaiters.values()) {
 			waiter.reject(this.#lastError ?? new Error('Writer closed before flush completed'))
 		}
+		this.#flushWaiters.clear()
 		// Resolved AFTER writer.error was processed (emitted first), so close()
 		// sees #lastError and can reject on an unclean close.
 		this.#closedDeferred.resolve()

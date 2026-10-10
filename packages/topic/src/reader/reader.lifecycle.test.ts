@@ -1,15 +1,69 @@
 import { getEventListeners } from 'node:events'
 
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { createTopicReader } from './index.ts'
 import { initResponse, makeFakeTopicDriver, settle } from './reader.fixtures.ts'
+import { ReaderTransport } from './transport.ts'
 
 // Resource-lifecycle coverage for the reader against the fake wire, mirroring the
 // writer's leak tests in writer.contract.test.ts: create/destroy churn must stay flat
 // in memory, finished readers must be GC-reclaimable, and a shared long-lived abort
 // signal must not accumulate listeners across lifecycles. The suite runs with
 // --expose-gc (see vitest.config.ts), so globalThis.gc is available.
+
+// A server failure is a protocol event; only an injected effect exception can
+// deterministically exercise the runtime's fault path without a terminal transition.
+test('closes the stream and clears timers when a reader effect throws', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		let error = new Error('Injected transport send failure')
+		using send = vi.spyOn(ReaderTransport.prototype, 'send').mockImplementation(() => {
+			throw error
+		})
+		stream.respond(initResponse())
+		await settle()
+		expect(stream.wasAborted()).toBe(true)
+		expect(vi.getTimerCount()).toBe(0)
+		await expect(reader.close()).rejects.toBe(error)
+		await vi.advanceTimersByTimeAsync(60_000)
+		expect(send).toHaveBeenCalledTimes(1)
+	} finally {
+		vi.useRealTimers()
+	}
+})
+
+test('preserves a zero destroy reason for reads commits and close', async () => {
+	let { driver } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	reader.destroy(0)
+	let iterator = reader.read()[Symbol.asyncIterator]()
+	await expect(iterator.next()).rejects.toBe(0)
+	await expect(reader.commit([])).rejects.toBe(0)
+	await expect(reader.close()).rejects.toBe(0)
+})
+
+test('releases the live transport and every timer before graceful close resolves', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		stream.respond(initResponse())
+		await stream.waitForReadRequest()
+		expect(vi.getTimerCount()).toBeGreaterThan(0)
+		await reader.close()
+		expect(stream.wasAborted()).toBe(true)
+		expect(vi.getTimerCount()).toBe(0)
+	} finally {
+		vi.useRealTimers()
+	}
+})
 
 // Bring one reader to `ready`, then destroy it. Returns nothing so the
 // reader/driver/stream locals leave the stack and become collectable.

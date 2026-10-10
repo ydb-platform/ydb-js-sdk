@@ -88,7 +88,7 @@ await using writer = createTopicWriter(driver, {
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — путь или источники с фильтрами
 - `consumer`: `string` — имя консюмера
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — свои кодеки для распаковки (встроенные: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — начальное окно чтения на сервере (по умолчанию 8 МиБ); большое сообщение может его превысить
+- `maxBufferBytes?`: `bigint` — бюджет чтения с учётом буферизованных ответов, сохраняемый при переподключении (по умолчанию 8 МиБ); большое сообщение может его превысить
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()`, после него ожидающие коммиты отбрасываются (по умолчанию 30000)
 - `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
@@ -99,6 +99,8 @@ await using writer = createTopicWriter(driver, {
 - `onCommittedOffset?` — уведомление о каждом серверном подтверждении коммита (ack, watermark из stop-запроса, override оффсета)
 
 `reader.bufferedBytes` показывает рассчитанный сервером объём данных, который ридер сейчас удерживает и ещё не полностью выдал через `read()`.
+
+Сообщения остаются в закодированном виде до выдачи через `read()`. `maxBufferBytes` ограничивает кредит чтения, а не объём распакованных данных или RSS; `read({ limit })` ограничивает число сообщений, декодируемых для одного батча. Обычный `close()` сохраняет непрочитанный хвост, а `destroy()` и терминальные ошибки удаляют его. Ошибка декодирования возникает при чтении соответствующего сообщения.
 
 TopicReaderSource поддерживает фильтры партиций и временные селекторы:
 
@@ -142,9 +144,9 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `tx?`: `TX` — транзакция для записи
 - `producer?`: `string` — id продюсера (по умолчанию генерируется)
 - `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
-- `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
+- `maxBufferBytes?`: `bigint` — лимит неподтверждённых payload после сжатия (по умолчанию 256 МиБ); metadata и служебные JS-объекты в него не входят
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
-- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
+- `flushIntervalMs?`: `number` — периодическая отправка неполного батча (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()` (по умолчанию 30000)
 - `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
@@ -234,7 +236,7 @@ await using writer = createTopicWriter(driver, {
 
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
-- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
+- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы, включая `TopicTxWriter`
 
 ## Лицензия
 

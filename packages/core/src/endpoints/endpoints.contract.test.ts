@@ -250,6 +250,25 @@ test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
 	expect(conn.endpoint.nodeId).toBe(9n)
 })
 
+test.for([false, true])(
+	'keeps pinned and discovered channels separate (pin first: %s)',
+	async (pinFirst, tc) => {
+		// Discovery and pin publication order must be controlled independently of network timing.
+		await using h = setup([endpoint(1)])
+		await h.pool.ready(tc.signal)
+		h.pool.pin(1n, 'direct-node', 2137)
+		await settle()
+		let direct = () => h.pool.acquireNode(1n, { hard: true })
+		let first = pinFirst ? direct() : h.pool.acquire(1n)
+		let second = pinFirst ? h.pool.acquire(1n) : direct()
+		expect(first.endpoint.address).toBe(pinFirst ? 'direct-node:2137' : 'node-1:2136')
+		expect(second.endpoint.address).toBe(pinFirst ? 'node-1:2136' : 'direct-node:2137')
+		await h.pool.close()
+		expect(h.connections.materialized).toHaveLength(2)
+		expect(h.connections.materialized.every((connection) => connection.closed)).toBe(true)
+	}
+)
+
 test('publishes an explicit pin while initial discovery is still pending', async () => {
 	let discovery = makeFakeDiscovery()
 	discovery.hang()
@@ -263,6 +282,55 @@ test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
 	await using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	expect(() => h.pool.acquireNode(99n, { hard: true })).toThrow(EndpointsUnavailableError)
+})
+
+test('invalidating a pin preserves the discovered channel for the same node', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	let discovered = h.pool.acquire(1n)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	h.pool.acquireNode(1n, { hard: true })
+	h.pool.invalidate(1n)
+	await settle()
+	expect(h.pool.acquire(1n)).toBe(discovered)
+	expect(h.connections.materialized.map((connection) => connection.closed)).toEqual([false, true])
+})
+
+test('retiring discovery preserves the pinned channel for the same node', async (tc) => {
+	await using h = setup([endpoint(1), endpoint(2)], { retiredGraceMs: 0 })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	let pinned = h.pool.acquireNode(1n, { hard: true })
+	h.discovery.push(discoveryResult([endpoint(2)]))
+	h.pool.forceRediscovery()
+	await settle()
+	h.machine.dispatch({ type: 'endpoints.timer.idle_sweep' })
+	await settle()
+	expect(h.pool.acquireNode(1n, { hard: true })).toBe(pinned)
+	expect(h.connections.materialized.map((connection) => connection.closed)).toEqual([true, false])
+})
+
+test('close waits for a busy pin when its discovered channel was never opened', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	h.pool.pin(1n, 'direct-node', 2137)
+	await settle()
+	h.pool.acquireNode(1n, { hard: true })
+	h.pool.callStarted(1n)
+	let closed = false
+	let closing = h.pool.close().then(() => {
+		closed = true
+		return closed
+	})
+	await settle()
+	expect(closed).toBe(false)
+	expect(h.connections.materialized[0]!.closed).toBe(false)
+	h.pool.callEnded(1n)
+	await closing
+	expect(h.connections.materialized[0]!.closed).toBe(true)
 })
 
 test('releasing the last pin makes an undiscovered node unreachable', async (tc) => {
@@ -447,6 +515,8 @@ test('a non-retryable initial failure rejects ready with the cause', async (tc) 
 	// A non-retryable failure is terminal; ready() rejects with the real cause,
 	// not a generic 'Endpoints closed'/'finalized'.
 	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
+	await settle()
+	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
 })
 
 test('a throwing onDiscovery hook does not break the pool', async (tc) => {
@@ -565,4 +635,50 @@ test('mapDiscoveryResult leaves pile states empty for a non-bridge cluster', () 
 	let dto = mapDiscoveryResult(result)
 	expect(dto.pileStates).toHaveLength(0)
 	expect(dto.endpoints[0]!.bridgePileName).toBe('')
+})
+
+test('keeps a live channel through repeated retirement and revival', async (tc) => {
+	// Fake discovery changes the roster without interrupting the channel's active RPC.
+	let discovery = makeFakeDiscovery()
+	await using h = setup([endpoint(1), endpoint(2)], { discovery })
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(2n)
+	let connection = h.connections.byNode(2n)!
+	connection.driveState(connectivityState.READY)
+	h.pool.callStarted(2n)
+	try {
+		for (let endpoints of [[endpoint(1)], [endpoint(1), endpoint(2)], [endpoint(1)]]) {
+			discovery.push(discoveryResult(endpoints))
+			h.pool.forceRediscovery()
+			// oxlint-disable-next-line no-await-in-loop
+			await settle()
+			expect(connection.closed).toBe(false)
+			expect(h.pool.acquire(2n)).toBe(connection)
+		}
+		expect(h.connections.factoryCalls()).toBe(1)
+	} finally {
+		h.pool.callEnded(2n)
+	}
+})
+
+test('rejects ready after a previously ready pool closes', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	await h.pool.close()
+	await expect(h.pool.ready(tc.signal)).rejects.toThrow(/closed/i)
+})
+
+test('rejects ready while a live call keeps the pool closing', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.callStarted(1n)
+	let closing = h.pool.close()
+	try {
+		await settle()
+		await expect(h.pool.ready(tc.signal)).rejects.toThrow(/clos/i)
+	} finally {
+		h.pool.callEnded(1n)
+		await closing
+	}
 })

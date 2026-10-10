@@ -21,7 +21,7 @@ import { AsyncPriorityQueue } from '@ydbjs/fsm/queue'
 import { ClientError, Status } from 'nice-grpc'
 
 import { createTopicWriter } from '../src/writer/index.js'
-import { isRetryableWriterError } from '../src/writer/writer-state.js'
+import { isRetryableTopicError } from '../src/retry.js'
 
 // Real-YDB protocol truth for the writer FSM migration. The reconnect dedup design
 // (drop in-flight messages the server already persisted, walk acks as an ordered
@@ -240,7 +240,7 @@ test('rejects an oversized payload with a permanent error', async (tc) => {
 		expect(error).toBeInstanceOf(ClientError)
 		expect((error as ClientError).code).toBe(Status.RESOURCE_EXHAUSTED)
 		expect((error as ClientError).details).toMatch(/Received message larger than max/)
-		expect(isRetryableWriterError(error)).toBe(false)
+		expect(isRetryableTopicError(error)).toBe(false)
 	}
 
 	// Client-side rejection: over the 64MiB client gRPC send cap.
@@ -262,6 +262,6 @@ test('rejects an oversized payload with a permanent error', async (tc) => {
 		expect((error as ClientError).details).toMatch(
 			/Attempted to send message with a size larger than/
 		)
-		expect(isRetryableWriterError(error)).toBe(false)
+		expect(isRetryableTopicError(error)).toBe(false)
 	}
 })

@@ -217,3 +217,34 @@ test('keeps pin confirmations ordered when an earlier client is disposed', async
 	expect(response.operation?.id).toBe('discovery')
 	expect(fixture.calls).toBe(0)
 })
+
+test.for([false, true])(
+	'routes pinned and discovered clients independently (pin first: %s)',
+	async (pinFirst, tc) => {
+		await using fixture = await pinFixture()
+		await fixture.driver.ready(tc.signal)
+
+		let discovered = fixture.driver.createClient(DiscoveryServiceDefinition, 1n)
+		using pinned = fixture.driver.createClient(DiscoveryServiceDefinition, {
+			...fixture.target,
+			nodeId: 1n,
+		})
+
+		let clients = pinFirst ? [pinned, discovered] : [discovered, pinned]
+		let responses = []
+
+		for (let client of clients) {
+			// oxlint-disable-next-line no-await-in-loop
+			let response = await client.whoAmI({}, { signal: tc.signal })
+			responses.push(response.operation?.id)
+		}
+
+		expect(responses).toEqual(pinFirst ? ['direct', 'discovery'] : ['discovery', 'direct'])
+
+		pinned[Symbol.dispose]()
+		await setImmediate()
+
+		let response = await discovered.whoAmI({}, { signal: tc.signal })
+		expect(response.operation?.id).toBe('discovery')
+	}
+)

@@ -1,10 +1,12 @@
 import { getEventListeners } from 'node:events'
 import { memoryUsage } from 'node:process'
+import { setImmediate } from 'node:timers/promises'
 
 import { expect, test } from 'vitest'
 
 import { EndpointsUnavailableError } from '../errors.ts'
 import {
+	capture,
 	discoveryResult,
 	endpoint,
 	makeEndpointPool,
@@ -59,6 +61,71 @@ test('ready(signal) leaves no abort listeners on a shared signal', async (tc) =>
 	// abortable() in pool.ready() must remove its abort listener — a shared signal
 	// reused across lifecycles must not accumulate abort handlers.
 	expect(getEventListeners(signal, 'abort')).toHaveLength(0)
+})
+
+test('cancelled ready calls release their reasons before discovery completes', async () => {
+	if (gc === undefined) throw new Error('This test requires --expose-gc')
+	// A blocked discovery deterministically keeps readiness pending through every cancellation.
+	let discovery = makeFakeDiscovery()
+	discovery.hang()
+	await using h = makeEndpointPool({ discovery })
+	await discovery.waitForRound(1)
+
+	let cancelReady = async () => {
+		let controller = new AbortController()
+		let reason = { cancelled: true }
+		let reference = new WeakRef(reason)
+		let pending = h.pool.ready(controller.signal)
+		controller.abort(reason)
+		try {
+			await pending
+			throw new Error('Cancelled ready resolved')
+		} catch (error) {
+			if (error !== reason) throw error
+		}
+		return reference
+	}
+	let reasons: WeakRef<object>[] = []
+	for (let i = 0; i < 100; i++) {
+		// oxlint-disable-next-line no-await-in-loop
+		reasons.push(await cancelReady())
+	}
+	for (let i = 0; i < 3; i++) {
+		// oxlint-disable-next-line no-await-in-loop
+		await setImmediate()
+		gc()
+	}
+	await setImmediate()
+
+	expect(h.machine.state).toBe('discovering')
+	expect(discovery.lastSignal()!.aborted).toBe(false)
+	expect(reasons.filter((reference) => reference.deref() !== undefined)).toHaveLength(0)
+})
+
+test('cancelling one ready waiter leaves the others waiting for published readiness', async (tc) => {
+	using readyEvents = capture('ydb:driver.ready')
+	await using h = spinUp()
+	let controller = new AbortController()
+	let reason = new Error('Caller cancelled')
+	let cancelled = h.pool.ready(controller.signal).catch((error: unknown) => error)
+	let remaining = Promise.all([h.pool.ready(tc.signal), h.pool.ready()]).then(
+		() => readyEvents.events.length
+	)
+	controller.abort(reason)
+
+	expect(await cancelled).toBe(reason)
+	expect(await remaining).toBe(1)
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+	expect(h.pool.acquire().endpoint.nodeId).toBeDefined()
+})
+
+test('rejects ready when close starts before its continuation', async (tc) => {
+	await using h = spinUp()
+	await h.pool.ready(tc.signal)
+	let ready = h.pool.ready(tc.signal)
+	let closed = h.pool.close()
+	await expect(ready).rejects.toThrow(/closed/i)
+	await closed
 })
 
 test('close closes every materialized channel and leaves none behind', async (tc) => {

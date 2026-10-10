@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
+
 import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
@@ -78,6 +81,36 @@ test('writes messages and reads them back in order', async () => {
 
 	expect(contents).toEqual(['Message 1', 'Message 2', 'Message 3'])
 	expect(seqNos).toEqual([1n, 2n, 3n])
+})
+
+test('publishes isolated writes across idle intervals without an explicit flush', async (tc) => {
+	let flushIntervalMs = 20
+	await using writer = createTopicWriter(driver, {
+		topic: testTopicName,
+		producer: testProducerName,
+		flushIntervalMs,
+	})
+	await using reader = createTopicReader(driver, {
+		topic: testTopicName,
+		consumer: testConsumerName,
+	})
+	let messages = reader.read({ limit: 1, signal: tc.signal })[Symbol.asyncIterator]()
+	try {
+		writer.write(encode('first'))
+		let first = await messages.next()
+		expect(first.done).toBe(false)
+		expect(new TextDecoder().decode(first.value![0]!.payload)).toBe('first')
+		await reader.commit(first.value!)
+
+		await sleep(3 * flushIntervalMs, undefined, { signal: tc.signal })
+		writer.write(encode('after idle'))
+		let second = await messages.next()
+		expect(second.done).toBe(false)
+		expect(new TextDecoder().decode(second.value![0]!.payload)).toBe('after idle')
+		await reader.commit(second.value!)
+	} finally {
+		await messages.return?.()
+	}
 })
 
 test(
@@ -323,3 +356,42 @@ test('writes many messages preserving order', async () => {
 	expect(received).toHaveLength(total)
 	expect(received).toEqual(Array.from({ length: total }, (_, i) => `msg-${i}`))
 })
+
+test.for([1, 6])(
+	'round-trips 48 MiB of RAW payload in %i messages at the buffer limit',
+	async (count, tc) => {
+		let totalBytes = 48 * 1024 * 1024
+		let payload = new Uint8Array(totalBytes / count).fill(0x5a)
+		let digest = createHash('sha256').update(payload).digest('hex')
+		let metadataItems = { trace: new Uint8Array(256).fill(0x31) }
+		await using writer = createTopicWriter(driver, {
+			topic: testTopicName,
+			producer: testProducerName,
+			maxBufferBytes: BigInt(totalBytes),
+		})
+		for (let i = 0; i < count; i++) writer.write(payload, { metadataItems })
+		expect(() => writer.write(new Uint8Array(1))).toThrow(/buffer is full/)
+		expect(await writer.flush(tc.signal)).toBe(BigInt(count))
+		await using reader = createTopicReader(driver, {
+			topic: testTopicName,
+			consumer: testConsumerName,
+		})
+		let received = 0
+		for await (let batch of reader.read({
+			limit: count,
+			batchWindowMs: 100,
+			signal: tc.signal,
+		})) {
+			for (let message of batch) {
+				expect(message.payload.byteLength).toBe(payload.byteLength)
+				expect(createHash('sha256').update(message.payload).digest('hex')).toBe(digest)
+				expect(Object.keys(message.metadataItems ?? {})).toEqual(['trace'])
+				expect(new Uint8Array(message.metadataItems!.trace!)).toEqual(metadataItems.trace)
+				expect(message.seqNo).toBe(BigInt(++received))
+			}
+			await reader.commit(batch)
+			if (received === count) break
+		}
+		expect(received).toBe(count)
+	}
+)

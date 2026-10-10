@@ -109,9 +109,7 @@ export type EndpointsCtx = {
 	pinned: Map<bigint, EndpointEntry & { references: number }>
 
 	attempts: number
-	lastError: unknown
 	roundInFlight: boolean
-	hasEverDiscovered: boolean
 
 	selfLocation: string
 	// Empty ⇒ the cluster is not in bridge mode ⇒ the pile filter is identity.
@@ -131,9 +129,7 @@ export let createEndpointsCtx = function createEndpointsCtx(config?: {
 		byNodeId: new Map(),
 		pinned: new Map(),
 		attempts: 0,
-		lastError: undefined,
 		roundInFlight: false,
-		hasEverDiscovered: false,
 		selfLocation: '',
 		pileStates: [],
 		config: {
@@ -199,11 +195,12 @@ export type EndpointsEffect =
 	| ({ type: 'endpoints.effect.timer.clear' } & TimerRef)
 	// Retire-to-drain: keep the channel open, move it to the drain-watch set.
 	| { type: 'endpoints.effect.retire_channel'; nodeId: bigint }
-	// Physically close and drop the channel. `store` scopes which materialized
-	// channel is dropped: 'pinned' closes only the pin (an invalidate must not
-	// tear down a discovered channel that shares the same nodeId); 'any' (default)
-	// closes whichever store holds it.
-	| { type: 'endpoints.effect.close_channel'; nodeId: bigint; store?: 'any' | 'pinned' }
+	// Retirement and pin invalidation close their own store; shutdown closes both.
+	| {
+			type: 'endpoints.effect.close_channel'
+			nodeId: bigint
+			store?: 'any' | 'discovered' | 'pinned'
+	  }
 	// Begin the graceful close drain: close idle channels now and wait for
 	// in-flight streams to finish (bounded by the close deadline). Runtime-only.
 	| { type: 'endpoints.effect.begin_close_drain' }
@@ -415,7 +412,11 @@ let applyRound = function applyRound(
 		// (A brief flap keeps the same address and is absorbed by retire-drain.)
 		let newAddress = `${ep.host}:${ep.port}`
 		if (existing.address !== newAddress) {
-			effects.push({ type: 'endpoints.effect.close_channel', nodeId: ep.nodeId })
+			effects.push({
+				type: 'endpoints.effect.close_channel',
+				nodeId: ep.nodeId,
+				store: 'discovered',
+			})
 		}
 
 		// Refresh surface fields (location/pile/load/dial info can change).
@@ -477,7 +478,6 @@ let applyRound = function applyRound(
 	ctx.selfLocation = selfLocation
 	ctx.pileStates = pileStates
 	ctx.attempts = 0
-	ctx.lastError = undefined
 	ctx.roundInFlight = false
 
 	rebuild(ctx, runtime)
@@ -682,8 +682,6 @@ export let endpointsTransition = function endpointsTransition(
 			switch (event.type) {
 				case 'endpoints.discovery.round_succeeded': {
 					if (event.endpoints.length === 0) return rejectEmptyRound(ctx, runtime)
-					let firstReady = !ctx.hasEverDiscovered
-					ctx.hasEverDiscovered = true
 					let effects = applyRound(
 						ctx,
 						event.endpoints,
@@ -696,12 +694,11 @@ export let endpointsTransition = function endpointsTransition(
 						which: 'discovery_interval',
 					})
 					effects.push({ type: 'endpoints.effect.timer.schedule', which: 'idle_sweep' })
-					if (firstReady) runtime.emit({ type: 'endpoints.ready' })
+					runtime.emit({ type: 'endpoints.ready' })
 					return { state: healthState(ctx), effects }
 				}
 				case 'endpoints.discovery.round_failed': {
 					ctx.attempts += 1
-					ctx.lastError = event.error
 					ctx.roundInFlight = false
 					runtime.emit({
 						type: 'endpoints.discovery_failed',
@@ -754,7 +751,6 @@ export let endpointsTransition = function endpointsTransition(
 					// Background failure is never terminal — keep serving the last
 					// snapshot; the interval/backoff retries.
 					ctx.attempts += 1
-					ctx.lastError = event.error
 					ctx.roundInFlight = false
 					runtime.emit({
 						type: 'endpoints.discovery_failed',
@@ -837,7 +833,13 @@ export let endpointsTransition = function endpointsTransition(
 						reason: 'idle',
 					})
 					return {
-						effects: [{ type: 'endpoints.effect.close_channel', nodeId: event.nodeId }],
+						effects: [
+							{
+								type: 'endpoints.effect.close_channel',
+								nodeId: event.nodeId,
+								store: 'discovered',
+							},
+						],
 					}
 				}
 				case 'endpoints.pin':

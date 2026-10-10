@@ -90,7 +90,7 @@ await using writer = createTopicWriter(driver, {
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]` — topic path or detailed sources
 - `consumer`: `string` — consumer name
 - `codecMap?`: `Map<Codec | number, CompressionCodec>` — custom codecs for decompression (built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — initial server read-credit window (default 8 MiB); an oversized message may exceed it
+- `maxBufferBytes?`: `bigint` — read-credit budget shared with buffered responses across reconnects (default 8 MiB); an oversized message may exceed it
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
@@ -101,6 +101,8 @@ await using writer = createTopicWriter(driver, {
 - `onCommittedOffset?`: observe every server-confirmed commit advance (commit acks, stop watermarks, offset overrides)
 
 `reader.bufferedBytes` exposes the server-accounted bytes currently retained by the reader and not yet fully delivered through `read()`.
+
+Buffered messages remain encoded until `read()` selects them for delivery. `maxBufferBytes` limits server read credit, not decompressed memory or RSS; use `read({ limit })` to bound the number of messages decoded for one batch. A clean `close()` preserves the unread tail, while `destroy()` and terminal errors discard it. Decoding errors surface when the affected message is read.
 
 TopicReaderSource supports partition filters and time‑based selectors:
 
@@ -146,9 +148,9 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
 - `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
+- `maxBufferBytes?`: `bigint` — limit for unacknowledged payload bytes after compression (default 256 MiB); metadata and JavaScript object overhead are not included
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
-- `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
+- `flushIntervalMs?`: `number` — periodic flush of a partially filled batch (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever, waiting for the server/topic), pass a finite ms value to bound it
@@ -178,7 +180,11 @@ writer.write(payload) // fire-and-forget (void)
 const lastSeqNo = await writer.flush()
 ```
 
-`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed.
+`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. With RAW, the writer may retain your buffer without copying it. The same unchanged buffer may be passed to multiple `write()` calls, including while earlier writes are awaiting acknowledgment. Do not change its bytes or detach its backing buffer until all writes using it are acknowledged through `onAck` or a completed `flush()` called after those writes. Metadata and timestamps are copied when `write()` accepts the message.
+
+`flush()` waits for acknowledgments of the writes accepted before that call and returns the sequence number at that boundary. Later `write()` calls do not extend its wait. Concurrent flush calls may cover different boundaries; a terminal failure rejects any that are still pending. `close()` stops accepting writes and drains the entire queue.
+
+Acknowledgment observers (`onAck` and the reader's `onCommittedOffset`) do not delay flush or commit completion. Synchronous exceptions and rejected async callbacks are logged; use an explicit application task when callback work must finish before shutdown.
 
 ## Transactions
 
@@ -245,7 +251,7 @@ await using writer = createTopicWriter(driver, {
 
 - `@ydbjs/topic`: `topic(driver)` and types
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
-- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types
+- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types including `TopicTxWriter`
 
 ## License
 

@@ -18,8 +18,7 @@ export type WriterScope = {
 	producer: string
 }
 
-// One-shot config snapshot, published on `opened` so metrics/traces subscribers
-// that join later still learn the writer's effective configuration.
+// Configuration snapshot carried by the creation-time `opened` event.
 export type WriterConfig = {
 	codec: number
 	maxInflightCount: number

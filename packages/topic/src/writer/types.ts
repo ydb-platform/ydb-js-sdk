@@ -1,5 +1,8 @@
 import type { CompressionCodec } from '../codec.js'
 import type { TX } from '../tx.js'
+import type { TopicWriter } from './writer.js'
+
+export type TopicTxWriter = Pick<TopicWriter, 'write' | 'flush' | 'close' | 'destroy'>
 
 // Status of a single message acknowledged by the server.
 export type AckStatus = 'written' | 'skipped' | 'writtenInTx'
@@ -44,12 +47,12 @@ export type TopicWriterOptions = {
 	// Route writes by message group (mutually exclusive with partitionId).
 	messageGroupId?: string
 
-	// Hard cap on the un-acknowledged bytes held in memory; write() throws when a
-	// message would exceed it. Default 256MiB.
+	// Byte limit for unacknowledged payloads after compression.
+	// write() throws when the budget would be exceeded. Default 256MiB.
 	maxBufferBytes?: bigint
 	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number
-	// Background flush cadence in ms — bounds how long a small batch waits. Default 1000.
+	// Maximum background wait for a partial batch in ms. Default 1000.
 	flushIntervalMs?: number
 
 	// How often to refresh the auth token on the stream. Default 60s.

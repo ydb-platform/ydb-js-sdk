@@ -6,8 +6,7 @@ import { loggers } from '@ydbjs/debug'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
 
 import { parseReadSettings } from './read-settings.js'
-import { PRIORITY_CONTROL, ReaderTransport } from './transport.js'
-import type { TransportOutput } from './transport-state.js'
+import { PRIORITY_CONTROL, ReaderTransport, type TransportOutput } from './transport.js'
 import {
 	type ReaderCtx,
 	type ReaderEffect,
@@ -18,6 +17,7 @@ import {
 	type TimerRef,
 	createReaderCtx,
 	readerTransition,
+	releaseState,
 } from './reader-state.js'
 import type {
 	TopicReaderOptions,
@@ -47,14 +47,8 @@ type ReaderEnv = {
 	onPartitionSessionStart?: onPartitionSessionStartCallback
 	onPartitionSessionStop?: onPartitionSessionStopCallback
 
-	startTimeoutMs: number
 	updateTokenIntervalMs: number
 	gracefulShutdownTimeoutMs: number
-	partitionReassignGcMs: number
-
-	ac: AbortController
-	closedDeferred: PromiseWithResolvers<void>
-	isFinalized: boolean
 	timers: Map<string, ReturnType<typeof setTimeout>>
 }
 
@@ -100,7 +94,7 @@ let backoffDelay = function backoffDelay(attempts: number): number {
 let delayFor = function delayFor(ctx: FullCtx, which: TimerName): number {
 	switch (which) {
 		case 'start_timeout':
-			return ctx.startTimeoutMs
+			return DEFAULT_START_TIMEOUT_MS
 		case 'retry_backoff':
 			return backoffDelay(ctx.attempts)
 		case 'recovery_window':
@@ -111,7 +105,7 @@ let delayFor = function delayFor(ctx: FullCtx, which: TimerName): number {
 		case 'partition_graceful_timeout':
 			return ctx.gracefulShutdownTimeoutMs
 		case 'partition_reassign_gc':
-			return ctx.partitionReassignGcMs
+			return DEFAULT_PARTITION_REASSIGN_GC_MS
 		case 'partition_commit_status':
 			return COMMIT_STATUS_INTERVAL_MS
 	}
@@ -129,6 +123,17 @@ let clearTimerByKey = function clearTimerByKey(ctx: FullCtx, key: string): void 
 		clearTimeout(handle)
 		ctx.timers.delete(key)
 	}
+}
+
+let finalize = function finalize(ctx: FullCtx, reason: unknown): void {
+	for (let handle of ctx.timers.values()) {
+		clearTimeout(handle)
+	}
+	ctx.timers.clear()
+	releaseState(ctx)
+	delete ctx.onPartitionSessionStart
+	delete ctx.onPartitionSessionStop
+	ctx.transport.destroy(reason)
 }
 
 let mapTransportOutput = function mapTransportOutput(output: TransportOutput): ReaderEvent | null {
@@ -225,15 +230,9 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 			onPartitionSessionStop: options.onPartitionSessionStop,
 		}),
 
-		startTimeoutMs: DEFAULT_START_TIMEOUT_MS,
 		updateTokenIntervalMs: options.updateTokenIntervalMs ?? DEFAULT_UPDATE_TOKEN_INTERVAL_MS,
 		gracefulShutdownTimeoutMs:
 			options.gracefulShutdownTimeoutMs ?? DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
-		partitionReassignGcMs: DEFAULT_PARTITION_REASSIGN_GC_MS,
-
-		ac: new AbortController(),
-		closedDeferred: Promise.withResolvers<void>(),
-		isFinalized: false,
 		timers: new Map(),
 	}
 
@@ -329,10 +328,6 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 				})
 			},
 
-			'reader.effect.transport.close': (fullCtx) => {
-				fullCtx.transport.close()
-			},
-
 			// The one effect where the runtime makes a domain decision, by necessity: the
 			// StartPartitionSessionResponse's read_offset/commit_offset come from the async
 			// `onPartitionSessionStart` hook (typically an external offset-store lookup — I/O),
@@ -346,11 +341,11 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 				// result re-enters the machine as reader.partition.start_ready, so the
 				// answer-or-not decision is made against fresh state in the transition.
 				void (async () => {
-					let session = fullCtx.partitions.get(effect.partitionKey)?.session
+					let session = effect.session
 					let readOffset: bigint | undefined
 					let commitOffset: bigint | undefined
 
-					if (fullCtx.onPartitionSessionStart && session) {
+					if (fullCtx.onPartitionSessionStart) {
 						try {
 							let result = await fullCtx.onPartitionSessionStart(
 								session,
@@ -368,9 +363,7 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 
 					runtime.dispatch({
 						type: 'reader.partition.start_ready',
-						partitionSessionId: effect.partitionSessionId,
-						partitionKey: effect.partitionKey,
-						grantId: effect.grantId,
+						session,
 						...(readOffset !== undefined && { readOffset }),
 						...(commitOffset !== undefined && { commitOffset }),
 					})
@@ -383,9 +376,9 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 			// response goes out only after stop_ready AND the pending commits drain.
 			'reader.effect.partition.stop_hook': (fullCtx, effect, runtime) => {
 				void (async () => {
-					let session = fullCtx.partitions.get(effect.partitionKey)?.session
+					let session = effect.session
 
-					if (fullCtx.onPartitionSessionStop && session) {
+					if (fullCtx.onPartitionSessionStop) {
 						try {
 							await fullCtx.onPartitionSessionStop(session, effect.committedOffset)
 						} catch (error) {
@@ -395,8 +388,7 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 
 					runtime.dispatch({
 						type: 'reader.partition.stop_ready',
-						partitionKey: effect.partitionKey,
-						grantId: effect.grantId,
+						session,
 					})
 				})()
 			},
@@ -451,23 +443,14 @@ export function createReaderRuntime(driver: Driver, options: TopicReaderOptions)
 				clearTimerByKey(fullCtx, timerKey(effect))
 			},
 
-			'reader.effect.finalize': (fullCtx, effect) => {
-				if (fullCtx.isFinalized) {
-					return
-				}
-				fullCtx.isFinalized = true
-
-				for (let handle of fullCtx.timers.values()) {
-					clearTimeout(handle)
-				}
-				fullCtx.timers.clear()
-
-				fullCtx.transport.destroy(effect.reason)
-				fullCtx.ac.abort(effect.reason)
-				fullCtx.closedDeferred.resolve()
-			},
+			'reader.effect.finalize': (fullCtx, effect) => finalize(fullCtx, effect.reason),
 		},
 	})
+	machine.signal.addEventListener(
+		'abort',
+		() => finalize(ctx as FullCtx, machine.signal.reason),
+		{ once: true }
+	)
 
 	machine.ingest(transport.events, mapTransportOutput)
 

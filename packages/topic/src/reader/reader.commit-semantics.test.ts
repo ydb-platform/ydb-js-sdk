@@ -636,3 +636,33 @@ test('invokes onCommittedOffset when a partition stop carries the committed wate
 
 	expect(acks).toEqual([{ partitionId: 10n, committedOffset: 1n }])
 })
+
+test('handles a rejected async commit observer without delaying commit', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let observer = Promise.withResolvers<void>()
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		onCommittedOffset: async () => {
+			await observer.promise
+			throw new Error('Asynchronous commit observer failed')
+		},
+	})
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('message') }],
+		})
+	)
+	let messages = await collect(reader, 1, tc.signal)
+	let committed = reader.commit(messages)
+	await stream.waitForCommit()
+	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
+	await expect(committed).resolves.toBeUndefined()
+	observer.resolve()
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	await expect(reader.close()).resolves.toBeUndefined()
+})
