@@ -353,7 +353,7 @@ test('emits flushed once the buffer drains after a flush request', () => {
 	drive('ready', { type: 'writer.write', message: msg(1) }, ctx)
 	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
-	expect(ctx.pendingFlushId).toBe(1)
+	expect([...ctx.flushes.values()]).toEqual([1])
 
 	let d = drive(
 		'ready',
@@ -362,7 +362,7 @@ test('emits flushed once the buffer drains after a flush request', () => {
 	)
 
 	expect(d.emitted.find((o) => o.type === 'writer.flushed')).toBeDefined()
-	expect(d.ctx.pendingFlushId).toBeUndefined()
+	expect(d.ctx.flushes.size).toBe(0)
 })
 
 // ── reconnect ────────────────────────────────────────────────────────────────────
@@ -441,7 +441,7 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 	drive('ready', { type: 'writer.write', message: msg(2) }, ctx)
 	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
 	drive('ready', { type: 'writer.flush', requestId: 1 }, ctx)
-	expect(ctx.pendingFlushId).toBe(1)
+	expect([...ctx.flushes.values()]).toEqual([1])
 
 	let d = drive(
 		'connecting',
@@ -454,7 +454,7 @@ test('resolves a pending flush when a reconnect init drains the window via dedup
 		requestId: 1,
 		lastSeqNo: 2n,
 	})
-	expect(d.ctx.pendingFlushId).toBeUndefined()
+	expect(d.ctx.flushes.size).toBe(0)
 })
 
 test('fails terminally when the recovery window expires', () => {
@@ -713,10 +713,11 @@ test('emits acknowledgments, flushed, closed in that order on the final closing 
 		hasEverConnected: true,
 		closeRequested: true,
 		lastSeqNo: 2n,
-		pendingFlushId: 1,
 		messages: [msg(1, 1n), msg(2, 2n)],
 		inflightCount: 2,
 	})
+
+	ctx.flushes.set(ctx.messages.at(-1)!, 1)
 
 	let d = drive(
 		'ready',
@@ -974,7 +975,7 @@ test('defers a flush requested during a gated close until the init unlocks the d
 
 	let flushed = drive('connecting', { type: 'writer.flush', requestId: 1 }, ctx)
 	expect(flushed.emitted).toHaveLength(0) // not drained — must not resolve now
-	expect(ctx.pendingFlushId).toBe(1)
+	expect([...ctx.flushes.values()]).toEqual([1])
 
 	// the pump requestFlush dispatched is still gated
 	let gated = drive('connecting', { type: 'writer.pump' }, ctx)
