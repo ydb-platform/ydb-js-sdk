@@ -314,13 +314,10 @@ let formBatch = function formBatch(ctx: WriterCtx): StreamWriteMessage_WriteRequ
 // Apply a server init: recover the seqNo high-water mark once (auto numbering),
 // then drop any server-persisted in-flight messages and rewind the rest for resend.
 //
-// The dedup runs on EVERY init, including reconnects: YDB reports last_seq_no even
-// when get_last_seq_no is false (proven in tests/writer-protocol.test.ts), so we
-// skip resending messages the server already has — like the Java SDK. We only
-// request get_last_seq_no on the first connect (like Go) to avoid its cost. If a
-// reconnect ever reported 0, dropAckedAndRewind drops nothing and we resend
-// everything; the server dedups by producerId+seqNo — correct either way, just
-// less efficient. So this is an optimization, not a correctness dependency.
+// YDB reports last_seq_no on reconnect even when get_last_seq_no is false. Only
+// previously sent messages may be removed using that watermark; unsent auto messages
+// have no sequence number yet. If the server reports zero, replay remains safe through
+// producer+seqNo deduplication.
 let applyInit = function applyInit(
 	ctx: WriterCtx,
 	sessionId: string,
