@@ -1,6 +1,7 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
+import { ClientError, Status } from 'nice-grpc'
 
 import {
 	type OffsetRange,
@@ -1894,4 +1895,21 @@ test('drains commits and refreshes the token before retained responses allow the
 		type: 'reader.commit.resolved',
 		waiterId: 2,
 	})
+})
+
+test('distinguishes receive-size failures from temporary resource exhaustion', () => {
+	expect(
+		isRetryableReaderError(
+			new ClientError(
+				'/read',
+				Status.RESOURCE_EXHAUSTED,
+				'Received message larger than max (2097152 vs. 1048576)'
+			)
+		)
+	).toBe(false)
+	expect(
+		isRetryableReaderError(
+			new ClientError('/read', Status.RESOURCE_EXHAUSTED, 'Rate limit exceeded')
+		)
+	).toBe(true)
 })

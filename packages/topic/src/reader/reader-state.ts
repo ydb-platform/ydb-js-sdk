@@ -4,6 +4,7 @@ import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
 import { isRetryableStreamError } from '@ydbjs/retry'
+import { ClientError, Status } from 'nice-grpc'
 
 import { TopicPartitionSession } from '../partition-session.js'
 
@@ -366,6 +367,14 @@ export let isRetryableReaderError = function isRetryableReaderError(
 		error.code === StatusIds_StatusCode.SCHEME_ERROR
 	) {
 		return true
+	}
+	// A new stream cannot make an oversized frame fit; ordinary quota exhaustion can recover.
+	if (
+		error instanceof ClientError &&
+		error.code === Status.RESOURCE_EXHAUSTED &&
+		/larger than/i.test(error.details)
+	) {
+		return false
 	}
 	return isRetryableStreamError(error)
 }

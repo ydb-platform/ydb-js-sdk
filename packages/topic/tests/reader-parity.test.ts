@@ -10,6 +10,7 @@ import {
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
+import { Status } from 'nice-grpc'
 
 import type { TopicMessage } from '../src/message.js'
 import { type TopicReader, createTopicReader } from '../src/reader/index.js'
@@ -314,5 +315,28 @@ test(
 		// Give any delivery below the override time to surface.
 		await new Promise((resolve) => setTimeout(resolve, 500))
 		expect(received.map((message) => message.offset)).toEqual([7n, 8n, 9n])
+	}
+)
+
+test(
+	'fails an oversized read response instead of reconnecting to the same message',
+	{ timeout: 10_000 },
+	async (tc) => {
+		let topic = await makeTopic('receive-limit')
+		await using writer = createTopicWriter(driver, { topic })
+		writer.write(new Uint8Array(2 * 1024 * 1024))
+		await writer.close(tc.signal)
+
+		using limited = new Driver(inject('connectionString'), {
+			'ydb.sdk.enable_discovery': false,
+			channelOptions: { 'grpc.max_receive_message_length': 1024 * 1024 },
+		})
+		await limited.ready(tc.signal)
+		using reader = createTopicReader(limited, { topic, consumer: consumerName })
+		let iterator = reader.read({ signal: tc.signal })[Symbol.asyncIterator]()
+		await expect(iterator.next()).rejects.toMatchObject({
+			code: Status.RESOURCE_EXHAUSTED,
+			details: expect.stringMatching(/larger than/i),
+		})
 	}
 )
