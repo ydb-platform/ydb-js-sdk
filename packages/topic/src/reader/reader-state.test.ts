@@ -3,6 +3,7 @@ import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
 import { ClientError, Status } from 'nice-grpc'
 
+import { isRetryableTopicError } from '../retry.ts'
 import {
 	type OffsetRange,
 	type ReaderCtx,
@@ -11,7 +12,6 @@ import {
 	type ReaderOutput,
 	type ReaderState,
 	createReaderCtx,
-	isRetryableReaderError,
 	partitionKey,
 	readerTransition,
 } from './reader-state.ts'
@@ -287,7 +287,7 @@ test('errors terminally on a fatal disconnect', () => {
 })
 
 test('classifies SCHEME_ERROR as retryable when retryOnSchemeError is set', () => {
-	expect(isRetryableReaderError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
 		true
 	)
 })
@@ -1899,7 +1899,7 @@ test('drains commits and refreshes the token before retained responses allow the
 
 test('distinguishes receive-size failures from temporary resource exhaustion', () => {
 	expect(
-		isRetryableReaderError(
+		isRetryableTopicError(
 			new ClientError(
 				'/read',
 				Status.RESOURCE_EXHAUSTED,
@@ -1908,7 +1908,7 @@ test('distinguishes receive-size failures from temporary resource exhaustion', (
 		)
 	).toBe(false)
 	expect(
-		isRetryableReaderError(
+		isRetryableTopicError(
 			new ClientError('/read', Status.RESOURCE_EXHAUSTED, 'Rate limit exceeded')
 		)
 	).toBe(true)

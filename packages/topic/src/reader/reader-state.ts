@@ -1,10 +1,8 @@
 import type { Timestamp } from '@bufbuild/protobuf/wkt'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
-import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
-import { isRetryableStreamError } from '@ydbjs/retry'
-import { ClientError, Status } from 'nice-grpc'
+
+import { isRetryableTopicError } from '../retry.js'
 
 import { TopicPartitionSession } from '../partition-session.js'
 
@@ -343,36 +341,6 @@ export let createReaderCtx = function createReaderCtx(
 
 		limits,
 	}
-}
-
-// Reconnecting is always safe for a reader (offsets are server-tracked), so we
-// retry any retryable stream error; a clean end (undefined) is a server-side
-// reconnect. Fatal statuses (SCHEME_ERROR, UNAUTHORIZED, …) stop the reader —
-// except SCHEME_ERROR is retried when `retryOnSchemeError` is set (wait for the
-// topic to be created).
-export let isRetryableReaderError = function isRetryableReaderError(
-	error: unknown,
-	retryOnSchemeError = false
-): boolean {
-	if (error === undefined || error === null) {
-		return true
-	}
-	if (
-		retryOnSchemeError &&
-		error instanceof YDBError &&
-		error.code === StatusIds_StatusCode.SCHEME_ERROR
-	) {
-		return true
-	}
-	// A new stream cannot make an oversized frame fit; ordinary quota exhaustion can recover.
-	if (
-		error instanceof ClientError &&
-		error.code === Status.RESOURCE_EXHAUSTED &&
-		/larger than/i.test(error.details)
-	) {
-		return false
-	}
-	return isRetryableStreamError(error)
 }
 
 let clearConnectTimersEffects: ReaderEffect[] = [
@@ -1406,7 +1374,7 @@ let sessionTransition = function sessionTransition(
 		}
 
 		case 'reader.stream.disconnected':
-			if (!isRetryableReaderError(event.error, ctx.retryOnSchemeError)) {
+			if (!isRetryableTopicError(event.error, ctx.retryOnSchemeError)) {
 				return terminate(ctx, 'errored', event.error, runtime)
 			}
 			return toReconnecting(ctx, event.error, runtime)
@@ -1511,7 +1479,7 @@ export let readerTransition = function readerTransition(
 						event.type === 'reader.stream.disconnected' ? event.error : undefined
 					if (
 						event.type === 'reader.stream.disconnected' &&
-						!isRetryableReaderError(error, ctx.retryOnSchemeError)
+						!isRetryableTopicError(error, ctx.retryOnSchemeError)
 					) {
 						return terminate(ctx, 'errored', error, runtime)
 					}

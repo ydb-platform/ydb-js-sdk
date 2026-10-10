@@ -56,7 +56,7 @@ stateDiagram-v2
 
 The facade counts unacknowledged compressed payload bytes for `maxBufferBytes`. The FSM caches the compressed payload bytes in the unsent suffix for constant-time batch readiness checks. Batching targets 48 MiB of compressed payload; protocol framing and metadata do not reduce this payload budget. Diagnostics report the same compressed payload bytes.
 
-A batch is full when it fills the available `maxInflightCount` slots, reaches the byte cap, or the next queued message cannot fit within that cap. Full batches send immediately. A partial batch waits for `flushIntervalMs`, unless an explicit `flush()` or `close()` requires draining it. `batchDue` records that the timer expired while messages were waiting: if in-flight messages occupy the window, their ACK must release the overdue batch without another timer delay. Resends after reconnect are also immediately eligible once InitResponse arrives.
+A batch is full when it fills the available `maxInflightCount` slots, reaches the byte cap, or the next queued message cannot fit within that cap. Full batches send immediately. A partial batch waits for `flushIntervalMs`, unless an explicit `flush()` or `close()` requires draining it. `batchDue` records that the timer expired while messages were waiting: if in-flight messages occupy the window, their ACK must release the overdue batch without another timer delay. All messages retained across a reconnect become immediately eligible once InitResponse arrives, including partial batches that had not reached the wire.
 
 `pendingFlushId` identifies the latest application flush being drained. `closeRequested` stops admission and keeps reconnecting until all accepted messages are acknowledged. The graceful deadline bounds that drain instead of the normal recovery window. ACK outputs precede flush completion, which precedes terminal close.
 
@@ -82,7 +82,7 @@ A batch is full when it fills the available `maxInflightCount` slots, reaches th
 | `ready`                          | `writer.stream.token_response`  | No protocol-state change.                                                                                                                                           |
 | Any state                        | Other events                    | Ignore; terminal states accept no further work.                                                                                                                     |
 
-A clean stream end is retryable. `SCHEME_ERROR` retries only with `retryOnSchemeError`. Other errors use `isRetryableStreamError || isRetryableError(error, true)` because producer/seqNo deduplication makes resending safe. A deterministic gRPC frame-size rejection is terminal.
+Reader and writer use the same topic retry policy. A clean stream end and a server gRPC deadline reconnect. `SCHEME_ERROR` retries only with `retryOnSchemeError`. Producer/seqNo deduplication and consumer offsets make replay safe for conditionally retryable YDB statuses. A deterministic gRPC frame-size rejection is terminal. User cancellation stays separate: the transport checks its aborted signal before reporting a disconnection.
 
 The runtime finalizer also runs when the machine signal aborts after an internal fault, releasing transport, timers and the message window even when no terminal transition completes.
 

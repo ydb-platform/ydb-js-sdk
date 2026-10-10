@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 
+import { isRetryableTopicError } from '../retry.ts'
 import type { TransitionRuntime } from '@ydbjs/fsm'
 import { YDBError } from '@ydbjs/error'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -14,7 +15,6 @@ import {
 	type WriterOutput,
 	type WriterState,
 	createWriterCtx,
-	isRetryableWriterError,
 	writerTransition,
 } from './writer-state.ts'
 
@@ -120,25 +120,23 @@ let readyWithInflight = function readyWithInflight(): WriterCtx {
 // ── error classification ────────────────────────────────────────────────────────
 
 test('classifies a missing error as retryable', () => {
-	expect(isRetryableWriterError(undefined)).toBe(true)
+	expect(isRetryableTopicError(undefined)).toBe(true)
 })
 
 test('classifies UNAVAILABLE as retryable', () => {
-	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.UNAVAILABLE, []))).toBe(true)
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.UNAVAILABLE, []))).toBe(true)
 })
 
 test('classifies conditionally-retryable SESSION_EXPIRED as retryable for idempotent writes', () => {
-	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []))).toBe(
-		true
-	)
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []))).toBe(true)
 })
 
 test('classifies SCHEME_ERROR as fatal', () => {
-	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []))).toBe(false)
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []))).toBe(false)
 })
 
 test('classifies SCHEME_ERROR as retryable when retryOnSchemeError is set', () => {
-	expect(isRetryableWriterError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
 		true
 	)
 })
@@ -152,7 +150,7 @@ test('classifies a server frame-cap rejection as fatal', () => {
 		Status.RESOURCE_EXHAUSTED,
 		'Received message larger than max (66060326 vs. 64000000)'
 	)
-	expect(isRetryableWriterError(error)).toBe(false)
+	expect(isRetryableTopicError(error)).toBe(false)
 })
 
 test('classifies a client send-cap rejection as fatal', () => {
@@ -161,7 +159,7 @@ test('classifies a client send-cap rejection as fatal', () => {
 		Status.RESOURCE_EXHAUSTED,
 		'Attempted to send message with a size larger than 67108864'
 	)
-	expect(isRetryableWriterError(error)).toBe(false)
+	expect(isRetryableTopicError(error)).toBe(false)
 })
 
 test('classifies a throttling RESOURCE_EXHAUSTED as retryable', () => {
@@ -171,11 +169,11 @@ test('classifies a throttling RESOURCE_EXHAUSTED as retryable', () => {
 		Status.RESOURCE_EXHAUSTED,
 		'Too many pending requests'
 	)
-	expect(isRetryableWriterError(error)).toBe(true)
+	expect(isRetryableTopicError(error)).toBe(true)
 })
 
 test('classifies an unknown error as fatal', () => {
-	expect(isRetryableWriterError(new Error('message is larger than max allowed'))).toBe(false)
+	expect(isRetryableTopicError(new Error('message is larger than max allowed'))).toBe(false)
 })
 
 // ── idle ────────────────────────────────────────────────────────────────────────

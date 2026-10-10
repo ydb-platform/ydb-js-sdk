@@ -4,9 +4,9 @@ import { YDBError } from '@ydbjs/error'
 import { ClientError, Status } from 'nice-grpc'
 import { expect, test } from 'vitest'
 
+import { isRetryableTopicError } from '../retry.ts'
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
-import { isRetryableWriterError } from './writer-state.ts'
 import {
 	failureResponse,
 	initResponse,
@@ -141,13 +141,11 @@ let classifierTable: Array<{
 		error: new ClientError(GRPC_PATH, Status.CANCELLED, ''),
 		retryable: true,
 	},
-	// Divergence from the go SDK: go treats DEADLINE_EXCEEDED on a topic stream as
-	// retryable (a proxy/LB deadline blip reconnects), while this classifier is
-	// terminal — the writer is destroyed. Pinned as currently implemented.
+
 	{
-		name: 'classifies a DEADLINE_EXCEEDED transport error as fatal',
+		name: 'retries a server deadline on an idempotent topic stream',
 		error: new ClientError(GRPC_PATH, Status.DEADLINE_EXCEEDED, ''),
-		retryable: false,
+		retryable: true,
 	},
 	{
 		name: 'classifies an UNAVAILABLE transport error as retryable',
@@ -157,7 +155,7 @@ let classifierTable: Array<{
 ]
 
 test.each(classifierTable)('$name', ({ error, retryOnSchemeError, retryable }) => {
-	expect(isRetryableWriterError(error, retryOnSchemeError ?? false)).toBe(retryable)
+	expect(isRetryableTopicError(error, retryOnSchemeError ?? false)).toBe(retryable)
 })
 
 // ── public constructor producer id ───────────────────────────────────────────────
