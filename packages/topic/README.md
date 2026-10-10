@@ -180,7 +180,11 @@ writer.write(payload) // fire-and-forget (void)
 const lastSeqNo = await writer.flush()
 ```
 
-`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. Keep payload bytes unchanged until acknowledgment; the writer snapshots metadata and timestamps.
+`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. With RAW, the writer may retain your buffer without copying it. The same unchanged buffer may be passed to multiple `write()` calls, including while earlier writes are awaiting acknowledgment. Do not change its bytes or detach its backing buffer until all writes using it are acknowledged through `onAck` or a completed `flush()`. Metadata and timestamps are copied when `write()` accepts the message.
+
+`flush()` waits for the entire queue to be acknowledged, including messages accepted by later `write()` calls while it is pending. Continuous writes can therefore keep it pending indefinitely. Stop submitting new messages before awaiting a final drain, or use `close()`, which stops accepting writes and drains the queue.
+
+Acknowledgment observers (`onAck` and the reader's `onCommittedOffset`) do not delay flush or commit completion. Synchronous exceptions and rejected async callbacks are logged; use an explicit application task when callback work must finish before shutdown.
 
 ## Transactions
 

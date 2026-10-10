@@ -195,22 +195,12 @@ test('preserves tracked read offsets when the reader closes before the tx commit
 	)
 	await collect(reader, 1, tc.signal)
 
-	let closeError: unknown
-	try {
-		await reader.close()
-	} catch (error) {
-		closeError = error
-	}
-	let commitError: unknown
-	try {
-		await fake.commit()
-	} catch (error) {
-		commitError = error
-	}
-
-	expect(
-		closeError !== undefined || commitError !== undefined || txOffsetRequests.length === 1
-	).toBe(true)
+	await expect(reader.close()).resolves.toBeUndefined()
+	await expect(fake.commit()).resolves.toBeUndefined()
+	expect(txOffsetRequests).toHaveLength(1)
+	expect(txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets).toEqual([
+		expect.objectContaining({ start: 0n, end: 1n }),
+	])
 })
 
 test('keeps the transaction consumer registered at reader creation', async (tc) => {

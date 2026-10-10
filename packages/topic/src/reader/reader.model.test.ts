@@ -838,7 +838,7 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 		}
 	}
 
-	if (sim.readerState === 'connecting' && ctx.sessionId !== undefined) {
+	if (sim.readerState === 'waiting-credit') {
 		if (sim.credit !== 0n || retainedBytes < ctx.limits.maxBufferBytes) {
 			throw new Error(
 				`${where}: initialized session waits for credit without a full retained buffer`
@@ -935,6 +935,7 @@ let runOne = function runOne(
 		let live =
 			sim.readerState === 'connecting' ||
 			sim.readerState === 'ready' ||
+			sim.readerState === 'waiting-credit' ||
 			sim.readerState === 'reconnecting'
 
 		let actions: Array<{ w: number; run: () => void }> = []

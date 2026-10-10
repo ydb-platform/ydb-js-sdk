@@ -1,7 +1,9 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
+import { ClientError, Status } from 'nice-grpc'
 
+import { isRetryableTopicError } from '../retry.ts'
 import {
 	type OffsetRange,
 	type ReaderCtx,
@@ -10,7 +12,6 @@ import {
 	type ReaderOutput,
 	type ReaderState,
 	createReaderCtx,
-	isRetryableReaderError,
 	partitionKey,
 	readerTransition,
 } from './reader-state.ts'
@@ -286,7 +287,7 @@ test('errors terminally on a fatal disconnect', () => {
 })
 
 test('classifies SCHEME_ERROR as retryable when retryOnSchemeError is set', () => {
-	expect(isRetryableReaderError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
+	expect(isRetryableTopicError(new YDBError(StatusIds_StatusCode.SCHEME_ERROR, []), true)).toBe(
 		true
 	)
 })
@@ -1862,8 +1863,8 @@ test('drains commits and refreshes the token before retained responses allow the
 	step(h, { type: 'reader.stream.disconnected' })
 	step(h, { type: 'reader.timer.retry_backoff' })
 	step(h, { type: 'reader.stream.init_response', sessionId: '' })
-	expect(h.state).toBe('connecting')
-	expect(h.ctx.sessionId).toBe('')
+	expect(h.state).toBe('waiting-credit')
+	expect(outputs(h, 'reader.session')).toContainEqual({ type: 'reader.session', sessionId: '' })
 	expect(effectTypes(h.effects)).not.toContain('reader.effect.send.read_request')
 	message(h, startMsg(2n, 10n, 5n))
 	ackStart(h, 2n, 10n)
@@ -1882,7 +1883,7 @@ test('drains commits and refreshes the token before retained responses allow the
 	step(h, { type: 'reader.timer.update_token' })
 	expect(h.effects).toEqual([{ type: 'reader.effect.send.update_token' }])
 	step(h, { type: 'reader.timer.start_timeout' })
-	expect(h.state).toBe('connecting')
+	expect(h.state).toBe('waiting-credit')
 	expect(h.effects).toEqual([])
 	commit(h, 10n, [{ start: 6n, end: 7n }], 2)
 	expect(commitSends(h.effects)).toHaveLength(1)
@@ -1894,4 +1895,21 @@ test('drains commits and refreshes the token before retained responses allow the
 		type: 'reader.commit.resolved',
 		waiterId: 2,
 	})
+})
+
+test('distinguishes receive-size failures from temporary resource exhaustion', () => {
+	expect(
+		isRetryableTopicError(
+			new ClientError(
+				'/read',
+				Status.RESOURCE_EXHAUSTED,
+				'Received message larger than max (2097152 vs. 1048576)'
+			)
+		)
+	).toBe(false)
+	expect(
+		isRetryableTopicError(
+			new ClientError('/read', Status.RESOURCE_EXHAUSTED, 'Rate limit exceeded')
+		)
+	).toBe(true)
 })
