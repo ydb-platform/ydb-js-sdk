@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
-import { workerData } from 'node:worker_threads'
+import { parentPort, workerData } from 'node:worker_threads'
 
 import { ValueType } from '@opentelemetry/api'
 import { Driver } from '@ydbjs/core'
@@ -8,6 +8,7 @@ import { query } from '@ydbjs/query'
 import { Timestamp, Uint64 } from '@ydbjs/value/primitive'
 import * as hdr from 'hdr-histogram-js'
 
+import { controlSequence, kvTableName } from '../../lib/kv-control.ts'
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import {
 	type FinOpAttrs,
@@ -15,7 +16,7 @@ import {
 	meterProvider,
 	registerLatencyGauges,
 } from '../../lib/telemetry.ts'
-import { type WorkerData, abortOnStop, runPaced } from '../../lib/worker-api.ts'
+import { type WorkerData, abortOnStop, isAbortedBySignal, runPaced } from '../../lib/worker-api.ts'
 
 installSafetyHandlers()
 
@@ -28,6 +29,8 @@ let ctrl = new AbortController()
 let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 let sql = query(driver)
+let table = sql.identifier(kvTableName(process.env['SLO_KV_NAMESPACE']))
+let verifyControl = controlSequence()
 
 // ---- Metrics ---------------------------------------------------------------
 let meter = meterProvider.getMeter('kv-write-meter')
@@ -74,6 +77,7 @@ async function writeOp(): Promise<void> {
 
 	let opType = 'write' as const
 	let opStatus: 'success' | 'error' = 'error'
+	let cancelled = false
 
 	sdk_pending_operations.add(1, { operation_type: opType })
 
@@ -81,7 +85,7 @@ async function writeOp(): Promise<void> {
 		[Symbol.dispose]() {
 			sdk_pending_operations.add(-1, { operation_type: opType })
 
-			if (ctrl.signal.aborted) return
+			if (cancelled) return
 
 			sdk_operations.add(1, { operation_type: opType, operation_status: opStatus })
 			sdk_retry_attempts.add(1 + retries, { operation_type: opType })
@@ -89,7 +93,7 @@ async function writeOp(): Promise<void> {
 	}
 
 	try {
-		await sql`UPSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+		await sql`UPSERT INTO ${table} (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 			Digest::NumericHash(${id}),
 			${id},
 			${randomUUID()},
@@ -102,11 +106,40 @@ async function writeOp(): Promise<void> {
 			.signal(ctrl.signal)
 			.on('retry', () => retries++)
 
+		await verifyControl(
+			async (row) =>
+				await sql`UPSERT INTO ${table}
+				(hash, id, payload_str, payload_double, payload_timestamp, payload_hash) VALUES (
+				${new Uint64(row.hash)}, ${new Uint64(row.id)}, ${row.payload_str},
+				${row.payload_double}, ${new Timestamp(new Date(Number(row.payload_timestamp / 1000n)))}, ${new Uint64(row.payload_hash)}
+			);`
+					.idempotent(true)
+					.isolation('serializableReadWrite')
+					.timeout(timeout)
+					.signal(ctrl.signal)
+					.on('retry', () => retries++),
+			async (row) =>
+				await sql`SELECT hash, id, payload_str, payload_double,
+					CAST(payload_timestamp AS Uint64) AS payload_timestamp, payload_hash FROM ${table}
+				WHERE hash = ${new Uint64(row.hash)} AND id = ${new Uint64(row.id)}`
+					.idempotent(true)
+					.isolation('onlineReadOnly')
+					.timeout(timeout)
+					.signal(ctrl.signal)
+					.on('retry', () => retries++)
+		)
+
 		opStatus = 'success'
 		latency.recordValue(Math.round((performance.now() - start) * 1000))
 	} catch (err) {
-		if (ctrl.signal.aborted) return
+		if (isAbortedBySignal(err, ctrl.signal)) {
+			cancelled = true
+			return
+		}
 		console.error(err)
+		process.exitCode = 1
+		parentPort?.postMessage({ type: 'failure' })
+		ctrl.abort(err)
 	}
 }
 
@@ -136,4 +169,4 @@ try {
 	console.error('[kv.write] driver close failed:', err)
 }
 
-process.exit(0)
+process.exit(process.exitCode ?? 0)
