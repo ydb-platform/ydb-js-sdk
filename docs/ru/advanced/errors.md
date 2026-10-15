@@ -10,7 +10,7 @@ title: Обработка ошибок
 
 - `YDBError` — серверная ошибка YDB с полями `code` и `issues`.
 - `CommitError` — неудачный коммит; содержит `retryable(idempotent)`.
-- `ClientError` — gRPC‑ошибка на стороне клиента (например, `UNAVAILABLE`).
+- `ServiceError` — нативная ошибка grpc-js с полями `code`, `details` и `metadata` (например, `UNAVAILABLE`).
 
 ### Ошибки координации (`@ydbjs/coordination`)
 
@@ -24,13 +24,15 @@ title: Обработка ошибок
 Используйте `instanceof` для ветвления логики.
 
 ```ts
-import { YDBError } from '@ydbjs/error'
+import { YDBError, isServiceError } from '@ydbjs/error'
 
 try {
   await sql`SELECT * FROM t`
 } catch (e) {
   if (e instanceof YDBError) {
     console.error('YDB code:', e.code)
+  } else if (isServiceError(e)) {
+    console.error('gRPC code:', e.code, e.details)
   }
   throw e
 }

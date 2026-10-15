@@ -6,7 +6,7 @@ import {
 } from '@bufbuild/protoplugin'
 
 let plugin = createEcmaScriptPlugin({
-	name: 'protoc-gen-nice-grpc',
+	name: 'protoc-gen-grpc',
 	version: 'v1',
 
 	generateTs(schema: Schema) {
@@ -15,14 +15,12 @@ let plugin = createEcmaScriptPlugin({
 			let f = schema.generateFile(file.name + '_grpc_pb.ts')
 			f.preamble(file)
 
-			let niceGRPCServiceDefinition = f.import('ServiceDefinition', 'nice-grpc', true)
+			let serviceDefinition = f.import('ServiceDefinition', '@grpc/grpc-js', true)
 			let bufProtoCreate = f.import('create', '@bufbuild/protobuf')
 			let bufProtoMessageInitShape = f.import('MessageInitShape', '@bufbuild/protobuf', true)
 			let bufProtoToBinary = f.import('toBinary', '@bufbuild/protobuf')
 			let bufProtoFromBinary = f.import('fromBinary', '@bufbuild/protobuf')
 
-			// Create a service definition based on the Nice-GRPC one
-			// (see https://github.com/deeplay-io/nice-grpc/blob/7458e8a57aec763d854c2e6eb119bfe6820b17dd/packages/nice-grpc/src/service-definitions/index.ts#L20)
 			for (let service of file.services) {
 				f.print(f.jsDoc(service))
 				f.print(f.export('const', safeIdentifier(service.name + 'Definition')), ' = {')
@@ -45,7 +43,7 @@ let plugin = createEcmaScriptPlugin({
 						bufProtoMessageInitShape,
 						'<typeof ',
 						requestSchema,
-						'>) => ',
+						'>) => { let bytes = ',
 						bufProtoToBinary,
 						'(',
 						requestSchema,
@@ -53,7 +51,7 @@ let plugin = createEcmaScriptPlugin({
 						bufProtoCreate,
 						'(',
 						requestSchema,
-						', message)),'
+						', message)); return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) },'
 					)
 					f.print(
 						'    requestDeserialize: (bytes: Uint8Array) => ',
@@ -68,7 +66,7 @@ let plugin = createEcmaScriptPlugin({
 						bufProtoMessageInitShape,
 						'<typeof ',
 						responseSchema,
-						'>) => ',
+						'>) => { let bytes = ',
 						bufProtoToBinary,
 						'(',
 						responseSchema,
@@ -76,7 +74,7 @@ let plugin = createEcmaScriptPlugin({
 						bufProtoCreate,
 						'(',
 						responseSchema,
-						', message)),'
+						', message)); return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) },'
 					)
 					f.print(
 						'    responseDeserialize: (bytes: Uint8Array) => ',
@@ -85,25 +83,9 @@ let plugin = createEcmaScriptPlugin({
 						responseSchema,
 						',bytes),'
 					)
-					f.print('    options: {},')
 					f.print('  },')
 				}
-				f.print('} as const satisfies ', niceGRPCServiceDefinition)
-
-				f.print('//@ts-expect-error')
-				f.print(
-					safeIdentifier(service.name + 'Definition'),
-					'["name"] = "',
-					service.name,
-					'";'
-				)
-				f.print('//@ts-expect-error')
-				f.print(
-					safeIdentifier(service.name + 'Definition'),
-					'["fullName"] = "',
-					service.typeName,
-					'";'
-				)
+				f.print('} as const satisfies ', serviceDefinition)
 			}
 		}
 	},

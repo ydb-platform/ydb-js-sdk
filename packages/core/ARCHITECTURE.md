@@ -5,7 +5,7 @@
 A reference-grade state machine for endpoint management — discovery, routing, and
 the connection pool — built on `@ydbjs/fsm`. It replaces the legacy `ConnectionPool`
 and the Driver's ad-hoc discovery loop: `Driver` owns a bootstrap connection + the
-middleware chain and hands the engine a `listEndpoints` seam (see `driver.ts`); the
+native interceptor chain and hands the engine a `listEndpoints` seam (see `driver.ts`); the
 `BalancedChannel` (see `channel.ts`) routes each RPC through `EndpointPool.acquire()`
 and feeds outcomes back via `EndpointPool.penalize()` / `recover()`.
 
@@ -138,7 +138,7 @@ reached through `Driver.createClient(service, target)`:
 
 - `createClient(service)` — balanced across all healthy nodes.
 - `createClient(service, nodeId)` — soft affinity (node-bound query sessions).
-- `createClient(service, { nodeId, endpoint?, hard? })` — direct-IO. With
+- `createPinnedClient(service, { nodeId, endpoint, hard? })` — direct-IO. With
   `hard: true` every RPC goes to `nodeId` or fails (never substitutes). With
   `endpoint` the node is **pinned** (reachable before the next discovery round,
   for a server-named node from a topic `PartitionLocation`); the returned client

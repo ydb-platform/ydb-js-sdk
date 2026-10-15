@@ -1,13 +1,13 @@
-import { channel } from 'node:diagnostics_channel'
-import { once } from 'node:events'
-import { type Socket, createConnection, createServer } from 'node:net'
-
-import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { channel } from 'node:diagnostics_channel'
+import { once } from 'node:events'
+import { type Socket, createConnection, createServer } from 'node:net'
+
+import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
 import { expect, inject, test } from 'vitest'
 

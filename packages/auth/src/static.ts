@@ -2,14 +2,14 @@ import * as tls from 'node:tls'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import { type ChannelOptions, credentials } from '@grpc/grpc-js'
+import { type ChannelOptions, Client, credentials } from '@grpc/grpc-js'
+import { type ServiceClient, createServiceClient } from '@ydbjs/api/client'
 import { AuthServiceDefinition, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 import { type RetryContext, defaultRetryConfig, retry } from '@ydbjs/retry'
 import { linkSignals } from '@ydbjs/abortable'
-import { type Client, ClientError, Status, createChannel, createClient } from 'nice-grpc'
 
 import { CredentialsProvider } from './index.js'
 
@@ -45,7 +45,7 @@ export type StaticCredentials = {
  * @extends CredentialsProvider
  */
 export class StaticCredentialsProvider extends CredentialsProvider {
-	#client: Client<typeof AuthServiceDefinition>
+	#client: ServiceClient<typeof AuthServiceDefinition>
 	#username: string
 	#password: string
 
@@ -81,7 +81,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			)
 		}
 
-		let address = cs.host
+		let address = `${cs.hostname}:${cs.port || (secureOptions ? '443' : '80')}`
 		// For unix sockets, keep the full URL
 		if (cs.protocol === 'unix:') {
 			address = `${cs.protocol}//${cs.host}${cs.pathname}`
@@ -91,10 +91,8 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			? credentials.createFromSecureContext(tls.createSecureContext(secureOptions))
 			: credentials.createInsecure()
 
-		this.#client = createClient(
-			AuthServiceDefinition,
-			createChannel(address, channelCredentials, channelOptions)
-		)
+		let client = new Client(address, channelCredentials, channelOptions)
+		this.#client = createServiceClient(AuthServiceDefinition, client)
 	}
 
 	/**
@@ -223,11 +221,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			{ signal }
 		)
 		if (!response.operation) {
-			throw new ClientError(
-				AuthServiceDefinition.login.path,
-				Status.UNKNOWN,
-				'No operation in response'
-			)
+			throw new Error('No operation in response')
 		}
 
 		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {
@@ -236,11 +230,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 
 		let result = anyUnpack(response.operation.result!, LoginResultSchema)
 		if (!result) {
-			throw new ClientError(
-				AuthServiceDefinition.login.path,
-				Status.UNKNOWN,
-				'No result in operation'
-			)
+			throw new Error('No result in operation')
 		}
 
 		debug.log('login successful, parsing JWT token')

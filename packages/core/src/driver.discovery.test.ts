@@ -1,11 +1,16 @@
+import {
+	DiscoveryServiceDefinition,
+	ListEndpointsResponseSchema,
+	ListEndpointsResultSchema,
+	WhoAmIResponseSchema,
+} from '@ydbjs/api/discovery'
 import { channel } from 'node:diagnostics_channel'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { create } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
-import { DiscoveryServiceDefinition, ListEndpointsResultSchema } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { createServer } from 'nice-grpc'
+import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 
 import { Driver } from './driver.ts'
@@ -18,8 +23,8 @@ test.for([false, true])(
 		let entered = Promise.withResolvers<void>()
 		let release = Promise.withResolvers<void>()
 		await using servers = {
-			first: createServer(),
-			second: createServer(),
+			first: createTestServer(),
+			second: createTestServer(),
 			async [Symbol.asyncDispose]() {
 				release.resolve()
 				await Promise.all([this.first.shutdown(), this.second.shutdown()])
@@ -34,7 +39,7 @@ test.for([false, true])(
 			},
 			{
 				async listEndpoints() {
-					return {
+					return create(ListEndpointsResponseSchema, {
 						operation: {
 							ready: true,
 							status: StatusIds_StatusCode.SUCCESS,
@@ -43,14 +48,14 @@ test.for([false, true])(
 								create(ListEndpointsResultSchema, { endpoints })
 							),
 						},
-					}
+					})
 				},
 				async whoAmI() {
 					if (++callsOnOriginal === 1) {
 						entered.resolve()
 						await release.promise
 					}
-					return { operation: { id: 'original' } }
+					return create(WhoAmIResponseSchema, { operation: { id: 'original' } })
 				},
 			}
 		)
@@ -58,7 +63,7 @@ test.for([false, true])(
 			{ whoAmI: DiscoveryServiceDefinition.whoAmI },
 			{
 				async whoAmI() {
-					return { operation: { id: 'replacement' } }
+					return create(WhoAmIResponseSchema, { operation: { id: 'replacement' } })
 				},
 			}
 		)

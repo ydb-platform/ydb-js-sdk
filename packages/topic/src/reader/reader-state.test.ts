@@ -1,7 +1,7 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
-import { ClientError, Status } from 'nice-grpc'
+import { Metadata, status as Status } from '@grpc/grpc-js'
 
 import { isRetryableTopicError } from '../retry.ts'
 import {
@@ -1900,16 +1900,20 @@ test('drains commits and refreshes the token before retained responses allow the
 test('distinguishes receive-size failures from temporary resource exhaustion', () => {
 	expect(
 		isRetryableTopicError(
-			new ClientError(
-				'/read',
-				Status.RESOURCE_EXHAUSTED,
-				'Received message larger than max (2097152 vs. 1048576)'
-			)
+			Object.assign(new Error('Received message larger than max (2097152 vs. 1048576)'), {
+				code: Status.RESOURCE_EXHAUSTED,
+				details: 'Received message larger than max (2097152 vs. 1048576)',
+				metadata: new Metadata(),
+			})
 		)
 	).toBe(false)
 	expect(
 		isRetryableTopicError(
-			new ClientError('/read', Status.RESOURCE_EXHAUSTED, 'Rate limit exceeded')
+			Object.assign(new Error('Rate limit exceeded'), {
+				code: Status.RESOURCE_EXHAUSTED,
+				details: 'Rate limit exceeded',
+				metadata: new Metadata(),
+			})
 		)
 	).toBe(true)
 })

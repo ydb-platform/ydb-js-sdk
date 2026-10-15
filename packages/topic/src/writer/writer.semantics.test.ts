@@ -1,7 +1,7 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Codec, type StreamWriteMessage_FromServer } from '@ydbjs/api/topic'
 import { YDBError } from '@ydbjs/error'
-import { ClientError, Status } from 'nice-grpc'
+import { Metadata, status as Status } from '@grpc/grpc-js'
 import { expect, test } from 'vitest'
 
 import { isRetryableTopicError } from '../retry.ts'
@@ -71,8 +71,6 @@ let makeFakeTx = function makeFakeTx() {
 // writes are idempotent (server dedup by producerId+seqNo), so conditionally-
 // retryable YDB statuses count as retryable here.
 
-let GRPC_PATH = '/Ydb.Topic.V1.TopicService/StreamWrite'
-
 let classifierTable: Array<{
 	name: string
 	error: unknown
@@ -110,17 +108,24 @@ let classifierTable: Array<{
 	// A deterministic size rejection can only fail again on resend — must be fatal.
 	{
 		name: 'classifies a payload-too-large RESOURCE_EXHAUSTED as fatal',
-		error: new ClientError(
-			GRPC_PATH,
-			Status.RESOURCE_EXHAUSTED,
-			'Received message larger than max (66060326 vs. 64000000)'
+		error: Object.assign(
+			new Error('Received message larger than max (66060326 vs. 64000000)'),
+			{
+				code: Status.RESOURCE_EXHAUSTED,
+				details: 'Received message larger than max (66060326 vs. 64000000)',
+				metadata: new Metadata(),
+			}
 		),
 		retryable: false,
 	},
 	// The same gRPC code without a size complaint is genuine throttling — retryable.
 	{
 		name: 'classifies a generic throttling RESOURCE_EXHAUSTED as retryable',
-		error: new ClientError(GRPC_PATH, Status.RESOURCE_EXHAUSTED, 'Too many pending requests'),
+		error: Object.assign(new Error('Too many pending requests'), {
+			code: Status.RESOURCE_EXHAUSTED,
+			details: 'Too many pending requests',
+			metadata: new Metadata(),
+		}),
 		retryable: true,
 	},
 	{
@@ -138,18 +143,30 @@ let classifierTable: Array<{
 	// cancelled by the caller — the writer must reconnect.
 	{
 		name: 'classifies a CANCELLED transport error as retryable',
-		error: new ClientError(GRPC_PATH, Status.CANCELLED, ''),
+		error: Object.assign(new Error(''), {
+			code: Status.CANCELLED,
+			details: '',
+			metadata: new Metadata(),
+		}),
 		retryable: true,
 	},
 
 	{
 		name: 'retries a server deadline on an idempotent topic stream',
-		error: new ClientError(GRPC_PATH, Status.DEADLINE_EXCEEDED, ''),
+		error: Object.assign(new Error(''), {
+			code: Status.DEADLINE_EXCEEDED,
+			details: '',
+			metadata: new Metadata(),
+		}),
 		retryable: true,
 	},
 	{
 		name: 'classifies an UNAVAILABLE transport error as retryable',
-		error: new ClientError(GRPC_PATH, Status.UNAVAILABLE, ''),
+		error: Object.assign(new Error(''), {
+			code: Status.UNAVAILABLE,
+			details: '',
+			metadata: new Metadata(),
+		}),
 		retryable: true,
 	},
 ]

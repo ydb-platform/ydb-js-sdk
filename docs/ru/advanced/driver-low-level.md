@@ -16,5 +16,7 @@ const driver = new Driver(process.env.YDB_CONNECTION_STRING!)
 await driver.ready()
 
 const discovery = driver.createClient(DiscoveryServiceDefinition)
-const res = await discovery.listEndpoints({ database: driver.database })
+discovery.listEndpoints({ database: driver.database }, (error, response) => {
+  console.log(error ?? response)
+})
 ```

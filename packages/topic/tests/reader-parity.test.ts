@@ -1,7 +1,3 @@
-import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-
-import { create } from '@bufbuild/protobuf'
-import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import {
 	CreateTopicRequestSchema,
 	DescribeConsumerRequestSchema,
@@ -9,8 +5,12 @@ import {
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { afterEach, beforeEach, expect, inject, test } from 'vitest'
+
+import { create } from '@bufbuild/protobuf'
+import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { Driver } from '@ydbjs/core'
-import { Status } from 'nice-grpc'
+import { status as Status } from '@grpc/grpc-js'
 
 import type { TopicMessage } from '../src/message.js'
 import { type TopicReader, createTopicReader } from '../src/reader/index.js'

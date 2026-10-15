@@ -1,13 +1,13 @@
-import { subscribe, unsubscribe } from 'node:diagnostics_channel'
-
-import { create } from '@bufbuild/protobuf'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	Codec,
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { subscribe, unsubscribe } from 'node:diagnostics_channel'
+
+import { create } from '@bufbuild/protobuf'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
@@ -103,7 +103,10 @@ test('surfaces server BAD_REQUEST for messageGroupId without matching producer',
 	})
 	try {
 		writer.write(encode('mismatched-pair'))
-		let error = await writer.flush(tc.signal).then(() => null, (caught: unknown) => caught)
+		let error = await writer.flush(tc.signal).then(
+			() => null,
+			(caught: unknown) => caught
+		)
 		expect(error).toBeInstanceOf(YDBError)
 		expect((error as YDBError).code).toBe(StatusIds_StatusCode.BAD_REQUEST)
 		expect((error as YDBError).message).toContain(
@@ -133,7 +136,10 @@ test('rejects RAW writes into a GZIP-only topic terminally', { timeout: 20_000 }
 	let writer = createTopicWriter(driver, { topic: path, producer: testProducerName })
 	try {
 		writer.write(encode('raw-into-gzip-only'))
-		let error = await writer.flush(tc.signal).then(() => null, (caught: unknown) => caught)
+		let error = await writer.flush(tc.signal).then(
+			() => null,
+			(caught: unknown) => caught
+		)
 		expect(error).toBeInstanceOf(Error)
 		expect((error as Error).message).toMatch(/codec 1 .*supported codecs: 2/i)
 		// The rejection is terminal: the writer is dead, not reconnecting.

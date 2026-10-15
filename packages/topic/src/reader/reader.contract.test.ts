@@ -3,11 +3,10 @@ import { DurationSchema, TimestampSchema } from '@bufbuild/protobuf/wkt'
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { Codec } from '@ydbjs/api/topic'
-import type { StreamReadMessage_FromServer } from '@ydbjs/api/topic'
+import { Codec, type StreamReadMessage_FromServer } from '@ydbjs/api/topic'
 import { YDBError } from '@ydbjs/error'
 import { expect, test, vi } from 'vitest'
-import { ClientError, Status } from 'nice-grpc'
+import { Metadata, status as Status } from '@grpc/grpc-js'
 
 import { ZSTD_CODEC } from '../codec.ts'
 import type { TopicMessage } from '../message.ts'
@@ -212,7 +211,11 @@ test.for([
 	{ name: 'clean end', error: undefined },
 	{
 		name: 'server deadline',
-		error: new ClientError('/stream', Status.DEADLINE_EXCEEDED, 'deadline'),
+		error: Object.assign(new Error('deadline'), {
+			code: Status.DEADLINE_EXCEEDED,
+			details: 'deadline',
+			metadata: new Metadata(),
+		}),
 	},
 	{ name: 'server timeout', error: new YDBError(StatusIds_StatusCode.TIMEOUT, []) },
 	{ name: 'expired session', error: new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []) },

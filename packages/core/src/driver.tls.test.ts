@@ -1,12 +1,13 @@
+import { create } from '@bufbuild/protobuf'
+import { DiscoveryServiceDefinition, WhoAmIResponseSchema } from '@ydbjs/api/discovery'
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { ServerCredentials } from '@grpc/grpc-js'
-import { createServer } from 'nice-grpc'
+import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 
 import { Driver } from './driver.ts'
@@ -44,7 +45,7 @@ test('uses the configured TLS identity when the endpoint has no override', async
 	)
 	let ca = await readFile(certificate)
 	await using fixture = {
-		server: createServer(),
+		server: createTestServer(),
 		[Symbol.asyncDispose]() {
 			return this.server.shutdown()
 		},
@@ -53,7 +54,7 @@ test('uses the configured TLS identity when the endpoint has no override', async
 	let service = { whoAmI: DiscoveryServiceDefinition.whoAmI }
 	server.add(service, {
 		async whoAmI() {
-			return {}
+			return create(WhoAmIResponseSchema, {})
 		},
 	})
 	let port = await server.listen(

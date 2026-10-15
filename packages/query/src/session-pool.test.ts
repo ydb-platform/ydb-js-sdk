@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest'
-import { createServer } from 'nice-grpc'
+import { createTestServer } from '../../../tests/grpc-server.js'
 import { create } from '@bufbuild/protobuf'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -42,7 +42,7 @@ async function startQueryServer() {
 	let deleteCalls: string[] = []
 	let attachCalls: string[] = []
 
-	let server = createServer()
+	let server = createTestServer()
 	let subset = {
 		createSession: QueryServiceDefinition.createSession,
 		deleteSession: QueryServiceDefinition.deleteSession,

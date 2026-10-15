@@ -18,7 +18,7 @@ import type { Entry } from '@ydbjs/api/scheme'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import type { Client } from 'nice-grpc'
+import type { ServiceClient } from '@ydbjs/api/client'
 
 let dbg = loggers.coordination.extend('node')
 
@@ -37,7 +37,7 @@ export interface CoordinationNodeDescription {
 }
 
 export class CoordinationNodeRuntime {
-	#client: Client<typeof CoordinationServiceDefinition>
+	#client: ServiceClient<typeof CoordinationServiceDefinition>
 
 	constructor(driver: Driver) {
 		this.#client = driver.createClient(CoordinationServiceDefinition)

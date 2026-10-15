@@ -1,13 +1,13 @@
-import { subscribe, unsubscribe } from 'node:diagnostics_channel'
-
-import { create } from '@bufbuild/protobuf'
-import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { subscribe, unsubscribe } from 'node:diagnostics_channel'
+
+import { create } from '@bufbuild/protobuf'
+import { afterEach, beforeEach, expect, inject, test } from 'vitest'
+
 import { Driver } from '@ydbjs/core'
 
 import { type TopicReader, createTopicReader } from '../src/reader/index.js'

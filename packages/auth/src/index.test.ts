@@ -1,68 +1,124 @@
+import { create } from '@bufbuild/protobuf'
+import { DiscoveryServiceDefinition, WhoAmIResponseSchema } from '@ydbjs/api/discovery'
+import { Client, Metadata, credentials, status } from '@grpc/grpc-js'
+import { createServiceClient } from '@ydbjs/api/client'
+import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 
 import { CredentialsProvider } from './index.ts'
 
-class FakeCredentialsProvider extends CredentialsProvider {
-	#token: string
-
-	constructor(token: string) {
-		super()
-		this.#token = token
+// A controllable provider isolates cancellation during token acquisition from server timing.
+async function fixture(getToken: CredentialsProvider['getToken']) {
+	class Provider extends CredentialsProvider {
+		override getToken = getToken
 	}
 
-	async getToken(): Promise<string> {
-		return this.#token
+	let server = createTestServer()
+	let received: Record<string, string | undefined> | undefined
+	server.add(
+		{ whoAmI: DiscoveryServiceDefinition.whoAmI },
+		{
+			async whoAmI(_request, context) {
+				received = {
+					token: context.metadata.get('x-ydb-auth-ticket')[0] as string | undefined,
+					existing: context.metadata.get('x-existing')[0] as string | undefined,
+				}
+				return create(WhoAmIResponseSchema, {})
+			},
+		}
+	)
+
+	let port = await server.listen('127.0.0.1:0')
+	let client = createServiceClient(
+		DiscoveryServiceDefinition,
+		new Client(`127.0.0.1:${port}`, credentials.createInsecure(), {
+			interceptors: [new Provider().interceptor],
+		})
+	)
+
+	return {
+		client,
+		get received() {
+			return received
+		},
+		async [Symbol.asyncDispose]() {
+			client.close()
+			await server.shutdown()
+		},
 	}
 }
 
-test('attaches the token as x-ydb-auth-ticket on the outgoing call', async () => {
-	let provider = new FakeCredentialsProvider('secret-token')
+test('attaches credentials while preserving caller metadata', async (tc) => {
+	await using server = await fixture(async () => 'secret-token')
+	let metadata = new Metadata()
+	metadata.set('x-existing', 'value')
+	metadata.set('x-ydb-auth-ticket', 'stale-token')
 
-	let seenMetadata: any
-	let call = {
-		method: { path: '/test/Method' },
-		requestStream: false as const,
-		responseStream: false as const,
-		request: undefined,
-		async *next(_request: unknown, options: any) {
-			seenMetadata = options.metadata
-			yield 'response'
-			return 'response'
-		},
-	}
+	await server.client.whoAmI({}, { metadata, signal: tc.signal })
 
-	let gen = provider.middleware(call as any, {})
-	for await (let chunk of gen) void chunk
-
-	expect(seenMetadata.get('x-ydb-auth-ticket')).toBe('secret-token')
+	expect(server.received).toEqual({ token: 'secret-token', existing: 'value' })
+	expect(metadata.getMap()).toEqual({ 'x-existing': 'value', 'x-ydb-auth-ticket': 'stale-token' })
 })
 
-test('preserves existing metadata and call options', async () => {
-	let provider = new FakeCredentialsProvider('secret-token')
-
-	let seenMetadata: any
-	let seenSignal: AbortSignal | undefined
-	let call = {
-		method: { path: '/test/Method' },
-		requestStream: false as const,
-		responseStream: false as const,
-		request: undefined,
-		async *next(_request: unknown, options: any) {
-			seenMetadata = options.metadata
-			seenSignal = options.signal
-			yield 'response'
-			return 'response'
-		},
-	}
-
-	let controller = new AbortController()
-	let gen = provider.middleware(call as any, {
-		metadata: { 'x-existing': 'value' } as any,
-		signal: controller.signal,
+test('cancels a call while its credentials provider is pending', async () => {
+	let started = Promise.withResolvers<void>()
+	let pending = Promise.withResolvers<string>()
+	let providerSignal: AbortSignal | undefined
+	await using server = await fixture((_force, signal) => {
+		providerSignal = signal
+		started.resolve()
+		return pending.promise
 	})
-	for await (let chunk of gen) void chunk
+	let controller = new AbortController()
+	let response = server.client.whoAmI({}, { signal: controller.signal })
+	await started.promise
 
-	expect(seenMetadata.get('x-existing')).toBe('value')
-	expect(seenMetadata.get('x-ydb-auth-ticket')).toBe('secret-token')
-	expect(seenSignal).toBe(controller.signal)
+	controller.abort(new Error('cancelled by caller'))
+	await expect(response).rejects.toThrow('cancelled by caller')
+
+	expect(providerSignal?.aborted).toBe(true)
+	pending.resolve('late-token')
+	await new Promise((resolve) => setImmediate(resolve))
+	expect(server.received).toBeUndefined()
+})
+
+test('honors a native deadline while its credentials provider ignores cancellation', async () => {
+	let providerSignal: AbortSignal | undefined
+	await using server = await fixture((_force, signal) => {
+		providerSignal = signal
+		return new Promise(() => {})
+	})
+
+	await expect(server.client.whoAmI({}, { deadline: Date.now() + 30 })).rejects.toMatchObject({
+		code: status.DEADLINE_EXCEEDED,
+	})
+
+	expect(providerSignal?.aborted).toBe(true)
+	expect(server.received).toBeUndefined()
+})
+
+test('reports provider failures without sending an unauthenticated RPC', async (tc) => {
+	await using server = await fixture(async () => {
+		throw new Error('token unavailable')
+	})
+
+	await expect(server.client.whoAmI({}, { signal: tc.signal })).rejects.toMatchObject({
+		code: status.UNKNOWN,
+		details: expect.stringContaining('token unavailable'),
+	})
+
+	expect(server.received).toBeUndefined()
+})
+
+test('preserves native per-call credentials alongside the YDB token', async (tc) => {
+	await using server = await fixture(async () => 'secret-token')
+	let extraCredentials = credentials.createFromMetadataGenerator((_params, callback) => {
+		let metadata = new Metadata()
+		metadata.set('x-existing', 'native-credential')
+		callback(null, metadata)
+	})
+
+	await server.client.whoAmI({}, { credentials: extraCredentials, signal: tc.signal })
+
+	expect(server.received).toEqual({ token: 'secret-token', existing: 'native-credential' })
 })

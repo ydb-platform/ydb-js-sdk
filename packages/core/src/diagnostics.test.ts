@@ -9,7 +9,8 @@ import {
 	ListEndpointsResultSchema,
 } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { ServerError, Status, createServer } from 'nice-grpc'
+import { status } from '@grpc/grpc-js'
+import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 
 import { Driver } from './driver.js'
@@ -42,7 +43,7 @@ function collect(name: string): { payloads: unknown[] } & Disposable {
  * would instead keep retrying until the ready timeout.
  */
 async function startDiscoveryServer(opts: { fail?: boolean } = {}) {
-	let server = createServer()
+	let server = createTestServer()
 	let selfPort = 0
 
 	server.add(
@@ -53,7 +54,9 @@ async function startDiscoveryServer(opts: { fail?: boolean } = {}) {
 		{
 			async listEndpoints() {
 				if (opts.fail) {
-					throw new ServerError(Status.PERMISSION_DENIED, 'discovery boom')
+					throw Object.assign(new Error('discovery boom'), {
+						code: status.PERMISSION_DENIED,
+					})
 				}
 				let result = create(ListEndpointsResultSchema, {
 					endpoints: [
@@ -243,7 +246,7 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 	// sleep) guarantees the RPC has actually landed before we close.
 	let entered = Promise.withResolvers<void>()
 	let release = Promise.withResolvers<void>()
-	let server = createServer()
+	let server = createTestServer()
 	let port = 0
 	server.add(
 		{

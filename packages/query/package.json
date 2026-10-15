@@ -59,7 +59,7 @@
 		"@ydbjs/retry": "^6.3.0",
 		"@ydbjs/value": "^6.0.8",
 		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.13"
+		"@grpc/grpc-js": "^1.14.6"
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"

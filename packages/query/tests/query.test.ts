@@ -1,6 +1,7 @@
 import { expect, inject, test } from 'vitest'
 import { tracingChannel } from 'node:diagnostics_channel'
 
+import { Metadata } from '@grpc/grpc-js'
 import { Driver } from '@ydbjs/core'
 import { fromJs } from '@ydbjs/value'
 import { Optional } from '@ydbjs/value/optional'
@@ -51,6 +52,18 @@ test('executes simple query', async () => {
 		  ],
 		]
 	`)
+})
+
+test('emits native trailing metadata after a query completes', async (tc) => {
+	await using sql = query(driver)
+	let trailers: Metadata[] = []
+	let statement = sql`SELECT 1 AS id`.signal(tc.signal)
+	statement.on('metadata', (metadata) => trailers.push(metadata))
+
+	await statement
+
+	expect(trailers).toHaveLength(1)
+	expect(trailers[0]).toBeInstanceOf(Metadata)
 })
 
 test('executes query with parameters', async () => {

@@ -1,4 +1,6 @@
-import { status as Status, connectivityState } from '@grpc/grpc-js'
+import { promisify } from 'node:util'
+
+import { Client, status as Status, connectivityState, credentials } from '@grpc/grpc-js'
 import type { InterceptingListener } from '@grpc/grpc-js'
 import { expect, test, vi } from 'vitest'
 
@@ -69,7 +71,7 @@ let driveStatus = function driveStatus(
 	code: number
 ): { propagated: number } {
 	let bc = new BalancedChannel(fake.pool)
-	let call = bc.createCall('/S/M', null, 'host', null, 0) as unknown as {
+	let call = bc.createCall('/S/M', Infinity, 'host', null, 0) as unknown as {
 		start(m: unknown, l: InterceptingListener): void
 	}
 	let propagated = -1
@@ -126,7 +128,7 @@ test('reports the outcome before propagating the status downstream', () => {
 	let fake = makeFakePool()
 	let order: string[] = []
 	let bc = new BalancedChannel(fake.pool)
-	let call = bc.createCall('/S/M', null, 'host', null, 0) as unknown as {
+	let call = bc.createCall('/S/M', Infinity, 'host', null, 0) as unknown as {
 		start(m: unknown, l: InterceptingListener): void
 	}
 	let downstream = {
@@ -243,21 +245,21 @@ test('a throwing onCall hook does not prevent the RPC from being created', () =>
 		},
 	})
 	// createCall must still return a usable call despite the throwing hook.
-	expect(() => bc.createCall('/S/M', null, 'host', null, 0)).not.toThrow()
+	expect(() => bc.createCall('/S/M', Infinity, 'host', null, 0)).not.toThrow()
 	expect(fake.started).toEqual([7n])
 })
 
 test('a hard channel routes every call through acquireNode({hard})', () => {
 	let fake = makeFakePool()
 	let bc = new BalancedChannel(fake.pool, {}, 7n, true)
-	bc.createCall('/S/M', null, 'host', null, 0)
+	bc.createCall('/S/M', Infinity, 'host', null, 0)
 	expect(fake.acquiredHard).toEqual([7n])
 })
 
 test('a soft channel does not hard-acquire', () => {
 	let fake = makeFakePool()
 	let bc = new BalancedChannel(fake.pool, {}, 7n, false)
-	bc.createCall('/S/M', null, 'host', null, 0)
+	bc.createCall('/S/M', Infinity, 'host', null, 0)
 	expect(fake.acquiredHard).toEqual([])
 })
 
@@ -267,7 +269,7 @@ test('onComplete receives the grpc status code', () => {
 	let bc = new BalancedChannel(fake.pool, {
 		onCall: () => complete,
 	})
-	let call = bc.createCall('/S/M', null, 'host', null, 0) as unknown as {
+	let call = bc.createCall('/S/M', Infinity, 'host', null, 0) as unknown as {
 		start(m: unknown, l: InterceptingListener): void
 	}
 	call.start({}, {
@@ -277,4 +279,81 @@ test('onComplete receives the grpc status code', () => {
 	} as unknown as InterceptingListener)
 	fake.getListener().onReceiveStatus({ code: Status.OK } as never)
 	expect(complete).toHaveBeenCalledWith(expect.objectContaining({ grpcStatusCode: Status.OK }))
+})
+
+test('native waitForReady observes a later routing snapshot without blocking the event loop', async () => {
+	let fake = makeFakePool()
+	let available = fake.pool.snapshot
+	;(fake.pool as { snapshot: RoutingSnapshot }).snapshot = EMPTY_SNAPSHOT
+	let channel = new BalancedChannel(fake.pool)
+	let client = new Client('unused', credentials.createInsecure(), { channelOverride: channel })
+	let ready = false
+	let pending = new Promise<void>((resolve, reject) => {
+		client.waitForReady(Date.now() + 500, (error) => {
+			if (error) {
+				reject(error)
+				return
+			}
+			ready = true
+			resolve()
+		})
+	})
+
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	expect(ready).toBe(false)
+	;(fake.pool as { snapshot: RoutingSnapshot }).snapshot = available
+	await pending
+	expect(ready).toBe(true)
+})
+
+test('native waitForReady respects its deadline when no endpoint becomes available', async () => {
+	let fake = makeFakePool()
+	;(fake.pool as { snapshot: RoutingSnapshot }).snapshot = EMPTY_SNAPSHOT
+	let channel = new BalancedChannel(fake.pool)
+	let client = new Client('unused', credentials.createInsecure(), { channelOverride: channel })
+
+	await expect(promisify(client.waitForReady.bind(client))(Date.now() + 30)).rejects.toThrow(
+		'Failed to connect before the deadline'
+	)
+})
+
+test('native waitForReady rejects an already closed client', async () => {
+	let channel = new BalancedChannel(makeFakePool().pool)
+	let client = new Client('unused', credentials.createInsecure(), { channelOverride: channel })
+	client.close()
+
+	await expect(promisify(client.waitForReady.bind(client))(Infinity)).rejects.toThrow(
+		'The channel has been closed'
+	)
+})
+
+test('closing a client completes its pending readiness wait', async () => {
+	let fake = makeFakePool()
+	;(fake.pool as { snapshot: RoutingSnapshot }).snapshot = EMPTY_SNAPSHOT
+	let channel = new BalancedChannel(fake.pool)
+	let client = new Client('unused', credentials.createInsecure(), { channelOverride: channel })
+	let pending = promisify(client.waitForReady.bind(client))(Infinity)
+	await new Promise<void>((resolve) => setImmediate(resolve))
+
+	client.close()
+	await expect(pending).rejects.toThrow(/closed|deadline/)
+})
+
+test('closing the endpoint pool completes a native readiness wait', async () => {
+	let fake = makeFakePool()
+	let pool = fake.pool as EndpointPool & { closed: boolean; snapshot: RoutingSnapshot }
+	pool.snapshot = EMPTY_SNAPSHOT
+	pool.closed = false
+	let channel = new BalancedChannel(pool)
+	let client = new Client('unused', credentials.createInsecure(), { channelOverride: channel })
+	let pending = promisify(client.waitForReady.bind(client))(Infinity)
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	expect(client.getChannel().getConnectivityState(false)).toBe(
+		connectivityState.TRANSIENT_FAILURE
+	)
+
+	pool.closed = true
+
+	await expect(pending).rejects.toThrow(/closed|deadline/)
+	expect(client.getChannel().getConnectivityState(false)).toBe(connectivityState.SHUTDOWN)
 })

@@ -1,3 +1,9 @@
+import {
+	Codec,
+	CreateTopicRequestSchema,
+	DropTopicRequestSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
@@ -7,12 +13,6 @@ import { setTimeout as sleep, setImmediate as turn } from 'node:timers/promises'
 
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import {
-	Codec,
-	CreateTopicRequestSchema,
-	DropTopicRequestSchema,
-	TopicServiceDefinition,
-} from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { GZIP_CODEC, RAW_CODEC, ZSTD_CODEC } from '../src/codec.ts'
 import { type TopicReader, createTopicReader } from '../src/reader/index.ts'

@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=core)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/core/)
 
-The `@ydbjs/core` package provides the core driver and connection management for YDB in JavaScript/TypeScript. It is the foundation for all YDB client operations, handling connection pooling, service client creation, authentication, and middleware.
+The `@ydbjs/core` package provides the core driver and connection management for YDB in JavaScript/TypeScript. It is the foundation for all YDB client operations, handling connection pooling, service client creation, authentication, and native gRPC interceptors.
 
 ## Features
 
@@ -25,7 +25,17 @@ npm install @ydbjs/core
 - **Connection Pool**: Maintains and balances gRPC channels to YDB endpoints.
 - **Service Clients**: Use `driver.createClient(ServiceDefinition)` to get a typed client for any YDB gRPC service (from `@ydbjs/api`).
 - **Authentication**: Pass a credentials provider from `@ydbjs/auth` to the driver for static, token, anonymous, or cloud metadata authentication.
-- **Middleware**: Internal middleware handles metadata, authentication, and debugging.
+- **Interceptors**: Native `@grpc/grpc-js` interceptors handle metadata, authentication, and debugging.
+
+`Driver.createClient()` returns a typed asynchronous client: unary methods return a `Promise`, response streams return an `AsyncIterable`, and request streams accept an `AsyncIterable`. Pass `{ signal }` to cancel a call. Per-call options also accept native grpc-js options, `metadata`, and `onHeader` / `onTrailer` callbacks with native `Metadata` objects. Errors retain the native grpc-js `ServiceError` fields and trailers.
+
+The driver owns channels. A service client's `close()` prevents new calls through that client while other clients remain usable. Existing calls continue until completion or cancellation through their `AbortSignal`.
+
+For an endpoint absent from discovery, await `driver.createPinnedClient(service, { nodeId, endpoint, hard }, signal)`. It requires discovery to be enabled, waits for pin publication, and returns a disposable async client. `close()` or `[Symbol.dispose]()` releases that client's pin. Ordinary `createClient(service, nodeId)` and `createClient(service, { nodeId, hard })` remain synchronous.
+
+Per-call `interceptors` and `interceptor_providers` extend the driver interceptor chain; they do not replace authentication or driver metadata.
+
+Register native interceptors with `addClientInterceptor(interceptor)` before creating a driver. The driver snapshots registrations at construction; disposing the registration affects future drivers. This replaces the previous `addClientMiddleware` hook and generator middleware contract.
 
 ## Usage
 
@@ -35,14 +45,14 @@ npm install @ydbjs/core
 import { Driver } from '@ydbjs/core'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const driver = new Driver('grpc://localhost:2136/local')
+let driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const discovery = driver.createClient(DiscoveryServiceDefinition)
-const endpoints = await discovery.listEndpoints({ database: '/local' })
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+let endpoints = await discovery.listEndpoints({ database: '/local' })
 console.log(endpoints)
 
-await driver.close()
+driver.close()
 ```
 
 ### Using Authentication Providers

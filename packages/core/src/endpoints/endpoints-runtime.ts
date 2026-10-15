@@ -19,7 +19,7 @@ import type { ListEndpointsResult, EndpointInfo as ProtoEndpointInfo } from '@yd
 import { loggers } from '@ydbjs/debug'
 import { isRetryableError } from '@ydbjs/retry'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
-import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
+import type { ChannelCredentials, ChannelOptions } from '@grpc/grpc-js'
 
 import { type Connection, GrpcConnection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
@@ -462,6 +462,14 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 
 	get snapshot(): RoutingSnapshot {
 		return this.#snapshot
+	}
+
+	get closed(): boolean {
+		return (
+			this.#machine.signal.aborted ||
+			this.#machine.state === 'closing' ||
+			this.#machine.state === 'closed'
+		)
 	}
 
 	// ── SYNCHRONOUS hot path — one Map.get or one random index + lazy materialize ──

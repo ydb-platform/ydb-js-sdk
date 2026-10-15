@@ -61,7 +61,7 @@
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/error": "^6.0.0",
-		"nice-grpc": "^2.1.13"
+		"@grpc/grpc-js": "^1.14.6"
 	},
 	"engines": {
 		"node": ">=20.19.0",

@@ -1,3 +1,4 @@
+import { Metadata, type ServiceError } from '@grpc/grpc-js'
 import { type MessageJsonType, toJson } from '@bufbuild/protobuf'
 import { type IssueMessage, IssueMessageSchema, StatusIds_StatusCode } from '@ydbjs/api/operation'
 
@@ -116,4 +117,16 @@ export class CommitError extends Error {
 				idempotent)
 		)
 	}
+}
+
+export function isServiceError(error: unknown): error is ServiceError {
+	return (
+		error instanceof Error &&
+		'code' in error &&
+		typeof error.code === 'number' &&
+		'details' in error &&
+		typeof error.details === 'string' &&
+		'metadata' in error &&
+		error.metadata instanceof Metadata
+	)
 }

@@ -246,7 +246,9 @@ class MyCredentialsProvider extends CredentialsProvider {
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
 const discovery = driver.createClient(DiscoveryServiceDefinition)
-const endpoints = await discovery.listEndpoints({ database: driver.database })
+discovery.listEndpoints({ database: driver.database }, (error, response) => {
+  console.log(error ?? response)
+})
 ```
 
 См. также «Расширенные темы → Низкоуровневые клиенты (driver)».

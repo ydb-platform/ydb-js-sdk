@@ -107,6 +107,8 @@ q.on('retry', (ctx) => console.log('Retrying:', ctx))
 await q
 ```
 
+The `metadata` event receives trailing `Metadata` from `@grpc/grpc-js`; `metadata.get(key)` returns an array of values.
+
 ### Error Handling
 
 ```ts

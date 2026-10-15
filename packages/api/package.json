@@ -101,6 +101,10 @@
 		"./value": {
 			"development": "./src/value.ts",
 			"default": "./dist/value.js"
+		},
+		"./client": {
+			"development": "./src/client.ts",
+			"default": "./dist/client.js"
 		}
 	},
 	"publishConfig": {
@@ -110,13 +114,12 @@
 	"scripts": {
 		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
 		"clean": "rm -rf dist",
-		"build": "tsc",
+		"build": "tsc && tsc -p type-tests",
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.12.0",
-		"@grpc/grpc-js": "^1.14.0",
-		"nice-grpc": "^2.1.13"
+		"@grpc/grpc-js": "^1.14.6"
 	},
 	"devDependencies": {
 		"@bufbuild/buf": "^1.61.0",

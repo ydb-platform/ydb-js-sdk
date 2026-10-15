@@ -41,27 +41,46 @@ const PESSIMIZING_CODES: ReadonlySet<number> = new Set<number>([
  * version must be kept in lockstep with @ydbjs/core.
  */
 export class BalancedChannel implements Channel {
-	#pool: EndpointPool
+	#pool: EndpointPool | undefined
+	#connection: Connection | undefined
+	#closed = false
 	#hooks: DriverHooks
 	#nodeId: bigint | undefined
 	// Hard routing: every RPC goes to #nodeId or fails (never substitutes). Used
 	// for direct topic read/write, where landing on the wrong node is incorrect.
 	#hard: boolean
 
-	constructor(pool: EndpointPool, hooks?: DriverHooks, nodeId?: bigint, hard = false) {
-		this.#pool = pool
+	constructor(
+		source: EndpointPool | Connection,
+		hooks?: DriverHooks,
+		nodeId?: bigint,
+		hard = false
+	) {
+		if ('channel' in source) {
+			this.#connection = source
+		} else {
+			this.#pool = source
+		}
 		this.#hooks = hooks || {}
 		this.#nodeId = nodeId
 		this.#hard = hard
 	}
 
 	createCall(...args: Parameters<Channel['createCall']>): ReturnType<Channel['createCall']> {
+		if (this.#closed || this.#pool?.closed) {
+			throw new Error('Client is closed')
+		}
+
+		if (this.#connection) {
+			return this.#connection.channel.createCall(...args)
+		}
+
 		let [method, deadline, host, parentCall, propagateFlags] = args
 
 		let conn =
 			this.#hard && this.#nodeId !== undefined
-				? this.#pool.acquireNode(this.#nodeId, { hard: true })
-				: this.#pool.acquire(this.#nodeId)
+				? this.#pool!.acquireNode(this.#nodeId, { hard: true })
+				: this.#pool!.acquire(this.#nodeId)
 
 		// The onCall hook (and its ALS restore + start timestamp) is the only reason
 		// to snapshot the async context or read the clock — skip all three when no
@@ -77,20 +96,20 @@ export class BalancedChannel implements Channel {
 
 		let call = conn.channel.createCall(method, deadline, host, parentCall, propagateFlags)
 		// Count the RPC as in-flight so a graceful close can wait for it to drain.
-		this.#pool.callStarted(conn.endpoint.nodeId)
+		this.#pool!.callStarted(conn.endpoint.nodeId)
 
 		return this.#wrapCall(call, conn, start, restoreContext, onComplete)
 	}
 
 	// ── Channel interface — pool-level implementations ─────────────────────────
 
-	/** No-op: pool lifecycle is owned by Driver, not by individual clients. */
+	/** Closing a client must not close channels shared with other clients. */
 	close(): void {
-		// intentional no-op
+		this.#closed = true
 	}
 
 	getTarget(): string {
-		return 'ydb-balanced-channel'
+		return this.#connection?.channel.getTarget() ?? 'ydb-balanced-channel'
 	}
 
 	/**
@@ -99,8 +118,16 @@ export class BalancedChannel implements Channel {
 	 * "the pool knows of any endpoint" (byNodeId also holds retired/pinned refs
 	 * that balanced selection can never return).
 	 */
-	getConnectivityState(_tryToConnect: boolean): connectivityState {
-		let snapshot = this.#pool.snapshot
+	getConnectivityState(tryToConnect: boolean): connectivityState {
+		if (this.#closed || this.#pool?.closed) {
+			return connectivityState.SHUTDOWN
+		}
+
+		if (this.#connection) {
+			return this.#connection.channel.getConnectivityState(tryToConnect)
+		}
+
+		let snapshot = this.#pool!.snapshot
 
 		// Hard routing: the exact node or nothing.
 		if (this.#hard && this.#nodeId !== undefined) {
@@ -128,14 +155,43 @@ export class BalancedChannel implements Channel {
 	}
 
 	watchConnectivityState(
-		_currentState: connectivityState,
-		_deadline: Date | number,
+		currentState: connectivityState,
+		deadline: Date | number,
 		callback: (error?: Error) => void
 	): void {
-		process.nextTick(callback)
+		if (this.getConnectivityState(false) === connectivityState.SHUTDOWN) {
+			throw new Error('Client is closed')
+		}
+
+		let check = () => {
+			let state = this.getConnectivityState(false)
+			if (state === connectivityState.SHUTDOWN) {
+				callback(new Error('Client is closed'))
+				return
+			}
+
+			if (state !== currentState) {
+				callback()
+				return
+			}
+
+			let remaining = Number(deadline) - Date.now()
+			if (remaining <= 0) {
+				callback(new Error('Deadline passed without connectivity state change'))
+				return
+			}
+
+			setTimeout(check, Math.min(25, remaining)).unref()
+		}
+
+		setImmediate(check)
 	}
 
 	getChannelzRef(): ReturnType<Channel['getChannelzRef']> {
+		if (this.#connection) {
+			return this.#connection.channel.getChannelzRef()
+		}
+
 		return {
 			id: 0,
 			kind: 'channel',
@@ -150,7 +206,7 @@ export class BalancedChannel implements Channel {
 		restoreContext: (<T>(fn: (...args: unknown[]) => T) => T) | null,
 		onComplete: ((event: CallCompleteEvent) => void) | null
 	): ReturnType<Channel['createCall']> {
-		let pool = this.#pool
+		let pool = this.#pool!
 
 		return new Proxy(call, {
 			get(target, prop, receiver) {
@@ -204,7 +260,7 @@ export class BalancedChannel implements Channel {
 	}
 
 	#buildStartEvent(conn: Connection, method: string): CallStartEvent {
-		let snapshot = this.#pool.snapshot
+		let snapshot = this.#pool!.snapshot
 		return {
 			method,
 			endpoint: conn.endpoint,

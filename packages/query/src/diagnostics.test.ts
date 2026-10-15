@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'vitest'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
-import { createServer } from 'nice-grpc'
+import { createTestServer } from '../../../tests/grpc-server.js'
 import { create } from '@bufbuild/protobuf'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -20,7 +20,7 @@ async function startServer() {
 	let nextId = 0
 	let attachCtrls = new Map<string, AbortController>()
 
-	let server = createServer()
+	let server = createTestServer()
 	server.add(
 		{
 			createSession: QueryServiceDefinition.createSession,

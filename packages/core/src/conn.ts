@@ -1,11 +1,6 @@
 import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
 import { loggers } from '@ydbjs/debug'
-import {
-	type Channel,
-	type ChannelCredentials,
-	type ChannelOptions,
-	createChannel,
-} from 'nice-grpc'
+import { Channel, type ChannelCredentials, type ChannelOptions } from '@grpc/grpc-js'
 
 import type { EndpointInfo } from './hooks.js'
 
@@ -48,7 +43,7 @@ export class GrpcConnection implements Connection {
 
 		dbg.log('create channel to node id=%d address=%s', this.endpoint.nodeId, address)
 
-		this.#channel = createChannel(address, channelCredentials, {
+		this.#channel = new Channel(address, channelCredentials, {
 			...channelOptions,
 			// Required when the TLS certificate CN doesn't match the gRPC endpoint
 			// address (common in YDB deployments behind a load balancer).

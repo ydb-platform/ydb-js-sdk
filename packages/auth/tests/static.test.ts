@@ -96,7 +96,7 @@ test('returns cached token when fresh (outside soft expiry threshold)', async ()
 	expect(token1).toBeDefined()
 
 	// Move time forward but keep token fresh
-	vi.useFakeTimers()
+	vi.useFakeTimers({ toFake: ['Date'] })
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + 30 * 60 * 1000)) // 30 minutes
 
 	let token2 = await provider.getToken()
@@ -115,7 +115,7 @@ test('returns cached token and fires a background refresh in the soft expiry zon
 	let baseline = refreshes.count // initial login completed
 
 	// Move time into the soft expiry zone (120 seconds before expiry)
-	vi.useFakeTimers()
+	vi.useFakeTimers({ toFake: ['Date'] })
 	let timeToSoftExpiry = (12 * 60 * 60 - SOFT_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToSoftExpiry))
 
@@ -124,11 +124,8 @@ test('returns cached token and fires a background refresh in the soft expiry zon
 	let token2 = await provider.getToken()
 	expect(token2).toBe(token1)
 
-	// Wait for the fire-and-forget background refresh to land.
 	vi.useRealTimers()
-	await new Promise((resolve) => setTimeout(resolve, 100))
-
-	expect(refreshes.count - baseline).toBeGreaterThanOrEqual(1)
+	await expect.poll(() => refreshes.count - baseline).toBeGreaterThanOrEqual(1)
 })
 
 test('blocks getToken on a fresh network refresh past the hard expiry threshold', async () => {
@@ -143,7 +140,7 @@ test('blocks getToken on a fresh network refresh past the hard expiry threshold'
 	let baseline = refreshes.count // initial login completed
 
 	// Move time to the hard expiry threshold (30 seconds before expiry).
-	vi.useFakeTimers()
+	vi.useFakeTimers({ toFake: ['Date'] })
 	let timeToHardExpiry = (12 * 60 * 60 - HARD_EXPIRY_THRESHOLD_SECONDS) * 1000
 	vi.setSystemTime(new Date(vi.getRealSystemTime() + timeToHardExpiry))
 
@@ -164,7 +161,7 @@ test('escalates from background to synchronous refresh across soft → hard zone
 	await provider.getToken()
 	let baseline = refreshes.count // initial login completed
 
-	vi.useFakeTimers()
+	vi.useFakeTimers({ toFake: ['Date'] })
 
 	// Soft zone: getToken returns the cached value immediately. A background
 	// refresh fires off but is not awaited by the caller — racing the assert

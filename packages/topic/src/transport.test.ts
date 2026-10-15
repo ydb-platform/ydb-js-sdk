@@ -170,6 +170,36 @@ for (let [name, make] of Object.entries(transports)) {
 		expect(createClient).not.toHaveBeenCalled()
 	})
 
+	test(`${name} reports a failed request stream and cancels the call`, async () => {
+		using fixture = make()
+		let failure = new Error('Outgoing stream failed')
+		let signal: AbortSignal | undefined
+		let failedStream = function (
+			_input: AsyncIterable<unknown>,
+			options?: { signal?: AbortSignal }
+		): AsyncIterable<never> {
+			signal = options?.signal
+
+			return {
+				[Symbol.asyncIterator]() {
+					return { next: () => Promise.reject(failure) }
+				},
+			}
+		}
+		vi.spyOn(fixture.driver, 'createClient').mockReturnValue({
+			streamRead: failedStream,
+			streamWrite: failedStream,
+		} as never)
+		let events = fixture.transport.events[Symbol.asyncIterator]()
+
+		fixture.connect()
+		let disconnected = await events.next()
+
+		expect(disconnected.value).toMatchObject({ type: 'transport.stream.disconnected' })
+		expect(disconnected.value?.error).toBe(failure)
+		expect(signal?.aborted).toBe(true)
+	})
+
 	test(`${name} does not open a stream after close interrupts driver readiness`, async () => {
 		using fixture = make()
 		let ready = Promise.withResolvers<void>()

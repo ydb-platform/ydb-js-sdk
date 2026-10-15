@@ -2,7 +2,7 @@ import { create } from '@bufbuild/protobuf'
 import { connectivityState } from '@grpc/grpc-js'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { ListEndpointsResultSchema } from '@ydbjs/api/discovery'
-import { ClientError, Status } from 'nice-grpc'
+import { Metadata, status as Status } from '@grpc/grpc-js'
 import { expect, test } from 'vitest'
 
 import { EndpointsUnavailableError } from '../errors.ts'
@@ -497,7 +497,13 @@ test('idle_sweep reaps a retired channel idle past the grace window', async (tc)
 test('a retryable initial failure recovers on the next successful round', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	// A client-side UNAVAILABLE is retryable for an idempotent call (discovery is).
-	discovery.fail(new ClientError('/Discovery/ListEndpoints', Status.UNAVAILABLE, 'transient'))
+	discovery.fail(
+		Object.assign(new Error('transient'), {
+			code: Status.UNAVAILABLE,
+			details: 'transient',
+			metadata: new Metadata(),
+		})
+	)
 	discovery.push(discoveryResult([endpoint(1)])) // backoff retry succeeds
 	await using h = makeEndpointPool({ discovery })
 

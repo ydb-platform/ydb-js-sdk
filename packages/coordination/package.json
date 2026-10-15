@@ -55,7 +55,7 @@
 		"@ydbjs/fsm": "^6.1.1",
 		"@ydbjs/retry": "^6.2.0",
 		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.13"
+		"@grpc/grpc-js": "^1.14.6"
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"

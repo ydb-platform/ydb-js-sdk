@@ -1,16 +1,15 @@
-import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
 import type { TopicMessage } from '../src/message.ts'
-import { createTopicReader, createTopicTxReader } from '../src/reader/index.ts'
-import type { TopicTxReader } from '../src/reader/index.ts'
+import { type TopicTxReader, createTopicReader, createTopicTxReader } from '../src/reader/index.ts'
 import { createTopicTxWriter, createTopicWriter } from '../src/writer/index.ts'
 
 let driver = new Driver(inject('connectionString'), {

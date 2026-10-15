@@ -377,7 +377,7 @@ export class SessionTransport implements Disposable {
 					dispatch({ type: 'transport.stream.message', response })
 				}
 			} catch (error) {
-				if (!isAbortError(error)) {
+				if (!ac.signal.aborted && !isAbortError(error)) {
 					dispatch({ type: 'transport.stream.error', error })
 				}
 			} finally {

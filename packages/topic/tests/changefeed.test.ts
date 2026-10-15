@@ -1,12 +1,11 @@
+import { AlterTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { AlterTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 
-import { createTopicReader } from '../src/reader/index.ts'
-import type { TopicReader } from '../src/reader/index.ts'
+import { type TopicReader, createTopicReader } from '../src/reader/index.ts'
 
 // Table changefeeds (CDC) are served through the Topic read protocol: ALTER TABLE ...
 // ADD CHANGEFEED materializes a topic at `<table>/<feed>`, consumers are attached to

@@ -1,12 +1,12 @@
-import { subscribe, unsubscribe } from 'node:diagnostics_channel'
-import { setTimeout as delay } from 'node:timers/promises'
-
-import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { subscribe, unsubscribe } from 'node:diagnostics_channel'
+import { setTimeout as delay } from 'node:timers/promises'
+
+import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 

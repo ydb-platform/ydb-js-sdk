@@ -23,7 +23,7 @@ OpenTelemetry instrumentation for the YDB JavaScript SDK. Subscribes to
   Compatible with `registerInstrumentations()` from
   `@opentelemetry/instrumentation`.
 - W3C trace context propagation — `register()` installs a gRPC client
-  middleware that carries `traceparent` / `tracestate` (and any other
+  interceptor that carries `traceparent` / `tracestate` (and any other
   propagator registered via `propagation.setGlobalPropagator`) into
   outgoing YDB calls. See [Propagation to YDB](#propagation-to-ydb) below.
 
@@ -366,21 +366,21 @@ state.
 
 ## Propagation to YDB
 
-`register()` installs a gRPC client middleware into `@ydbjs/core` (via
-`addClientMiddleware` — a small public hook exported from `@ydbjs/core`).
+`register()` installs a gRPC client interceptor into `@ydbjs/core` (via
+`addClientInterceptor` — a small public hook exported from `@ydbjs/core`).
 On every outgoing RPC it calls
 `propagation.inject(context.active(), metadata, …)`, serialising the active
 OTel context into gRPC metadata using whichever propagator is globally
 registered. With no SDK registered the global propagator is a no-op.
 
-**Order of operations matters.** Drivers compose the middleware chain
+**Order of operations matters.** Drivers compose the interceptor chain
 **once** at construction time, so `register()` must run **before**
 `new Driver(...)`. Matches OTel's `NodeSDK.start()` pattern.
 
 ```ts
 sdk.start()                 // 1. OTel SDK
 register({ /* … */ })       // 2. @ydbjs/telemetry
-let driver = new Driver(…)  // 3. YDB driver — picks up the middleware
+let driver = new Driver(…)  // 3. YDB driver — picks up the interceptor
 ```
 
 Default propagator is W3C `traceparent` / `tracestate`. Override with any
@@ -408,7 +408,7 @@ await tracer.startActiveSpan('checkout', async (span) => {
   try {
     let rows = await sql`SELECT * FROM orders WHERE id = ${orderId}`
     // Inside `startActiveSpan` callback, `context.active()` carries the new
-    // span — the propagator middleware emits a matching `traceparent`.
+    // span — the propagator interceptor emits a matching `traceparent`.
   } finally {
     span.end()
   }
