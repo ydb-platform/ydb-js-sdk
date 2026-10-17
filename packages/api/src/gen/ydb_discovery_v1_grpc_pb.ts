@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { ListEndpointsRequestSchema, ListEndpointsResponseSchema, WhoAmIRequestSchema, WhoAmIResponseSchema } from "./protos/ydb_discovery_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Discovery.V1.DiscoveryService

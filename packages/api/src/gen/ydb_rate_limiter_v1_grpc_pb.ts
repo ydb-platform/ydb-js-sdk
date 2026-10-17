@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AcquireResourceRequestSchema, AcquireResourceResponseSchema, AlterResourceRequestSchema, AlterResourceResponseSchema, CreateResourceRequestSchema, CreateResourceResponseSchema, DescribeResourceRequestSchema, DescribeResourceResponseSchema, DropResourceRequestSchema, DropResourceResponseSchema, ListResourcesRequestSchema, ListResourcesResponseSchema } from "./protos/ydb_rate_limiter_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * Control plane API

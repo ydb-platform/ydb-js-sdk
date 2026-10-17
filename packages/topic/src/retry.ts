@@ -1,11 +1,15 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError, isServiceError } from '@ydbjs/error'
 import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
-import { status as Status } from '@grpc/grpc-js'
+import { MessageSizeError, Status } from '@ydbjs/grpc'
 
 export function isRetryableTopicError(error: unknown, retryOnSchemeError = false): boolean {
 	if (error === undefined || error === null) {
 		return true
+	}
+
+	if (error instanceof MessageSizeError) {
+		return false
 	}
 
 	// Changing streams cannot make an oversized frame fit; quota exhaustion can recover.

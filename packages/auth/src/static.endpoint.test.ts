@@ -1,47 +1,125 @@
-import type { SecureContextOptions } from 'node:tls'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 
-import { Channel, type ChannelCredentials, type ChannelOptions } from '@grpc/grpc-js'
+import { create } from '@bufbuild/protobuf'
+import { anyPack } from '@bufbuild/protobuf/wkt'
+import { ServerCredentials } from '@grpc/grpc-js'
+import { AuthServiceDefinition, LoginResponseSchema, LoginResultSchema } from '@ydbjs/api/auth'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { expect, test } from 'vitest'
 
+import { createTestServer } from '../../../tests/grpc-server.ts'
 import { StaticCredentialsProvider } from './static.ts'
 
-test.for<{ endpoint: string; secure?: SecureContextOptions; target: string }>([
-	{ endpoint: 'http://localhost:80', target: 'localhost:80' },
-	{ endpoint: 'grpc://localhost', target: 'localhost:80' },
-	{ endpoint: 'grpcs://localhost', secure: {}, target: 'localhost:443' },
-	{ endpoint: 'grpc://localhost:2136', target: 'localhost:2136' },
-	{ endpoint: 'unix:///tmp/ydb-auth.sock', target: 'unix:///tmp/ydb-auth.sock' },
-])(
-	'uses the configured authentication dial target for $endpoint',
-	({ endpoint, secure, target }) => {
-		let addresses: string[] = []
-		using channels = {
-			values: [] as Channel[],
-			[Symbol.dispose]() {
-				for (let channel of this.values) {
-					channel.close()
-				}
+function loginServer() {
+	let requests: Array<{ user: string; password: string }> = []
+	let server = createTestServer()
+	server.add(
+		{ login: AuthServiceDefinition.login },
+		{
+			async login(request) {
+				requests.push({ user: request.user, password: request.password })
+				return create(LoginResponseSchema, {
+					operation: {
+						ready: true,
+						status: StatusIds_StatusCode.SUCCESS,
+						result: anyPack(
+							LoginResultSchema,
+							create(LoginResultSchema, { token: 'endpoint-token' })
+						),
+					},
+				})
 			},
 		}
+	)
+	return { server, requests }
+}
 
-		void new StaticCredentialsProvider(
-			{ username: 'test', password: 'test' },
-			endpoint,
-			secure,
-			{
-				channelFactoryOverride(
-					address: string,
-					credentials: ChannelCredentials,
-					options: ChannelOptions
-				) {
-					addresses.push(address)
-					let channel = new Channel(address, credentials, options)
-					channels.values.push(channel)
-					return channel
-				},
-			}
+test.for(['http', 'grpc'])('authenticates at the configured %s endpoint', async (protocol, tc) => {
+	let { server, requests } = loginServer()
+	await using peer = server
+	let port = await peer.listen('127.0.0.1:0')
+	let provider = new StaticCredentialsProvider(
+		{ username: 'test-user', password: 'test-password' },
+		`${protocol}://127.0.0.1:${port}`
+	)
+
+	expect(await provider.getToken(true, tc.signal)).toBe('endpoint-token')
+	expect(requests).toEqual([{ user: 'test-user', password: 'test-password' }])
+})
+
+test('authenticates through the configured Unix socket', async (tc) => {
+	await using files = {
+		path: await mkdtemp(join(tmpdir(), 'ydb-auth-socket-')),
+		[Symbol.asyncDispose]() {
+			return rm(this.path, { recursive: true, force: true })
+		},
+	}
+	let { server, requests } = loginServer()
+	await using peer = server
+	let endpoint = `unix://${join(files.path, 'auth.sock')}`
+	await peer.listen(endpoint)
+	let provider = new StaticCredentialsProvider(
+		{ username: 'test-user', password: 'test-password' },
+		endpoint
+	)
+
+	expect(await provider.getToken(true, tc.signal)).toBe('endpoint-token')
+	expect(requests).toHaveLength(1)
+})
+
+test.for(['grpcs', 'grpc'])(
+	'authenticates over TLS at a %s endpoint with explicit secure options',
+	async (protocol, tc) => {
+		await using files = {
+			path: await mkdtemp(join(tmpdir(), 'ydb-auth-tls-')),
+			[Symbol.asyncDispose]() {
+				return rm(this.path, { recursive: true, force: true })
+			},
+		}
+		let key = join(files.path, 'key.pem')
+		let certificate = join(files.path, 'cert.pem')
+		await promisify(execFile)(
+			'openssl',
+			[
+				'req',
+				'-x509',
+				'-newkey',
+				'rsa:2048',
+				'-nodes',
+				'-keyout',
+				key,
+				'-out',
+				certificate,
+				'-subj',
+				'/CN=ydb.test',
+				'-addext',
+				'subjectAltName=DNS:ydb.test',
+				'-days',
+				'1',
+			],
+			{ signal: tc.signal }
+		)
+		let ca = await readFile(certificate)
+		let { server, requests } = loginServer()
+		await using peer = server
+		let port = await peer.listen(
+			'127.0.0.1:0',
+			ServerCredentials.createSsl(null, [
+				{ private_key: await readFile(key), cert_chain: ca },
+			])
+		)
+		let provider = new StaticCredentialsProvider(
+			{ username: 'test-user', password: 'test-password' },
+			`${protocol}://127.0.0.1:${port}`,
+			{ ca },
+			{ tls: { servername: 'ydb.test' } }
 		)
 
-		expect(addresses).toEqual([target])
+		expect(await provider.getToken(true, tc.signal)).toBe('endpoint-token')
+		expect(requests).toHaveLength(1)
 	}
 )

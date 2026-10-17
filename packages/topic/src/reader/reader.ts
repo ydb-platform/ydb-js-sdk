@@ -55,7 +55,9 @@ let dbg = loggers.topic.extend('reader')
 // Read credit bounds encoded bytes. Keep the grant alive until its buffered
 // messages are delivered, including after a clean close.
 type Chunk = {
-	messages: Array<ReaderMessage & { session: TopicPartitionSession }>
+	groups: Array<{ session: TopicPartitionSession; messages: Array<ReaderMessage | undefined> }>
+	groupIndex: number
+	messageIndex: number
 	releaseBytes: bigint
 }
 type ReadBatch = { messages: TopicMessage[]; releaseBytes: bigint }
@@ -365,8 +367,8 @@ export class TopicReader implements AsyncDisposable, Disposable {
 				// `batchWindowMs`, block for one chunk. Starts from the carry-over of a
 				// previously aborted call — those messages were dequeued but never
 				// delivered.
-				let chunks: Chunk[] = this.#takeCarry()
-				let batchLength = chunks.reduce((count, chunk) => count + chunk.messages.length, 0)
+				let batchLength = this.#filterCarry()
+				let chunks = this.#carry
 				let closed = false
 
 				{
@@ -408,7 +410,7 @@ export class TopicReader implements AsyncDisposable, Disposable {
 
 						if (this.#lastError !== undefined) {
 							if (!result.done) {
-								result.value.messages.length = 0
+								result.value.groups.length = 0
 							}
 
 							throw this.#lastError
@@ -419,10 +421,10 @@ export class TopicReader implements AsyncDisposable, Disposable {
 							break
 						}
 
-						let chunk = this.#filterChunk(result.value)
-						if (chunk) {
-							chunks.push(chunk)
-							batchLength += chunk.messages.length
+						let messageCount = this.#filterChunk(result.value)
+						if (messageCount > 0) {
+							chunks.push(result.value)
+							batchLength += messageCount
 						}
 
 						if (
@@ -488,22 +490,40 @@ export class TopicReader implements AsyncDisposable, Disposable {
 		let remaining = limit ?? Infinity
 		while (chunks.length > 0 && remaining > 0) {
 			let chunk = chunks[0]!
-			let count = Math.min(chunk.messages.length, remaining)
-			for (let message of chunk.messages.splice(0, count)) {
-				if (!message.session.isStopped) {
-					try {
-						messages.push(toTopicMessage(this.#codecs, message.session, message))
-					} catch (error) {
-						this.#lastError ??= error
-						this.#txReadOffsets?.clear()
-						this.destroy(error)
-						throw error
-					}
-					remaining--
+			while (chunk.groupIndex < chunk.groups.length) {
+				let group = chunk.groups[chunk.groupIndex]!
+				if (group.session.isStopped) {
+					group.messages.length = 0
+				}
+
+				if (chunk.messageIndex >= group.messages.length) {
+					group.messages.length = 0
+					chunk.groupIndex++
+					chunk.messageIndex = 0
+					continue
+				}
+				if (remaining === 0) {
+					break
+				}
+
+				let message = group.messages[chunk.messageIndex]!
+				group.messages[chunk.messageIndex++] = undefined
+				try {
+					messages.push(toTopicMessage(this.#codecs, group.session, message))
+				} catch (error) {
+					this.#lastError ??= error
+					this.#txReadOffsets?.clear()
+					this.destroy(error)
+					throw error
+				}
+				remaining--
+				if (this.#lastError !== undefined) {
+					throw this.#lastError
 				}
 			}
 
-			if (chunk.messages.length === 0) {
+			if (chunk.groupIndex >= chunk.groups.length) {
+				chunk.groups.length = 0
 				releaseBytes += chunk.releaseBytes
 				chunks.shift()
 			}
@@ -514,28 +534,39 @@ export class TopicReader implements AsyncDisposable, Disposable {
 
 	// A force-stopped partition is re-read by its new owner. If filtering consumes the
 	// whole response, there is no user-visible message to gate its credit on.
-	#filterChunk(chunk: Chunk): Chunk | undefined {
-		chunk.messages = chunk.messages.filter((message) => !message.session.isStopped)
-		if (chunk.messages.length === 0) {
+	#filterChunk(chunk: Chunk): number {
+		let messageCount = 0
+		for (let i = chunk.groupIndex; i < chunk.groups.length; i++) {
+			let group = chunk.groups[i]!
+			if (group.session.isStopped) {
+				group.messages.length = 0
+			} else {
+				messageCount +=
+					group.messages.length - (i === chunk.groupIndex ? chunk.messageIndex : 0)
+			}
+		}
+		if (messageCount === 0) {
+			chunk.groups.length = 0
 			this.#releaseReadBytes(chunk.releaseBytes)
-			return undefined
 		}
 
-		return chunk
+		return messageCount
 	}
 
 	// A partition may have been lost between the aborted call and this one.
-	#takeCarry(): Chunk[] {
+	#filterCarry(): number {
+		let messageCount = 0
 		for (let i = 0; i < this.#carry.length; ) {
-			let filtered = this.#filterChunk(this.#carry[i]!)
-			if (filtered) {
-				this.#carry[i++] = filtered
+			let remaining = this.#filterChunk(this.#carry[i]!)
+			if (remaining > 0) {
+				messageCount += remaining
+				i++
 			} else {
 				this.#carry.splice(i, 1)
 			}
 		}
 
-		return this.#carry
+		return messageCount
 	}
 
 	#createCommitBatch(): CommitBatch {
@@ -650,16 +681,14 @@ export class TopicReader implements AsyncDisposable, Disposable {
 						break
 					}
 
-					let messages: Chunk['messages'] = []
-					for (let group of output.groups) {
-						for (let message of group.messages) {
-							messages.push({ ...message, session: group.session })
-						}
-					}
-
 					this.#bufferedBytes += output.releaseBytes
 					publishBufferChanged(this.#scope, this.#bufferedBytes)
-					this.#chunks.push({ messages, releaseBytes: output.releaseBytes })
+					this.#chunks.push({
+						groups: output.groups,
+						groupIndex: 0,
+						messageIndex: 0,
+						releaseBytes: output.releaseBytes,
+					})
 					break
 				}
 
@@ -809,7 +838,10 @@ export class TopicReader implements AsyncDisposable, Disposable {
 
 	#discardBuffers(): void {
 		this.#chunks.destroy()
-		for (let chunk of this.#carry) chunk.messages.length = 0
+		for (let chunk of this.#carry) {
+			for (let group of chunk.groups) group.messages.length = 0
+			chunk.groups.length = 0
+		}
 		this.#carry.length = 0
 		this.#codecs = defaultCodecMap
 		if (this.#bufferedBytes !== 0n) {

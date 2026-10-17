@@ -9,7 +9,7 @@ import {
 	ListEndpointsResultSchema,
 } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { status } from '@grpc/grpc-js'
+import { Status as status } from '@ydbjs/grpc'
 import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 

@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { CancelOperationRequestSchema, CancelOperationResponseSchema, ForgetOperationRequestSchema, ForgetOperationResponseSchema, GetOperationRequestSchema, GetOperationResponseSchema, ListOperationsRequestSchema, ListOperationsResponseSchema } from "./protos/ydb_operation_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Operation.V1.OperationService

@@ -111,7 +111,7 @@ let Client = grpc.makeGenericClientConstructor({ probe: {
 	path: '/memory.Proxy/Probe', requestStream: false, responseStream: false,
 	requestSerialize: value => Buffer.from(value), responseDeserialize: value => value.toString(),
 } })
-let client = new Client(url.host, url.protocol === 'grpcs:' ? grpc.credentials.createSsl() : grpc.credentials.createInsecure())
+let client = new Client(url.host, url.protocol === 'grpcs:' ? grpc.credentials.createSsl() : grpc.credentials.createInsecure(), { 'grpc.ssl_target_name_override': process.env.YDB_MEMORY_TLS_SERVERNAME })
 let probe = () => new Promise((resolve, reject) => client.probe('ping', (error, reply) => error ? reject(error) : resolve(reply)))
 async function run() {
 	try {

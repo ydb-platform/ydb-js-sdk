@@ -1,7 +1,8 @@
-type ShiftResolver<T> = (value: IteratorResult<T>) => void
-// The void parameter (rather than none) lets take()'s generic gate racer park in
-// #pendingResume and #pendingShift through one signature.
-type ResumeResolver = (value: void) => void
+type QueueFailure = { error: unknown }
+type ShiftResult<T> = IteratorResult<T> & { failure?: QueueFailure }
+type ShiftResolver<T> = (value: ShiftResult<T>) => void
+type ResumeCompletion = { failure: QueueFailure | null }
+type ResumeResolver = (completion: ResumeCompletion | undefined) => void
 
 type DequeueResult<T> = { hasValue: true; value: T } | { hasValue: false }
 
@@ -16,11 +17,12 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	#paused = false
 	#closed = false
 	#destroyed = false
+	#generation = 0
 
 	// Set by fail() so the iterator throws this error once the buffer drains,
 	// instead of ending silently. Lets a producer terminate the stream with a
 	// reason without wrapping the iterator (which would tax every happy-path item).
-	#failure: { error: unknown } | null = null
+	#failure: QueueFailure | null = null
 
 	#pendingShift: ShiftResolver<T>[] = []
 	#pendingResume: ResumeResolver[] = []
@@ -76,7 +78,7 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 
 		this.#closed = true
 		this.#paused = false
-		this.#resolvePendingResume()
+		this.#resolvePendingResume(this.getBufferSize() === 0)
 		this.#resolvePendingShift()
 		this.#resolvePendingDoneIfNeeded()
 	}
@@ -102,30 +104,33 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 		}
 
 		this.#destroyed = true
+		this.#failure = null
 		this.#closed = true
 		this.#paused = false
 		this.clearBuffer()
-		this.#resolvePendingResume()
+		this.#resolvePendingResume(true)
 		this.#resolvePendingDone()
 	}
 
 	reset(): void {
+		this.#generation += 1
 		this.#paused = false
 		this.#closed = false
 		this.#destroyed = false
 		this.#failure = null
 		this.clearBuffer()
-		this.#resolvePendingResume()
+		this.#resolvePendingResume(true)
 		this.#resolvePendingDone()
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<T> {
-		while (true) {
+		let generation = this.#generation
+		while (generation === this.#generation) {
 			// oxlint-disable-next-line no-await-in-loop
-			let next: IteratorResult<T> | undefined = await this.#next()
+			let next: ShiftResult<T> | undefined = await this.#next(generation)
 			if (next.done) {
-				if (this.#failure) {
-					throw this.#failure.error
+				if (next.failure) {
+					throw next.failure.error
 				}
 
 				return
@@ -145,16 +150,23 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	// thus swallow) an item. For a bounded wait compose the deadline at the call site:
 	// linkSignals(signal, AbortSignal.timeout(ms)).
 	async take(signal?: AbortSignal): Promise<IteratorResult<T>> {
+		let generation = this.#generation
 		for (;;) {
 			signal?.throwIfAborted()
-			if (this.#destroyed) {
+			if (this.#destroyed || generation !== this.#generation) {
 				return { value: undefined as never, done: true }
 			}
 
 			if (this.#paused) {
 				// Wait for resume(), then re-evaluate from the top.
 				// oxlint-disable-next-line no-await-in-loop
-				await this.#parkCancellable(this.#pendingResume, signal)
+				let completion = await this.#parkCancellable(this.#pendingResume, signal)
+				if (completion !== undefined) {
+					if (completion.failure) {
+						throw completion.failure.error
+					}
+					return { value: undefined as never, done: true }
+				}
 				continue
 			}
 
@@ -171,10 +183,8 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 
 			// oxlint-disable-next-line no-await-in-loop
 			let result = await this.#parkCancellable(this.#pendingShift, signal)
-			// close()/destroy() settles parked waiters with done — mirror the
-			// iterator's drain-then-throw before reporting the end.
-			if (result.done && this.#failure) {
-				throw this.#failure.error
+			if (result.done && result.failure) {
+				throw result.failure.error
 			}
 			return result
 		}
@@ -212,14 +222,18 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 		this.destroy()
 	}
 
-	async #next(): Promise<IteratorResult<T>> {
-		if (this.#destroyed) {
+	async #next(generation: number): Promise<ShiftResult<T>> {
+		if (this.#destroyed || generation !== this.#generation) {
 			return { value: undefined as never, done: true }
 		}
 
-		if (this.#paused) {
-			await this.#waitForResume()
-			if (this.#destroyed) {
+		while (this.#paused) {
+			// oxlint-disable-next-line no-await-in-loop
+			let completion = await this.#waitForResume()
+			if (completion?.failure) {
+				return { value: undefined as never, done: true, failure: completion.failure }
+			}
+			if (completion !== undefined || this.#destroyed || generation !== this.#generation) {
 				return { value: undefined as never, done: true }
 			}
 		}
@@ -230,28 +244,35 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 		}
 
 		if (this.#closed || this.#destroyed) {
-			return { value: undefined as never, done: true }
+			return this.#failure
+				? { value: undefined as never, done: true, failure: this.#failure }
+				: { value: undefined as never, done: true }
 		}
 
-		return new Promise<IteratorResult<T>>((resolve) => {
+		return new Promise<ShiftResult<T>>((resolve) => {
 			this.#pendingShift.push(resolve)
 		})
 	}
 
-	#waitForResume(): Promise<void> {
+	#waitForResume(): Promise<ResumeCompletion | undefined> {
 		if (!this.#paused || this.#destroyed) {
-			return Promise.resolve()
+			return Promise.resolve(undefined)
 		}
 
-		return new Promise<void>((resolve) => {
+		return new Promise<ResumeCompletion | undefined>((resolve) => {
 			this.#pendingResume.push(resolve)
 		})
 	}
 
-	#resolvePendingResume(): void {
+	#resolvePendingResume(done = false): void {
+		if (this.#pendingResume.length === 0) {
+			return
+		}
+		// Capture terminal completion before resumed waiters can observe a later abort.
+		let completion = done ? { failure: this.#failure } : undefined
 		while (this.#pendingResume.length > 0) {
 			let resolve = this.#pendingResume.shift()!
-			resolve()
+			resolve(completion)
 		}
 	}
 
@@ -280,7 +301,11 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	#resolvePendingDone(): void {
 		while (this.#pendingShift.length > 0) {
 			let resolve = this.#pendingShift.shift()!
-			resolve({ value: undefined as never, done: true })
+			resolve(
+				this.#failure
+					? { value: undefined as never, done: true, failure: this.#failure }
+					: { value: undefined as never, done: true }
+			)
 		}
 	}
 

@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { createServer } from 'node:http'
-import { type Socket, createConnection } from 'node:net'
+import { type Socket, createConnection, createServer } from 'node:net'
 
 import type { MemoryReport, MemorySample } from './memory-worker.ts'
 
@@ -23,13 +22,8 @@ export async function runMemoryProfile(
 	let disconnect = () => {
 		for (let socket of sockets) socket.destroy()
 	}
-	let server = createServer()
-	server.on('connection', track)
-	server.on('connect', (request, incoming, head) => {
-		if (request.url !== `${upstream.hostname}:${upstreamPort}`) {
-			incoming.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
-			return
-		}
+	let server = createServer((incoming) => {
+		track(incoming)
 		let outgoing = createConnection({
 			host: upstream.hostname,
 			port: upstreamPort,
@@ -40,8 +34,6 @@ export async function runMemoryProfile(
 		incoming.once('close', () => outgoing.destroy())
 		outgoing.once('close', () => incoming.destroy())
 		outgoing.once('connect', () => {
-			incoming.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-			if (head.length) outgoing.write(head)
 			incoming.pipe(outgoing).pipe(incoming)
 		})
 	})
@@ -58,6 +50,9 @@ export async function runMemoryProfile(
 	}
 	let address = proxy.server.address()
 	if (!address || typeof address === 'string') throw new Error('Missing proxy address')
+	let proxied = new URL(connectionString)
+	proxied.hostname = '127.0.0.1'
+	proxied.port = String(address.port)
 	let reportFile = reportPath
 	let child = fork(workerPath, [], {
 		execPath: process.env['YDB_MEMORY_RUNTIME'] || process.execPath,
@@ -67,11 +62,8 @@ export async function runMemoryProfile(
 		env: {
 			...process.env,
 			DEBUG: '',
-			YDB_CONNECTION_STRING: connectionString,
-			// CONNECT preserves the server hostname for TLS identity verification.
-			grpc_proxy: `http://127.0.0.1:${address.port}`,
-			no_grpc_proxy: '',
-			no_proxy: '',
+			YDB_CONNECTION_STRING: proxied.href,
+			YDB_MEMORY_TLS_SERVERNAME: upstream.hostname,
 			MEMORY_REPORT_FILE: reportFile,
 		},
 	})

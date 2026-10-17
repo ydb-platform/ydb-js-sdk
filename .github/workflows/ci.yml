@@ -34,6 +34,105 @@ jobs:
       - run: npm run attw
       - run: npm run check:surface --workspace=@ydbjs/drizzle-adapter
 
+  fsm-benchmark:
+    name: FSM benchmark (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: fsm-benchmark-${{ github.event_name }}-${{ github.ref }}-${{ matrix.node-version }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Measure isolated FSM paths
+        shell: bash
+        run: npm run bench:fsm -- --outputJson "$RUNNER_TEMP/fsm-benchmark.json" | tee "$RUNNER_TEMP/fsm-benchmark.log"
+      - name: Publish scaling summary
+        if: always()
+        run: node scripts/report-fsm-bench.mjs "$RUNNER_TEMP/fsm-benchmark.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fsm-benchmark-node-${{ matrix.node-version }}
+          path: |
+            ${{ runner.temp }}/fsm-benchmark.json
+            ${{ runner.temp }}/fsm-benchmark.log
+          if-no-files-found: error
+          retention-days: 30
+
+  grpc-runtimes:
+    name: gRPC (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: grpc-${{ github.event_name }}-${{ github.ref }}-${{ matrix.id }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: node22, runtime: node, version: '22', node: '22' }
+          - { id: node24, runtime: node, version: '24', node: '24' }
+          - { id: node26, runtime: node, version: '26', node: '26' }
+          - { id: bun14, runtime: bun, version: '1.4.3', node: '24' }
+    env:
+      GRPC_TEST_RUNTIME: ${{ matrix.runtime }}
+      GRPC_TEST_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Preserve independent Node peer
+        run: echo "GRPC_TEST_NODE=$(node -p 'process.execPath')" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup
+        with:
+          node-version: ${{ matrix.node }}
+          bun-version: '1.4.3'
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.5'
+          cache-dependency-path: packages/grpc/tests/interop-go/go.sum
+      - name: Prepare runtime evidence
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/grpc-results"
+          : > "$RUNNER_TEMP/grpc-results/workers.jsonl"
+          {
+            echo "GRPC_TEST_RESULTS=$RUNNER_TEMP/grpc-results/results.json"
+            echo "GRPC_TEST_WITNESS=$RUNNER_TEMP/grpc-results/workers.jsonl"
+            echo "GRPC_TEST_GO_SERVER=$RUNNER_TEMP/grpc-interop-go"
+          } >> "$GITHUB_ENV"
+      - name: Build gRPC transport
+        run: npm run build --workspace=@ydbjs/grpc
+      - name: Build grpc-go interoperability server
+        working-directory: packages/grpc/tests/interop-go
+        env:
+          GOTOOLCHAIN: local
+        run: go build -mod=readonly -o "$GRPC_TEST_GO_SERVER" .
+      - name: Test gRPC on Node
+        if: matrix.runtime == 'node'
+        run: node node_modules/vitest/vitest.mjs run --config vitest.grpc.config.ts
+      - name: Test gRPC on Bun
+        if: matrix.runtime == 'bun'
+        run: bun --bun node_modules/vitest/vitest.mjs run --config vitest.grpc.config.ts
+      - name: Verify complete suite and actual worker runtime
+        if: always()
+        run: node scripts/verify-grpc-tests.mjs "$GRPC_TEST_RESULTS" "$GRPC_TEST_WITNESS" "$RUNNER_TEMP/grpc-results/verification.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: grpc-${{ matrix.id }}
+          path: ${{ runner.temp }}/grpc-results/
+          if-no-files-found: error
+          retention-days: 30
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -76,6 +175,9 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node-version }}
+
+      - name: Build gRPC transport
+        run: npm run build --workspace=@ydbjs/grpc
 
       - name: Test
         if: matrix.node-version != 26

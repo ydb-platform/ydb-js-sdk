@@ -8,7 +8,7 @@
 		"start:topic": "node --env-file=.env ./dist/index.js --setup=topic.setup --topic.setup.partitions=10 --worker=topic.write --topic.write.rps=100 --topic.write.partitions=10 --worker=topic.read --teardown=topic.teardown"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.12.0",
+		"@bufbuild/protobuf": "2.16.0",
 		"hdr-histogram-js": "3.0.1",
 		"@opentelemetry/exporter-metrics-otlp-http": "^0.218.0",
 		"@opentelemetry/sdk-metrics": "^2.7.1",

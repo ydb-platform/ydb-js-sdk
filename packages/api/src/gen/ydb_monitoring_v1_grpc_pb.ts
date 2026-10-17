@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { NodeCheckRequestSchema, NodeCheckResponseSchema, SelfCheckRequestSchema, SelfCheckResponseSchema } from "./protos/ydb_monitoring_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Monitoring.V1.MonitoringService

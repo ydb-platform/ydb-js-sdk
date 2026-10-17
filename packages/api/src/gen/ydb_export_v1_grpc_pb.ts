@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { ExportToFsRequestSchema, ExportToFsResponseSchema, ExportToS3RequestSchema, ExportToS3ResponseSchema, ExportToYtRequestSchema, ExportToYtResponseSchema } from "./protos/ydb_export_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Export.V1.ExportService

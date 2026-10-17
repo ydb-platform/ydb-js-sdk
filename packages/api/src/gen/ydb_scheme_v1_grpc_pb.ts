@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { DescribePathRequestSchema, DescribePathResponseSchema, ListDirectoryRequestSchema, ListDirectoryResponseSchema, MakeDirectoryRequestSchema, MakeDirectoryResponseSchema, ModifyPermissionsRequestSchema, ModifyPermissionsResponseSchema, RemoveDirectoryRequestSchema, RemoveDirectoryResponseSchema } from "./protos/ydb_scheme_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Scheme.V1.SchemeService

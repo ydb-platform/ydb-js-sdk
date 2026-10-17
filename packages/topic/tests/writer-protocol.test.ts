@@ -1,3 +1,4 @@
+import { MessageSizeError } from '@ydbjs/grpc'
 import {
 	Codec,
 	CreateTopicRequestSchema,
@@ -74,7 +75,8 @@ let openWriteStream = function openWriteStream(
 		}),
 		100
 	)
-	let stream = driver.createClient(TopicServiceDefinition).streamWrite(input, { signal })
+	let client = driver.createClient(TopicServiceDefinition)
+	let stream = client.streamWrite(input, { signal })
 	let iterator = stream[Symbol.asyncIterator]()
 
 	let next = async function next(): Promise<StreamWriteMessage_FromServer> {
@@ -241,9 +243,8 @@ test('rejects an oversized payload with a permanent error', async (tc) => {
 
 		expect(error).toBeInstanceOf(Error)
 		expect((error as ServiceError).code).toBe(Status.RESOURCE_EXHAUSTED)
-		expect((error as ServiceError).details).toMatch(
-			/Attempted to send message with a size larger than/
-		)
+		expect(error).toBeInstanceOf(MessageSizeError)
+		expect(error).toMatchObject({ direction: 'request', limit: 64 * 1024 * 1024 })
 		expect(isRetryableTopicError(error)).toBe(false)
 	}
 })

@@ -49,16 +49,13 @@ test('onDiscovery hook fires with endpoint data after ready', async (tc) => {
 	expect(event.removed.length).toBe(0)
 })
 
-test('BalancedChannel routes real RPC through connection pool', async (tc) => {
+test('routes a real RPC through the endpoint pool', async (tc) => {
 	using driver = new Driver(inject('connectionString'), {
 		'ydb.sdk.discovery_timeout_ms': 5_000,
 	})
 
 	await driver.ready(tc.signal)
 
-	// createClient() returns a client backed by BalancedChannel when
-	// discovery is enabled. Making a real RPC verifies the full path:
-	// BalancedChannel.createCall() → pool.acquire() → real grpc-js channel.
 	let client = driver.createClient(DiscoveryServiceDefinition)
 
 	let response = await client.listEndpoints({ database: driver.database }, { signal: tc.signal })
@@ -71,7 +68,7 @@ test('BalancedChannel routes real RPC through connection pool', async (tc) => {
 	expect(result!.endpoints.length).toBeGreaterThan(0)
 })
 
-test('onCall hook fires for each RPC dispatched through BalancedChannel', async (tc) => {
+test('onCall hook fires for each RPC dispatched through the endpoint pool', async (tc) => {
 	let callEvents: { method: string; nodeId: bigint; preferred: boolean }[] = []
 
 	using driver = new Driver(inject('connectionString'), {

@@ -18,7 +18,7 @@ import type { Entry } from '@ydbjs/api/scheme'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import type { ServiceClient } from '@ydbjs/api/client'
+import type { ServiceClient } from '@ydbjs/grpc'
 
 let dbg = loggers.coordination.extend('node')
 

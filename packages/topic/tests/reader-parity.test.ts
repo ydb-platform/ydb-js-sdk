@@ -329,14 +329,16 @@ test(
 
 		using limited = new Driver(inject('connectionString'), {
 			'ydb.sdk.enable_discovery': false,
-			channelOptions: { 'grpc.max_receive_message_length': 1024 * 1024 },
+			transportOptions: { maxReceiveBytes: 1024 * 1024 },
 		})
 		await limited.ready(tc.signal)
 		using reader = createTopicReader(limited, { topic, consumer: consumerName })
 		let iterator = reader.read({ signal: tc.signal })[Symbol.asyncIterator]()
 		await expect(iterator.next()).rejects.toMatchObject({
 			code: Status.RESOURCE_EXHAUSTED,
-			details: expect.stringMatching(/larger than/i),
+			name: 'MessageSizeError',
+			direction: 'response',
+			limit: 1024 * 1024,
 		})
 	}
 )

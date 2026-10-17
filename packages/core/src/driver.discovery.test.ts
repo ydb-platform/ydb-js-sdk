@@ -120,3 +120,104 @@ test.for([false, true])(
 		await shutdown
 	}
 )
+
+// A controlled server can finish while the response consumer deliberately stays paused.
+test.for(['drain', 'return', 'abort'] as const)(
+	'graceful driver disposal waits for a buffered response consumer to %s',
+	async (mode, tc) => {
+		await using server = createTestServer()
+		let port = 0
+		let service = {
+			messages: {
+				path: '/test.Messages/Read',
+				requestStream: false as const,
+				responseStream: true as const,
+				requestSerialize: () => Buffer.alloc(0),
+				requestDeserialize: () => ({}),
+				responseSerialize: (message: string) => Buffer.from(message),
+				responseDeserialize: (bytes: Uint8Array) => Buffer.from(bytes).toString(),
+			},
+		}
+		server.add(
+			{ listEndpoints: DiscoveryServiceDefinition.listEndpoints, ...service },
+			{
+				async listEndpoints() {
+					return create(ListEndpointsResponseSchema, {
+						operation: {
+							ready: true,
+							status: StatusIds_StatusCode.SUCCESS,
+							result: anyPack(
+								ListEndpointsResultSchema,
+								create(ListEndpointsResultSchema, {
+									endpoints: [{ nodeId: 1, address: '127.0.0.1', port }],
+								})
+							),
+						},
+					})
+				},
+				async *messages() {
+					yield 'first'
+					yield 'second'
+					yield 'third'
+				},
+			}
+		)
+		port = await server.listen('127.0.0.1:0')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`)
+		await driver.ready(tc.signal)
+		let client = driver.createClient(service)
+		let controller = new AbortController()
+		let terminal = Promise.withResolvers<void>()
+		let statuses: number[] = []
+		let stream = client.messages(
+			{},
+			{
+				signal: AbortSignal.any([tc.signal, controller.signal]),
+				onStatus(status) {
+					statuses.push(status.code)
+					terminal.resolve()
+				},
+			}
+		)
+		let responses = stream[Symbol.asyncIterator]()
+		expect(await responses.next()).toMatchObject({ value: 'first', done: false })
+		await terminal.promise
+		expect(statuses).toEqual([0])
+
+		let disposed = false
+		let closing = driver[Symbol.asyncDispose]().then(() => {
+			disposed = true
+			return true
+		})
+		try {
+			await delay(20, undefined, { signal: tc.signal })
+			expect(disposed).toBe(false)
+			let reason = new Error('Caller stopped after wire status')
+			let outcome: unknown
+			if (mode === 'drain') {
+				outcome = [await responses.next(), await responses.next(), await responses.next()]
+			} else if (mode === 'abort') {
+				controller.abort(reason)
+				outcome = await responses.next().catch((error: unknown) => error)
+			} else {
+				outcome = await responses.return?.()
+			}
+			let expected = {
+				drain: [
+					{ value: 'second', done: false },
+					{ value: 'third', done: false },
+					{ value: undefined, done: true },
+				],
+				abort: reason,
+				return: { value: undefined, done: true },
+			}
+			expect(outcome).toEqual(expected[mode])
+			await closing
+			expect(disposed).toBe(true)
+			expect(statuses).toEqual([0])
+		} finally {
+			await responses.return?.()
+			await closing
+		}
+	}
+)

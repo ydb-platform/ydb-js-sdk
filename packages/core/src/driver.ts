@@ -5,14 +5,12 @@ import * as tls from 'node:tls'
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import {
-	type ChannelOptions,
-	Client,
-	InterceptingCall,
-	type Interceptor,
+	type ClientOptions,
+	type Metadata,
+	type ServiceClient,
 	type ServiceDefinition,
-	credentials,
-} from '@grpc/grpc-js'
-import { type ServiceClient, createServiceClient } from '@ydbjs/api/client'
+	createServiceClient,
+} from '@ydbjs/grpc'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import {
 	DiscoveryServiceDefinition,
@@ -27,7 +25,7 @@ import { YDBError } from '@ydbjs/error'
 
 import pkg from '../package.json' with { type: 'json' }
 
-import { BalancedChannel } from './channel.js'
+import { createRoutingTransport } from './routing.js'
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
@@ -47,8 +45,8 @@ import {
 	DriverDiscoveryTimeoutError,
 	DriverResponseError,
 } from './errors.js'
-import type { DriverHooks, EndpointInfo } from './hooks.js'
-import { debug, getRegisteredClientInterceptors } from './interceptors.js'
+import { type DriverHooks, type EndpointInfo, safeHook } from './hooks.js'
+import { type MetadataHook, getRegisteredMetadataHooks } from './metadata-hooks.js'
 import { detectRuntime } from './runtime.js'
 
 export type { DriverHooks, EndpointInfo }
@@ -77,7 +75,7 @@ export type DriverOptions = {
 	 */
 	ssl?: tls.SecureContextOptions
 	secureOptions?: tls.SecureContextOptions | undefined
-	channelOptions?: ChannelOptions
+	transportOptions?: ClientOptions
 	credentialsProvider?: CredentialsProvider
 
 	/**
@@ -147,36 +145,12 @@ let defaultOptions: DriverOptions = {
 	'ydb.sdk.connection_idle_interval_ms': 60_000,
 } as const satisfies DriverOptions
 
-let defaultChannelOptions: ChannelOptions = {
-	'grpc.primary_user_agent': `ydb-js-sdk/${pkg.version}`,
-	'grpc.secondary_user_agent': detectRuntime(),
-
-	'grpc.keepalive_time_ms': 10_000,
-	'grpc.keepalive_timeout_ms': 5_000,
-	'grpc.keepalive_permit_without_calls': 1,
-
-	'grpc.max_send_message_length': 64 * 1024 * 1024,
-	'grpc.max_receive_message_length': 64 * 1024 * 1024,
-
-	'grpc.max_reconnect_backoff_ms': 5_000,
-	'grpc.initial_reconnect_backoff_ms': 50,
-}
-
-/* node:coverage ignore if -- polyfill for Node < 20.19; dead on supported runtimes */
-if (!Promise.withResolvers) {
-	Promise.withResolvers = function <T>(): {
-		promise: Promise<T>
-		resolve: (value: T | PromiseLike<T>) => void
-		reject: (reason?: any) => void
-	} {
-		let resolve: (value: T | PromiseLike<T>) => void
-		let reject: (reason?: any) => void
-		let promise = new Promise<T>((res, rej) => {
-			resolve = res
-			reject = rej
-		})
-		return { promise, resolve: resolve!, reject: reject! }
-	}
+let defaultTransportOptions: ClientOptions = {
+	userAgent: `ydb-js-sdk/${pkg.version} ${detectRuntime()}`,
+	keepaliveIntervalMs: 10_000,
+	keepaliveTimeoutMs: 5_000,
+	maxSendBytes: 64 * 1024 * 1024,
+	maxReceiveBytes: 64 * 1024 * 1024,
 }
 
 export class Driver implements Disposable, AsyncDisposable {
@@ -188,12 +162,11 @@ export class Driver implements Disposable, AsyncDisposable {
 	// bootstrap connection is used directly).
 	#endpoints: EndpointsRuntime | undefined
 
-	// Single connection: always the bootstrap endpoint from the connection
-	// string. Used for the discovery client, and as the sole transport when
-	// discovery is disabled. GrpcConnection creates the channel eagerly but
-	// grpc-js starts it IDLE — no TCP/TLS until the first RPC.
+	// Discovery and discovery-disabled calls use the bootstrap connection.
+	// The HTTP/2 session is opened by the first RPC.
 	#connection: Connection
-	#interceptors: Interceptor[]
+	#metadataHooks: readonly MetadataHook[]
+	#closedController = new AbortController()
 	#discoveryClient: ServiceClient<typeof DiscoveryServiceDefinition> | undefined
 
 	#credentialsProvider: CredentialsProvider = new AnonymousCredentialsProvider()
@@ -216,19 +189,16 @@ export class Driver implements Disposable, AsyncDisposable {
 
 		this.#identity = this.#buildIdentity()
 
-		let channelCredentials = this.#createChannelCredentials()
-
 		this.#connection = new GrpcConnection(
 			this.#initialEndpoint(),
-			channelCredentials,
-			this.options.channelOptions
+			this.options.transportOptions
 		)
 
 		if (this.options.credentialsProvider) {
 			this.#credentialsProvider = this.options.credentialsProvider
 		}
 
-		this.#interceptors = this.#buildInterceptors()
+		this.#metadataHooks = [...getRegisteredMetadataHooks()]
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
@@ -239,8 +209,8 @@ export class Driver implements Disposable, AsyncDisposable {
 			this.#endpoints = createEndpointsRuntime({
 				identity: this.identity,
 				listEndpoints: this.#fetchEndpoints,
-				channelCredentials,
-				channelOptions: this.options.channelOptions,
+				secure: this.isSecure || this.options.secureOptions !== undefined,
+				transportOptions: this.options.transportOptions,
 				hooks: this.options.hooks,
 				localityEnabled: this.options['ydb.sdk.locality_enabled'],
 				preferPrimaryPile: this.options['ydb.sdk.prefer_primary_pile'],
@@ -313,51 +283,24 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	close(): void {
-		// Synchronous teardown — dispatch destroy; the pool closes channels and
+		// Synchronous teardown — dispatch destroy; the pool closes connections and
 		// publishes ydb:driver.closed on a later turn.
 		this.#teardown((pool) => pool[Symbol.dispose]())
 	}
 
-	/** Create an async service client that borrows the driver's channels. */
+	/** Create an async service client that borrows the driver's connections. */
 	createClient<Service extends ServiceDefinition>(
 		service: Service,
 		target?: bigint | ClientTarget
 	): ServiceClient<Service> {
 		let nodeId = typeof target === 'bigint' ? target : target?.nodeId
 		let hard = typeof target === 'object' ? (target.hard ?? false) : false
-		let channel = new BalancedChannel(
+		let transport = createRoutingTransport(
 			this.#endpoints?.pool ?? this.#connection,
-			this.options.hooks,
-			nodeId,
-			hard
+			this.#prepareMetadata,
+			{ signal: this.#closedController.signal, hooks: this.options.hooks, nodeId, hard }
 		)
-		let client = new Client(this.cs.host, credentials.createInsecure(), {
-			channelOverride: channel,
-			interceptors: this.#interceptors,
-			// grpc-js per-call interceptors replace client defaults unless composed explicitly.
-			callInvocationTransformer: (call) => {
-				let options = call.callOptions
-				if (options.interceptors?.length) {
-					options = {
-						...options,
-						interceptors: [...this.#interceptors, ...options.interceptors],
-					}
-				}
-				if (options.interceptor_providers?.length) {
-					options = {
-						...options,
-						interceptor_providers: [
-							...this.#interceptors.map((interceptor) => () => interceptor),
-							...options.interceptor_providers,
-						],
-					}
-				}
-
-				return options === call.callOptions ? call : { ...call, callOptions: options }
-			},
-		})
-
-		return createServiceClient(service, client)
+		return createServiceClient(service, transport)
 	}
 
 	/** Wait for the endpoint pin to be published before exposing its client. */
@@ -426,10 +369,14 @@ export class Driver implements Disposable, AsyncDisposable {
 		dbg.log('closing driver')
 		let closed = this.#endpoints ? closePool(this.#endpoints.pool) : this.#markClosedDisabled()
 
-		if (closed instanceof Promise) {
-			return closed.finally(() => this.#connection.close())
+		let finish = () => {
+			this.#closedController.abort(new Error('Driver is closed'))
+			this.#connection.close()
 		}
-		this.#connection.close()
+		if (closed instanceof Promise) {
+			return closed.finally(finish)
+		}
+		finish()
 	}
 
 	#markReadyDisabled(): void {
@@ -471,7 +418,12 @@ export class Driver implements Disposable, AsyncDisposable {
 
 	#mergeOptions(userOptions: Readonly<DriverOptions>): DriverOptions {
 		let merged: DriverOptions = { ...defaultOptions, ...userOptions }
-		merged.channelOptions = { ...defaultChannelOptions, ...merged.channelOptions }
+		merged.secureOptions ??= merged.ssl
+		merged.transportOptions = {
+			...defaultTransportOptions,
+			...merged.transportOptions,
+			tls: { ...merged.transportOptions?.tls, ...merged.secureOptions },
+		}
 		return merged
 	}
 
@@ -494,17 +446,8 @@ export class Driver implements Disposable, AsyncDisposable {
 			address: this.cs.hostname,
 			nodeId: -1,
 			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80'), 10),
-			ssl: this.isSecure,
+			ssl: this.isSecure || this.options.secureOptions !== undefined,
 		})
-	}
-
-	#createChannelCredentials() {
-		if ((this.options.secureOptions ??= this.options.ssl)) {
-			let secureContext = tls.createSecureContext(this.options.secureOptions)
-			return credentials.createFromSecureContext(secureContext)
-		}
-
-		return this.isSecure ? credentials.createSsl() : credentials.createInsecure()
 	}
 
 	[kRegisterLibrary](name: string, version: string): void {
@@ -514,25 +457,42 @@ export class Driver implements Disposable, AsyncDisposable {
 		this.#buildInfo = `${this.#buildInfo};${entry}`
 	}
 
-	#buildInterceptors(): Interceptor[] {
-		let stamp: Interceptor = (options, nextCall) =>
-			new InterceptingCall(nextCall(options), {
-				start: (metadata, listener, next) => {
-					metadata = metadata.clone()
-					metadata.set('x-ydb-sdk-build-info', this.#buildInfo)
-					metadata.set('x-ydb-database', this.database)
-					metadata.set('x-ydb-application-name', this.application)
+	#prepareMetadata = async (
+		input: Metadata | undefined,
+		signal: AbortSignal
+	): Promise<Metadata> => {
+		let metadata = Object.fromEntries(
+			Object.entries(input ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+		)
+		for (let hook of this.#metadataHooks) {
+			safeHook('metadata', hook, metadata)
+		}
+		if (this.#metadataHooks.length) {
+			metadata = Object.fromEntries(
+				Object.entries(metadata).map(([key, value]) => [key.toLowerCase(), value])
+			)
+		}
 
-					next(metadata, listener)
-				},
-			})
+		let tokenController = new AbortController()
+		let onAbort = () => tokenController.abort(signal.reason)
+		signal.throwIfAborted()
+		signal.addEventListener('abort', onAbort, { once: true })
+		let token: string
+		try {
+			token = await abortable(
+				signal,
+				this.#credentialsProvider.getToken(false, tokenController.signal)
+			)
+		} finally {
+			// A completed getToken() may have started a background refresh that outlives this RPC.
+			signal.removeEventListener('abort', onAbort)
+		}
 
-		return [
-			debug,
-			stamp,
-			...getRegisteredClientInterceptors(),
-			this.#credentialsProvider.interceptor,
-		]
+		metadata['x-ydb-sdk-build-info'] = this.#buildInfo
+		metadata['x-ydb-database'] = this.database
+		metadata['x-ydb-application-name'] = this.application
+		metadata['x-ydb-auth-ticket'] = token
+		return metadata
 	}
 
 	// The listEndpoints seam handed to the endpoints runtime. One plain RPC — the
@@ -540,12 +500,10 @@ export class Driver implements Disposable, AsyncDisposable {
 	// tracing:ydb:driver.discovery span; this closure must not add either.
 	#fetchEndpoints: ListEndpoints = async (signal: AbortSignal): Promise<DiscoveryResult> => {
 		if (!this.#discoveryClient) {
-			let client = new Client(this.cs.host, credentials.createInsecure(), {
-				channelOverride: this.#connection.channel,
-				interceptors: this.#interceptors,
+			let transport = createRoutingTransport(this.#connection, this.#prepareMetadata, {
+				signal: this.#closedController.signal,
 			})
-
-			this.#discoveryClient = createServiceClient(DiscoveryServiceDefinition, client)
+			this.#discoveryClient = createServiceClient(DiscoveryServiceDefinition, transport)
 		}
 
 		let response = await this.#discoveryClient.listEndpoints(

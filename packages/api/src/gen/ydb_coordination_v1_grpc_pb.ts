@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AlterNodeRequestSchema, AlterNodeResponseSchema, CreateNodeRequestSchema, CreateNodeResponseSchema, DescribeNodeRequestSchema, DescribeNodeResponseSchema, DropNodeRequestSchema, DropNodeResponseSchema, SessionRequestSchema, SessionResponseSchema } from "./protos/ydb_coordination_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Coordination.V1.CoordinationService

@@ -1,9 +1,8 @@
-import * as tls from 'node:tls'
+import type * as tls from 'node:tls'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import { type ChannelOptions, Client, credentials } from '@grpc/grpc-js'
-import { type ServiceClient, createServiceClient } from '@ydbjs/api/client'
+import { Client, type ClientOptions, type ServiceClient, createServiceClient } from '@ydbjs/grpc'
 import { AuthServiceDefinition, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
@@ -62,7 +61,7 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 		{ username, password }: StaticCredentials,
 		endpoint: string,
 		secureOptions?: tls.SecureContextOptions | undefined,
-		channelOptions?: ChannelOptions
+		transportOptions?: ClientOptions
 	) {
 		super()
 		this.#username = username
@@ -74,24 +73,21 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			endpoint
 		)
 
-		let cs = new URL(endpoint)
+		let cs = new URL(endpoint.replace(/^grpc:/, 'http:').replace(/^grpcs:/, 'https:'))
 		if (['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(cs.protocol) === false) {
 			throw new Error(
 				'Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https'
 			)
 		}
 
-		let address = `${cs.hostname}:${cs.port || (secureOptions ? '443' : '80')}`
-		// For unix sockets, keep the full URL
-		if (cs.protocol === 'unix:') {
-			address = `${cs.protocol}//${cs.host}${cs.pathname}`
+		if (secureOptions && cs.protocol === 'http:') {
+			cs.protocol = 'https:'
 		}
 
-		let channelCredentials = secureOptions
-			? credentials.createFromSecureContext(tls.createSecureContext(secureOptions))
-			: credentials.createInsecure()
-
-		let client = new Client(address, channelCredentials, channelOptions)
+		let client = new Client(cs, {
+			...transportOptions,
+			...(secureOptions ? { tls: { ...transportOptions?.tls, ...secureOptions } } : {}),
+		})
 		this.#client = createServiceClient(AuthServiceDefinition, client)
 	}
 

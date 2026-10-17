@@ -38,7 +38,7 @@ YDB requires authentication for most operations. The credentials provider you ch
 
 ## Native gRPC integration
 
-`CredentialsProvider.interceptor` is an `@grpc/grpc-js` interceptor. `Driver` installs it automatically. When constructing a grpc-js client yourself, pass it in `interceptors: [provider.interceptor]`; `createServiceClient(service, nativeClient)` from `@ydbjs/api/client` provides Promise and AsyncIterable methods over that client. This replaces the previous generator-based `middleware` property. Cancelling the call aborts pending token acquisition; a native call deadline also bounds that wait. Provider failures are reported as native gRPC errors.
+`CredentialsProvider` supplies `getToken(force?, signal?)`. `Driver` obtains the token before dispatch and sets the authentication and database headers after metadata hooks. A call's signal and deadline also bound token acquisition. Cancelling a completed call does not cancel a background token refresh. Provider failures retain their original error and do not penalize a database node.
 
 ## Usage
 

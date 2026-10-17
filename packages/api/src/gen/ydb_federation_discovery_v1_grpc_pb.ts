@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { ListFederationDatabasesRequestSchema, ListFederationDatabasesResponseSchema } from "./protos/ydb_federation_discovery_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.FederationDiscovery.V1.FederationDiscoveryService

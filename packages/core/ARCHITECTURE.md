@@ -129,7 +129,7 @@ hard-pin, and the pile-relaxed last-resort tiers still route if every pile is un
 
 A connection dropped from discovery is **not** torn down while it works: live streams
 drain on it and a brief flap does not close it. New RPCs are simply not routed there.
-The `idle_sweep` effect keeps retired channels in `READY`, removes `SHUTDOWN` channels immediately, and reaps other connectivity states after `retiredGraceMs` from retirement. A returning node reuses the same channel; another retirement starts a new grace interval. Still-discovered channels are never proactively closed — grpc-js manages their idle socket.
+The `idle_sweep` effect keeps retired connections while they are ready or have calls in flight, removes closed connections immediately, and reaps other states after `retiredGraceMs` from retirement. A returning node reuses the same connection; another retirement starts a new grace interval. Still-discovered connections are never proactively closed. The transport retires HTTP/2 sessions after GOAWAY while allowing accepted calls to finish.
 
 ### Direct topic IO
 

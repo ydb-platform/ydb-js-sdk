@@ -15,7 +15,7 @@ let plugin = createEcmaScriptPlugin({
 			let f = schema.generateFile(file.name + '_grpc_pb.ts')
 			f.preamble(file)
 
-			let serviceDefinition = f.import('ServiceDefinition', '@grpc/grpc-js', true)
+			let serviceDefinition = f.import('ServiceDefinition', '@ydbjs/grpc', true)
 			let bufProtoCreate = f.import('create', '@bufbuild/protobuf')
 			let bufProtoMessageInitShape = f.import('MessageInitShape', '@bufbuild/protobuf', true)
 			let bufProtoToBinary = f.import('toBinary', '@bufbuild/protobuf')

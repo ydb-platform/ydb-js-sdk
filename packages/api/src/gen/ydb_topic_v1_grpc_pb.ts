@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AlterTopicRequestSchema, AlterTopicResponseSchema, CommitOffsetRequestSchema, CommitOffsetResponseSchema, CreateTopicRequestSchema, CreateTopicResponseSchema, DescribeConsumerRequestSchema, DescribeConsumerResponseSchema, DescribeTopicRequestSchema, DescribeTopicResponseSchema, DropTopicRequestSchema, DropTopicResponseSchema, StreamReadMessage_FromClientSchema, StreamReadMessage_FromServerSchema, StreamWriteMessage_FromClientSchema, StreamWriteMessage_FromServerSchema, UpdateOffsetsInTransactionRequestSchema, UpdateOffsetsInTransactionResponseSchema } from "./protos/ydb_topic_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Topic.V1.TopicService

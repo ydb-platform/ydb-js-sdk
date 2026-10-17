@@ -25,7 +25,7 @@ import {
 } from '@ydbjs/retry'
 import { type Value, fromYdb, toJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
-import type { Metadata } from '@grpc/grpc-js'
+import type { Metadata } from '@ydbjs/grpc'
 
 import { ctx } from './ctx.js'
 import { linkSignals } from '@ydbjs/abortable'

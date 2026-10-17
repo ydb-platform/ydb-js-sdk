@@ -1,15 +1,14 @@
 import { create } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
-import { Client, credentials } from '@grpc/grpc-js'
 import { abortable } from '@ydbjs/abortable'
 import { AuthServiceDefinition, LoginResponseSchema, LoginResultSchema } from '@ydbjs/api/auth'
-import { createServiceClient } from '@ydbjs/api/client'
 import { DiscoveryServiceDefinition, WhoAmIResponseSchema } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { createTestServer } from '../../../tests/grpc-server.ts'
 import { expect, test } from 'vitest'
 
-import { StaticCredentialsProvider } from './static.ts'
+import { StaticCredentialsProvider } from '@ydbjs/auth/static'
+import { Driver } from './driver.ts'
 
 // A gated login response reproduces RPC completion during a soft-expiry refresh without clock races.
 test.for([false, true])(
@@ -69,19 +68,13 @@ test.for([false, true])(
 		)
 		expect(await provider.getToken(true, tc.signal)).toBe(tokens[0])
 
-		using rpc = {
-			client: createServiceClient(
-				DiscoveryServiceDefinition,
-				new Client(`127.0.0.1:${port}`, credentials.createInsecure(), {
-					interceptors: [provider.interceptor],
-				})
-			),
-			[Symbol.dispose]() {
-				this.client.close()
-			},
-		}
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+			credentialsProvider: provider,
+		})
+		let client = driver.createClient(DiscoveryServiceDefinition)
 		let controller = new AbortController()
-		let response = rpc.client.whoAmI(
+		let response = client.whoAmI(
 			{},
 			{ signal: AbortSignal.any([tc.signal, controller.signal]) }
 		)

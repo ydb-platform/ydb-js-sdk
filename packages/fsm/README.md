@@ -40,17 +40,18 @@ type Output = { type: 'counter.state'; value: State } | { type: 'counter.value';
 
 type Context = { count: number }
 
-let runtime = createMachineRuntime<State, Context, Event, Effect, Output>({
+let runtime = createMachineRuntime<State, Context, {}, Event, Effect, Output>({
   initialState: 'idle',
-  context: { count: 0 },
-  transition(context, state, event, runtime) {
+  ctx: { count: 0 },
+  env: {},
+  transition(context, event, runtime) {
     switch (event.type) {
       case 'counter.start':
         runtime.emit({ type: 'counter.state', value: 'running' })
         return { state: 'running', effects: [{ type: 'counter.log', message: 'started' }] }
 
       case 'counter.increment':
-        if (state !== 'running') return
+        if (runtime.state !== 'running') return
         context.count += event.step ?? 1
         runtime.emit({ type: 'counter.value', value: context.count })
         return { effects: [{ type: 'counter.log', message: `count=${context.count}` }] }
@@ -61,7 +62,7 @@ let runtime = createMachineRuntime<State, Context, Event, Effect, Output>({
     }
   },
   effects: {
-    'counter.log'(effect) {
+    'counter.log'(_ctx, effect) {
       console.log('[effect]', effect.message)
     },
   },
@@ -85,7 +86,7 @@ await runtime.destroy('finalized')
 
 ### Transition
 
-`transition(context, state, event, runtime)` is called for every event in queue order.
+`transition(ctx, event, runtime)` is called for every event in queue order.
 
 It can:
 
@@ -96,7 +97,7 @@ It can:
 ### Effects
 
 `effects` is a typed map keyed by `effect.type`.
-Each effect handler receives `(effect, context, state, runtime)`.
+Each effect handler receives `(ctx, effect, runtime)`.
 
 This map-based approach keeps handlers exhaustive and explicit.
 
@@ -148,6 +149,8 @@ Notes:
 - `map` can filter by returning `null`
 - `ingest` is rejected after runtime is closing/closed/destroyed
 - ingest handle is `AsyncDisposable`
+- an already-aborted signal does not open the source
+- cancellation cannot interrupt an arbitrary pending `source.next()`; cancel or close an idle source before awaiting ingestion disposal
 
 ## API Summary
 
@@ -158,6 +161,17 @@ Notes:
 - `runtime.destroy(reason?)`
 - `runtime[Symbol.asyncIterator]()`
 - `runtime[Symbol.asyncDispose]()`
+
+## Queues
+
+`AsyncQueue` and `AsyncPriorityQueue` are exported from `@ydbjs/fsm/queue`.
+Both support iteration and cancellable `take(signal)` calls.
+
+- `pause()` suspends delivery until `resume()`; repeating pause after resume takes effect before the next dequeue.
+- `close()` drains buffered values and ends reading; `fail(error)` drains them and then throws the error.
+- `destroy()` discards buffered values and unassigned failure, then ends reading.
+- `reset()` clears the buffer and ends unserved reads from the previous generation; new readers can use the queue again.
+- A value or terminal result already assigned to a waiting reader is preserved when a later abort or reset occurs.
 
 ## Design Notes
 
@@ -177,6 +191,17 @@ For full design rationale, see [DESIGN.md](./DESIGN.md).
 npm run build
 npm run test
 ```
+
+From the repository root, run the isolated scaling benchmarks:
+
+```sh
+npm run bench:fsm -- --outputJson=/tmp/fsm-benchmark.json
+node scripts/report-fsm-bench.mjs /tmp/fsm-benchmark.json
+```
+
+The report measures complete bursts, including creation and cleanup, at 128, 4000 and 64000 items.
+Wall time and relative growth are reported separately from correctness and Promise-budget tests.
+The CI benchmark job saves its JSON/log artifacts and publishes the scaling table; a large increase in per-event drain cost produces a warning, not a shared-runner timing assertion.
 
 ## License
 

@@ -1,13 +1,10 @@
+import { constants } from 'node:http2'
 import { setTimeout } from 'node:timers/promises'
 
 import {
-	Client,
-	InterceptingCall,
-	type Interceptor,
 	Metadata,
 	Server,
 	ServerCredentials,
-	credentials,
 	type handleBidiStreamingCall,
 	type handleClientStreamingCall,
 	type handleServerStreamingCall,
@@ -16,7 +13,10 @@ import {
 } from '@grpc/grpc-js'
 import { expect, test } from 'vitest'
 
-import { createServiceClient } from './client.js'
+import { nodePeer } from '../tests/node-peer.ts'
+import { Client } from './client.ts'
+import { createServiceClient } from './service.ts'
+import type { Metadata as CallMetadata } from './types.ts'
 
 interface Message {
 	value: number
@@ -33,8 +33,10 @@ function serialize(message: Message): Buffer {
 	return bytes
 }
 
-function deserialize(bytes: Buffer): Message {
-	return { value: bytes.readUInt32LE(), padding: bytes.subarray(4) }
+function deserialize(bytes: Uint8Array): Message {
+	let buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+
+	return { value: buffer.readUInt32LE(), padding: buffer.subarray(4) }
 }
 
 function method<RequestStream extends boolean, ResponseStream extends boolean>(
@@ -68,7 +70,7 @@ interface Handlers {
 }
 
 // A loopback peer makes transport EOF, cancellation and non-OK trailers deterministic.
-async function serve(handlers: Handlers) {
+async function inProcessGrpcPeer(handlers: Handlers) {
 	let server = new Server()
 	server.addService(definition, { ...handlers })
 	let port = await new Promise<number>((resolve, reject) => {
@@ -80,7 +82,7 @@ async function serve(handlers: Handlers) {
 			}
 		})
 	})
-	let client = new Client(`127.0.0.1:${port}`, credentials.createInsecure())
+	let client = new Client(`http://127.0.0.1:${port}`)
 
 	return {
 		client: createServiceClient(definition, client),
@@ -106,9 +108,9 @@ async function collect(stream: AsyncIterable<Message>): Promise<number[]> {
 	return values
 }
 
-test('awaits a unary response with native request, header and trailer metadata', async (tc) => {
+test('awaits a unary response with request, header and trailer metadata', async (tc) => {
 	let requestMetadata: Metadata | undefined
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		unary(call, respond) {
 			requestMetadata = call.metadata
 			let header = new Metadata()
@@ -119,11 +121,9 @@ test('awaits a unary response with native request, header and trailer metadata',
 			respond(null, { value: call.request.value + 1 }, trailer)
 		},
 	})
-	let metadata = new Metadata()
-	metadata.set('x-request', 'request')
-	metadata.set('x-data-bin', Buffer.from([1, 2, 3]))
-	let header: Metadata | undefined
-	let trailer = Promise.withResolvers<Metadata>()
+	let metadata = { 'x-request': 'request', 'x-data-bin': new Uint8Array([1, 2, 3]) }
+	let header: CallMetadata | undefined
+	let trailer = Promise.withResolvers<CallMetadata>()
 
 	let response = await peer.client.unary(
 		{ value: 41 },
@@ -140,19 +140,19 @@ test('awaits a unary response with native request, header and trailer metadata',
 	expect(response).toEqual({ value: 42, padding: Buffer.alloc(0) })
 	expect(requestMetadata?.get('x-request')).toEqual(['request'])
 	expect(requestMetadata?.get('x-data-bin')).toEqual([Buffer.from([1, 2, 3])])
-	expect(header).toBeInstanceOf(Metadata)
-	expect(header?.get('x-header')).toEqual(['header'])
-	expect((await trailer.promise).get('x-trailer')).toEqual(['trailer'])
-	expect(metadata.getMap()).toEqual({
+	expect(header?.['x-header']).toEqual('header')
+	let responseTrailer = await trailer.promise
+	expect(responseTrailer['x-trailer']).toEqual('trailer')
+	expect(metadata).toEqual({
 		'x-request': 'request',
-		'x-data-bin': Buffer.from([1, 2, 3]),
+		'x-data-bin': new Uint8Array([1, 2, 3]),
 	})
 })
 
-test('preserves native unary status, details and binary trailers', async (tc) => {
+test('preserves unary status, details and binary trailers', async (tc) => {
 	let metadata = new Metadata()
 	metadata.set('x-error-bin', Buffer.from([4, 5]))
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		unary(_call, respond) {
 			respond({ code: status.RESOURCE_EXHAUSTED, details: 'capacity', metadata })
 		},
@@ -163,14 +163,12 @@ test('preserves native unary status, details and binary trailers', async (tc) =>
 		.catch((failure: unknown) => failure)
 	expect(error).toBeInstanceOf(Error)
 	expect(error).toMatchObject({ code: status.RESOURCE_EXHAUSTED, details: 'capacity' })
-	expect((error as { metadata: Metadata }).metadata).toBeInstanceOf(Metadata)
-	expect((error as { metadata: Metadata }).metadata.get('x-error-bin')).toEqual([
-		Buffer.from([4, 5]),
-	])
+	let bytes = (error as { metadata: CallMetadata }).metadata['x-error-bin'] as Uint8Array
+	expect([...bytes]).toEqual([4, 5])
 })
 
 test('does not start already-aborted calls or consume their inputs', async () => {
-	using peer = await serve({})
+	using peer = await inProcessGrpcPeer({})
 	let reason = new Error('already cancelled')
 	let signal = AbortSignal.abort(reason)
 	let consumed = 0
@@ -179,17 +177,24 @@ test('does not start already-aborted calls or consume their inputs', async () =>
 		yield { value: 1 }
 	}
 
-	await expect(peer.client.unary({ value: 1 }, { signal })).rejects.toBe(reason)
-	await expect(collect(peer.client.server({ value: 1 }, { signal }))).rejects.toBe(reason)
-	await expect(peer.client.client(input(), { signal })).rejects.toBe(reason)
-	await expect(collect(peer.client.bidi(input(), { signal }))).rejects.toBe(reason)
+	let unaryResponse = peer.client.unary({ value: 1 }, { signal })
+	await expect(unaryResponse).rejects.toBe(reason)
+
+	let serverResponses = collect(peer.client.server({ value: 1 }, { signal }))
+	await expect(serverResponses).rejects.toBe(reason)
+
+	let clientResponse = peer.client.client(input(), { signal })
+	await expect(clientResponse).rejects.toBe(reason)
+
+	let bidiResponses = collect(peer.client.bidi(input(), { signal }))
+	await expect(bidiResponses).rejects.toBe(reason)
 	expect(consumed).toBe(0)
 })
 
 test('cancels a pending unary call with the caller reason', async (tc) => {
 	let started = Promise.withResolvers<void>()
 	let cancelled = Promise.withResolvers<void>()
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		unary(call) {
 			call.on('cancelled', cancelled.resolve)
 			started.resolve()
@@ -205,27 +210,21 @@ test('cancels a pending unary call with the caller reason', async (tc) => {
 	await started.promise
 	controller.abort(reason)
 
-	expect(await failure).toBe(reason)
+	let error = await failure
+	expect(error).toBe(reason)
 	await cancelled.promise
 })
 
-test('passes the native deadline to grpc-js', async (tc) => {
-	using peer = await serve({ unary() {} })
+test('enforces the call deadline', async (tc) => {
+	using peer = await inProcessGrpcPeer({ unary() {} })
 
-	await expect(
-		peer.client.unary(
-			{ value: 1 },
-			{
-				signal: tc.signal,
-				deadline: Date.now() + 50,
-			}
-		)
-	).rejects.toMatchObject({ code: status.DEADLINE_EXCEEDED })
+	let response = peer.client.unary({ value: 1 }, { signal: tc.signal, deadline: Date.now() + 50 })
+	await expect(response).rejects.toMatchObject({ code: status.DEADLINE_EXCEEDED })
 })
 
 test('starts a response stream only when iteration begins', async (tc) => {
 	let calls = 0
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		server(call) {
 			calls++
 			call.write({ value: call.request.value })
@@ -235,12 +234,13 @@ test('starts a response stream only when iteration begins', async (tc) => {
 	let stream = peer.client.server({ value: 7 }, { signal: tc.signal })
 	await setTimeout(10, undefined, { signal: tc.signal })
 	expect(calls).toBe(0)
-	expect(await collect(stream)).toEqual([7])
+	let values = await collect(stream)
+	expect(values).toEqual([7])
 	expect(calls).toBe(1)
 })
 
 test('yields every server response and completes after OK trailers', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		server(call) {
 			call.write({ value: 1 })
 			call.write({ value: 2 })
@@ -248,19 +248,21 @@ test('yields every server response and completes after OK trailers', async (tc) 
 		},
 	})
 
-	expect(await collect(peer.client.server({ value: 0 }, { signal: tc.signal }))).toEqual([1, 2])
+	let responses = peer.client.server({ value: 0 }, { signal: tc.signal })
+	let values = await collect(responses)
+	expect(values).toEqual([1, 2])
 })
 
 test('rejects response iteration on non-OK trailers', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		server(call) {
 			call.emit('error', { code: status.PERMISSION_DENIED, details: 'denied' })
 		},
 	})
 
-	await expect(
-		collect(peer.client.server({ value: 0 }, { signal: tc.signal }))
-	).rejects.toMatchObject({
+	let responses = peer.client.server({ value: 0 }, { signal: tc.signal })
+	let values = collect(responses)
+	await expect(values).rejects.toMatchObject({
 		code: status.PERMISSION_DENIED,
 		details: 'denied',
 	})
@@ -268,7 +270,7 @@ test('rejects response iteration on non-OK trailers', async (tc) => {
 
 test('cancels the RPC when a response consumer breaks early', async (tc) => {
 	let cancelled = Promise.withResolvers<void>()
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		server(call) {
 			call.on('cancelled', cancelled.resolve)
 			call.write({ value: 1 })
@@ -284,28 +286,28 @@ test('cancels the RPC when a response consumer breaks early', async (tc) => {
 
 test('aborts a pending response read with the caller reason', async (tc) => {
 	let started = Promise.withResolvers<void>()
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		server() {
 			started.resolve()
 		},
 	})
 	let controller = new AbortController()
 	let reason = new Error('stop reading')
-	let pending = collect(
-		peer.client.server(
-			{ value: 0 },
-			{ signal: AbortSignal.any([tc.signal, controller.signal]) }
-		)
+	let responses = peer.client.server(
+		{ value: 0 },
+		{ signal: AbortSignal.any([tc.signal, controller.signal]) }
 	)
+	let pending = collect(responses)
 	let failure = pending.catch((error: unknown) => error)
 	await started.promise
 	controller.abort(reason)
 
-	expect(await failure).toBe(reason)
+	let error = await failure
+	expect(error).toBe(reason)
 })
 
 test('half-closes bidirectional input and reads the remaining responses', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			let received: Message[] = []
 			call.on('data', (message: Message) => received.push(message))
@@ -318,13 +320,13 @@ test('half-closes bidirectional input and reads the remaining responses', async 
 		},
 	})
 
-	expect(await collect(peer.client.bidi(messages(1, 2, 3), { signal: tc.signal }))).toEqual([
-		1, 2, 3,
-	])
+	let responses = peer.client.bidi(messages(1, 2, 3), { signal: tc.signal })
+	let values = await collect(responses)
+	expect(values).toEqual([1, 2, 3])
 })
 
 test('returns a client-streaming response after input ends', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		client(call, respond) {
 			let sum = 0
 			call.on('data', (message: Message) => {
@@ -334,14 +336,15 @@ test('returns a client-streaming response after input ends', async (tc) => {
 		},
 	})
 
-	expect((await peer.client.client(messages(1, 2, 3), { signal: tc.signal })).value).toBe(6)
+	let response = await peer.client.client(messages(1, 2, 3), { signal: tc.signal })
+	expect(response.value).toBe(6)
 })
 
 test('propagates a bidirectional producer failure without replacing it with cancellation', async (tc) => {
 	let started = Promise.withResolvers<void>()
 	let cancelled = Promise.withResolvers<void>()
 	let failure = new Error('producer failed')
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			call.on('cancelled', cancelled.resolve)
 			call.on('data', started.resolve)
@@ -353,13 +356,15 @@ test('propagates a bidirectional producer failure without replacing it with canc
 		throw failure
 	}
 
-	await expect(collect(peer.client.bidi(input(), { signal: tc.signal }))).rejects.toBe(failure)
+	let responses = peer.client.bidi(input(), { signal: tc.signal })
+	let values = collect(responses)
+	await expect(values).rejects.toBe(failure)
 	await cancelled.promise
 })
 
 test('propagates a client-streaming producer failure', async (tc) => {
 	let failure = new Error('producer failed')
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		client(call) {
 			call.resume()
 		},
@@ -369,54 +374,47 @@ test('propagates a client-streaming producer failure', async (tc) => {
 		throw failure
 	}
 
-	await expect(peer.client.client(input(), { signal: tc.signal })).rejects.toBe(failure)
+	let response = peer.client.client(input(), { signal: tc.signal })
+	await expect(response).rejects.toBe(failure)
 })
 
 test('bounds request production while a peer stops reading', async (tc) => {
-	let connected = Promise.withResolvers<() => void>()
 	let produced = 0
 	let padding = new Uint8Array(128 * 1024)
-	using peer = await serve({
-		client(call, respond) {
-			let received = 0
-			call.on('data', () => {
-				received++
-			})
-			call.on('end', () => respond(null, { value: received }))
-			call.pause()
-			connected.resolve(() => call.resume())
-		},
-	})
+	await using peer = await nodePeer({ type: 'backpressure', initialWindowSize: 65535 }, tc.signal)
+	using transport = new Client(peer.authority)
+	let client = createServiceClient(definition, transport)
 	async function* input() {
 		for (let value = 0; value < 256; value++) {
 			produced++
 			yield { value, padding }
 		}
 	}
-	let response = peer.client.client(input(), { signal: tc.signal })
-	let resume = await connected.promise
+	let pendingResponse = client.client(input(), { signal: tc.signal })
+	await peer.wait('request-started')
 	try {
 		await setTimeout(50, undefined, { signal: tc.signal })
 		expect(produced).toBeGreaterThan(0)
 		expect(produced).toBeLessThan(256)
+		let blocked = await peer.snapshot()
+		expect(blocked.consumedRequestBytes).toBe(0)
 	} finally {
-		resume()
+		await peer.command('resume-requests')
 	}
 
-	expect((await response).value).toBe(256)
+	let response = await pendingResponse
+	expect(response.value).toBe(256)
+	let received = await peer.snapshot()
+	expect(received.requestMessages).toBe(256)
 })
 
 test('aborts a drain wait and closes the request producer', async (tc) => {
-	let connected = Promise.withResolvers<void>()
 	let produced = 0
 	let closed = false
 	let padding = new Uint8Array(128 * 1024)
-	using peer = await serve({
-		bidi(call) {
-			call.pause()
-			connected.resolve()
-		},
-	})
+	await using peer = await nodePeer({ type: 'backpressure', initialWindowSize: 0 }, tc.signal)
+	using transport = new Client(peer.authority)
+	let client = createServiceClient(definition, transport)
 	async function* input() {
 		try {
 			for (let value = 0; value < 256; value++) {
@@ -429,17 +427,28 @@ test('aborts a drain wait and closes the request producer', async (tc) => {
 	}
 	let controller = new AbortController()
 	let reason = new Error('abort blocked writes')
-	let response = collect(
-		peer.client.bidi(input(), { signal: AbortSignal.any([tc.signal, controller.signal]) })
-	)
+	let responses = client.bidi(input(), {
+		signal: AbortSignal.any([tc.signal, controller.signal]),
+	})
+	let response = collect(responses)
 	let failure = response.catch((error: unknown) => error)
-	await connected.promise
+	await peer.wait('request-started')
 	await setTimeout(50, undefined, { signal: tc.signal })
 	expect(produced).toBeGreaterThan(0)
 	expect(produced).toBeLessThan(256)
+	let blocked = await peer.snapshot()
+	expect(blocked.consumedRequestBytes).toBe(0)
 	controller.abort(reason)
-	expect(await failure).toBe(reason)
+	let error = await failure
+	expect(error).toBe(reason)
 	expect(closed).toBe(true)
+	let resetCode = await peer.wait('request-closed')
+	expect(resetCode).toBe(constants.NGHTTP2_CANCEL)
+	let received = await peer.snapshot()
+	expect(received.consumedRequestBytes).toBe(0)
+	expect(received.bufferedRequestBytes).toBe(0)
+	expect(received.requestMessages).toBe(0)
+	expect(received.requestResetCodes).toEqual([constants.NGHTTP2_CANCEL])
 })
 
 function blockedInput() {
@@ -470,14 +479,16 @@ function blockedInput() {
 }
 
 test('finishes a response stream without waiting for a blocked request producer', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			call.on('data', () => call.end())
 		},
 	})
 	let producer = blockedInput()
 	try {
-		expect(await collect(peer.client.bidi(producer.input, { signal: tc.signal }))).toEqual([])
+		let responses = peer.client.bidi(producer.input, { signal: tc.signal })
+		let values = await collect(responses)
+		expect(values).toEqual([])
 		await producer.returned
 	} finally {
 		producer.release({ done: true, value: undefined })
@@ -485,14 +496,15 @@ test('finishes a response stream without waiting for a blocked request producer'
 })
 
 test('stops a client-streaming producer after an early server response', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		client(call, respond) {
 			call.once('data', () => respond(null, { value: 42 }))
 		},
 	})
 	let producer = blockedInput()
 	try {
-		expect((await peer.client.client(producer.input, { signal: tc.signal })).value).toBe(42)
+		let response = await peer.client.client(producer.input, { signal: tc.signal })
+		expect(response.value).toBe(42)
 		await producer.returned
 	} finally {
 		producer.release({ done: true, value: undefined })
@@ -502,7 +514,7 @@ test('stops a client-streaming producer after an early server response', async (
 test('cancels while a request next is blocked and never writes its late value', async (tc) => {
 	let started = Promise.withResolvers<void>()
 	let received: number[] = []
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			call.on('data', (message: Message) => {
 				received.push(message.value)
@@ -513,16 +525,16 @@ test('cancels while a request next is blocked and never writes its late value', 
 	let producer = blockedInput()
 	let controller = new AbortController()
 	let reason = new Error('stop producer')
-	let response = collect(
-		peer.client.bidi(producer.input, {
-			signal: AbortSignal.any([tc.signal, controller.signal]),
-		})
-	)
+	let responses = peer.client.bidi(producer.input, {
+		signal: AbortSignal.any([tc.signal, controller.signal]),
+	})
+	let response = collect(responses)
 	let failure = response.catch((error: unknown) => error)
 	try {
 		await started.promise
 		controller.abort(reason)
-		expect(await failure).toBe(reason)
+		let error = await failure
+		expect(error).toBe(reason)
 		await producer.returned
 		producer.release({ done: false, value: { value: 2 } })
 		await setTimeout(10, undefined, { signal: tc.signal })
@@ -533,7 +545,7 @@ test('cancels while a request next is blocked and never writes its late value', 
 })
 
 test('stops requests on abort while the response consumer is paused', async (tc) => {
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			call.once('data', (message: Message) => call.write(message))
 		},
@@ -547,11 +559,13 @@ test('stops requests on abort while the response consumer is paused', async (tc)
 	let stream = responses[Symbol.asyncIterator]()
 
 	try {
-		expect((await stream.next()).value?.value).toBe(1)
+		let first = await stream.next()
+		expect(first.value?.value).toBe(1)
 		controller.abort(reason)
 		await producer.returned
 		producer.release({ done: false, value: { value: 2 } })
-		await expect(stream.next()).rejects.toBe(reason)
+		let next = stream.next()
+		await expect(next).rejects.toBe(reason)
 	} finally {
 		producer.release({ done: true, value: undefined })
 		await stream.return?.()
@@ -560,7 +574,7 @@ test('stops requests on abort while the response consumer is paused', async (tc)
 
 test('stops requests at server EOF while the response consumer is paused', async (tc) => {
 	let end = Promise.withResolvers<() => void>()
-	using peer = await serve({
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
 			call.once('data', (message: Message) => {
 				call.write(message)
@@ -572,76 +586,43 @@ test('stops requests at server EOF while the response consumer is paused', async
 	let stream = peer.client.bidi(producer.input, { signal: tc.signal })[Symbol.asyncIterator]()
 
 	try {
-		expect((await stream.next()).value?.value).toBe(1)
+		let first = await stream.next()
+		expect(first.value?.value).toBe(1)
 		let finish = await end.promise
 		finish()
 		await producer.returned
 		producer.release({ done: false, value: { value: 2 } })
-		expect((await stream.next()).done).toBe(true)
+		let finalResponse = await stream.next()
+		expect(finalResponse.done).toBe(true)
 	} finally {
 		producer.release({ done: true, value: undefined })
 		await stream.return?.()
 	}
 })
 
-async function checkBufferedCancellation(bidi: boolean, signal: AbortSignal) {
-	let buffered = Promise.withResolvers<void>()
-	let received = 0
-	let observer: Interceptor = (options, nextCall) =>
-		new InterceptingCall(nextCall(options), {
-			start(metadata, _listener, next) {
-				next(metadata, {
-					onReceiveMessage(message, forward) {
-						forward(message)
-						received += 1
-						if (received === 3) {
-							buffered.resolve()
-						}
-					},
-				})
-			},
-		})
-	using peer = await serve({
-		server(call) {
-			for (let value of [1, 2, 3]) {
-				call.write({ value })
-			}
-		},
+test('handles a producer rejection that races synchronous cancellation', async (tc) => {
+	using peer = await inProcessGrpcPeer({
 		bidi(call) {
-			call.once('data', () => {
-				for (let value of [1, 2, 3]) {
-					call.write({ value })
-				}
-			})
+			call.resume()
 		},
 	})
 	let controller = new AbortController()
-	let options = {
-		signal: AbortSignal.any([signal, controller.signal]),
-		interceptors: [observer],
+	let reason = new Error('cancel inside producer')
+	let input: AsyncIterable<Message> = {
+		[Symbol.asyncIterator]() {
+			return {
+				next() {
+					controller.abort(reason)
+					return Promise.reject(new Error('producer also failed'))
+				},
+			}
+		},
 	}
-	let responses = bidi
-		? peer.client.bidi(messages(1), options)
-		: peer.client.server({ value: 0 }, options)
-	let stream = responses[Symbol.asyncIterator]()
-	let reason = new Error('cancel buffered responses')
 
-	try {
-		expect((await stream.next()).value?.value).toBe(1)
-		await buffered.promise
-		controller.abort(reason)
-		await expect(stream.next()).rejects.toBe(reason)
-	} finally {
-		await stream.return?.()
-	}
-}
-
-test('discards buffered server-stream responses after caller cancellation', async (tc) => {
-	expect.assertions(2)
-	await checkBufferedCancellation(false, tc.signal)
-})
-
-test('discards buffered bidirectional responses after caller cancellation', async (tc) => {
-	expect.assertions(2)
-	await checkBufferedCancellation(true, tc.signal)
+	let responses = peer.client.bidi(input, {
+		signal: AbortSignal.any([tc.signal, controller.signal]),
+	})
+	let values = collect(responses)
+	await expect(values).rejects.toBe(reason)
+	await new Promise<void>((resolve) => setImmediate(resolve))
 })

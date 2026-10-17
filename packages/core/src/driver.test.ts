@@ -1,5 +1,4 @@
 import { abortable } from '@ydbjs/abortable'
-import { Metadata } from '@grpc/grpc-js'
 import {
 	DiscoveryServiceDefinition,
 	EndpointInfoSchema,
@@ -11,7 +10,7 @@ import { expect, test } from 'vitest'
 import { create } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { status } from '@grpc/grpc-js'
+import { Status as status } from '@ydbjs/grpc'
 import { createTestServer } from '../../../tests/grpc-server.ts'
 
 import { Driver, kRegisterLibrary } from './driver.ts'
@@ -132,45 +131,28 @@ test('discovery fails when the response has no operation', async (tc) => {
 	await expect(driver.ready(tc.signal)).rejects.toThrow(DriverResponseError)
 })
 
-test('validates default channel options for long-lived streams', () => {
-	let driver = new Driver('grpc://ydb:2136/local', {
-		'ydb.sdk.enable_discovery': false,
+test('sets transport defaults for long-lived streams', () => {
+	using driver = new Driver('grpc://ydb:2136/local', { 'ydb.sdk.enable_discovery': false })
+
+	expect(driver.options.transportOptions).toMatchObject({
+		keepaliveIntervalMs: 10_000,
+		keepaliveTimeoutMs: 5_000,
+		maxSendBytes: 64 * 1024 * 1024,
+		maxReceiveBytes: 64 * 1024 * 1024,
 	})
-
-	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(10_000)
-	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(5_000)
-	expect(driver.options.channelOptions?.['grpc.keepalive_permit_without_calls']).toBe(1)
-
-	expect(driver.options.channelOptions?.['grpc.max_send_message_length']).toBe(64 * 1024 * 1024)
-	expect(driver.options.channelOptions?.['grpc.max_receive_message_length']).toBe(
-		64 * 1024 * 1024
-	)
-
-	expect(driver.options.channelOptions?.['grpc.max_connection_age_ms']).toBeUndefined()
-
-	expect(driver.options.channelOptions?.['grpc.initial_reconnect_backoff_ms']).toBe(50)
-	expect(driver.options.channelOptions?.['grpc.max_reconnect_backoff_ms']).toBe(5_000)
-
-	driver.close()
 })
 
-test('allows custom channel options override', () => {
-	let customOptions = {
+test('merges custom transport options with driver defaults', () => {
+	using driver = new Driver('grpc://localhost:2136/test', {
 		'ydb.sdk.enable_discovery': false,
-		channelOptions: {
-			'grpc.keepalive_time_ms': 60_000, // Custom value
-			'grpc.max_send_message_length': 32 * 1024 * 1024, // Custom value
-		},
-	}
+		transportOptions: { keepaliveIntervalMs: 60_000, maxSendBytes: 32 * 1024 * 1024 },
+	})
 
-	let driver = new Driver('grpc://localhost:2136/test', customOptions)
-
-	expect(driver.options.channelOptions?.['grpc.keepalive_time_ms']).toBe(60_000)
-	expect(driver.options.channelOptions?.['grpc.max_send_message_length']).toBe(32 * 1024 * 1024)
-
-	expect(driver.options.channelOptions?.['grpc.keepalive_timeout_ms']).toBe(5_000)
-
-	driver.close()
+	expect(driver.options.transportOptions).toMatchObject({
+		keepaliveIntervalMs: 60_000,
+		keepaliveTimeoutMs: 5_000,
+		maxSendBytes: 32 * 1024 * 1024,
+	})
 })
 
 test('adds x-ydb-sdk-build-info header with current sdk version', async () => {
@@ -437,15 +419,16 @@ test('service calls leave caller metadata unchanged', async (tc) => {
 		'ydb.sdk.enable_discovery': false,
 	})
 	let client = driver.createClient(DiscoveryServiceDefinition)
-	let metadata = new Metadata()
-	metadata.set('x-existing', 'caller-value')
-	metadata.set('x-ydb-database', '/caller-database')
-	metadata.set('x-ydb-auth-ticket', 'caller-ticket')
-	let original = metadata.getMap()
+	let metadata = Object.freeze({
+		'x-existing': 'caller-value',
+		'x-ydb-database': '/caller-database',
+		'x-ydb-auth-ticket': 'caller-ticket',
+	})
+	let original = { ...metadata }
 
 	await client.whoAmI({}, { metadata, signal: tc.signal })
 
-	expect(metadata.getMap()).toEqual(original)
+	expect(metadata).toEqual(original)
 })
 
 test('rejects endpoint pinning when discovery is disabled', async (tc) => {

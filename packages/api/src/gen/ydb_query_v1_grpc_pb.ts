@@ -6,7 +6,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AttachSessionRequestSchema, BeginTransactionRequestSchema, BeginTransactionResponseSchema, CommitTransactionRequestSchema, CommitTransactionResponseSchema, CreateSessionRequestSchema, CreateSessionResponseSchema, DeleteSessionRequestSchema, DeleteSessionResponseSchema, ExecuteQueryRequestSchema, ExecuteQueryResponsePartSchema, ExecuteScriptRequestSchema, FetchScriptResultsRequestSchema, FetchScriptResultsResponseSchema, RollbackTransactionRequestSchema, RollbackTransactionResponseSchema, SessionStateSchema } from "./protos/ydb_query_pb.js";
 import { OperationSchema } from "./protos/ydb_operation_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Query.V1.QueryService

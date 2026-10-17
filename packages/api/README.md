@@ -29,50 +29,26 @@ import { PileState, PileState_State } from '@ydbjs/api/bridge' // bridge / multi
 
 ### Using with @ydbjs/core
 
+Driver takes the database from the connection string and adds database and authentication metadata to each call.
+
 ```ts
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { Driver } from '@ydbjs/core'
 
-let driver = new Driver('grpc://localhost:2136/local')
-await driver.ready()
+using driver = new Driver('grpc://localhost:2136/local')
+let signal = AbortSignal.timeout(5000)
+await driver.ready(signal)
 let client = driver.createClient(DiscoveryServiceDefinition)
 
-let response = await client.listEndpoints({ database: driver.database })
+let response = await client.listEndpoints({ database: driver.database }, { signal })
 console.log(response)
-driver.close()
 ```
 
-### Using with grpc-js
+### Using the standalone transport
 
-```ts
-import { Client, credentials, Metadata } from '@grpc/grpc-js'
-import { createServiceClient } from '@ydbjs/api/client'
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+Pass a generated service definition and a transport to `createServiceClient(service, transport)` from `@ydbjs/grpc` for direct gRPC access. The transport connects to one authority; Driver supplies YDB discovery, authentication, database metadata, and node selection.
 
-let nativeClient = new Client('localhost:2136', credentials.createInsecure())
-let client = createServiceClient(DiscoveryServiceDefinition, nativeClient)
-let metadata = new Metadata()
-metadata.set('x-ydb-database', '/local')
-
-try {
-  let response = await client.listEndpoints(
-    { database: '/local' },
-    {
-      metadata,
-      signal: AbortSignal.timeout(5000),
-    }
-  )
-  console.log(response)
-} finally {
-  client.close()
-}
-```
-
-Unary and client-streaming methods return `Promise<Response>`. Server-streaming and bidirectional methods return `AsyncIterable<Response>` and start when iteration begins. Request streams accept `AsyncIterable<Request>`; writes respect grpc-js backpressure. Breaking out of response iteration cancels the RPC. Finishing a request stream half-closes it and allows the server to send its remaining responses.
-
-`ClientCallOptions` extends grpc-js `CallOptions` with `metadata`, `signal`, `onHeader`, and `onTrailer`. Metadata, credentials, interceptors, and server errors use native grpc-js types. Cancellation rejects with `signal.reason` before another buffered response is delivered; request-producer failures retain their original error. Producers that wait for external input must also release that input when cancelled: the adapter requests iterator cleanup without waiting indefinitely for a blocked `next()`.
-
-`ServiceClient<Service>` infers methods from the native grpc-js `ServiceDefinition` and exposes `close()` for the underlying native client. The definitions also work directly with grpc-js `makeClientConstructor`. RPC failures preserve the native `ServiceError`, including its status code, details, and trailing metadata.
+Unary and client-streaming methods return `Promise<Response>`. Server-streaming and bidirectional methods return `AsyncIterable<Response>`. See [`@ydbjs/grpc`](../grpc/README.md) for cancellation, metadata, and connection options.
 
 ## Development
 

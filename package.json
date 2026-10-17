@@ -20,6 +20,8 @@
 		"build": "turbo run build --output-logs=errors-only",
 		"attw": "turbo run attw",
 		"test": "vitest --run",
+		"test:grpc": "vitest --run --config vitest.grpc.config.ts",
+		"bench:fsm": "vitest bench --run --project uni --no-file-parallelism --maxWorkers=1 packages/fsm/src",
 		"coverage": "vitest --run --coverage",
 		"lint": "oxlint --fix",
 		"format": "oxfmt --write",

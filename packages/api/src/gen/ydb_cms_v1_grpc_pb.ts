@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AlterDatabaseRequestSchema, AlterDatabaseResponseSchema, CreateDatabaseRequestSchema, CreateDatabaseResponseSchema, DescribeDatabaseOptionsRequestSchema, DescribeDatabaseOptionsResponseSchema, GetDatabaseStatusRequestSchema, GetDatabaseStatusResponseSchema, ListDatabasesRequestSchema, ListDatabasesResponseSchema, RemoveDatabaseRequestSchema, RemoveDatabaseResponseSchema } from "./protos/ydb_cms_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Cms.V1.CmsService

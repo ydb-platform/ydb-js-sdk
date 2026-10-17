@@ -1,4 +1,5 @@
 ---
+'@ydbjs/grpc': minor
 '@ydbjs/api': major
 '@ydbjs/auth': major
 '@ydbjs/core': major
@@ -10,10 +11,12 @@
 '@ydbjs/error': minor
 ---
 
-Replace nice-grpc with a small async adapter over grpc-js 1.14.6 or later. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and native stream backpressure.
+Replace the nice-grpc transport stack with the dependency-free `@ydbjs/grpc` client over Node.js HTTP/2. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and backpressure. Requires Node.js 22.15 or later supported by the SDK.
 
-createServiceClient(service, nativeClient) adapts a native grpc-js client. Driver.createClient returns that async service client. Use createPinnedClient to await endpoint pin acquisition explicitly. ClientCallOptions accepts native Metadata and grpc-js call options alongside signal, onHeader and onTrailer. Replace addClientMiddleware and CredentialsProvider.middleware with native addClientInterceptor and CredentialsProvider.interceptor. Metadata.get returns an array; server failures retain native ServiceError codes, details and trailers. Query metadata events carry native Metadata.
+Use `createServiceClient(service, transport)` for standalone calls. `Driver.createClient` retains discovery and node selection; `createPinnedClient` explicitly awaits endpoint pin acquisition. Configure TLS, message limits, and HTTP/2 windows through `transportOptions`. The transport does not replay RPCs or duplicate YDB balancing and retry policies.
 
-High-level TopicWriter, TopicReader, query and coordination operations retain their APIs. Custom service definitions use the native grpc-js ServiceDefinition format.
+Call options accept plain metadata records, signals, absolute deadlines, and header/trailer/status observers. `RpcError` carries code, details, and trailing metadata; `MessageSizeError` identifies permanent local size-limit failures. Query metadata events expose the same record format. Register `addMetadataHook` before constructing Driver to add tracing headers. Credential providers supply `getToken`; Driver handles authentication and mandatory headers without middleware or interceptor adapters.
 
-Per-call interceptors and interceptor providers preserve the driver authentication and metadata chain. Cancelled response streams reject with the caller reason before delivering further buffered responses.
+High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
+
+Decode incoming HTTP/2 fragments into bounded gRPC frame batches before async iteration, preserving cancellation and response ordering without scheduling an iterator step for every fragment.

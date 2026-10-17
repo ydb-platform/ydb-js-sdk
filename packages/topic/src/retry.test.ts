@@ -1,6 +1,7 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { Metadata, status as Status } from '@grpc/grpc-js'
+import { MessageSizeError, RpcError } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
 import { isRetryableTopicError } from './retry.ts'
@@ -22,4 +23,9 @@ test('reconnects a reader after an indeterminate idempotent stream failure', () 
 	]) {
 		expect(isRetryableTopicError(new YDBError(status, []))).toBe(true)
 	}
+})
+
+test.for(['request', 'response'] as const)('does not retry a local %s size limit', (direction) => {
+	expect(isRetryableTopicError(new MessageSizeError(direction, 1024))).toBe(false)
+	expect(isRetryableTopicError(new RpcError(Status.RESOURCE_EXHAUSTED, 'Rate limit'))).toBe(true)
 })

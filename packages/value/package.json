@@ -86,7 +86,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "2.12.0",
+		"@bufbuild/protobuf": "2.16.0",
 		"@date-fns/tz": "^1.4.1",
 		"@ydbjs/api": "^6.0.7",
 		"date-fns": "^4.1.0",

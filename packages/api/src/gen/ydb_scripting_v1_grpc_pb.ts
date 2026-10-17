@@ -5,7 +5,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { ExecuteYqlPartialResponseSchema, ExecuteYqlRequestSchema, ExecuteYqlResponseSchema, ExplainYqlRequestSchema, ExplainYqlResponseSchema } from "./protos/ydb_scripting_pb.js";
-import type { ServiceDefinition } from "@grpc/grpc-js";
+import type { ServiceDefinition } from "@ydbjs/grpc";
 
 /**
  * @generated from service Ydb.Scripting.V1.ScriptingService

@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { expect, test } from 'vitest'
@@ -593,3 +594,187 @@ test('releases a yielded payload while the iterator waits for its next item', as
 	queue.close()
 	await expect(iterator.next()).resolves.toMatchObject({ done: true })
 })
+
+for (let [kind, createQueue] of [
+	['fifo', () => new AsyncQueue<number>()],
+	['priority', () => new AsyncPriorityQueue<number>()],
+] as const) {
+	for (let reader of ['take', 'iterator'] as const) {
+		for (let buffered of [false, true]) {
+			test(`${kind} ${reader} reset ends a paused wait with buffered=${buffered}`, async () => {
+				using queue = createQueue()
+				queue.pause()
+				if (buffered) queue.push(1)
+				let iterator = queue[Symbol.asyncIterator]()
+				let pending = reader === 'take' ? queue.take() : iterator.next()
+				queue.reset()
+				queue.push(2)
+				queue.close()
+				await expect(pending).resolves.toMatchObject({ done: true })
+				let fresh = reader === 'take' ? queue.take() : queue[Symbol.asyncIterator]().next()
+				await expect(fresh).resolves.toEqual({ done: false, value: 2 })
+			})
+		}
+		test(`${kind} ${reader} reset isolates a pending wait from a new failure`, async () => {
+			using queue = createQueue()
+			let iterator = queue[Symbol.asyncIterator]()
+			let pending = reader === 'take' ? queue.take() : iterator.next()
+			queue.reset()
+			let error = new Error('New generation failed')
+			queue.fail(error)
+			await expect(pending).resolves.toMatchObject({ done: true })
+			let fresh = reader === 'take' ? queue.take() : queue[Symbol.asyncIterator]().next()
+			await expect(fresh).rejects.toBe(error)
+		})
+		test(`${kind} ${reader} respects a second pause before the resumed wait runs`, async (tc) => {
+			using queue = createQueue()
+			queue.pause()
+			queue.push(1)
+			let iterator = queue[Symbol.asyncIterator]()
+			let settled = false
+			let pending = (reader === 'take' ? queue.take() : iterator.next()).then((result) => {
+				settled = true
+				return result
+			})
+			queue.resume()
+			queue.pause()
+			await sleep(0, undefined, { signal: tc.signal })
+			expect(settled).toBe(false)
+			expect(queue.size).toBe(1)
+			queue.resume()
+			await expect(pending).resolves.toEqual({ done: false, value: 1 })
+		})
+		for (let buffered of [false, true]) {
+			test(`${kind} ${reader} destroy drops buffered failure and preserves assigned failure with buffered=${buffered}`, async () => {
+				using queue = createQueue()
+				let iterator = queue[Symbol.asyncIterator]()
+				let reads: Promise<IteratorResult<number>>[] = []
+				if (buffered) queue.push(1)
+				else reads.push(reader === 'take' ? queue.take() : iterator.next())
+				let failure = new Error('Queue failed')
+				queue.fail(failure)
+				queue.destroy()
+				reads.push(reader === 'take' ? queue.take() : iterator.next())
+				let outcomes = await Promise.all(
+					reads.map((read) =>
+						read.then(
+							(value) => ({ value }),
+							(reason) => ({ reason })
+						)
+					)
+				)
+				let done = { value: { done: true, value: undefined } }
+				expect(outcomes).toEqual(buffered ? [done] : [{ reason: failure }, done])
+				expect(queue.size).toBe(0)
+			})
+		}
+	}
+	test(`${kind} reset ends an iterator suspended after a yielded value`, async () => {
+		using queue = createQueue()
+		let iterator = queue[Symbol.asyncIterator]()
+		queue.push(1)
+		await expect(iterator.next()).resolves.toEqual({ done: false, value: 1 })
+		queue.reset()
+		queue.push(2)
+		queue.close()
+		await expect(iterator.next()).resolves.toMatchObject({ done: true })
+		await expect(queue[Symbol.asyncIterator]().next()).resolves.toEqual({
+			done: false,
+			value: 2,
+		})
+	})
+}
+
+for (let [kind, createQueue] of [
+	['fifo', () => new AsyncQueue<number>()],
+	['priority', () => new AsyncPriorityQueue<number>()],
+] as const) {
+	for (let terminal of ['reset', 'close', 'destroy', 'fail'] as const) {
+		for (let paused of [false, true]) {
+			for (let abortFirst of [false, true]) {
+				test(`${kind} ${terminal} and abort preserve first completion with paused=${paused} abortFirst=${abortFirst}`, async () => {
+					using queue = createQueue()
+					let controller = new AbortController()
+					let abortReason = new Error('Cancelled')
+					let failure = new Error('Queue failed')
+					if (paused) queue.pause()
+					let pending = queue.take(controller.signal)
+					let terminate = () => {
+						if (terminal === 'fail') queue.fail(failure)
+						else queue[terminal]()
+					}
+					if (abortFirst) {
+						controller.abort(abortReason)
+						terminate()
+					} else {
+						terminate()
+						controller.abort(abortReason)
+					}
+					let outcome = await pending.then(
+						(value) => ({ value }),
+						(reason) => ({ reason })
+					)
+					let expected = abortFirst
+						? { reason: abortReason }
+						: terminal === 'fail'
+							? { reason: failure }
+							: { value: { done: true, value: undefined } }
+					expect(outcome).toEqual(expected)
+					expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+				})
+			}
+		}
+
+		test(`${kind} resumed take preserves abort before ${terminal}`, async () => {
+			using queue = createQueue()
+			let controller = new AbortController()
+			let abortReason = new Error('Cancelled after resume')
+			queue.pause()
+			let pending = queue.take(controller.signal)
+			queue.resume()
+			controller.abort(abortReason)
+			if (terminal === 'fail') queue.fail(new Error('Queue failed'))
+			else queue[terminal]()
+			await expect(pending).rejects.toBe(abortReason)
+			expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+		})
+	}
+}
+
+for (let [kind, createQueue] of [
+	['fifo', () => new AsyncQueue<number>()],
+	['priority', () => new AsyncPriorityQueue<number>()],
+] as const) {
+	for (let reader of ['take', 'iterator'] as const) {
+		for (let completion of ['item', 'done', 'error'] as const) {
+			test(`${kind} ${reader} preserves assigned ${completion} across reset`, async () => {
+				using queue = createQueue()
+				let iterator = queue[Symbol.asyncIterator]()
+				let pending = reader === 'take' ? queue.take() : iterator.next()
+				let failure = new Error('Assigned failure')
+				if (completion === 'item') queue.push(1)
+				else if (completion === 'error') queue.fail(failure)
+				else queue.close()
+				queue.reset()
+				queue.push(2)
+				queue.close()
+				let outcome = await pending.then(
+					(value) => ({ value }),
+					(reason) => ({ reason })
+				)
+				let expected =
+					completion === 'error'
+						? { reason: failure }
+						: {
+								value: {
+									done: completion === 'done',
+									value: completion === 'item' ? 1 : undefined,
+								},
+							}
+				expect(outcome).toEqual(expected)
+				let fresh = reader === 'take' ? queue.take() : queue[Symbol.asyncIterator]().next()
+				await expect(fresh).resolves.toEqual({ done: false, value: 2 })
+			})
+		}
+	}
+}

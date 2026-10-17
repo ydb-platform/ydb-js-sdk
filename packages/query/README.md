@@ -107,7 +107,7 @@ q.on('retry', (ctx) => console.log('Retrying:', ctx))
 await q
 ```
 
-The `metadata` event receives trailing `Metadata` from `@grpc/grpc-js`; `metadata.get(key)` returns an array of values.
+The `metadata` event receives a read-only metadata record from `@ydbjs/grpc`. Read a value with `metadata[key]`; repeated keys produce arrays, and binary values use `Uint8Array`.
 
 ### Error Handling
 

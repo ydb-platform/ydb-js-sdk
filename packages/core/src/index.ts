@@ -10,7 +10,7 @@ export type {
 	PessimizeEvent,
 	UnpessimizeEvent,
 } from './hooks.js'
-export { addClientInterceptor } from './interceptors.js'
+export { addMetadataHook, type MetadataHook } from './metadata-hooks.js'
 export {
 	DriverCSError,
 	DriverCSProtocolError,

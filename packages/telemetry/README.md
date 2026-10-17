@@ -366,16 +366,9 @@ state.
 
 ## Propagation to YDB
 
-`register()` installs a gRPC client interceptor into `@ydbjs/core` (via
-`addClientInterceptor` — a small public hook exported from `@ydbjs/core`).
-On every outgoing RPC it calls
-`propagation.inject(context.active(), metadata, …)`, serialising the active
-OTel context into gRPC metadata using whichever propagator is globally
-registered. With no SDK registered the global propagator is a no-op.
+`register()` installs a metadata hook through `addMetadataHook` from `@ydbjs/core`. Before each RPC, the hook injects the active OpenTelemetry context into a copy of the caller's metadata. Driver then supplies its mandatory YDB headers and authentication token. The globally registered propagator controls the wire format; without one, injection is a no-op.
 
-**Order of operations matters.** Drivers compose the interceptor chain
-**once** at construction time, so `register()` must run **before**
-`new Driver(...)`. Matches OTel's `NodeSDK.start()` pattern.
+Register telemetry before constructing Driver: each Driver captures the metadata hooks at construction time.
 
 ```ts
 sdk.start()                 // 1. OTel SDK

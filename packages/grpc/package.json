@@ -1,0 +1,55 @@
+{
+	"name": "@ydbjs/grpc",
+	"version": "0.1.0",
+	"description": "Async gRPC transport over Node.js HTTP/2",
+	"keywords": [
+		"grpc",
+		"http2",
+		"typescript",
+		"sdk"
+	],
+	"homepage": "https://github.com/ydb-platform/ydb-js-sdk#readme",
+	"bugs": {
+		"url": "https://github.com/ydb-platform/ydb-js-sdk/issues"
+	},
+	"license": "Apache-2.0",
+	"author": "YDB Team <team@ydb.tech> (https://ydb.tech)",
+	"contributors": [
+		"Vladislav Polyakov <me@polrk.com>"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ydb-platform/ydb-js-sdk.git",
+		"directory": "packages/grpc"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"development": "./src/index.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"scripts": {
+		"clean": "rm -rf dist",
+		"build": "tsc && tsc -p type-tests",
+		"test": "vitest --run",
+		"attw": "attw --pack --profile esm-only"
+	},
+	"engines": {
+		"node": "^22.15.0 || >=23.8.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}

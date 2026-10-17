@@ -1,7 +1,7 @@
-import type { Metadata, MethodDefinition, ServiceDefinition } from '@grpc/grpc-js'
+import type { Metadata, MethodDefinition, ServiceDefinition } from '../src/types.js'
 import { expectTypeOf } from 'vitest'
 
-import type { ClientCallOptions, ServiceClient } from '../src/client.js'
+import type { CallOptions, ServiceClient } from '../src/types.js'
 
 type Request = { value: number }
 type Response = { result: string }
@@ -16,7 +16,7 @@ interface Methods extends ServiceDefinition {
 declare let client: ServiceClient<Methods>
 declare let input: AsyncIterable<Request>
 declare let metadata: Metadata
-let options: ClientCallOptions = { metadata, deadline: Date.now() + 1000 }
+let options: CallOptions = { metadata, deadline: Date.now() + 1000 }
 expectTypeOf(client.unary({ value: 1 }, options)).toEqualTypeOf<Promise<Response>>()
 expectTypeOf(client.read({ value: 1 })).toEqualTypeOf<AsyncIterable<Response>>()
 expectTypeOf(client.write(input)).toEqualTypeOf<Promise<Response>>()
