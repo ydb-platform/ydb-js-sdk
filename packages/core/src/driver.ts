@@ -7,8 +7,10 @@ import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import {
 	type ClientOptions,
 	type Metadata,
+	RpcError,
 	type ServiceClient,
 	type ServiceDefinition,
+	Status,
 	createServiceClient,
 } from '@ydbjs/grpc'
 import { abortable, linkSignals } from '@ydbjs/abortable'
@@ -87,6 +89,7 @@ export type DriverOptions = {
 
 	'ydb.sdk.application'?: string
 	'ydb.sdk.ready_timeout_ms'?: number
+	/** Maximum token acquisition time before an RPC, in milliseconds. Defaults to 10000. */
 	'ydb.sdk.token_timeout_ms'?: number
 	'ydb.sdk.enable_discovery'?: boolean
 	'ydb.sdk.discovery_timeout_ms'?: number
@@ -194,6 +197,12 @@ export class Driver implements Disposable {
 
 		this.cs = this.#parseConnectionString(connectionString)
 		this.options = this.#mergeOptions(userOptions)
+		let tokenTimeout = this.options['ydb.sdk.token_timeout_ms']!
+		if (!Number.isInteger(tokenTimeout) || tokenTimeout < 0 || tokenTimeout > 0xffffffff) {
+			throw new RangeError(
+				'ydb.sdk.token_timeout_ms must be an integer between 0 and 4294967295'
+			)
+		}
 		this.#assertDiscoveryTimings()
 
 		this.#identity = this.#buildIdentity()
@@ -236,9 +245,8 @@ export class Driver implements Disposable {
 	}
 
 	get token(): Promise<string> {
-		let signal = AbortSignal.timeout(this.options['ydb.sdk.token_timeout_ms']!)
-
-		return this.#credentialsProvider.getToken(false, signal)
+		let signal = this.#closedController.signal
+		return signal.aborted ? Promise.reject(signal.reason) : this.#getRpcToken(signal)
 	}
 
 	get database(): string {
@@ -459,26 +467,75 @@ export class Driver implements Disposable {
 			metadata = normalizeMetadata(metadata)
 		}
 
-		let tokenController = new AbortController()
-		let onAbort = () => tokenController.abort(signal.reason)
-		signal.throwIfAborted()
-		signal.addEventListener('abort', onAbort, { once: true })
-		let token: string
-		try {
-			token = await abortable(
-				signal,
-				this.#credentialsProvider.getToken(false, tokenController.signal)
-			)
-		} finally {
-			// A completed getToken() may have started a background refresh that outlives this RPC.
-			signal.removeEventListener('abort', onAbort)
-		}
+		let token = await this.#getRpcToken(signal)
 
 		metadata['x-ydb-sdk-build-info'] = this.#buildInfo
 		metadata['x-ydb-database'] = this.database
 		metadata['x-ydb-application-name'] = this.application
 		metadata['x-ydb-auth-ticket'] = token
 		return metadata
+	}
+
+	#getRpcToken(signal: AbortSignal): Promise<string> {
+		signal.throwIfAborted()
+		let tokenRequestDeadline = performance.now() + this.options['ydb.sdk.token_timeout_ms']!
+		let token: Promise<string>
+		try {
+			token = this.#credentialsProvider.getToken(false)
+		} catch (error) {
+			signal.throwIfAborted()
+			throw error
+		}
+
+		return new Promise((resolve, reject) => {
+			let settled = false
+			let timer: ReturnType<typeof setTimeout> | undefined
+			let cleanup = () => {
+				settled = true
+				clearTimeout(timer)
+				signal.removeEventListener('abort', cancel)
+			}
+			let cancel = () => {
+				cleanup()
+				reject(
+					signal.aborted
+						? signal.reason
+						: new RpcError(Status.DEADLINE_EXCEEDED, 'Token acquisition timed out')
+				)
+			}
+			let scheduleTokenTimeout = () => {
+				if (settled) return
+				let remainingWaitMs = tokenRequestDeadline - performance.now()
+				if (remainingWaitMs <= 0) {
+					cancel()
+					return
+				}
+				timer = setTimeout(
+					scheduleTokenTimeout,
+					Math.min(remainingWaitMs, 2147483647)
+				).unref()
+			}
+			signal.addEventListener('abort', cancel, { once: true })
+			if (signal.aborted) cancel()
+			token.then(
+				(value) => {
+					if (settled) return
+					if (performance.now() >= tokenRequestDeadline) {
+						cancel()
+						return
+					}
+					cleanup()
+					resolve(value)
+					return undefined
+				},
+				(error: unknown) => {
+					cleanup()
+					reject(error)
+				}
+			)
+			// Already-fulfilled cached tokens settle before a timer needs to be allocated.
+			queueMicrotask(scheduleTokenTimeout)
+		})
 	}
 
 	// The listEndpoints seam handed to the endpoints runtime. One plain RPC — the

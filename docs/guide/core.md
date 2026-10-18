@@ -183,60 +183,54 @@ await driver.ready()
 
 ## Build your own provider
 
-Implement `CredentialsProvider` with `getToken(force?, signal?)`. The provider middleware automatically sets `x-ydb-auth-ticket` for all calls.
+Implement `CredentialsProvider.getToken(force?, signal?)`. The Driver obtains the token and sets `x-ydb-auth-ticket`, database and SDK headers before sending the RPC. The provider owns its cache and token refresh; it does not install middleware.
+
+Concurrent callers should share one refresh. In this example, `fetchTokenSomehow(signal)` performs the token request and returns `{ value, expiresAt }`, where `expiresAt` is the token's expiry time in Unix milliseconds. Pass the provider's signal to that network request.
 
 ```ts
+import { abortable } from '@ydbjs/abortable'
 import { CredentialsProvider } from '@ydbjs/auth'
+import { Driver } from '@ydbjs/core'
 
 class MyCredentialsProvider extends CredentialsProvider {
-  #token: string | null = null
+  #token: { value: string; expiresAt: number } | undefined
+  #refreshPromise: Promise<string> | undefined
+
   async getToken(force = false, signal?: AbortSignal): Promise<string> {
-    if (!force && this.#token) return this.#token
-    const token = await fetchTokenSomehow(signal)
-    this.#token = token
-    return token
+    signal?.throwIfAborted()
+    if (!force && this.#token && this.#token.expiresAt > Date.now()) {
+      return this.#token.value
+    }
+
+    if (!this.#refreshPromise) {
+      let timeout = AbortSignal.timeout(5000)
+      this.#refreshPromise = fetchTokenSomehow(timeout)
+        .then((token) => {
+          this.#token = token
+          return token.value
+        })
+        .finally(() => {
+          this.#refreshPromise = undefined
+        })
+    }
+
+    return signal ? abortable(signal, this.#refreshPromise) : this.#refreshPromise
   }
 }
 
-const driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!, {
   credentialsProvider: new MyCredentialsProvider(),
 })
+await driver.ready()
 ```
 
-Tips:
+The timeout is created only when a new token request starts. A cached read or a caller joining the existing refresh creates no additional provider timeout. The refresh clears `#refreshPromise` on both success and failure, so a later call can try again. Providers with short-lived tokens can also start a refresh before expiry while continuing to return the current token.
 
-- Cache the token and refresh it proactively (like `StaticCredentialsProvider`).
-- Mind timeouts: `ydb.sdk.token_timeout_ms` in driver options.
+### RPC deadline and caller cancellation
 
-### Why AbortSignal matters and how to handle aborts
+The Driver calls `getToken()` without the RPC signal. It limits its own wait with `ydb.sdk.token_timeout_ms` (default 10000 ms), the call deadline and caller cancellation. A token-wait timeout rejects with `Status.DEADLINE_EXCEEDED`; cancellation preserves the caller's original reason. The same absolute RPC deadline covers authorization and the RPC itself, without restarting after token acquisition.
 
-- The driver passes a timed `signal` to `getToken()` (`ydb.sdk.token_timeout_ms`) so token retrieval won’t hang and blow overall SLA.
-- Your provider must:
-  - propagate this `signal` to network calls (fetch/gRPC/HTTP);
-  - abort quickly when `signal.aborted` (typically throwing an `AbortError`).
-- This enables correct retries and graceful degradation.
-
-Example:
-
-```ts
-class MyCredentialsProvider extends CredentialsProvider {
-  #token: string | null = null
-
-  async getToken(force = false, signal: AbortSignal = AbortSignal.timeout(10_000)) {
-    if (!force && this.#token) return this.#token
-    const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
-    const res = await fetch(this.#endpoint, {
-      method: 'POST',
-      body: '{}',
-      signal: abort,
-    })
-    if (!res.ok) throw new Error(`Auth failed: ${res.status}`)
-    const { token } = await res.json()
-    this.#token = token
-    return token
-  }
-}
-```
+For callers that invoke `provider.getToken(false, signal)` directly, `abortable` cancels only their wait. The shared request continues under its provider-owned timeout, can populate the cache and remains available to other callers. Cancelling one RPC or closing its Driver therefore does not cancel a refresh used by another request.
 
 ## Low-level service clients
 
