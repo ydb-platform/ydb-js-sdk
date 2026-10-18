@@ -189,6 +189,8 @@ Each partition owns one canonical `pendingRanges` set for unconfirmed commits. `
 
 The facade queues encoded messages with their partition-session object. Decoding happens only for the messages selected for the next yield, so a paused consumer does not inflate its entire compressed backlog. The owned carry array also covers a suspended iterator; hard/fatal shutdown clears its chunks and the queue. Clean shutdown retains the encoded tail and its codec until the tail is consumed or discarded. Transaction offsets survive an early clean close until the transaction finishes.
 
+Encoded payload views can share a protobuf response backing buffer. Clearing consumed slots releases the message objects; unread views can keep that shared buffer alive until the response is fully consumed.
+
 Stopped partition entries with no outstanding obligations are forgotten after earlier queued commits have observed their final watermark. Ended partitions remain committable. Runtime faults use the same resource cleanup as protocol termination, including releasing partition state and callback references.
 After the current stream receives its initial grant, releasing a response of `N` bytes returns exactly `N` bytes in one `ReadRequest`, even if the response is split across many application batches.
 For example, a 10 MiB response delivered as 100 batches returns no credit for the first 99 batches and exactly 10 MiB after the last one.

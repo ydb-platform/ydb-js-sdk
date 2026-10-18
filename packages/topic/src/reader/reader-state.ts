@@ -293,7 +293,8 @@ export type ReaderOutput =
 	| {
 			type: 'reader.messages'
 			releaseBytes: bigint
-			groups: { session: TopicPartitionSession; messages: ReaderMessage[] }[]
+			// Ownership passes to the facade, which clears consumed slots.
+			groups: { session: TopicPartitionSession; messages: Array<ReaderMessage | undefined> }[]
 	  }
 	| {
 			type: 'reader.partition.started'
