@@ -29,6 +29,6 @@ test('handles invalid response', async () => {
 
 	let provider = new MetadataCredentialsProvider({})
 
-	let result = provider.getToken(true, AbortSignal.timeout(100))
-	await expect(result).rejects.toThrow('The operation was aborted')
+	let result = provider.getToken(true)
+	await expect(result).rejects.toThrow('Failed to fetch token: 404')
 })

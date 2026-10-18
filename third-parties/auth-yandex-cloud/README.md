@@ -101,6 +101,8 @@ Required fields:
 3. **Token Caching**: Caches the IAM token and automatically refreshes it before expiration (5 minute safety margin)
 4. **YDB Authentication**: Uses the IAM token as `x-ydb-auth-ticket` header for YDB requests
 
+Each provider shares one in-progress IAM exchange across callers. A `getToken(force, signal)` signal cancels only that caller's wait; it does not abort the exchange or other callers. The provider limits a new foreground exchange to 5 seconds and a background refresh to 30 seconds. Cached tokens and callers joining an existing exchange do not create another timeout.
+
 ## Observability
 
 This provider participates in the unified `node:diagnostics_channel` surface defined by `@ydbjs/auth`. Every token fetch publishes:

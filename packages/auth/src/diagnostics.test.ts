@@ -98,9 +98,7 @@ test('publishes ydb:auth.provider.failed when metadata fetch fails', async () =>
 
 	let provider = new MetadataCredentialsProvider({})
 
-	await expect(provider.getToken(true, AbortSignal.timeout(50))).rejects.toThrow(
-		/aborted|fetch token|abort/i
-	)
+	await expect(provider.getToken(true)).rejects.toThrow('Failed to fetch token: 500')
 
 	expect(failed.payloads).toHaveLength(1)
 	let p = failed.payloads[0] as any

@@ -1,5 +1,6 @@
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
+import { abortable } from '@ydbjs/abortable'
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { backoff } from '@ydbjs/retry/strategy'
@@ -10,6 +11,7 @@ let authTokenFetchCh = tracingChannel<{ provider: 'metadata' }, { provider: 'met
 )
 
 let dbg = loggers.auth.extend('metadata')
+let ACQUIRE_TOKEN_TIMEOUT_MS = 5_000
 
 export type MetadataCredentialsToken = {
 	value: string
@@ -72,11 +74,12 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 	 * Otherwise, it fetches a new token with optional retry logic based on the provided configuration.
 	 *
 	 * @param force - A flag indicating whether to force fetching a new token regardless of the existing one's validity.
-	 * @param signal - An AbortSignal to cancel the operation if needed.
+	 * @param signal - Cancels this caller’s wait without cancelling the shared refresh.
 	 * @returns A promise resolving to the authentication token as a string.
 	 * @throws Will throw an error if the token fetch fails, the response is not OK, or the content type is incorrect.
 	 */
 	async getToken(force?: boolean, signal?: AbortSignal): Promise<string> {
+		signal?.throwIfAborted()
 		if (!force && this.#token && this.#token.expired_at > Date.now()) {
 			dbg.log('returning cached token, expires in %d ms', this.#token.expired_at - Date.now())
 			return this.#token.value
@@ -90,14 +93,14 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 
 		if (this.#promise) {
 			dbg.log('token fetch already in progress, waiting for result')
-			return this.#promise
+			return abortable(signal, this.#promise)
 		}
 
 		dbg.log('fetching new token from metadata service')
 
 		let retryConfig: RetryConfig = {
 			retry: (err) => err instanceof Error,
-			signal,
+			signal: AbortSignal.timeout(ACQUIRE_TOKEN_TIMEOUT_MS),
 			budget: 5,
 			strategy: backoff(10, 1000),
 			onRetry: (ctx) => {
@@ -118,7 +121,7 @@ export class MetadataCredentialsProvider extends CredentialsProvider {
 				this.#promise = null
 			})
 
-		return this.#promise
+		return abortable(signal, this.#promise)
 	}
 
 	async #fetchTokenAttempt(signal: AbortSignal): Promise<string> {
