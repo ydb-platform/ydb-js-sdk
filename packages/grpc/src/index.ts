@@ -9,8 +9,13 @@ export type {
 	MethodDefinition,
 	RpcStatus,
 	ServiceClient,
+	ServiceImplementation,
+	ServerContext,
+	ServerOptions,
 	ServiceDefinition,
 	Transport,
 } from './types.js'
 
 export { createServiceClient } from './service.js'
+
+export { Server } from './server.js'

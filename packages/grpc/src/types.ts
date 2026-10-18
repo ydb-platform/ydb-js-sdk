@@ -1,3 +1,4 @@
+import type { SecureServerOptions } from 'node:http2'
 import type { ConnectionOptions } from 'node:tls'
 
 export type MetadataValue = string | Uint8Array
@@ -63,4 +64,37 @@ export type ServiceClient<Service extends ServiceDefinition> = Pick<Transport, '
 	) => Service[Method]['responseStream'] extends true
 		? AsyncIterable<ResponseOf<Service[Method]>>
 		: Promise<ResponseOf<Service[Method]>>
+}
+
+export interface ServerOptions {
+	tls?: SecureServerOptions
+	maxSendBytes?: number
+	maxReceiveBytes?: number
+}
+
+export interface ServerContext {
+	readonly metadata: Metadata
+	readonly signal: AbortSignal
+	readonly deadline: number | undefined
+	readonly peer: string
+	sendHeader(metadata: Metadata): void
+	setTrailer(metadata: Metadata): void
+}
+
+type ServerRequest<Method extends MethodDefinition> = ReturnType<
+	NonNullable<Method['requestDeserialize']>
+>
+type ServerResponse<Method extends MethodDefinition> = Parameters<
+	NonNullable<Method['responseSerialize']>
+>[0]
+
+export type ServiceImplementation<Service extends ServiceDefinition> = {
+	[Method in keyof Service as string extends Method ? never : Method]: (
+		request: Service[Method]['requestStream'] extends true
+			? AsyncIterable<ServerRequest<Service[Method]>>
+			: ServerRequest<Service[Method]>,
+		context: ServerContext
+	) => Service[Method]['responseStream'] extends true
+		? AsyncIterable<ServerResponse<Service[Method]>>
+		: ServerResponse<Service[Method]> | Promise<ServerResponse<Service[Method]>>
 }
