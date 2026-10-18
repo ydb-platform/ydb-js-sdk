@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { constants, createPrivateKey, sign } from 'node:crypto'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 import { CredentialsProvider } from '@ydbjs/auth'
+import { abortable } from '@ydbjs/abortable'
 import { loggers } from '@ydbjs/debug'
 import { type RetryConfig, retry } from '@ydbjs/retry'
 import { type RetryStrategy, exponential, fixed } from '@ydbjs/retry/strategy'
@@ -174,23 +175,24 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * Only blocks when token is expired or force=true.
 	 *
 	 * @param force - If true, forces fetching a new token regardless of cache
-	 * @param signal - AbortSignal to cancel the operation
+	 * @param signal - Cancels only this caller's wait; the shared token refresh continues.
 	 * @returns Promise resolving to IAM token string
 	 */
 	async getToken(force?: boolean, signal?: AbortSignal): Promise<string> {
+		signal?.throwIfAborted()
 		let now = Date.now()
 
 		if (!force && this.#token && this.#token.expires_at > now) {
 			// Refresh in background when token expires in < 5 minutes to avoid blocking on expiration
 			if (this.#token.expires_at <= now + 5 * 60 * 1000) {
-				this.#refreshTokenInBackground(signal)
+				this.#refreshTokenInBackground()
 			}
 
 			return this.#token.value
 		}
 
 		if (this.#promise) {
-			return this.#promise
+			return abortable(signal, this.#promise)
 		}
 
 		if (this.#token && this.#token.expires_at <= now && !this.#expiredReported) {
@@ -203,11 +205,11 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 
 		dbg.log('fetching new IAM token (token expired or force=true, key ID: %s)', this.#key.id)
 
-		this.#promise = this.#refreshOnce(signal).finally(() => {
+		this.#promise = this.#refreshOnce(AbortSignal.timeout(5_000)).finally(() => {
 			this.#promise = null
 		})
 
-		return this.#promise
+		return abortable(signal, this.#promise)
 	}
 
 	/**
@@ -216,13 +218,13 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * opportunistic refreshes behave identically from the caller's point
 	 * of view.
 	 */
-	#refreshTokenInBackground(signal?: AbortSignal): void {
+	#refreshTokenInBackground(): void {
 		if (this.#promise) {
 			return
 		}
 
 		let refreshPromise: Promise<string> | null = null
-		refreshPromise = this.#refreshOnce(signal)
+		refreshPromise = this.#refreshOnce(AbortSignal.timeout(30_000))
 			.catch((error) => {
 				// Don't throw — failed background refresh will retry on next
 				// getToken call. Return the existing token to avoid breaking
@@ -244,7 +246,7 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * Performs one IAM-token exchange against Yandex Cloud and updates the
 	 * cached token. Used by both blocking and background refresh.
 	 */
-	async #refreshOnce(signal?: AbortSignal): Promise<string> {
+	async #refreshOnce(signal: AbortSignal): Promise<string> {
 		try {
 			return await authTokenFetchCh.tracePromise(
 				async (): Promise<string> => {
@@ -282,7 +284,6 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 			return null
 		}
 
-		// AbortError is not retryable - user explicitly cancelled the operation
 		if (error.name === 'AbortError') {
 			return null
 		}
@@ -375,7 +376,7 @@ export class ServiceAccountCredentialsProvider extends CredentialsProvider {
 	 * @param signal - AbortSignal to cancel the request
 	 * @returns Promise resolving to IamToken with value and expiration
 	 */
-	async #fetchIamToken(signal?: AbortSignal): Promise<IamToken> {
+	async #fetchIamToken(signal: AbortSignal): Promise<IamToken> {
 		let retryConfig: RetryConfig = {
 			retry: (err) => this.#getRetryStrategy(err) !== null,
 			signal,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { abortable } from '@ydbjs/abortable'
 
 import { ServiceAccountCredentialsProvider, type ServiceAccountKey } from './service-account.js'
 
@@ -441,4 +442,131 @@ test('throws error on invalid private key format', async () => {
 		code: expect.stringMatching(/^ERR_OSSL_(UNSUPPORTED|PEM_NO_START_LINE)$/),
 	})
 	expect(global.fetch).not.toHaveBeenCalled()
+})
+
+// A gated IAM response makes cancellation during a shared exchange deterministic.
+test.for(['initiator', 'joiner'])(
+	'cancels only the %s waiting for a shared IAM exchange',
+	async (cancelledCaller, tc) => {
+		let response = Promise.withResolvers<Response>()
+		let exchangeSignal: AbortSignal | undefined
+		using fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, options) => {
+			if (!options?.signal) throw new Error('Expected an IAM exchange signal')
+			exchangeSignal = options.signal
+			return abortable(exchangeSignal, response.promise)
+		})
+		using timeouts = vi.spyOn(AbortSignal, 'timeout')
+		let controller = new AbortController()
+		let signal = AbortSignal.any([tc.signal, controller.signal])
+		let provider = new ServiceAccountCredentialsProvider(mockKey)
+		let first = provider.getToken(false, cancelledCaller === 'initiator' ? signal : tc.signal)
+		let second = provider.getToken(false, cancelledCaller === 'joiner' ? signal : tc.signal)
+		let cancelled = cancelledCaller === 'initiator' ? first : second
+		let remaining = cancelledCaller === 'initiator' ? second : first
+		let reason = new Error('Caller cancelled')
+		let failure = cancelled.catch((error: unknown) => error)
+
+		controller.abort(reason)
+		expect(await failure).toBe(reason)
+
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		expect(exchangeSignal?.aborted).toBe(false)
+		expect(timeouts).toHaveBeenCalledExactlyOnceWith(5_000)
+		response.resolve(
+			Response.json({
+				iamToken: 'shared-token',
+				expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+			})
+		)
+		expect(await remaining).toBe('shared-token')
+		expect(await provider.getToken(false, tc.signal)).toBe('shared-token')
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		expect(timeouts).toHaveBeenCalledTimes(1)
+	}
+)
+
+test('rejects an already cancelled IAM waiter without starting an exchange', async (tc) => {
+	using fetchMock = vi.spyOn(globalThis, 'fetch')
+	using timeouts = vi.spyOn(AbortSignal, 'timeout')
+	let reason = new Error('Caller already cancelled')
+	let signal = AbortSignal.any([tc.signal, AbortSignal.abort(reason)])
+	let provider = new ServiceAccountCredentialsProvider(mockKey)
+
+	let pending = provider.getToken(false, signal)
+
+	await expect(pending).rejects.toBe(reason)
+	expect(fetchMock).not.toHaveBeenCalled()
+	expect(timeouts).not.toHaveBeenCalled()
+})
+
+test('bounds a shared IAM exchange and allows the next caller to retry', async (tc) => {
+	let controller = new AbortController()
+	let response = Promise.withResolvers<Response>()
+	using timeouts = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(controller.signal)
+	using fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, options) => {
+		if (!options?.signal) throw new Error('Expected an IAM exchange signal')
+		return abortable(options.signal, response.promise)
+	})
+	let provider = new ServiceAccountCredentialsProvider(mockKey)
+	let reason = new DOMException('IAM exchange timed out', 'TimeoutError')
+	let first = provider.getToken(false, tc.signal)
+	let second = provider.getToken(false, tc.signal)
+	let firstFailure = first.catch((error: unknown) => error)
+	let secondFailure = second.catch((error: unknown) => error)
+
+	controller.abort(reason)
+	expect(await firstFailure).toBe(reason)
+	expect(await secondFailure).toBe(reason)
+
+	expect(timeouts).toHaveBeenCalledExactlyOnceWith(5_000)
+	expect(fetchMock).toHaveBeenCalledTimes(1)
+	fetchMock.mockResolvedValueOnce(
+		Response.json({
+			iamToken: 'recovered-token',
+			expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+		})
+	)
+	expect(await provider.getToken(false, tc.signal)).toBe('recovered-token')
+	expect(fetchMock).toHaveBeenCalledTimes(2)
+	expect(timeouts).toHaveBeenCalledTimes(2)
+})
+
+test('keeps background IAM refresh independent of the cached-token caller', async (tc) => {
+	let response = Promise.withResolvers<Response>()
+	let exchangeSignal: AbortSignal | undefined
+	using fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+		Response.json({
+			iamToken: 'cached-token',
+			expiresAt: new Date(Date.now() + 240_000).toISOString(),
+		})
+	)
+	fetchMock.mockImplementation((_input, options) => {
+		if (!options?.signal) throw new Error('Expected an IAM exchange signal')
+		exchangeSignal = options.signal
+		return abortable(exchangeSignal, response.promise)
+	})
+	using timeouts = vi.spyOn(AbortSignal, 'timeout')
+	let provider = new ServiceAccountCredentialsProvider(mockKey)
+	expect(await provider.getToken(false, tc.signal)).toBe('cached-token')
+	let controller = new AbortController()
+	let signal = AbortSignal.any([tc.signal, controller.signal])
+	expect(await provider.getToken(false, signal)).toBe('cached-token')
+	expect(await provider.getToken(false, tc.signal)).toBe('cached-token')
+	let refreshed = provider.getToken(true, tc.signal)
+
+	controller.abort(new Error('Cached-token caller finished'))
+
+	expect(exchangeSignal?.aborted).toBe(false)
+	expect(fetchMock).toHaveBeenCalledTimes(2)
+	expect(timeouts.mock.calls).toEqual([[5_000], [30_000]])
+	response.resolve(
+		Response.json({
+			iamToken: 'refreshed-token',
+			expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+		})
+	)
+	expect(await refreshed).toBe('refreshed-token')
+	expect(await provider.getToken(false, tc.signal)).toBe('refreshed-token')
+	expect(fetchMock).toHaveBeenCalledTimes(2)
+	expect(timeouts).toHaveBeenCalledTimes(2)
 })

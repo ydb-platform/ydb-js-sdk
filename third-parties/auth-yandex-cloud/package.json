@@ -52,6 +52,7 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
+		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/auth": "^6.3.0",
 		"@ydbjs/debug": "^6.0.0",
 		"@ydbjs/retry": "^6.3.0"

@@ -38,7 +38,9 @@ YDB requires authentication for most operations. The credentials provider you ch
 
 ## Native gRPC integration
 
-`CredentialsProvider` supplies `getToken(force?, signal?)`. `Driver` obtains the token before dispatch and sets the authentication and database headers after metadata hooks. A call's signal and deadline also bound token acquisition. Cancelling a completed call does not cancel a background token refresh. Provider failures retain their original error and do not penalize a database node.
+`CredentialsProvider` supplies `getToken(force?, signal?)`. Its signal cancels only that caller's wait; a shared token refresh continues for other callers and can populate the cache. `Driver` obtains the token before dispatch and sets the authentication and database headers after metadata hooks. A call's signal and deadline bound its wait without cancelling the provider's work. Provider failures retain their original error and do not penalize a database node.
+
+Static and metadata providers bound a new token request, including retries, to five seconds. Static credentials allow 30 seconds for a background refresh while the cached token is still usable. Cached reads and calls joining a refresh create no additional provider timeout.
 
 ## Usage
 
