@@ -1,7 +1,7 @@
+import { DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { workerData } from 'node:worker_threads'
 
 import { create } from '@bufbuild/protobuf'
-import { DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 
 import { installSafetyHandlers } from '../../lib/safety.ts'

@@ -70,11 +70,15 @@ let collectTrace = function collectTrace(
 		asyncEnd: () => (counts.asyncEnd += 1),
 		error: () => (counts.error += 1),
 	}
-	ch.subscribe(handlers)
+	ch.start.subscribe(handlers.start)
+	ch.asyncEnd.subscribe(handlers.asyncEnd)
+	ch.error.subscribe(handlers.error)
 	return {
 		counts,
 		[Symbol.dispose]() {
-			ch.unsubscribe(handlers)
+			ch.start.unsubscribe(handlers.start)
+			ch.asyncEnd.unsubscribe(handlers.asyncEnd)
+			ch.error.unsubscribe(handlers.error)
 		},
 	}
 }

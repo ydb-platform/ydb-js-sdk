@@ -132,10 +132,8 @@ test('waitReady with per-call signal rejects without terminating the session', a
 	let waitPromise = runtime.transport.waitReady(callCtrl.signal)
 
 	callCtrl.abort(new Error('per-call timeout'))
-	await settle()
-
-	// waitReady rejects with an AbortError DOMException (thrown by abortable).
 	await expect(waitPromise).rejects.toBeDefined()
+	await settle()
 	// The session itself is still alive — only the per-call signal was cancelled.
 	expect(runtime.status).toBe('connecting')
 

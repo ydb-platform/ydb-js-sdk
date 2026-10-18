@@ -2,7 +2,7 @@
 
 [![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=core)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/core/)
 
-The `@ydbjs/core` package provides the core driver and connection management for YDB in JavaScript/TypeScript. It is the foundation for all YDB client operations, handling connection pooling, service client creation, authentication, and middleware.
+The `@ydbjs/core` package provides the core driver and connection management for YDB in JavaScript/TypeScript. It is the foundation for all YDB client operations, handling connection pooling, service client creation, authentication, and HTTP/2 transport.
 
 ## Features
 
@@ -11,7 +11,7 @@ The `@ydbjs/core` package provides the core driver and connection management for
 - Pluggable authentication via `@ydbjs/auth` providers
 - Automatic endpoint discovery and failover
 - TypeScript support with type definitions
-- Compatible with Node.js and modern runtimes
+- Compatible with Node.js 22.15 and newer
 
 ## Installation
 
@@ -22,10 +22,20 @@ npm install @ydbjs/core
 ## How It Works
 
 - **Driver**: The main entry point. Manages connections, endpoint discovery, and authentication.
-- **Connection Pool**: Maintains and balances gRPC channels to YDB endpoints.
+- **Connection Pool**: Maintains and balances HTTP/2 connections to YDB endpoints.
 - **Service Clients**: Use `driver.createClient(ServiceDefinition)` to get a typed client for any YDB gRPC service (from `@ydbjs/api`).
 - **Authentication**: Pass a credentials provider from `@ydbjs/auth` to the driver for static, token, anonymous, or cloud metadata authentication.
-- **Middleware**: Internal middleware handles metadata, authentication, and debugging.
+- **Metadata hooks**: Add tracing or application headers before the driver stamps its required headers and credentials.
+
+`Driver.createClient()` returns a typed asynchronous client: unary methods return a `Promise`, response streams return an `AsyncIterable`, and request streams accept an `AsyncIterable`. Pass `{ signal }` to cancel a call. Per-call options accept an absolute `deadline`, plain `metadata` records, and `onHeader` / `onTrailer` callbacks. RPC failures expose `RpcError.code`, `details`, and trailing `metadata` from `@ydbjs/grpc`.
+
+The driver owns connections. A service client's `close()` prevents new calls through that client while other clients remain usable. Existing calls continue until completion or cancellation through their `AbortSignal`.
+
+For an endpoint absent from discovery, await `driver.createPinnedClient(service, { nodeId, endpoint, hard }, signal)`. It requires discovery to be enabled, waits for pin publication, and returns a disposable async client. `close()` or `[Symbol.dispose]()` releases that client's pin. Ordinary `createClient(service, nodeId)` and `createClient(service, { nodeId, hard })` remain synchronous.
+
+Register a synchronous `addMetadataHook(metadata => { ... })` before creating a driver to add tracing or application headers. The driver snapshots registrations at construction; disposing the registration affects future drivers. Caller metadata is copied, and authentication, database, application, and SDK headers are applied after hooks.
+
+Use `transportOptions` to configure keepalive intervals, connection and stream window sizes, and message byte limits. TLS configuration belongs in `secureOptions`; an explicit server name can be set through `transportOptions.tls.servername`.
 
 ## Usage
 
@@ -35,14 +45,14 @@ npm install @ydbjs/core
 import { Driver } from '@ydbjs/core'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const driver = new Driver('grpc://localhost:2136/local')
+let driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const discovery = driver.createClient(DiscoveryServiceDefinition)
-const endpoints = await discovery.listEndpoints({ database: '/local' })
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+let endpoints = await discovery.listEndpoints({ database: '/local' })
 console.log(endpoints)
 
-await driver.close()
+driver.close()
 ```
 
 ### Using Authentication Providers

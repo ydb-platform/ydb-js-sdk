@@ -1,44 +1,27 @@
 import type { EndpointInfo as ProtoEndpointInfo } from '@ydbjs/api/discovery'
 import { loggers } from '@ydbjs/debug'
-import {
-	type Channel,
-	type ChannelCredentials,
-	type ChannelOptions,
-	createChannel,
-} from 'nice-grpc'
+import { Client, type ClientOptions, type Transport } from '@ydbjs/grpc'
 
 import type { EndpointInfo } from './hooks.js'
 
 let dbg = loggers.driver.extend('conn')
 
-/**
- * Immutable view of a single gRPC connection.
- * Pessimization state is owned by the Pool — not here.
- */
 export interface Connection extends Disposable {
 	readonly endpoint: EndpointInfo
-	readonly channel: Channel
-
+	readonly client: Transport & Pick<Client, 'state' | 'connect'>
 	close(): void
-	[Symbol.dispose](): void
 }
 
-/**
- * A single gRPC connection to a YDB node.
- */
 export class GrpcConnection implements Connection {
 	readonly endpoint: EndpointInfo
-	#channel: Channel
+	readonly client: Client
 
-	constructor(
-		endpoint: ProtoEndpointInfo,
-		channelCredentials: ChannelCredentials,
-		channelOptions?: ChannelOptions
-	) {
-		let address = `${endpoint.address}:${endpoint.port}`
-
-		// Freeze the value object so hooks receive a stable, immutable reference
-		// without being able to accidentally mutate driver internals.
+	constructor(endpoint: ProtoEndpointInfo, options?: ClientOptions) {
+		let host =
+			endpoint.address.includes(':') && !endpoint.address.startsWith('[')
+				? `[${endpoint.address}]`
+				: endpoint.address
+		let address = `${host}:${endpoint.port}`
 		this.endpoint = Object.freeze<EndpointInfo>({
 			nodeId: BigInt(endpoint.nodeId),
 			address,
@@ -46,27 +29,25 @@ export class GrpcConnection implements Connection {
 			pile: endpoint.bridgePileName,
 		})
 
-		dbg.log('create channel to node id=%d address=%s', this.endpoint.nodeId, address)
-
-		this.#channel = createChannel(address, channelCredentials, {
-			...channelOptions,
-			// Required when the TLS certificate CN doesn't match the gRPC endpoint
-			// address (common in YDB deployments behind a load balancer).
-			'grpc.ssl_target_name_override': endpoint.sslTargetNameOverride,
+		this.client = new Client(`${endpoint.ssl ? 'https' : 'http'}://${address}`, {
+			...options,
+			tls: {
+				...options?.tls,
+				...(endpoint.sslTargetNameOverride && {
+					servername: endpoint.sslTargetNameOverride,
+				}),
+			},
 		})
-	}
-
-	get channel(): Channel {
-		return this.#channel
+		dbg.log('create connection to node id=%d address=%s', this.endpoint.nodeId, address)
 	}
 
 	close(): void {
 		dbg.log(
-			'close channel to node id=%d address=%s',
+			'close connection to node id=%d address=%s',
 			this.endpoint.nodeId,
 			this.endpoint.address
 		)
-		this.#channel.close()
+		this.client.close()
 	}
 
 	[Symbol.dispose](): void {

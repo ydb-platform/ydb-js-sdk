@@ -42,7 +42,6 @@
 		"zx": "^8.8.5"
 	},
 	"overrides": {
-		"@grpc/proto-loader": "npm:dry-uninstall",
 		"esbuild": "^0.28.0",
 		"fflate": "0.8.2",
 		"protobufjs": "npm:dry-uninstall",

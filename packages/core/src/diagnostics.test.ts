@@ -6,10 +6,12 @@ import { anyPack } from '@bufbuild/protobuf/wkt'
 import {
 	DiscoveryServiceDefinition,
 	EndpointInfoSchema,
+	ListEndpointsResponseSchema,
 	ListEndpointsResultSchema,
+	WhoAmIResponseSchema,
 } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { ServerError, Status, createServer } from 'nice-grpc'
+import { RpcError, Server, Status } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
 import { Driver } from './driver.js'
@@ -42,49 +44,43 @@ function collect(name: string): { payloads: unknown[] } & Disposable {
  * would instead keep retrying until the ready timeout.
  */
 async function startDiscoveryServer(opts: { fail?: boolean } = {}) {
-	let server = createServer()
+	let server = new Server()
 	let selfPort = 0
 
-	server.add(
-		{
-			listEndpoints: DiscoveryServiceDefinition.listEndpoints,
-			whoAmI: DiscoveryServiceDefinition.whoAmI,
+	server.add(DiscoveryServiceDefinition, {
+		async listEndpoints() {
+			if (opts.fail) {
+				throw new RpcError(Status.PERMISSION_DENIED, 'discovery boom')
+			}
+			let result = create(ListEndpointsResultSchema, {
+				endpoints: [
+					create(EndpointInfoSchema, {
+						nodeId: 1,
+						address: '127.0.0.1',
+						port: selfPort,
+						location: 'dc1',
+					}),
+				],
+			})
+			return create(ListEndpointsResponseSchema, {
+				operation: {
+					status: StatusIds_StatusCode.SUCCESS,
+					ready: true,
+					result: anyPack(ListEndpointsResultSchema, result),
+				},
+			})
 		},
-		{
-			async listEndpoints() {
-				if (opts.fail) {
-					throw new ServerError(Status.PERMISSION_DENIED, 'discovery boom')
-				}
-				let result = create(ListEndpointsResultSchema, {
-					endpoints: [
-						create(EndpointInfoSchema, {
-							nodeId: 1,
-							address: '127.0.0.1',
-							port: selfPort,
-							location: 'dc1',
-						}),
-					],
-				})
-				return {
-					operation: {
-						status: StatusIds_StatusCode.SUCCESS,
-						ready: true,
-						result: anyPack(ListEndpointsResultSchema, result),
-					},
-				} as any
-			},
-			async whoAmI() {
-				return {} as any
-			},
-		}
-	)
+		async whoAmI() {
+			return create(WhoAmIResponseSchema, {})
+		},
+	})
 
 	selfPort = await server.listen('127.0.0.1:0')
 
 	return {
 		port: selfPort,
 		async [Symbol.asyncDispose]() {
-			await server.shutdown()
+			await server.close()
 		},
 	}
 }
@@ -243,40 +239,34 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 	// sleep) guarantees the RPC has actually landed before we close.
 	let entered = Promise.withResolvers<void>()
 	let release = Promise.withResolvers<void>()
-	let server = createServer()
+	let server = new Server()
 	let port = 0
-	server.add(
-		{
-			listEndpoints: DiscoveryServiceDefinition.listEndpoints,
-			whoAmI: DiscoveryServiceDefinition.whoAmI,
+	server.add(DiscoveryServiceDefinition, {
+		async listEndpoints() {
+			entered.resolve()
+			await release.promise
+			let result = create(ListEndpointsResultSchema, {
+				endpoints: [
+					create(EndpointInfoSchema, {
+						nodeId: 1,
+						address: '127.0.0.1',
+						port,
+						location: 'dc1',
+					}),
+				],
+			})
+			return create(ListEndpointsResponseSchema, {
+				operation: {
+					status: StatusIds_StatusCode.SUCCESS,
+					ready: true,
+					result: anyPack(ListEndpointsResultSchema, result),
+				},
+			})
 		},
-		{
-			async listEndpoints() {
-				entered.resolve()
-				await release.promise
-				let result = create(ListEndpointsResultSchema, {
-					endpoints: [
-						create(EndpointInfoSchema, {
-							nodeId: 1,
-							address: '127.0.0.1',
-							port,
-							location: 'dc1',
-						}),
-					],
-				})
-				return {
-					operation: {
-						status: StatusIds_StatusCode.SUCCESS,
-						ready: true,
-						result: anyPack(ListEndpointsResultSchema, result),
-					},
-				} as any
-			},
-			async whoAmI() {
-				return {} as any
-			},
-		}
-	)
+		async whoAmI() {
+			return create(WhoAmIResponseSchema, {})
+		},
+	})
 	port = await server.listen('127.0.0.1:0')
 
 	using ready = collect('ydb:driver.ready')
@@ -299,7 +289,7 @@ test('close() during in-flight initial discovery suppresses ydb:driver.ready / .
 	expect(ready.payloads).toHaveLength(0)
 	expect(failed.payloads).toHaveLength(0)
 
-	await server.shutdown()
+	await server.close()
 })
 
 test('traces tracing:ydb:driver.discovery error when listEndpoints fails', async () => {

@@ -1,5 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
-import { createServer } from 'nice-grpc'
+import { expect, test } from 'vitest'
 import { create } from '@bufbuild/protobuf'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -11,6 +10,7 @@ import {
 } from '@ydbjs/api/query'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
+import { Server } from '@ydbjs/grpc'
 
 import { Session } from './session.ts'
 import { SessionLease, SessionPool } from './session-pool.ts'
@@ -24,7 +24,7 @@ import { SessionLease, SessionPool } from './session-pool.ts'
 // ../tests/session-pool.test.ts against real YDB instead.
 
 /**
- * Minimal in-memory QueryService. Tests get:
+ * Controlled loopback QueryService. Tests get:
  *  - `breakSession(id)`: server-side abort of a session's attach stream
  *    (simulates YDB-driven invalidation).
  *  - `holdCreateSession()`: blocks every subsequent `CreateSession` until
@@ -42,13 +42,8 @@ async function startQueryServer() {
 	let deleteCalls: string[] = []
 	let attachCalls: string[] = []
 
-	let server = createServer()
-	let subset = {
-		createSession: QueryServiceDefinition.createSession,
-		deleteSession: QueryServiceDefinition.deleteSession,
-		attachSession: QueryServiceDefinition.attachSession,
-	}
-	server.add(subset, {
+	let server = new Server()
+	server.add(QueryServiceDefinition, {
 		async createSession() {
 			createCount++
 			if (holdPromise) await holdPromise
@@ -109,25 +104,13 @@ async function startQueryServer() {
 			holdPromise = new Promise<void>((r) => (holdResolve = r))
 			return () => holdResolve?.()
 		},
-		async close() {
+		[Symbol.dispose]() {
 			holdResolve?.()
 			driver.close()
-			await server.shutdown()
+			server[Symbol.dispose]()
 		},
 	}
 }
-
-type Harness = Awaited<ReturnType<typeof startQueryServer>>
-
-// SessionPool is AsyncDisposable — each test declares its own `await using
-// pool`. Only the raw server harness (not disposable) needs shared afterEach
-// cleanup.
-let srv: Harness | undefined
-
-afterEach(async () => {
-	await srv?.close()
-	srv = undefined
-})
 
 /** Poll a condition until true or timeout — async server effects need time. */
 async function until(cond: () => boolean, timeoutMs = 500): Promise<void> {
@@ -141,7 +124,7 @@ async function until(cond: () => boolean, timeoutMs = 500): Promise<void> {
 }
 
 test('eviction of a busy session pumps a fresh one to the oldest waiter', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	let held = await pool.acquire()
@@ -161,7 +144,7 @@ test('eviction of a busy session pumps a fresh one to the oldest waiter', async 
 })
 
 test('close() during in-flight create does not hang and rejects the pending acquire', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	let release = srv.holdCreateSession()
 	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
@@ -184,7 +167,7 @@ test('close() during in-flight create does not hang and rejects the pending acqu
 })
 
 test('lease.signal is lease-scoped — ghost subscribers do not accumulate', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
 
 	let lease = await pool.acquire()
@@ -203,18 +186,18 @@ test('lease.signal is lease-scoped — ghost subscribers do not accumulate', asy
 })
 
 test('Session.open deletes the server-side session when attach first message is bad', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	srv.setFirstAttachStatus(StatusIds_StatusCode.BAD_SESSION)
 
 	await expect(Session.open(srv.driver)).rejects.toBeInstanceOf(YDBError)
 
 	// Fire-and-forget DeleteSession — wait for the RPC to actually land.
-	await until(() => srv!.deleteCalls.length > 0)
+	await until(() => srv.deleteCalls.length > 0)
 	expect(srv.deleteCalls).toHaveLength(1)
 })
 
 test('Session.open aborts the attach stream when the caller signal fires mid-wait', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 
 	// Hold the first attach message forever — the harness normally yields
 	// SUCCESS on first message; here we want to verify cancellation during
@@ -227,9 +210,9 @@ test('Session.open aborts the attach stream when the caller signal fires mid-wai
 	let opening = Session.open(srv.driver, ctrl.signal)
 
 	// Wait for the attach RPC to reach the server.
-	await until(() => srv!.attachCalls.length > 0)
+	await until(() => srv.attachCalls.length > 0)
 
-	// Client aborts — nice-grpc should cancel the stream; our forward
+	// Client cancellation closes the attach stream; the forward
 	// listener in #bindAttach propagates the abort into #attach.
 	ctrl.abort(new Error('caller gave up'))
 
@@ -244,7 +227,7 @@ test('Session.open aborts the attach stream when the caller signal fires mid-wai
 })
 
 test('refills to minSize after a session is evicted by the server', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	await using pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 2 })
 
 	await until(() => pool.stats.total === 2, 1000)
@@ -255,7 +238,7 @@ test('refills to minSize after a session is evicted by the server', async () => 
 	// broken → pool eviction listener removes from #all → refill kicks in.
 	srv.breakSession(killed)
 
-	await until(() => srv!.createCount > createsBeforeEviction, 2000)
+	await until(() => srv.createCount > createsBeforeEviction, 2000)
 	await until(() => pool.stats.total === 2, 2000)
 
 	expect(pool.stats.total).toBe(2)
@@ -263,7 +246,7 @@ test('refills to minSize after a session is evicted by the server', async () => 
 })
 
 test('hands a warming session to a waiter when warm-up holds all capacity', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	let release = srv.holdCreateSession()
 
 	await using pool = new SessionPool(srv.driver, { maxSize: 2, minSize: 2 })
@@ -284,7 +267,7 @@ test('hands a warming session to a waiter when warm-up holds all capacity', asyn
 })
 
 test('pool.close() during warm-up settles without hanging', async () => {
-	srv = await startQueryServer()
+	using srv = await startQueryServer()
 	srv.holdCreateSession() // hold indefinitely; never released
 
 	await using pool = new SessionPool(srv.driver, { maxSize: 5, minSize: 5 })

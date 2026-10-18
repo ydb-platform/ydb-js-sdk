@@ -1,14 +1,11 @@
 # YDB OpenTelemetry Example
 
-Wires `@ydbjs/telemetry` into a standard OpenTelemetry Node SDK setup and
-exports both **traces** and **metrics** over OTLP/HTTP. Demonstrates:
+Connects `@ydbjs/telemetry` to OpenTelemetry trace and metric providers and exports both **traces** and **metrics** over OTLP/HTTP. Demonstrates:
 
-- Starting `NodeSDK` before YDB code runs so the global `TracerProvider` /
-  `MeterProvider` / `ContextManager` are in place when
-  `@ydbjs/telemetry` subscribes.
+- Registering `NodeTracerProvider` and `MeterProvider` before YDB code runs. `NodeTracerProvider.register()` also installs the context manager and W3C propagators.
 - Calling `register({ ... })` to enable the instrumentation.
-- Wrapping the workload in a user-created span — `@ydbjs/core`'s propagation
-  middleware reads `context.active()` on every outgoing gRPC call and
+- Wrapping the workload in a user-created span — the telemetry metadata
+  hook reads `context.active()` on every outgoing gRPC call and
   injects W3C `traceparent` / `tracestate` headers so the YDB server sees
   the same trace id.
 - Graceful teardown that flushes pending telemetry before the process exits.
@@ -50,12 +47,12 @@ In Prometheus / your metrics backend:
 
 ## Tweaks
 
-| Knob                     | Where                                  | Default                                |
-| ------------------------ | -------------------------------------- | -------------------------------------- |
-| `captureQueryText`       | `register({ … })`                      | `false`                                |
-| `emitAcquireSessionSpan` | `register({ … })`                      | `false`                                |
-| Service name             | `new NodeSDK({ … })`                   | —                                      |
-| Metric export interval   | `PeriodicExportingMetricReader({ … })` | `5_000ms` here, `60_000ms` SDK default |
+| Knob                     | Where                                           | Default                                |
+| ------------------------ | ----------------------------------------------- | -------------------------------------- |
+| `captureQueryText`       | `register({ … })`                               | `false`                                |
+| `emitAcquireSessionSpan` | `register({ … })`                               | `false`                                |
+| Service name             | `resourceFromAttributes({ 'service.name': … })` | —                                      |
+| Metric export interval   | `PeriodicExportingMetricReader({ … })`          | `5_000ms` here, `60_000ms` SDK default |
 
 See `packages/telemetry/README.md` for the full attribute / metric / span
 catalogue.

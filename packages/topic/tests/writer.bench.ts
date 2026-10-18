@@ -1,11 +1,11 @@
-import { bench, inject } from 'vitest'
-
-import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { bench, inject } from 'vitest'
+
+import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
 import { type TopicWriter, createTopicWriter } from '../src/writer/index.js'
 

@@ -1,7 +1,3 @@
-import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-
-import { create } from '@bufbuild/protobuf'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
@@ -10,6 +6,10 @@ import {
 	type StreamReadMessage_FromServer,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { afterEach, beforeEach, expect, inject, test } from 'vitest'
+
+import { create } from '@bufbuild/protobuf'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 import { AsyncPriorityQueue } from '@ydbjs/fsm/queue'

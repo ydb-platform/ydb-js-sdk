@@ -10,7 +10,7 @@ export type {
 	PessimizeEvent,
 	UnpessimizeEvent,
 } from './hooks.js'
-export { addClientMiddleware } from './middleware.js'
+export { addMetadataHook, type MetadataHook } from './metadata-hooks.js'
 export {
 	DriverCSError,
 	DriverCSProtocolError,
@@ -26,6 +26,6 @@ export {
 
 // The endpoints engine (src/endpoints/*) is an internal implementation detail of
 // Driver. Consumers only ever hold a Driver — direct-IO is reached through
-// `Driver.createClient(service, { nodeId, endpoint, hard })`, not by touching the
+// `Driver.createPinnedClient(service, { nodeId, endpoint, hard })`, not by touching the
 // pool. So EndpointPool / createEndpointsRuntime / selectEndpoint / buildSnapshot
 // and their types are intentionally NOT exported.

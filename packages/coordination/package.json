@@ -35,7 +35,7 @@
 		}
 	},
 	"engines": {
-		"node": ">=20.19.0",
+		"node": "^22.15.0 || >=23.8.0",
 		"npm": ">=10"
 	},
 	"engineStrict": true,
@@ -55,7 +55,7 @@
 		"@ydbjs/fsm": "^6.1.1",
 		"@ydbjs/retry": "^6.2.0",
 		"debug": "^4.4.0",
-		"nice-grpc": "^2.1.13"
+		"@ydbjs/grpc": "^0.1.0"
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"

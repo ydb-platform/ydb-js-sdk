@@ -1,5 +1,5 @@
 import { InstrumentationBase, type InstrumentationConfig } from '@opentelemetry/instrumentation'
-import { addClientMiddleware } from '@ydbjs/core'
+import { addMetadataHook } from '@ydbjs/core'
 
 import pkg from '../package.json' with { type: 'json' }
 
@@ -54,7 +54,7 @@ export class YdbInstrumentation extends InstrumentationBase<YdbInstrumentationCo
 		this.#metrics = new YdbMetricsPipeline(this.meter)
 		this.#metrics.enable()
 
-		this.#propagatorHandle = addClientMiddleware(propagator)
+		this.#propagatorHandle = addMetadataHook(propagator)
 	}
 
 	override disable(): void {

@@ -4,5 +4,12 @@
 		"rootDir": "./src",
 		"outDir": "./dist"
 	},
-	"exclude": ["dist/**/*", "**/*.test.ts", "**/*.bench.ts", "vitest.config.ts"]
+	"exclude": [
+		"dist/**/*",
+		"tests/**/*",
+		"**/*.test.ts",
+		"**/*.fixtures.ts",
+		"**/*.bench.ts",
+		"vitest.config.ts"
+	]
 }

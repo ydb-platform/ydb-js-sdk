@@ -8,7 +8,7 @@ import { SessionLease, SessionPool, SessionPoolFullError } from '../src/session-
 // Golden-path SessionPool/Session/SessionLease behavior against real YDB.
 // Scenarios that need server-side fault injection (killing a session's
 // stream mid-flight, holding CreateSession open, forcing a bad first attach
-// message) stay on the nice-grpc mock server in ../src/session-pool.test.ts
+// message) use the controlled loopback server in ../src/session-pool.test.ts
 // — there's no way to trigger those deterministically against a real server.
 let driver = new Driver(inject('connectionString'), {
 	'ydb.sdk.enable_discovery': false,

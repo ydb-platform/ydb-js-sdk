@@ -12,11 +12,12 @@ Example:
 import { Driver } from '@ydbjs/core'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const driver = new Driver(process.env.YDB_CONNECTION_STRING!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
-const discovery = driver.createClient(DiscoveryServiceDefinition)
-const res = await discovery.listEndpoints({ database: driver.database })
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+let response = await discovery.listEndpoints({ database: driver.database })
+console.log(response)
 ```
 
 For more examples, see package docs in `packages/api`.
