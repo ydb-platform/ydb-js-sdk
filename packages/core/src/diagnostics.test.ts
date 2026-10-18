@@ -171,28 +171,26 @@ test('publishes ydb:driver.closed with uptime on close()', async (tc) => {
 
 	using closed = collect('ydb:driver.closed')
 	driver.close()
-	// The endpoints pool tears down and publishes `closed` on a later turn.
-	await sleep(50)
+	driver.close()
 
-	expect(closed.payloads).toHaveLength(1)
+	await expect.poll(() => closed.payloads).toHaveLength(1)
 	let p = closed.payloads[0] as any
 	expect(p.driver.database).toBe('/local')
 	expect(typeof p.uptime).toBe('number')
 	expect(p.uptime).toBeGreaterThanOrEqual(0)
 })
 
-test('await using driver publishes ydb:driver.closed once via asyncDispose', async (tc) => {
+test('using driver publishes ydb:driver.closed once on scope exit', async (tc) => {
 	await using server = await startDiscoveryServer()
 	using closed = collect('ydb:driver.closed')
 
 	{
-		await using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
+		using driver = new Driver(`grpc://127.0.0.1:${server.port}/local`, {
 			'ydb.sdk.discovery_timeout_ms': 5_000,
 		})
 		await driver.ready(tc.signal)
 	}
-	// asyncDispose drains and awaits the graceful close; closed is already published.
-	expect(closed.payloads).toHaveLength(1)
+	await expect.poll(() => closed.payloads).toHaveLength(1)
 	let p = closed.payloads[0] as any
 	expect(p.driver.database).toBe('/local')
 	expect(typeof p.uptime).toBe('number')

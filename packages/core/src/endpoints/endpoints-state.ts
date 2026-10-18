@@ -3,7 +3,7 @@
 // clock live in the effectful half (`endpoints-runtime.ts`).
 //
 // One machine owns the DISCOVERY lifecycle (idle → discovering → ready →
-// degraded → closing → closed). Per-endpoint HEALTH is not a machine state —
+// degraded → closed). Per-endpoint HEALTH is not a machine state —
 // it is a sub-state on a registry entry (like the topic reader's PartitionEntry),
 // so a 10k-node cluster stays a single machine with two maps, not 10k machines.
 //
@@ -141,13 +141,13 @@ export let createEndpointsCtx = function createEndpointsCtx(config?: {
 }
 
 // ── States ──────────────────────────────────────────────────────────────────
-export type EndpointsState = 'idle' | 'discovering' | 'ready' | 'degraded' | 'closing' | 'closed'
+export type EndpointsState = 'idle' | 'discovering' | 'ready' | 'degraded' | 'closed'
 
 // ── Timers ──────────────────────────────────────────────────────────────────
 // No per-endpoint pessimization timer: recovery is optimistic-un-ban-on-rpc-ok
 // plus blanket-un-ban-on-discovery. `idle_sweep` reaps genuinely-departed
 // retired channels; brief flaps are absorbed (see endpoints-runtime.ts).
-export type TimerName = 'discovery_interval' | 'discovery_backoff' | 'idle_sweep' | 'close_deadline'
+export type TimerName = 'discovery_interval' | 'discovery_backoff' | 'idle_sweep'
 export type TimerRef = { which: TimerName }
 
 // ── Events ──────────────────────────────────────────────────────────────────
@@ -177,16 +177,12 @@ export type EndpointsEvent =
 			generation: number
 	  }
 	| { type: 'endpoints.invalidate'; nodeId: bigint }
-	// The runtime observed a channel become closeable (drained / broken / past
-	// grace, or fully drained during close) and asks the FSM to drop it. During
-	// closing, dropping the last channel finalizes.
+	// A retired channel has no active RPCs and can be removed after its grace period.
 	| { type: 'endpoints.channel_closeable'; nodeId: bigint }
 	| { type: 'endpoints.timer.discovery_interval' }
 	| { type: 'endpoints.timer.discovery_backoff' }
 	| { type: 'endpoints.timer.idle_sweep' }
-	| { type: 'endpoints.timer.close_deadline' }
 	| { type: 'endpoints.close' }
-	| { type: 'endpoints.destroy'; reason?: unknown }
 
 // ── Effects ─────────────────────────────────────────────────────────────────
 export type EndpointsEffect =
@@ -201,9 +197,6 @@ export type EndpointsEffect =
 			nodeId: bigint
 			store?: 'any' | 'discovered' | 'pinned'
 	  }
-	// Begin the graceful close drain: close idle channels now and wait for
-	// in-flight streams to finish (bounded by the close deadline). Runtime-only.
-	| { type: 'endpoints.effect.begin_close_drain' }
 	// Scan retired channels; dispatch endpoints.channel_closeable for any that
 	// are genuinely gone (broken or idle past grace). Pure I/O in the runtime.
 	| { type: 'endpoints.effect.idle_sweep' }
@@ -497,30 +490,6 @@ let applyRound = function applyRound(
 	return effects
 }
 
-let toClosing = function toClosing(ctx: EndpointsCtx, runtime: EndpointsTransitionRuntime): Result {
-	// Nothing registered → finalize immediately (no channels can exist).
-	if (ctx.byNodeId.size === 0 && ctx.pinned.size === 0) {
-		return terminate(ctx, new Error('Endpoints closed'), runtime)
-	}
-
-	// Freeze routing so no new RPC is dialed while draining, then hand the drain
-	// to the runtime: `begin_close_drain` closes idle channels immediately and
-	// dispatches `drained` once in-flight streams finish; `close_deadline` is the
-	// hard cap that force-closes whatever is left. This avoids waiting the full
-	// deadline when there is nothing (or nothing busy) to drain.
-	runtime.emit({ type: 'endpoints.snapshot', snapshot: EMPTY_SNAPSHOT })
-	return {
-		state: 'closing',
-		effects: [
-			{ type: 'endpoints.effect.timer.clear', which: 'discovery_interval' },
-			{ type: 'endpoints.effect.timer.clear', which: 'discovery_backoff' },
-			{ type: 'endpoints.effect.timer.clear', which: 'idle_sweep' },
-			{ type: 'endpoints.effect.begin_close_drain' },
-			{ type: 'endpoints.effect.timer.schedule', which: 'close_deadline' },
-		],
-	}
-}
-
 let terminate = function terminate(
 	ctx: EndpointsCtx,
 	reason: unknown,
@@ -564,7 +533,6 @@ let terminate = function terminate(
 			{ type: 'endpoints.effect.timer.clear', which: 'discovery_interval' },
 			{ type: 'endpoints.effect.timer.clear', which: 'discovery_backoff' },
 			{ type: 'endpoints.effect.timer.clear', which: 'idle_sweep' },
-			{ type: 'endpoints.effect.timer.clear', which: 'close_deadline' },
 			{ type: 'endpoints.effect.finalize', reason },
 		],
 	}
@@ -627,16 +595,6 @@ let applyInvalidate = function applyInvalidate(
 	ctx.pinned.delete(nodeId)
 	let close: EndpointsEffect = { type: 'endpoints.effect.close_channel', nodeId, store: 'pinned' }
 
-	if (runtime.state === 'closing') {
-		if (ctx.byNodeId.size === 0 && ctx.pinned.size === 0) {
-			let result = terminate(ctx, new Error('Endpoints closed'), runtime)
-
-			return { ...result, effects: [close, ...(result.effects ?? [])] }
-		}
-
-		return { effects: [close] }
-	}
-
 	rebuild(ctx, runtime)
 
 	// Close only the pinned channel — a discovered channel sharing this nodeId
@@ -652,9 +610,8 @@ export let endpointsTransition = function endpointsTransition(
 ): Result | void {
 	let state = runtime.state
 
-	// Global hard destroy from any non-terminal state.
-	if (state !== 'closed' && event.type === 'endpoints.destroy') {
-		return terminate(ctx, event.reason ?? new Error('Endpoints destroyed'), runtime)
+	if (state !== 'closed' && event.type === 'endpoints.close') {
+		return terminate(ctx, new Error('Endpoints closed'), runtime)
 	}
 
 	if (state !== 'closed' && event.type === 'endpoints.invalidate') {
@@ -672,8 +629,6 @@ export let endpointsTransition = function endpointsTransition(
 					}
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.close':
-					return terminate(ctx, new Error('Endpoints closed'), runtime)
 				default:
 					return ignored()
 			}
@@ -720,8 +675,6 @@ export let endpointsTransition = function endpointsTransition(
 					return { effects: [{ type: 'endpoints.effect.run_discovery_round' }] }
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.close':
-					return toClosing(ctx, runtime)
 				default:
 					return ignored()
 			}
@@ -844,44 +797,6 @@ export let endpointsTransition = function endpointsTransition(
 				}
 				case 'endpoints.pin':
 					return applyPin(ctx, event, runtime)
-				case 'endpoints.close':
-					return toClosing(ctx, runtime)
-				default:
-					return ignored()
-			}
-
-		case 'closing':
-			switch (event.type) {
-				case 'endpoints.channel_closeable': {
-					let entry = ctx.byNodeId.get(event.nodeId) ?? ctx.pinned.get(event.nodeId)
-					if (entry === undefined) return ignored()
-					ctx.byNodeId.delete(event.nodeId)
-					ctx.pinned.delete(event.nodeId)
-					runtime.emit({
-						type: 'endpoints.removed',
-						nodeId: entry.nodeId,
-						address: entry.address,
-						location: entry.location,
-						pile: entry.bridgePileName,
-						reason: 'pool_close',
-					})
-					let close: EndpointsEffect = {
-						type: 'endpoints.effect.close_channel',
-						nodeId: event.nodeId,
-					}
-					// Last channel drained → finalize, keeping this node's close effect.
-					if (ctx.byNodeId.size === 0 && ctx.pinned.size === 0) {
-						let term = terminate(ctx, new Error('Endpoints closed'), runtime)
-						return { ...term, effects: [close, ...(term.effects ?? [])] }
-					}
-					return { effects: [close] }
-				}
-				case 'endpoints.timer.close_deadline':
-					return terminate(ctx, new Error('Endpoints closed'), runtime)
-				case 'endpoints.discovery.round_succeeded':
-				case 'endpoints.discovery.round_failed':
-					ctx.roundInFlight = false
-					return ignored()
 				default:
 					return ignored()
 			}

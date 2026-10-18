@@ -1728,6 +1728,41 @@ test('closes gracefully and aborts the underlying stream', async () => {
 	expect(stream.wasAborted()).toBe(true)
 })
 
+test('waits for pending commit acknowledgements during async disposal', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+
+	let stream = await primeStream(waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
+		})
+	)
+	let messages = await collect(reader, 1, tc.signal)
+	let committed = reader.commit(messages)
+	let disposed = false
+	let disposing = reader[Symbol.asyncDispose]().then(() => {
+		disposed = true
+		return undefined
+	})
+
+	// Holding the ACK deterministically is not possible against a real YDB server.
+	await stream.waitForCommit()
+	await settle()
+	expect(disposed).toBe(false)
+	expect(stream.wasAborted()).toBe(false)
+
+	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
+	await committed
+	await disposing
+	await settle()
+	expect(disposed).toBe(true)
+	expect(stream.wasAborted()).toBe(true)
+})
+
 test('keeps the configured source filters when caller-owned options change', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let source = {

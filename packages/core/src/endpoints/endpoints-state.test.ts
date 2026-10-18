@@ -299,14 +299,11 @@ test('replacing a pin address preserves its existing owner count', () => {
 	expect(h.ctx.pinned.has(9n)).toBe(false)
 })
 
-test('releasing the last pin finishes a closing pool with no discovered nodes', () => {
+test('close removes a pin before initial discovery completes', () => {
 	let h = harness()
 	step(h, { type: 'endpoints.discovery.start' })
-	let pin = pinEv(9n)
-	step(h, pin)
+	step(h, pinEv(9n))
 	step(h, { type: 'endpoints.close' })
-	expect(h.state).toBe('closing')
-	step(h, { type: 'endpoints.invalidate', nodeId: 9n })
 	expect(h.state).toBe('closed')
 	expect(h.ctx.pinned.size).toBe(0)
 	expect(effectTypes(h)).toContain('endpoints.effect.close_channel')
@@ -332,19 +329,17 @@ test('invalidate removes a pin and closes its channel', () => {
 
 // ── terminal ─────────────────────────────────────────────────────────────────
 
-test('close with live channels drains via closing then finalizes on deadline', () => {
+test('close finalizes without scheduling further work', () => {
 	let h = toReady([ep(1)])
 	step(h, { type: 'endpoints.close' })
-	expect(h.state).toBe('closing')
-	expect(effectTypes(h)).toContain('endpoints.effect.timer.schedule')
-	step(h, { type: 'endpoints.timer.close_deadline' })
 	expect(h.state).toBe('closed')
 	expect(h.final).toBe(true)
+	expect(effectTypes(h)).not.toContain('endpoints.effect.timer.schedule')
 })
 
-test('destroy is immediate and closes every channel', () => {
+test('close immediately removes every channel', () => {
 	let h = toReady([ep(1), ep(2)])
-	step(h, { type: 'endpoints.destroy' })
+	step(h, { type: 'endpoints.close' })
 	expect(h.state).toBe('closed')
 	expect(h.final).toBe(true)
 	expect(outputs(h, 'endpoints.removed')).toHaveLength(2)
@@ -353,7 +348,7 @@ test('destroy is immediate and closes every channel', () => {
 
 test('events after closed are ignored with no effects', () => {
 	let h = toReady([ep(1)])
-	step(h, { type: 'endpoints.destroy' })
+	step(h, { type: 'endpoints.close' })
 	step(h, { type: 'endpoints.rpc_failed', nodeId: 1n })
 	expect(h.effects).toHaveLength(0)
 	expect(h.emitted).toHaveLength(0)
@@ -367,25 +362,24 @@ test('idle close (no channels) finalizes immediately', () => {
 	expect(h.final).toBe(true)
 })
 
-test('close with a registered node enters closing and freezes routing', () => {
+test('close empties routing and registries', () => {
 	let h = toReady([ep(1)])
+	step(h, pinEv(9n))
 	step(h, { type: 'endpoints.close' })
-	expect(h.state).toBe('closing')
-	// Routing is frozen so a late acquire() throws instead of vending a channel.
-	let snap = outputs(h, 'endpoints.snapshot').at(-1)!
-	expect(snap.snapshot.byNodeId.size).toBe(0)
-	expect(effectTypes(h)).toContain('endpoints.effect.begin_close_drain')
+	expect(h.state).toBe('closed')
+	let snapshot = outputs(h, 'endpoints.snapshot').at(-1)!.snapshot
+	expect(snapshot.byNodeId.size).toBe(0)
+	expect(h.ctx.byNodeId.size).toBe(0)
+	expect(h.ctx.pinned.size).toBe(0)
 })
 
-test('closing drops the last channel and finalizes on channel_closeable', () => {
+test('a retired channel callback after close has no effect', () => {
 	let h = toReady([ep(1)])
 	step(h, { type: 'endpoints.close' })
 	step(h, { type: 'endpoints.channel_closeable', nodeId: 1n })
 	expect(h.state).toBe('closed')
-	expect(h.final).toBe(true)
-	let removed = outputs(h, 'endpoints.removed')
-	expect(removed.at(-1)!.reason).toBe('pool_close')
-	expect(effectTypes(h)).toContain('endpoints.effect.close_channel')
+	expect(h.effects).toHaveLength(0)
+	expect(h.emitted).toHaveLength(0)
 })
 
 // ── empty discovery round ─────────────────────────────────────────────────────
@@ -614,13 +608,6 @@ test('an unhandled event is ignored in each live state', () => {
 	let r = toReady([ep(1)])
 	step(r, { type: 'endpoints.discovery.start' })
 	expect(r.effects).toHaveLength(0)
-
-	// closing: rpc_ok is not a closing event.
-	let c = toReady([ep(1)])
-	step(c, { type: 'endpoints.close' })
-	expect(c.state).toBe('closing')
-	step(c, { type: 'endpoints.rpc_ok', nodeId: 1n })
-	expect(c.effects).toHaveLength(0)
 })
 
 test('counts a nodeId duplicated in one response once', () => {

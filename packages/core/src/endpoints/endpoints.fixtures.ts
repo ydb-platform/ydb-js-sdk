@@ -208,7 +208,7 @@ export let capture = function capture(name: string): Captured {
 export type EndpointPoolHarness = EndpointsRuntime & {
 	discovery: FakeDiscovery
 	connections: FakeConnectionFactory
-} & AsyncDisposable
+} & Disposable
 
 export let makeEndpointPool = function makeEndpointPool(
 	over: {
@@ -222,7 +222,6 @@ export let makeEndpointPool = function makeEndpointPool(
 		discoveryIntervalMs?: number
 		idleIntervalMs?: number
 		retiredGraceMs?: number
-		closeDeadlineMs?: number
 	} = {}
 ): EndpointPoolHarness {
 	let discovery = over.discovery ?? makeFakeDiscovery()
@@ -240,15 +239,14 @@ export let makeEndpointPool = function makeEndpointPool(
 		discoveryIntervalMs: over.discoveryIntervalMs ?? 60_000,
 		idleIntervalMs: over.idleIntervalMs ?? 60_000,
 		retiredGraceMs: over.retiredGraceMs ?? 300_000,
-		closeDeadlineMs: over.closeDeadlineMs ?? 50,
 	})
 
 	return {
 		...runtime,
 		discovery,
 		connections,
-		async [Symbol.asyncDispose]() {
-			await runtime.pool.close()
+		[Symbol.dispose]() {
+			runtime.pool.close()
 		},
 	}
 }

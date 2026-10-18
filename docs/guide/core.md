@@ -16,12 +16,10 @@ This guide helps you connect to YDB from JavaScript/TypeScript and run your firs
 ```ts
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
+using driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
 await driver.ready()
 
 // use the driver with Query/Topic or low-level clients
-
-await driver.close()
 ```
 
 ## Authentication providers (`@ydbjs/auth`)

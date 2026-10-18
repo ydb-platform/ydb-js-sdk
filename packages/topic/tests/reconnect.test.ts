@@ -1,5 +1,7 @@
 import {
 	CreateTopicRequestSchema,
+	DescribeTopicRequestSchema,
+	DescribeTopicResultSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
@@ -8,9 +10,11 @@ import { once } from 'node:events'
 import { type Socket, createConnection, createServer } from 'node:net'
 
 import { create } from '@bufbuild/protobuf'
+import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import { Driver } from '@ydbjs/core'
 import { expect, inject, test } from 'vitest'
 
+import type { TopicMessage } from '../src/message.ts'
 import { createTopicReader } from '../src/reader/index.ts'
 import { createTopicWriter } from '../src/writer/index.ts'
 
@@ -19,53 +23,10 @@ test(
 	{ timeout: 30_000 },
 	async (tc) => {
 		let upstream = new URL(inject('connectionString'))
-		let sockets = new Set<Socket>()
-		let responses = new Set<Socket>()
-		let requestBytes = 0
-		let proxy = createServer((client) => {
-			let server = createConnection({ host: upstream.hostname, port: Number(upstream.port) })
-			sockets.add(client)
-			sockets.add(server)
-			responses.add(server)
-			client.on('data', (data) => {
-				requestBytes += data.length
-			})
-			client.on('error', () => server.destroy())
-			server.on('error', () => client.destroy())
-			client.on('close', () => {
-				sockets.delete(client)
-				server.destroy()
-			})
-			server.on('close', () => {
-				sockets.delete(server)
-				responses.delete(server)
-				client.destroy()
-			})
-			client.pipe(server).pipe(client)
-		})
-		let cut = () => {
-			let count = sockets.size
-			for (let socket of sockets) {
-				socket.destroy()
-			}
-			return count
-		}
-		await using fault = {
-			cut,
-			async [Symbol.asyncDispose]() {
-				cut()
-				await proxy[Symbol.asyncDispose]()
-			},
-		}
+		await using fault = await createTcpProxy(upstream, tc.signal)
 		let disconnectAfterRequest = async (previousBytes: number) => {
-			await expect.poll(() => requestBytes).toBeGreaterThan(previousBytes)
+			await expect.poll(() => fault.requestBytes).toBeGreaterThan(previousBytes)
 			expect(fault.cut()).toBeGreaterThan(0)
-		}
-		proxy.listen(0, '127.0.0.1')
-		await once(proxy, 'listening', { signal: tc.signal })
-		let address = proxy.address()
-		if (!address || typeof address === 'string') {
-			throw new Error('Expected TCP proxy address')
 		}
 
 		using admin = new Driver(upstream.toString(), { 'ydb.sdk.enable_discovery': false })
@@ -86,7 +47,7 @@ test(
 			{ signal: tc.signal }
 		)
 
-		using driver = new Driver(`grpc://127.0.0.1:${address.port}${upstream.pathname}`, {
+		using driver = new Driver(fault.endpoint, {
 			'ydb.sdk.enable_discovery': false,
 		})
 		await driver.ready(tc.signal)
@@ -120,10 +81,8 @@ test(
 			for await (let batch of reader.read({ signal: tc.signal })) {
 				if (!commitInterrupted && batch.some((message) => message.payload[0]! >= 20)) {
 					commitInterrupted = true
-					for (let server of responses) {
-						server.pause()
-					}
-					let sentBefore = requestBytes
+					fault.pauseResponses()
+					let sentBefore = fault.requestBytes
 					let pending = reader.commit(batch)
 					void pending.catch(() => {})
 					await disconnectAfterRequest(sentBefore)
@@ -143,11 +102,9 @@ test(
 		void readTask.catch(() => {})
 
 		for (let round = 0; round < 3; round++) {
-			let sentBefore = requestBytes
+			let sentBefore = fault.requestBytes
 			if (round === 1) {
-				for (let server of responses) {
-					server.pause()
-				}
+				fault.pauseResponses()
 			}
 			for (let index = round * 10; index < (round + 1) * 10; index++) {
 				writer.write(new Uint8Array([index]))
@@ -172,3 +129,147 @@ test(
 		expect(reconnects.write).toBeGreaterThanOrEqual(2)
 	}
 )
+
+test(
+	'waits for write reconciliation after losing an ACK during close',
+	{ timeout: 30_000 },
+	async (tc) => {
+		let upstream = new URL(inject('connectionString'))
+		await using fault = await createTcpProxy(upstream, tc.signal)
+		using admin = new Driver(upstream.toString(), { 'ydb.sdk.enable_discovery': false })
+		await admin.ready(tc.signal)
+		let service = admin.createClient(TopicServiceDefinition)
+		await using topic = {
+			path: `topic-close-reconnect-${Date.now()}`,
+			async [Symbol.asyncDispose]() {
+				await service.dropTopic(create(DropTopicRequestSchema, { path: topic.path }))
+			},
+		}
+		await service.createTopic(
+			create(CreateTopicRequestSchema, {
+				path: topic.path,
+				partitioningSettings: { minActivePartitions: 1n, maxActivePartitions: 1n },
+				consumers: [{ name: 'consumer' }],
+			}),
+			{ signal: tc.signal }
+		)
+
+		using driver = new Driver(fault.endpoint, { 'ydb.sdk.enable_discovery': false })
+		await driver.ready(tc.signal)
+		let acknowledged: bigint[] = []
+		using writer = createTopicWriter(driver, {
+			topic: topic.path,
+			producer: 'producer',
+			onAck: (seqNo) => acknowledged.push(seqNo),
+		})
+		writer.write(new Uint8Array([1]))
+		expect(await writer.flush(tc.signal)).toBe(1n)
+
+		fault.pauseResponses()
+		writer.write(new Uint8Array([2]))
+		let closed = false
+		let closing = writer.close(tc.signal).then(() => (closed = true))
+		void closing.catch(() => {})
+
+		// A direct reader proves persistence while the proxy withholds the writer's ACK.
+		await using reader = createTopicReader(admin, { topic: topic.path, consumer: 'consumer' })
+		let received: TopicMessage[] = []
+		for await (let batch of reader.read({ signal: tc.signal })) {
+			received.push(...batch)
+			await reader.commit(batch)
+			if (received.length >= 2) {
+				break
+			}
+		}
+		expect(received.map((message) => [...message.payload])).toEqual([[1], [2]])
+		expect(received.map((message) => message.seqNo)).toEqual([1n, 2n])
+		expect(acknowledged).toEqual([1n])
+		expect(closed).toBe(false)
+
+		let connectionsBefore = fault.connections
+		expect(fault.cut()).toBeGreaterThan(0)
+		await closing
+		expect(fault.connections).toBeGreaterThan(connectionsBefore)
+		expect(acknowledged).toEqual([1n, 2n])
+		expect(closed).toBe(true)
+
+		let response = await service.describeTopic(
+			create(DescribeTopicRequestSchema, {
+				path: topic.path,
+				includeStats: true,
+			}),
+			{ signal: tc.signal }
+		)
+		let result = anyUnpack(response.operation!.result!, DescribeTopicResultSchema)
+		expect(result?.partitions[0]?.partitionStats?.partitionOffsets?.end).toBe(2n)
+	}
+)
+
+async function createTcpProxy(upstream: URL, signal: AbortSignal) {
+	let sockets = new Set<Socket>()
+	let responses = new Set<Socket>()
+	let requestBytes = 0
+	let connections = 0
+	let proxy = createServer((client) => {
+		let server = createConnection({ host: upstream.hostname, port: Number(upstream.port) })
+		connections++
+		sockets.add(client)
+		sockets.add(server)
+		responses.add(server)
+		client.on('data', (data) => {
+			requestBytes += data.length
+		})
+		client.on('error', () => server.destroy())
+		server.on('error', () => client.destroy())
+		client.on('close', () => {
+			sockets.delete(client)
+			server.destroy()
+		})
+		server.on('close', () => {
+			sockets.delete(server)
+			responses.delete(server)
+			client.destroy()
+		})
+		client.pipe(server).pipe(client)
+	})
+	let cut = () => {
+		let count = sockets.size
+		for (let socket of sockets) {
+			socket.destroy()
+		}
+		return count
+	}
+	let port: number
+	try {
+		proxy.listen(0, '127.0.0.1')
+		await once(proxy, 'listening', { signal })
+		let address = proxy.address()
+		if (!address || typeof address === 'string') {
+			throw new Error('Expected TCP proxy address')
+		}
+		port = address.port
+	} catch (error) {
+		cut()
+		await proxy[Symbol.asyncDispose]()
+		throw error
+	}
+	return {
+		endpoint: `grpc://127.0.0.1:${port}${upstream.pathname}`,
+		get requestBytes() {
+			return requestBytes
+		},
+		get connections() {
+			return connections
+		},
+		pauseResponses() {
+			for (let server of responses) {
+				server.pause()
+			}
+		},
+		cut,
+		async [Symbol.asyncDispose]() {
+			cut()
+			await proxy[Symbol.asyncDispose]()
+		},
+	}
+}

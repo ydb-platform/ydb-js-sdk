@@ -54,8 +54,7 @@ test('ready(signal) leaves no abort listeners on a shared signal', async (tc) =>
 		let h = spinUp()
 		// oxlint-disable-next-line no-await-in-loop
 		await h.pool.ready(signal)
-		// oxlint-disable-next-line no-await-in-loop
-		await h.pool.close()
+		h.pool.close()
 	}
 
 	// abortable() in pool.ready() must remove its abort listener — a shared signal
@@ -68,7 +67,7 @@ test('cancelled ready calls release their reasons before discovery completes', a
 	// A blocked discovery deterministically keeps readiness pending through every cancellation.
 	let discovery = makeFakeDiscovery()
 	discovery.hang()
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await discovery.waitForRound(1)
 
 	let finalized = Promise.withResolvers<void>()
@@ -115,7 +114,7 @@ test('cancelled ready calls release their reasons before discovery completes', a
 
 test('cancelling one ready waiter leaves the others waiting for published readiness', async (tc) => {
 	using readyEvents = capture('ydb:driver.ready')
-	await using h = spinUp()
+	using h = spinUp()
 	let controller = new AbortController()
 	let reason = new Error('Caller cancelled')
 	let cancelled = h.pool.ready(controller.signal).catch((error: unknown) => error)
@@ -131,12 +130,11 @@ test('cancelling one ready waiter leaves the others waiting for published readin
 })
 
 test('rejects ready when close starts before its continuation', async (tc) => {
-	await using h = spinUp()
+	using h = spinUp()
 	await h.pool.ready(tc.signal)
 	let ready = h.pool.ready(tc.signal)
-	let closed = h.pool.close()
+	h.pool.close()
 	await expect(ready).rejects.toThrow(/closed/i)
-	await closed
 })
 
 test('close closes every materialized channel and leaves none behind', async (tc) => {
@@ -151,20 +149,17 @@ test('close closes every materialized channel and leaves none behind', async (tc
 	h.pool.acquire(3n)
 	expect(connections.factoryCalls()).toBe(3)
 
-	await h.pool.close()
+	h.pool.close()
 	expect(connections.materialized.every((c) => c.closed)).toBe(true)
 })
 
-test('destroy aborts an in-flight discovery round and refuses to route', async () => {
+test('dispose immediately aborts discovery and refuses to route', async () => {
 	let discovery = makeFakeDiscovery()
 	discovery.hang() // the first round blocks until its signal aborts
 	let h = makeEndpointPool({ discovery })
 	await discovery.waitForRound(1) // the round is genuinely in flight
 
 	h.pool[Symbol.dispose]()
-	await settle()
-
-	// The round's signal was aborted by the destroy, and a destroyed pool throws.
 	expect(discovery.lastSignal()!.aborted).toBe(true)
 	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
 })

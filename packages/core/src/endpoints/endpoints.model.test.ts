@@ -195,8 +195,8 @@ let runOne = function runOne(seed: number, steps: number): void {
 					retryable: true,
 				})
 		} else if (roll < 0.985) {
-			// Occasionally close/destroy — the walk ends; assert terminal invariants.
-			apply(sim, rng() < 0.5 ? { type: 'endpoints.close' } : { type: 'endpoints.destroy' })
+			// Closing ends the walk; assert terminal invariants.
+			apply(sim, { type: 'endpoints.close' })
 		}
 
 		if (sim.closed) {
