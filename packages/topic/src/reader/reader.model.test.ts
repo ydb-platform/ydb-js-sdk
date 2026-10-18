@@ -316,6 +316,9 @@ let onReaderOutput = function onReaderOutput(sim: Sim, output: ReaderOutput): vo
 					throw new Error(`messages delivered for never-started partition ${key}`)
 				}
 				for (let message of group.messages) {
+					if (message === undefined) {
+						throw new Error('Fresh reader output contains a consumed message')
+					}
 					// D2 stitching: the commit range continues exactly at the delivery
 					// watermark (or the message's own offset when it sits below it — a
 					// redelivery raced past by concurrent commit acks).

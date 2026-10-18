@@ -507,3 +507,22 @@ test('reclaims stopped partitions without pending commits while the reader stays
 	).toBeGreaterThanOrEqual(31)
 	expect(reader.bufferedBytes).toBe(0n)
 })
+
+test('reclaims delivered payloads while retaining the unread tail of the same response', async (tc) => {
+	let fixture = await bufferedReader()
+	using reader = fixture.reader
+	// Advance the fake transport past the payload response so its pending next()
+	// cannot keep that response alive independently of the reader's buffered tail.
+	fixture.stream.respond(readResponse({ partitionSessionId: 1n, messages: [], bytesSize: 0n }))
+	await settle()
+	await readOne(reader, tc.signal)
+	await collectGarbage()
+	expect(fixture.reclaimed.has('payload-0')).toBe(true)
+	expect(fixture.reclaimed.has('payload-1')).toBe(false)
+	expect(reader.bufferedBytes).toBe(512n * 1024n)
+	await reader.close()
+	expect(await readTail(reader, tc.signal)).toEqual([1n])
+	await collectGarbage()
+	expect(fixture.reclaimed.has('payload-1')).toBe(true)
+	expect(reader.bufferedBytes).toBe(0n)
+})

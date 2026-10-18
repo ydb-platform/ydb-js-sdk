@@ -366,7 +366,7 @@ test('delivers messages and charges the flow-control budget', () => {
 	message(h, readMsg(1n, 300n, [5n, 6n, 7n]))
 	let delivered = outputs(h, 'reader.messages')
 	expect(delivered).toHaveLength(1)
-	expect(delivered[0]!.groups[0]!.messages.map((m) => m.offset)).toEqual([5n, 6n, 7n])
+	expect(delivered[0]!.groups[0]!.messages.map((m) => m!.offset)).toEqual([5n, 6n, 7n])
 	expect(delivered[0]!.releaseBytes).toBe(300n)
 	expect(h.ctx.bufferedBytes).toBe(300n)
 })
@@ -1064,7 +1064,7 @@ test('delivers read responses while a partition is stopping gracefully', () => {
 	message(h, readMsg(1n, 100n, [5n]))
 	let delivered = outputs(h, 'reader.messages')
 	expect(delivered[0]!.groups).toHaveLength(1)
-	expect(delivered[0]!.groups[0]!.messages.map((m) => m.offset)).toEqual([5n])
+	expect(delivered[0]!.groups[0]!.messages.map((m) => m!.offset)).toEqual([5n])
 })
 
 // ── graceful stop drain & timers ────────────────────────────────────────────────
