@@ -78,7 +78,9 @@ export let makeFakeDriver = function makeFakeDriver(): FakeDriverHandle {
 
 					let handle: FakeStreamHandle = {
 						respond(response) {
-							if (done) return
+							if (done) {
+								return
+							}
 							if (readers.length > 0) {
 								readers.shift()!({ value: response, done: false })
 							} else {

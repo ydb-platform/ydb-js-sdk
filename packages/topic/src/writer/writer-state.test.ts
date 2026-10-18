@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import type { TransitionRuntime } from '@ydbjs/fsm'
 import { YDBError } from '@ydbjs/error'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { ClientError, Status } from 'nice-grpc'
+import { Status } from '@ydbjs/grpc'
 
 import {
 	type BufferedMessage,
@@ -110,30 +110,36 @@ test('classifies SCHEME_ERROR as retryable when retryOnSchemeError is set', () =
 // in tests/writer-protocol.test.ts.
 
 test('classifies a server frame-cap rejection as fatal', () => {
-	let error = new ClientError(
-		'/Ydb.Topic.V1.TopicService/StreamWrite',
-		Status.RESOURCE_EXHAUSTED,
-		'Received message larger than max (66060326 vs. 64000000)'
+	let error = Object.assign(
+		new Error('Received message larger than max (66060326 vs. 64000000)'),
+		{
+			code: Status.RESOURCE_EXHAUSTED,
+			details: 'Received message larger than max (66060326 vs. 64000000)',
+			metadata: {},
+		}
 	)
 	expect(isRetryableWriterError(error)).toBe(false)
 })
 
 test('classifies a client send-cap rejection as fatal', () => {
-	let error = new ClientError(
-		'/Ydb.Topic.V1.TopicService/StreamWrite',
-		Status.RESOURCE_EXHAUSTED,
-		'Attempted to send message with a size larger than 67108864'
+	let error = Object.assign(
+		new Error('Attempted to send message with a size larger than 67108864'),
+		{
+			code: Status.RESOURCE_EXHAUSTED,
+			details: 'Attempted to send message with a size larger than 67108864',
+			metadata: {},
+		}
 	)
 	expect(isRetryableWriterError(error)).toBe(false)
 })
 
 test('classifies a throttling RESOURCE_EXHAUSTED as retryable', () => {
 	// Same gRPC code as the size rejections — only a size complaint is fatal.
-	let error = new ClientError(
-		'/Ydb.Topic.V1.TopicService/StreamWrite',
-		Status.RESOURCE_EXHAUSTED,
-		'Too many pending requests'
-	)
+	let error = Object.assign(new Error('Too many pending requests'), {
+		code: Status.RESOURCE_EXHAUSTED,
+		details: 'Too many pending requests',
+		metadata: {},
+	})
 	expect(isRetryableWriterError(error)).toBe(true)
 })
 

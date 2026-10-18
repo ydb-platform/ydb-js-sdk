@@ -1,8 +1,11 @@
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { Codec } from '@ydbjs/api/topic'
-import type { StreamReadMessage_FromServer } from '@ydbjs/api/topic'
+import {
+	Codec,
+	type StreamReadMessage_FromClient,
+	type StreamReadMessage_FromServer,
+} from '@ydbjs/api/topic'
 import { YDBError } from '@ydbjs/error'
 import { expect, test } from 'vitest'
 
@@ -83,17 +86,18 @@ let endPartitionSession = function endPartitionSession(
 }
 
 // The reader's flow-control requests, in send order (initial credit + replenishments).
-let readRequests = function readRequests(
-	sent: Array<{ clientMessage: { case?: string; value?: unknown } }>
-): bigint[] {
-	return sent
-		.filter((m) => m.clientMessage.case === 'readRequest')
-		.map((m) => (m.clientMessage.value as { bytesSize: bigint }).bytesSize)
+let readRequests = function readRequests(sent: StreamReadMessage_FromClient[]): bigint[] {
+	let requests: bigint[] = []
+	for (let { clientMessage } of sent) {
+		if (clientMessage.case === 'readRequest') {
+			requests.push(clientMessage.value.bytesSize)
+		}
+	}
+	return requests
 }
 
 // init handshake + read-credit grant, the precondition for every test below.
 let primeStream = async function primeStream(
-	reader: ReturnType<typeof createTopicReader>,
 	waitForNextStream: ReturnType<typeof makeFakeTopicDriver>['waitForNextStream'],
 	sessionId = 'session-A'
 ) {
@@ -125,8 +129,9 @@ test('requests the full buffer as read credit after init', async () => {
 test('acknowledges a started partition session with its id', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	void reader
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 7n, partitionId: 3n }))
 
 	let ack = await stream.waitForStartResponse()
@@ -137,7 +142,7 @@ test('surfaces decoded messages through read()', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -160,7 +165,7 @@ test('honors the deprecated waitMs alias for batchWindowMs', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -177,7 +182,7 @@ test('resolves commit() when the server acknowledges the offset', async (tc) => 
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -205,7 +210,7 @@ test('does not reject commit() across a reconnect and resolves it on the new ses
 
 	// Session A: read [0,1,2], commit offset 2 (its stitched range [2,3) — the
 	// delivered-but-uncommitted 0 and 1 are never covered), but the server never acks.
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	a.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
 	)
@@ -251,7 +256,7 @@ test('a tx reader binds offsets read across a reconnect to the transaction commi
 	let fake = makeFakeTx()
 	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
 
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	a.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
 	)
@@ -309,7 +314,7 @@ test('throws on a manual commit() from a tx reader', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: makeFakeTx().tx })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -341,8 +346,9 @@ test('renders the tx distinction in the inspect tag', () => {
 test('reopens the stream after a transport drop', async () => {
 	let { driver, waitForNextStream, streamCount } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	void reader
 
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	a.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await a.waitForStartResponse()
 	expect(streamCount()).toBe(1)
@@ -361,7 +367,7 @@ test('fails terminally on a non-retryable status and rejects the pending commit'
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -386,7 +392,7 @@ test('read() throws the terminal error instead of ending cleanly', async (tc) =>
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -451,7 +457,7 @@ test('replenishes read credit once the consumer drains a batch', async () => {
 		maxBufferBytes: 100n,
 	})
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	// A response that charges the whole buffer; consuming it must free the credit back.
@@ -467,9 +473,9 @@ test('replenishes read credit once the consumer drains a batch', async () => {
 	await iterator.next() // take the batch
 	await settle()
 
-	let reads = stream.sent.filter((m) => m.clientMessage.case === 'readRequest')
+	let reads = readRequests(stream.sent)
 	expect(reads.length).toBeGreaterThanOrEqual(2)
-	expect(reads.at(-1)!.clientMessage.value.bytesSize).toBe(100n)
+	expect(reads.at(-1)).toBe(100n)
 })
 
 test('reports buffered bytes and publishes every change', async (tc) => {
@@ -478,7 +484,7 @@ test('reports buffered bytes and publishes every change', async (tc) => {
 	)
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -519,7 +525,7 @@ test('publishes session-started, partition-started, and committed diagnostics', 
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
 	)
@@ -552,7 +558,7 @@ test('decodes a zstd-compressed batch delivered by the server', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -578,7 +584,7 @@ test('sends only well-formed offset ranges when a message is committed twice', a
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -625,7 +631,7 @@ test('resolves a pending commit covered by stop_partition committed_offset', asy
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -662,7 +668,7 @@ test('sends a commit issued during a graceful stop and completes the handoff', a
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
 	)
@@ -714,7 +720,7 @@ test('drops buffered messages of a force-stopped partition and still releases th
 		maxBufferBytes: 1000n,
 	})
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	// Messages decoded into the facade chunk queue BEFORE the consumer pulls.
@@ -750,7 +756,7 @@ test('rejects a commit for a batch yielded before its partition force-stopped', 
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -775,12 +781,12 @@ test('invokes onPartitionSessionStop and keeps the reader alive on a force stop'
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
-		onPartitionSessionStop: (session) => {
+		onPartitionSessionStop: async (session) => {
 			stops.push(session.partitionId)
 		},
 	})
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -809,7 +815,7 @@ test('buffers a commit issued before the reconnected stream re-grants the partit
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
 	// Session A: partition granted as session id 1, one message delivered.
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	a.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
 	)
@@ -854,7 +860,7 @@ test('keeps the iterator alive past limit total messages (limit is a per-batch c
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -908,7 +914,7 @@ test('throws a single-consumer error on a second concurrent read()', async (tc) 
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	await primeStream(reader, waitForNextStream)
+	await primeStream(waitForNextStream)
 
 	let first = reader.read({ batchWindowMs: 10, signal: tc.signal })[Symbol.asyncIterator]()
 	await first.next() // empty window tick — the generator body is now running
@@ -925,7 +931,7 @@ test('delivers a message with codec UNSPECIFIED as a raw payload', async (tc) =>
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -947,7 +953,7 @@ test('fails the reader with an actionable error on an unknown codec', async (tc)
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -1000,7 +1006,7 @@ test('decodes with a custom codecMap entry for a non-built-in codec', async (tc)
 			[Codec.LZOP, { codec: Codec.LZOP, compress: reverse, decompress: reverse }],
 		]),
 	})
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 
@@ -1019,7 +1025,7 @@ test('decodes with a custom codecMap entry for a non-built-in codec', async (tc)
 test('fails the reader with a contextual error on a corrupt payload', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 7n }))
 	await stream.waitForStartResponse()
 
@@ -1056,7 +1062,7 @@ test('keeps tx offset ranges isolated per partition under equal and lower redeli
 	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
 	let fake = makeFakeTx()
 	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
 	)
@@ -1116,7 +1122,7 @@ test('keeps the tx offset range monotonic when the server redelivers lower offse
 	let fake = makeFakeTx()
 	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
 
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	a.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
 	)
@@ -1167,7 +1173,7 @@ test('re-sends a reconciled commit only after the start response on the new stre
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream1 = await primeStream(reader, waitForNextStream, 'session-A')
+	let stream1 = await primeStream(waitForNextStream, 'session-A')
 	stream1.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream1.waitForStartResponse()
 	stream1.respond(
@@ -1296,7 +1302,7 @@ test('keeps other partitions and destroy() working while a start hook hangs', as
 		},
 	})
 
-	let stream = await primeStream(reader, waitForNextStream, 'session-A')
+	let stream = await primeStream(waitForNextStream, 'session-A')
 
 	// partition 10's hook hangs; partition 20 must still complete its handshake.
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
@@ -1333,7 +1339,7 @@ test('sends the start response without offsets when the hook throws and keeps re
 		onPartitionSessionStart: () => Promise.reject(new Error('offset store down')),
 	})
 
-	let stream = await primeStream(reader, waitForNextStream, 'session-A')
+	let stream = await primeStream(waitForNextStream, 'session-A')
 	stream.respond(
 		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
 	)
@@ -1366,8 +1372,9 @@ test('answers a re-granted partition exactly once when the previous stream hook 
 			return d.promise.then(() => undefined)
 		},
 	})
+	void reader
 
-	let stream1 = await primeStream(reader, waitForNextStream, 'session-A')
+	let stream1 = await primeStream(waitForNextStream, 'session-A')
 	stream1.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await settle()
 	expect(calls).toHaveLength(1) // hook 1 running (slow)
@@ -1407,7 +1414,7 @@ test('releases a response only after its final limit slice is yielded', async (t
 		consumer: 'c',
 		maxBufferBytes: 1000n,
 	})
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -1449,7 +1456,7 @@ test('does not release a response when the signal aborts before yield', async ()
 		consumer: 'c',
 		maxBufferBytes: 1000n,
 	})
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 	stream.respond(
@@ -1500,7 +1507,7 @@ test('keeps blocking past a fully filtered chunk until a delivered chunk arrives
 		consumer: 'c',
 		maxBufferBytes: 1000n,
 	})
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	stream.respond(
 		readResponse({
@@ -1537,7 +1544,7 @@ test('keeps blocking past a fully filtered chunk until a delivered chunk arrives
 test('delivers buffered messages of an ended partition and commits them', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	stream.respond(
 		readResponse({
@@ -1567,7 +1574,7 @@ test('delivers buffered messages of an ended partition and commits them', async 
 test('delivers buffered messages while a graceful stop waits on pending commits', async (tc) => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	await using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	stream.respond(
 		readResponse({
@@ -1616,8 +1623,9 @@ test('sends a token refresh on the update interval', async () => {
 		consumer: 'c',
 		updateTokenIntervalMs: 20,
 	})
+	void reader
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 
 	// The interval timer is armed on init; the refresh carries the driver's token.
 	let update = await stream.waitForUpdateToken()
@@ -1631,8 +1639,9 @@ test('keeps refreshing the token on the new stream after a reconnect', async () 
 		consumer: 'c',
 		updateTokenIntervalMs: 20,
 	})
+	void reader
 
-	let a = await primeStream(reader, waitForNextStream, 'session-A')
+	let a = await primeStream(waitForNextStream, 'session-A')
 	await a.waitForUpdateToken()
 
 	a.disconnect()
@@ -1659,8 +1668,9 @@ test('coalesces update-token requests until one is acknowledged', async () => {
 		consumer: 'c',
 		updateTokenIntervalMs: 5, // fire many times quickly
 	})
+	void reader
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 
 	// Let the token interval fire many times without ever sending updateTokenResponse.
 	await new Promise((resolve) => setTimeout(resolve, 60))
@@ -1678,7 +1688,7 @@ test('closes gracefully and aborts the underlying stream', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 
-	let stream = await primeStream(reader, waitForNextStream)
+	let stream = await primeStream(waitForNextStream)
 	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
 	await stream.waitForStartResponse()
 

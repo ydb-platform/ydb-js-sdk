@@ -11,7 +11,7 @@ import {
 import type { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type { DriverIdentity } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
-import { ClientError } from 'nice-grpc'
+import { isServiceError } from '@ydbjs/error'
 
 // Keys used by BOTH pipelines live here. Span-only identifiers go in
 // `spans.ts`; metric-only tag enums go in `metrics.ts`.
@@ -75,7 +75,7 @@ export function recordErrorAttributes(error: unknown): {
 		}
 	}
 
-	if (error instanceof ClientError) {
+	if (isServiceError(error)) {
 		return { [ATTR_ERROR_TYPE]: 'transport_error' }
 	}
 

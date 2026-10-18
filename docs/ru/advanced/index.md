@@ -15,7 +15,7 @@ title: Расширенные темы
 
 ## Обработка ошибок
 
-- Классы ошибок SDK: `YDBError`, `CommitError`, `ClientError`.
+- Классы ошибок SDK: `YDBError`, `CommitError`, `RpcError`.
 - Как различать ошибки и извлекать диагностику (issues, трейлеры).
 - Таймауты/отмена по `AbortSignal` и корректная композиция.
 - См.: `/ru/advanced/errors`.

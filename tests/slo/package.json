@@ -18,9 +18,6 @@
 		"@ydbjs/topic": "*",
 		"@ydbjs/value": "*"
 	},
-	"overrides": {
-		"@grpc/proto-loader": "npm:dry-uninstall"
-	},
 	"publishConfig": {
 		"access": "restricted"
 	}

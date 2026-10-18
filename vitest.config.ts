@@ -90,7 +90,7 @@ export default defineConfig({
 			reportsDirectory: './coverage',
 			include: ['packages/*/src/**/*.ts', 'third-parties/*/src/**/*.ts'],
 			exclude: [
-				'packages/api/**',
+				'packages/api/src/gen/**',
 				'**/coverage/**',
 				'**/tests/**',
 				'**/dist/**',

@@ -2,9 +2,27 @@
 
 A gRPC client and server over `node:http2`, with Promise unary calls and AsyncIterable streams. Runs on Node.js `^22.15.0 || >=23.8.0` or Bun `>=1.4.0`. Cancellation waits use `@ydbjs/abortable`.
 
+## Calling YDB services
+
+For YDB, use `Driver` from `@ydbjs/core`. It takes the database from the connection string and adds `x-ydb-database`, SDK metadata, and authentication from the configured credentials provider to every call.
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+
+using driver = new Driver('grpc://localhost:2136/local')
+let signal = AbortSignal.timeout(5000)
+await driver.ready(signal)
+
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+let response = await discovery.listEndpoints({ database: driver.database }, { signal })
+```
+
+The `database` request field belongs to `ListEndpoints`; the driver supplies the routing header automatically.
+
 ## Calling a service directly
 
-For direct gRPC access, create a `Client` for the server authority and pass it to `createServiceClient(serviceDefinition, transport)`. The service definition supplies each method's path, streaming flags, request serializer, and response deserializer. The method name `close` is reserved for transport cleanup; a definition containing it is rejected. The transport itself has no database or credentials configuration and does not depend on protobuf or YDB.
+For direct gRPC access, create a `Client` for the server authority and pass it to `createServiceClient(serviceDefinition, transport)`. The service definition supplies each method's path, streaming flags, request serializer, and response deserializer. The method name `close` is reserved for transport cleanup; a definition containing it is rejected. `@ydbjs/api` provides YDB definitions; the transport itself has no database or credentials configuration and does not depend on protobuf or YDB.
 
 `Client` connects lazily to one authority. `connect(signal?)` explicitly waits for a connection. `close()` or disposal cancels outstanding calls and closes its sessions; closing a service client also closes its transport. Share a Client only between services with the same lifetime.
 

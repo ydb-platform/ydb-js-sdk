@@ -36,6 +36,10 @@ YDB requires authentication for most operations. The credentials provider you ch
 
 ---
 
+## Native gRPC integration
+
+`CredentialsProvider` supplies `getToken(force?, signal?)`. `Driver` obtains the token before dispatch and sets the authentication and database headers after metadata hooks. A call's signal and deadline also bound token acquisition. Cancelling a completed call does not cancel a background token refresh. Provider failures retain their original error and do not penalize a database node.
+
 ## Usage
 
 ### Using with YDB Driver

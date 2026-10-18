@@ -1,9 +1,10 @@
-import { create } from '@bufbuild/protobuf'
 import {
 	CreateTopicRequestSchema,
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+
+import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
 import { afterEach, beforeEach, expect, inject, test } from 'vitest'
 

@@ -1,7 +1,7 @@
 /**
  * YDB OpenTelemetry Example
  *
- * Wires `@ydbjs/telemetry` into a typical OpenTelemetry Node SDK setup, runs
+ * Wires `@ydbjs/telemetry` into OpenTelemetry trace and metric providers, runs
  * a couple of queries inside a user-created span, and exports both spans and
  * metrics via OTLP/HTTP.
  *
@@ -15,34 +15,46 @@
 
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
-import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { NodeSDK } from '@opentelemetry/sdk-node'
-import { trace } from '@opentelemetry/api'
+import {
+	defaultResource,
+	detectResources,
+	envDetector,
+	hostDetector,
+	processDetector,
+	resourceFromAttributes,
+} from '@opentelemetry/resources'
+import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { metrics, trace } from '@opentelemetry/api'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { register } from '@ydbjs/telemetry'
 
 let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
 
-// 1. Start the OTel Node SDK BEFORE any YDB code imports/runs. NodeSDK
-//    installs an AsyncLocalStorage-backed context manager, which is what
-//    `@ydbjs/core`'s propagation middleware reads from to write `traceparent`
-//    into outgoing gRPC metadata.
-let sdk = new NodeSDK({
-	serviceName: 'ydb-telemetry-example',
-	traceExporter: new OTLPTraceExporter(),
-	metricReader: new PeriodicExportingMetricReader({
-		exporter: new OTLPMetricExporter(),
-		// Demos export quickly so you see metrics without waiting; production
-		// defaults to 60s.
-		exportIntervalMillis: 5_000,
-	}),
+// Register providers before SDK operations so instrumentation sees their global context.
+let resource = defaultResource()
+	.merge(detectResources({ detectors: [envDetector, processDetector, hostDetector] }))
+	.merge(resourceFromAttributes({ 'service.name': 'ydb-telemetry-example' }))
+let tracerProvider = new NodeTracerProvider({
+	resource,
+	spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
 })
-sdk.start()
+tracerProvider.register()
+let meterProvider = new MeterProvider({
+	resource,
+	readers: [
+		new PeriodicExportingMetricReader({
+			exporter: new OTLPMetricExporter(),
+			exportIntervalMillis: 5_000,
+		}),
+	],
+})
+metrics.setGlobalMeterProvider(meterProvider)
 
 // 2. Register `@ydbjs/telemetry` — `InstrumentationBase` subclass that
 //    subscribes to SDK `diagnostics_channel` events and emits spans + metrics
-//    via the global TracerProvider/MeterProvider installed in step 1.
+//    via the registered global TracerProvider/MeterProvider.
 let instrumentation = register({
 	// Off by default — query text can carry PII via interpolated literals.
 	// Turn on per-environment when you control the data.
@@ -56,7 +68,7 @@ let instrumentation = register({
 //    plugs into `node:diagnostics_channel` topics that `@ydbjs/core`
 //    publishes natively. We close driver / query explicitly later so the
 //    teardown order is observable: workload → query close → driver close →
-//    instrumentation disable → SDK shutdown.
+//    instrumentation disable → provider shutdown.
 let driver = new Driver(connectionString)
 await driver.ready()
 
@@ -71,8 +83,8 @@ process.on('uncaughtException', (err) => {
 	throw err
 })
 
-// 4. Wrap the workload in a user-created span. The propagation middleware in
-//    `@ydbjs/core` reads `context.active()` on every outgoing RPC and injects
+// 4. Wrap the workload in a user-created span. The telemetry metadata hook
+//    reads `context.active()` on every outgoing RPC and injects
 //    W3C `traceparent` / `tracestate` headers — so the server sees this trace
 //    id and any future server-side instrumentation can correlate.
 let tracer = trace.getTracer('ydb-telemetry-example')
@@ -100,9 +112,9 @@ console.log('\n# done, shutting down\n')
 // 5. Drain query (publishes `session.closed{pool_close}` for each pooled
 //    session) → close driver (publishes `driver.closed`) → disable
 //    instrumentation so any post-shutdown events stop generating spans →
-//    flush the OTel SDK so the final span batch and metric tick reach the
+//    flush the OTel providers so the final span batch and metric tick reach the
 //    collector before the process exits.
 await sql[Symbol.asyncDispose]()
 driver[Symbol.dispose]()
 instrumentation.disable()
-await sdk.shutdown()
+await Promise.all([tracerProvider.shutdown(), meterProvider.shutdown()])

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { ClientError, Status } from 'nice-grpc'
+import { Status } from '@ydbjs/grpc'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
@@ -18,8 +18,14 @@ test('marks YDBError as ydb_error and carries the status code', () => {
 	expect(attrs['error.type']).toBe('ydb_error')
 })
 
-test('marks ClientError as transport_error without a status code', () => {
-	let attrs = recordErrorAttributes(new ClientError('p', Status.UNAVAILABLE, 'down'))
+test('marks ServiceError as transport_error without a status code', () => {
+	let attrs = recordErrorAttributes(
+		Object.assign(new Error('down'), {
+			code: Status.UNAVAILABLE,
+			details: 'down',
+			metadata: {},
+		})
+	)
 	expect(attrs['db.response.status_code']).toBeUndefined()
 	expect(attrs['error.type']).toBe('transport_error')
 })

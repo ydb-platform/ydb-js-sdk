@@ -1,8 +1,4 @@
-import { afterEach, beforeEach, expect, inject, test } from 'vitest'
-
-import { create } from '@bufbuild/protobuf'
-import { timestampFromDate } from '@bufbuild/protobuf/wkt'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { MessageSizeError, type RpcError, Status } from '@ydbjs/grpc'
 import {
 	Codec,
 	CreateTopicRequestSchema,
@@ -15,10 +11,14 @@ import {
 	StreamWriteMessage_WriteResponse_WriteAck_Skipped_Reason,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { afterEach, beforeEach, expect, inject, test } from 'vitest'
+
+import { create } from '@bufbuild/protobuf'
+import { timestampFromDate } from '@bufbuild/protobuf/wkt'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 import { AsyncPriorityQueue } from '@ydbjs/fsm/queue'
-import { ClientError, Status } from 'nice-grpc'
 
 import { createTopicWriter } from '../src/writer/index.js'
 import { isRetryableWriterError } from '../src/writer/writer-state.js'
@@ -74,7 +74,8 @@ let openWriteStream = function openWriteStream(
 		}),
 		100
 	)
-	let stream = driver.createClient(TopicServiceDefinition).streamWrite(input, { signal })
+	let client = driver.createClient(TopicServiceDefinition)
+	let stream = client.streamWrite(input, { signal })
 	let iterator = stream[Symbol.asyncIterator]()
 
 	let next = async function next(): Promise<StreamWriteMessage_FromServer> {
@@ -202,26 +203,8 @@ test('acknowledges duplicate seqNos per message as already written', async (tc) 
 })
 
 test('rejects an oversized payload with a permanent error', async (tc) => {
-	// Captured against local-ydb 25.3 with the driver defaults
-	// (grpc.max_send_message_length = 67108864; the server's gRPC receive cap
-	// observed as 64000000):
-	//   - single payloads of 48MiB+1, 50MB+1 and 55MiB were ACCEPTED and acked
-	//     'written' — the topic layer enforced no 48MiB per-message cap; the SDK
-	//     facade cap (MAX_PAYLOAD_BYTES) is the conservative client-side bound.
-	//   - 63MiB (frame 66060326 > server cap 64000000): the SERVER rejects the
-	//     frame at its gRPC layer and the stream fails with
-	//       ClientError { name: 'ClientError', code: 8 (RESOURCE_EXHAUSTED),
-	//         path: '/Ydb.Topic.V1.TopicService/StreamWrite',
-	//         details: 'Received message larger than max (66060326 vs. 64000000)' }
-	//       message: '/Ydb.Topic.V1.TopicService/StreamWrite RESOURCE_EXHAUSTED:
-	//         Received message larger than max (66060326 vs. 64000000)'
-	//   - 64MiB+1 (over the client send cap): grpc-js refuses to send;
-	//       ClientError { code: 8 (RESOURCE_EXHAUSTED),
-	//         details: 'Attempted to send message with a size larger than 67108864' }
-	// Both shapes are ClientError RESOURCE_EXHAUSTED with a 'larger than' size
-	// complaint. The generic retry classifier retries RESOURCE_EXHAUSTED (genuine
-	// throttling), so isPayloadTooLargeError (writer-state.ts) demotes exactly this
-	// shape to fatal — resending the same oversized frame can only fail again.
+	// Size-limit failures must be terminal even though RESOURCE_EXHAUSTED also
+	// represents retryable throttling. Exercise both client and server limits.
 
 	// Server-side rejection: over the server's frame cap, under the client's.
 	{
@@ -237,9 +220,9 @@ test('rejects an oversized payload with a permanent error', async (tc) => {
 			stream.close()
 		}
 
-		expect(error).toBeInstanceOf(ClientError)
-		expect((error as ClientError).code).toBe(Status.RESOURCE_EXHAUSTED)
-		expect((error as ClientError).details).toMatch(/Received message larger than max/)
+		expect(error).toBeInstanceOf(Error)
+		expect((error as RpcError).code).toBe(Status.RESOURCE_EXHAUSTED)
+		expect((error as RpcError).details).toMatch(/Received message larger than max/)
 		expect(isRetryableWriterError(error)).toBe(false)
 	}
 
@@ -257,11 +240,10 @@ test('rejects an oversized payload with a permanent error', async (tc) => {
 			stream.close()
 		}
 
-		expect(error).toBeInstanceOf(ClientError)
-		expect((error as ClientError).code).toBe(Status.RESOURCE_EXHAUSTED)
-		expect((error as ClientError).details).toMatch(
-			/Attempted to send message with a size larger than/
-		)
+		expect(error).toBeInstanceOf(Error)
+		expect((error as RpcError).code).toBe(Status.RESOURCE_EXHAUSTED)
+		expect(error).toBeInstanceOf(MessageSizeError)
+		expect(error).toMatchObject({ direction: 'request', limit: 64 * 1024 * 1024 })
 		expect(isRetryableWriterError(error)).toBe(false)
 	}
 })

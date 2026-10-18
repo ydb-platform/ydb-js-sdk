@@ -2,12 +2,7 @@
 
 ## Endpoints engine (`src/endpoints/`)
 
-A reference-grade state machine for endpoint management — discovery, routing, and
-the connection pool — built on `@ydbjs/fsm`. It replaces the legacy `ConnectionPool`
-and the Driver's ad-hoc discovery loop: `Driver` owns a bootstrap connection + the
-middleware chain and hands the engine a `listEndpoints` seam (see `driver.ts`); the
-`BalancedChannel` (see `channel.ts`) routes each RPC through `EndpointPool.acquire()`
-and feeds outcomes back via `EndpointPool.penalize()` / `recover()`.
+The endpoints state machine manages discovery, routing, and connection health. `Driver` owns the bootstrap connection, prepares authentication and metadata, and supplies a `listEndpoints` operation. The routing transport in `src/routing.ts` selects a connection through `EndpointPool.acquire()` and reports RPC outcomes through `penalize()` and `recover()`.
 
 ### Files
 
@@ -71,7 +66,7 @@ Global guard: `endpoints.destroy` from any non-terminal state → `closed` (imme
 On `close`, routing is frozen (an empty snapshot is emitted so `acquire()` throws
 rather than vending a channel), then the runtime's `begin_close_drain` effect
 closes every idle channel at once and registers the busy ones. A busy channel is
-finalized as soon as its in-flight RPCs drain (`BalancedChannel` tracks an
+finalized as soon as its in-flight RPCs drain (the routing transport tracks an
 in-flight count per node); `close_deadline` is the hard cap. So `await using
 driver` returns immediately when nothing is in flight instead of always waiting
 the deadline.
@@ -129,10 +124,7 @@ hard-pin, and the pile-relaxed last-resort tiers still route if every pile is un
 
 A connection dropped from discovery is **not** torn down while it works: live streams
 drain on it and a brief flap does not close it. New RPCs are simply not routed there.
-The `idle_sweep` effect closes a retired channel only on genuine breakage
-(`SHUTDOWN` / sustained `TRANSIENT_FAILURE`) or after `retiredGraceMs` idle with no
-reappearance; a returning node revives the **same** channel. Still-discovered channels
-are never proactively closed — grpc-js manages their idle socket.
+The `idle_sweep` effect keeps retired connections while they are ready or have calls in flight, removes closed connections immediately, and reaps other states after `retiredGraceMs` from retirement. Still-discovered connections are never proactively closed. The transport retires HTTP/2 sessions after GOAWAY while allowing accepted calls to finish.
 
 ### Direct topic IO
 
@@ -141,7 +133,7 @@ reached through `Driver.createClient(service, target)`:
 
 - `createClient(service)` — balanced across all healthy nodes.
 - `createClient(service, nodeId)` — soft affinity (node-bound query sessions).
-- `createClient(service, { nodeId, endpoint?, hard? })` — direct-IO. With
+- `createPinnedClient(service, { nodeId, endpoint, hard? })` — direct-IO. With
   `hard: true` every RPC goes to `nodeId` or fails (never substitutes). With
   `endpoint` the node is **pinned** (reachable before the next discovery round,
   for a server-named node from a topic `PartitionLocation`); the returned client

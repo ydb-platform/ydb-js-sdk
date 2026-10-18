@@ -4,7 +4,7 @@ let dbg = loggers.driver.extend('hooks')
 
 /**
  * Invoke a user hook, swallowing and logging any throw. A hook must never break
- * the request path or the driver's internal loops, so both `BalancedChannel` and
+ * the request path or the driver's internal loops, so both the routing transport and
  * the `EndpointPool` route their hook calls through here. Returns the hook's
  * value (or `undefined` if it is unset or threw).
  */
@@ -36,7 +36,7 @@ export interface EndpointInfo {
 }
 
 /**
- * Fired synchronously inside BalancedChannel.createCall(), in the caller's
+ * Fired synchronously inside routing transport dispatch, in the caller's
  * async context, when an RPC is dispatched to a selected endpoint.
  */
 export interface CallStartEvent {
@@ -61,7 +61,7 @@ export interface CallCompleteEvent {
 	/** gRPC status code: 0 = OK, 14 = UNAVAILABLE, etc. */
 	grpcStatusCode: number
 	/**
-	 * Wall-clock time from createCall() to onReceiveStatus, in milliseconds.
+	 * Wall-clock time from endpoint selection to the terminal status, in milliseconds.
 	 *
 	 * For unary RPCs this is the round-trip latency. For streaming RPCs
 	 * (server-streaming, bidi) this includes the entire stream lifetime —

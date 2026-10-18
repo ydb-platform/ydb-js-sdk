@@ -4,7 +4,13 @@ import * as tls from 'node:tls'
 
 import { create } from '@bufbuild/protobuf'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import { credentials } from '@grpc/grpc-js'
+import {
+	type ClientOptions,
+	type Metadata,
+	type ServiceClient,
+	type ServiceDefinition,
+	createServiceClient,
+} from '@ydbjs/grpc'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import {
 	DiscoveryServiceDefinition,
@@ -16,20 +22,10 @@ import type { CredentialsProvider } from '@ydbjs/auth'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
-import {
-	type Channel,
-	type ChannelOptions,
-	type Client,
-	type ClientMiddleware,
-	type CompatServiceDefinition,
-	Metadata,
-	composeClientMiddleware,
-	createClientFactory,
-} from 'nice-grpc'
 
 import pkg from '../package.json' with { type: 'json' }
 
-import { BalancedChannel } from './channel.js'
+import { createRoutingTransport } from './routing.js'
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
@@ -49,40 +45,26 @@ import {
 	DriverDiscoveryTimeoutError,
 	DriverResponseError,
 } from './errors.js'
-import type { DriverHooks, EndpointInfo } from './hooks.js'
-import { debug, getRegisteredClientMiddlewares } from './middleware.js'
+import { type DriverHooks, type EndpointInfo, safeHook } from './hooks.js'
+import { type MetadataHook, getRegisteredMetadataHooks } from './metadata-hooks.js'
 import { detectRuntime } from './runtime.js'
 
 export type { DriverHooks, EndpointInfo }
 
-/**
- * Direct-IO target for `createClient` — route a client to an exact node.
- *
- * For topic direct read/write: the server hands out a `PartitionLocation`
- * (`node_id` + `generation`) per partition; pass it here to reach that exact
- * node. When `endpoint` is given the node is pinned on create (so it is
- * reachable even before the next discovery round). RPCs wait for pin publication;
- * the pin is released after the last owning client's `[Symbol.dispose]`.
- */
 export type ClientTarget = {
-	/** Exact node to route to (a discovery nodeId, or a PartitionLocation node_id). */
 	nodeId: bigint
-	/**
-	 * Pin this endpoint for `nodeId` — for a server-named node that may not be in
-	 * the current discovery snapshot. Shared until the last owning client is disposed.
-	 */
-	endpoint?: {
+	/** Never substitute a different node when the target is unavailable. */
+	hard?: boolean
+}
+
+export type PinnedClientTarget = ClientTarget & {
+	endpoint: {
 		host: string
 		port: number
 		location?: string
 		sslTargetNameOverride?: string
 		generation?: number
 	}
-	/**
-	 * Never substitute another node — every RPC goes to `nodeId` or fails.
-	 * @default false (soft affinity: prefer this node, fall back if unavailable)
-	 */
-	hard?: boolean
 }
 
 export type DriverOptions = {
@@ -93,7 +75,7 @@ export type DriverOptions = {
 	 */
 	ssl?: tls.SecureContextOptions
 	secureOptions?: tls.SecureContextOptions | undefined
-	channelOptions?: ChannelOptions
+	transportOptions?: ClientOptions
 	credentialsProvider?: CredentialsProvider
 
 	/**
@@ -163,36 +145,12 @@ let defaultOptions: DriverOptions = {
 	'ydb.sdk.connection_idle_interval_ms': 60_000,
 } as const satisfies DriverOptions
 
-let defaultChannelOptions: ChannelOptions = {
-	'grpc.primary_user_agent': `ydb-js-sdk/${pkg.version}`,
-	'grpc.secondary_user_agent': detectRuntime(),
-
-	'grpc.keepalive_time_ms': 10_000,
-	'grpc.keepalive_timeout_ms': 5_000,
-	'grpc.keepalive_permit_without_calls': 1,
-
-	'grpc.max_send_message_length': 64 * 1024 * 1024,
-	'grpc.max_receive_message_length': 64 * 1024 * 1024,
-
-	'grpc.max_reconnect_backoff_ms': 5_000,
-	'grpc.initial_reconnect_backoff_ms': 50,
-}
-
-/* node:coverage ignore if -- polyfill for Node < 20.19; dead on supported runtimes */
-if (!Promise.withResolvers) {
-	Promise.withResolvers = function <T>(): {
-		promise: Promise<T>
-		resolve: (value: T | PromiseLike<T>) => void
-		reject: (reason?: any) => void
-	} {
-		let resolve: (value: T | PromiseLike<T>) => void
-		let reject: (reason?: any) => void
-		let promise = new Promise<T>((res, rej) => {
-			resolve = res
-			reject = rej
-		})
-		return { promise, resolve: resolve!, reject: reject! }
-	}
+let defaultTransportOptions: ClientOptions = {
+	userAgent: `ydb-js-sdk/${pkg.version} ${detectRuntime()}`,
+	keepaliveIntervalMs: 10_000,
+	keepaliveTimeoutMs: 5_000,
+	maxSendBytes: 64 * 1024 * 1024,
+	maxReceiveBytes: 64 * 1024 * 1024,
 }
 
 export class Driver implements Disposable, AsyncDisposable {
@@ -204,13 +162,12 @@ export class Driver implements Disposable, AsyncDisposable {
 	// bootstrap connection is used directly).
 	#endpoints: EndpointsRuntime | undefined
 
-	// Single connection: always the bootstrap endpoint from the connection
-	// string. Used for the discovery client, and as the sole transport when
-	// discovery is disabled. GrpcConnection creates the channel eagerly but
-	// grpc-js starts it IDLE — no TCP/TLS until the first RPC.
+	// Discovery and discovery-disabled calls use the bootstrap connection.
+	// The HTTP/2 session is opened by the first RPC.
 	#connection: Connection
-	#middleware: ClientMiddleware
-	#discoveryClient: Client<typeof DiscoveryServiceDefinition> | undefined
+	#metadataHooks: readonly MetadataHook[]
+	#closedController = new AbortController()
+	#discoveryClient: ServiceClient<typeof DiscoveryServiceDefinition> | undefined
 
 	// Ready latch for the discovery-DISABLED path only (resolved immediately at
 	// construction, rejected on close). The enabled path delegates to the pool.
@@ -228,8 +185,6 @@ export class Driver implements Disposable, AsyncDisposable {
 	#identity!: DriverIdentity
 
 	constructor(connectionString: string, userOptions: Readonly<DriverOptions> = defaultOptions) {
-		dbg.log('Driver(connectionString: %s, options: %o)', connectionString, userOptions)
-
 		this.#initAt = performance.now()
 
 		// close() rejects #ready to unblock awaiters; silence unhandled
@@ -242,19 +197,16 @@ export class Driver implements Disposable, AsyncDisposable {
 
 		this.#identity = this.#buildIdentity()
 
-		let channelCredentials = this.#createChannelCredentials()
-
 		this.#connection = new GrpcConnection(
 			this.#initialEndpoint(),
-			channelCredentials,
-			this.options.channelOptions
+			this.options.transportOptions
 		)
 
 		if (this.options.credentialsProvider) {
 			this.#credentialsProvider = this.options.credentialsProvider
 		}
 
-		this.#middleware = this.#buildMiddleware()
+		this.#metadataHooks = [...getRegisteredMetadataHooks()]
 
 		if (this.options['ydb.sdk.enable_discovery'] === false) {
 			dbg.log('discovery disabled, using single endpoint')
@@ -265,8 +217,8 @@ export class Driver implements Disposable, AsyncDisposable {
 			this.#endpoints = createEndpointsRuntime({
 				identity: this.identity,
 				listEndpoints: this.#fetchEndpoints,
-				channelCredentials,
-				channelOptions: this.options.channelOptions,
+				secure: this.isSecure || this.options.secureOptions !== undefined,
+				transportOptions: this.options.transportOptions,
 				hooks: this.options.hooks,
 				localityEnabled: this.options['ydb.sdk.locality_enabled'],
 				preferPrimaryPile: this.options['ydb.sdk.prefer_primary_pile'],
@@ -338,104 +290,72 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	close(): void {
-		// Synchronous teardown — dispatch destroy; the pool closes channels and
+		// Synchronous teardown — dispatch destroy; the pool closes connections and
 		// publishes ydb:driver.closed on a later turn.
 		this.#teardown((pool) => pool[Symbol.dispose]())
 	}
 
-	/**
-	 * Create a nice-grpc client for the given service.
-	 *
-	 * When discovery is enabled, each RPC is routed through a BalancedChannel that
-	 * selects a connection from the endpoints pool. When disabled, the single
-	 * bootstrap connection is used directly.
-	 *
-	 * @param target  Routing hint:
-	 *   - omitted → balanced across all healthy nodes.
-	 *   - `bigint` → soft affinity to that nodeId (node-bound query sessions).
-	 *   - `ClientTarget` → direct-IO: hard/soft routing to an exact node, with
-	 *     optional endpoint pinning. The returned client is `Disposable`; dispose
-	 *     it (`using`) to unpin.
-	 */
-	createClient<Service extends CompatServiceDefinition>(
-		service: Service,
-		preferNodeId?: bigint
-	): Client<Service>
-	createClient<Service extends CompatServiceDefinition>(
-		service: Service,
-		target: ClientTarget
-	): Client<Service> & Disposable
-	createClient<Service extends CompatServiceDefinition>(
+	/** Create an async service client that borrows the driver's connections. */
+	createClient<Service extends ServiceDefinition>(
 		service: Service,
 		target?: bigint | ClientTarget
-	): Client<Service> {
+	): ServiceClient<Service> {
 		let nodeId = typeof target === 'bigint' ? target : target?.nodeId
 		let hard = typeof target === 'object' ? (target.hard ?? false) : false
-		dbg.log('creating client for %s (node %o, hard %o)', service.fullName, nodeId, hard)
+		let transport = createRoutingTransport(
+			this.#endpoints?.pool ?? this.#connection,
+			this.#prepareMetadata,
+			{ signal: this.#closedController.signal, hooks: this.options.hooks, nodeId, hard }
+		)
+		return createServiceClient(service, transport)
+	}
+
+	/** Wait for the endpoint pin to be published before exposing its client. */
+	async createPinnedClient<Service extends ServiceDefinition>(
+		service: Service,
+		target: PinnedClientTarget,
+		signal?: AbortSignal
+	): Promise<ServiceClient<Service> & Disposable> {
+		signal?.throwIfAborted()
+		if (this.#closed) {
+			throw new Error('Driver is closed')
+		}
 
 		let pool = this.#endpoints?.pool
-		let pinReady: Promise<void> | undefined
-		let disposed = false
+		if (!pool) {
+			throw new Error('Endpoint pinning requires discovery')
+		}
 
-		if (typeof target === 'object' && target.endpoint !== undefined && pool) {
+		let nodeId = target.nodeId
+		let hard = target.hard ?? false
+		let pinned = pool.pin(nodeId, target.endpoint.host, target.endpoint.port, target.endpoint)
+
+		try {
+			await abortable(signal, pinned)
+
 			if (this.#closed) {
 				throw new Error('Driver is closed')
 			}
 
-			pinReady = pool.pin(target.nodeId, target.endpoint.host, target.endpoint.port, {
-				location: target.endpoint.location,
-				sslTargetNameOverride: target.endpoint.sslTargetNameOverride,
-				generation: target.endpoint.generation,
-			})
-		}
+			let client = this.createClient(service, { nodeId, hard })
+			let close = client.close.bind(client)
+			let disposed = false
 
-		let channel = this.#connection.channel
-		if (pool) {
-			channel = new BalancedChannel(
-				pool,
-				this.options.hooks,
-				nodeId,
-				hard
-			) as unknown as Channel
-		}
-
-		let factory = createClientFactory().use(this.#middleware)
-		if (pinReady) {
-			let ready = pinReady
-
-			factory = factory.use(async function* (call, options) {
-				await (options.signal ? abortable(options.signal, ready) : ready)
-
-				if (disposed) {
-					throw new Error('Endpoint pin disposed')
-				}
-
-				return yield* call.next(call.request, options)
-			})
-		}
-
-		let client = factory.create(service, channel, {
-			'*': this.options.channelOptions,
-		})
-
-		if (typeof target !== 'object') {
-			return client
-		}
-
-		// Object targets are Disposable — unpin on dispose (no-op if not pinned).
-		return Object.assign(client as object, {
-			[Symbol.dispose]: () => {
+			client.close = () => {
 				if (disposed) {
 					return
 				}
 
 				disposed = true
+				close()
+				pool.invalidate(nodeId)
+			}
 
-				if (pinReady) {
-					pool!.invalidate(nodeId!)
-				}
-			},
-		}) as Client<Service>
+			return Object.assign(client, { [Symbol.dispose]: () => client.close() })
+		} catch (error) {
+			pool.invalidate(nodeId)
+			throw error
+		}
 	}
 
 	[Symbol.dispose](): void {
@@ -456,10 +376,14 @@ export class Driver implements Disposable, AsyncDisposable {
 		dbg.log('closing driver')
 		let closed = this.#endpoints ? closePool(this.#endpoints.pool) : this.#markClosedDisabled()
 
-		if (closed instanceof Promise) {
-			return closed.finally(() => this.#connection.close())
+		let finish = () => {
+			this.#closedController.abort(new Error('Driver is closed'))
+			this.#connection.close()
 		}
-		this.#connection.close()
+		if (closed instanceof Promise) {
+			return closed.finally(finish)
+		}
+		finish()
 	}
 
 	#markReadyDisabled(): void {
@@ -504,7 +428,12 @@ export class Driver implements Disposable, AsyncDisposable {
 
 	#mergeOptions(userOptions: Readonly<DriverOptions>): DriverOptions {
 		let merged: DriverOptions = { ...defaultOptions, ...userOptions }
-		merged.channelOptions = { ...defaultChannelOptions, ...merged.channelOptions }
+		merged.secureOptions ??= merged.ssl
+		merged.transportOptions = {
+			...defaultTransportOptions,
+			...merged.transportOptions,
+			tls: { ...merged.transportOptions?.tls, ...merged.secureOptions },
+		}
 		return merged
 	}
 
@@ -527,17 +456,8 @@ export class Driver implements Disposable, AsyncDisposable {
 			address: this.cs.hostname,
 			nodeId: -1,
 			port: parseInt(this.cs.port || (this.isSecure ? '443' : '80'), 10),
-			ssl: this.isSecure,
+			ssl: this.isSecure || this.options.secureOptions !== undefined,
 		})
-	}
-
-	#createChannelCredentials() {
-		if ((this.options.secureOptions ??= this.options.ssl)) {
-			let secureContext = tls.createSecureContext(this.options.secureOptions)
-			return credentials.createFromSecureContext(secureContext)
-		}
-
-		return this.isSecure ? credentials.createSsl() : credentials.createInsecure()
 	}
 
 	[kRegisterLibrary](name: string, version: string): void {
@@ -547,38 +467,59 @@ export class Driver implements Disposable, AsyncDisposable {
 		this.#buildInfo = `${this.#buildInfo};${entry}`
 	}
 
-	#buildMiddleware(): ClientMiddleware {
-		let stamp: ClientMiddleware = (call, options) => {
-			let metadata = Metadata(options.metadata)
-				.set('x-ydb-sdk-build-info', this.#buildInfo)
-				.set('x-ydb-database', this.database)
-				.set('x-ydb-application-name', this.application)
-
-			return call.next(call.request, Object.assign(options, { metadata }))
+	#prepareMetadata = async (
+		input: Metadata | undefined,
+		signal: AbortSignal
+	): Promise<Metadata> => {
+		let metadata = Object.fromEntries(
+			Object.entries(input ?? {}).map(([key, value]) => [key.toLowerCase(), value])
+		)
+		for (let hook of this.#metadataHooks) {
+			safeHook('metadata', hook, metadata)
+		}
+		if (this.#metadataHooks.length) {
+			metadata = Object.fromEntries(
+				Object.entries(metadata).map(([key, value]) => [key.toLowerCase(), value])
+			)
 		}
 
-		// Order: debug (logging) → stamp (SDK / db / app headers) → any
-		// externally-registered middleware → auth (x-ydb-auth-ticket). Auth runs
-		// last so a token refresh from inside another middleware still wins.
-		//
-		// The registry snapshot is taken at construction — call
-		// addClientMiddleware() BEFORE new Driver(...) for it to apply.
-		let chain = composeClientMiddleware(debug, stamp)
-		for (let mw of getRegisteredClientMiddlewares()) {
-			chain = composeClientMiddleware(chain, mw)
+		let tokenController = new AbortController()
+		let onAbort = () => tokenController.abort(signal.reason)
+		signal.throwIfAborted()
+		signal.addEventListener('abort', onAbort, { once: true })
+		let token: string
+		try {
+			token = await abortable(
+				signal,
+				this.#credentialsProvider.getToken(false, tokenController.signal)
+			)
+		} finally {
+			// A completed getToken() may have started a background refresh that outlives this RPC.
+			signal.removeEventListener('abort', onAbort)
 		}
-		return composeClientMiddleware(chain, this.#credentialsProvider.middleware)
+
+		metadata['x-ydb-sdk-build-info'] = this.#buildInfo
+		metadata['x-ydb-database'] = this.database
+		metadata['x-ydb-application-name'] = this.application
+		metadata['x-ydb-auth-ticket'] = token
+		return metadata
 	}
 
 	// The listEndpoints seam handed to the endpoints runtime. One plain RPC — the
 	// FSM owns retry/backoff, and the run_discovery_round effect owns the
 	// tracing:ydb:driver.discovery span; this closure must not add either.
 	#fetchEndpoints: ListEndpoints = async (signal: AbortSignal): Promise<DiscoveryResult> => {
-		let client = (this.#discoveryClient ??= createClientFactory()
-			.use(this.#middleware)
-			.create(DiscoveryServiceDefinition, this.#connection.channel))
+		if (!this.#discoveryClient) {
+			let transport = createRoutingTransport(this.#connection, this.#prepareMetadata, {
+				signal: this.#closedController.signal,
+			})
+			this.#discoveryClient = createServiceClient(DiscoveryServiceDefinition, transport)
+		}
 
-		let response = await client.listEndpoints({ database: this.database }, { signal })
+		let response = await this.#discoveryClient.listEndpoints(
+			{ database: this.database },
+			{ signal }
+		)
 		assert.ok(response.operation, new DriverResponseError('Missing operation data.'))
 
 		if (response.operation.status !== StatusIds_StatusCode.SUCCESS) {

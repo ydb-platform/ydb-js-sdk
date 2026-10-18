@@ -4,8 +4,8 @@ import { setTimeout } from 'timers/promises'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
-import { CommitError, YDBError } from '@ydbjs/error'
-import { ClientError, Status } from 'nice-grpc'
+import { CommitError, YDBError, isServiceError } from '@ydbjs/error'
+import { Status } from '@ydbjs/grpc'
 
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
@@ -188,7 +188,7 @@ async function runLoop<R>(
 }
 
 export function isRetryableError(error: unknown, idempotent = false): boolean {
-	if (error instanceof ClientError) {
+	if (isServiceError(error)) {
 		return (
 			error.code === Status.ABORTED ||
 			error.code === Status.INTERNAL ||
@@ -220,7 +220,7 @@ export function isRetryableError(error: unknown, idempotent = false): boolean {
  * {@link isRetryableError}.
  */
 export function isRetryableStreamError(error: unknown): boolean {
-	if (error instanceof ClientError) {
+	if (isServiceError(error)) {
 		return (
 			error.code === Status.CANCELLED ||
 			error.code === Status.UNAVAILABLE ||
@@ -246,7 +246,7 @@ export const defaultRetryConfig: RetryConfig = {
 			return fixed(0)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof ClientError && ctx.error.code === Status.ABORTED) {
+		if (isServiceError(ctx.error) && ctx.error.code === Status.ABORTED) {
 			return fixed(0)(ctx, cfg)
 		}
 
@@ -254,7 +254,7 @@ export const defaultRetryConfig: RetryConfig = {
 			return backoff(BACKOFF_OVERLOAD_BASE_MS, BACKOFF_OVERLOAD_MAX_MS)(ctx, cfg)
 		}
 
-		if (ctx.error instanceof ClientError && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
+		if (isServiceError(ctx.error) && ctx.error.code === Status.RESOURCE_EXHAUSTED) {
 			return backoff(BACKOFF_OVERLOAD_BASE_MS, BACKOFF_OVERLOAD_MAX_MS)(ctx, cfg)
 		}
 
@@ -274,7 +274,7 @@ export const defaultStreamRetryConfig: RetryConfig = {
 	retry: isRetryableStreamError,
 	strategy: (ctx, cfg) => {
 		if (
-			ctx.error instanceof ClientError &&
+			isServiceError(ctx.error) &&
 			(ctx.error.code === Status.CANCELLED || ctx.error.code === Status.UNAVAILABLE)
 		) {
 			return backoff(BACKOFF_DEFAULT_BASE_MS, BACKOFF_DEFAULT_MAX_MS)(ctx, cfg)

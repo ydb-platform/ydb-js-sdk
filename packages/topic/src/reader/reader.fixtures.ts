@@ -182,7 +182,9 @@ export let makeFakeTopicDriver = function makeFakeTopicDriver(): FakeTopicDriver
 
 					let handle: FakeReadStream = {
 						respond(message) {
-							if (done) return
+							if (done) {
+								return
+							}
 							if (readers.length > 0) {
 								readers.shift()!.resolve({ value: message, done: false })
 							} else {
@@ -193,7 +195,9 @@ export let makeFakeTopicDriver = function makeFakeTopicDriver(): FakeTopicDriver
 							finish()
 						},
 						fail(error) {
-							if (done) return
+							if (done) {
+								return
+							}
 							done = true
 							for (let reader of readers.splice(0)) {
 								reader.reject(error)

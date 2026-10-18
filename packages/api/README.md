@@ -27,36 +27,28 @@ import { QueryServiceDefinition } from '@ydbjs/api/query'
 import { PileState, PileState_State } from '@ydbjs/api/bridge' // bridge / multi-pile (2-DC) clusters
 ```
 
-### Example: Using a Service
-
-```ts
-import { createClientFactory, createChannel } from 'nice-grpc'
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
-
-const clientFactory = createClientFactory()
-const discoveryClient = clientFactory.create(
-  DiscoveryServiceDefinition,
-  createChannel('http://localhost:2136')
-)
-
-async function listEndpoints() {
-  const response = await discoveryClient.listEndpoints({ database: '/local' })
-  console.log(response)
-}
-
-listEndpoints().catch(console.error)
-```
-
 ### Using with @ydbjs/core
+
+Driver takes the database from the connection string and adds database and authentication metadata to each call.
 
 ```ts
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver('grpc://localhost:2136')
-const client = driver.createClient(DiscoveryServiceDefinition)
-client.listEndpoints({ database: '/local' })
+using driver = new Driver('grpc://localhost:2136/local')
+let signal = AbortSignal.timeout(5000)
+await driver.ready(signal)
+let client = driver.createClient(DiscoveryServiceDefinition)
+
+let response = await client.listEndpoints({ database: driver.database }, { signal })
+console.log(response)
 ```
+
+### Using the standalone transport
+
+Pass a generated service definition and a transport to `createServiceClient(service, transport)` from `@ydbjs/grpc` for direct gRPC access. The transport connects to one authority; Driver supplies YDB discovery, authentication, database metadata, and node selection.
+
+Unary and client-streaming methods return `Promise<Response>`. Server-streaming and bidirectional methods return `AsyncIterable<Response>`. See [`@ydbjs/grpc`](../grpc/README.md) for cancellation, metadata, and connection options.
 
 ## Development
 

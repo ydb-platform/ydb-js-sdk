@@ -245,8 +245,9 @@ class MyCredentialsProvider extends CredentialsProvider {
 ```ts
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-const discovery = driver.createClient(DiscoveryServiceDefinition)
-const endpoints = await discovery.listEndpoints({ database: driver.database })
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+let response = await discovery.listEndpoints({ database: driver.database })
+console.log(response)
 ```
 
 See also “Advanced → Low-level clients (driver)”.

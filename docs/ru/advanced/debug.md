@@ -8,7 +8,7 @@ SDK использует структурированный логгер из п
 
 ## Пакеты и пространства имён
 
-- `ydbjs:driver:*` — внутренности драйвера (соединения, discovery, middleware)
+- `ydbjs:driver:*` — внутренности драйвера (соединения, discovery, маршрутизация)
 - `ydbjs:query:*` — клиент Query (текст SQL, повторы, статистика)
 - `ydbjs:topic:*` — Topic reader/writer (стриминг, коммиты, acks)
 - `ydbjs:retry:*` — решения ретраев

@@ -1,35 +1,55 @@
 import { expect, test } from 'vitest'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { CommitError, YDBError } from '@ydbjs/error'
-import { ClientError, Status } from 'nice-grpc'
+import { Status } from '@ydbjs/grpc'
 
 import { defaultRetryConfig, isRetryableError } from './index.js'
 import type { RetryStrategy } from './strategy.js'
 
 // Tests for isRetryableError function
-test('ClientError with ABORTED is retryable', () => {
-	let error = new ClientError('Aborted', Status.ABORTED, 'test details')
+test('ServiceError with ABORTED is retryable', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.ABORTED,
+		details: 'test details',
+		metadata: {},
+	})
 	expect(isRetryableError(error)).toBe(true)
 })
 
-test('ClientError with INTERNAL is retryable', () => {
-	let error = new ClientError('Internal error', Status.INTERNAL, 'test details')
+test('ServiceError with INTERNAL is retryable', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.INTERNAL,
+		details: 'test details',
+		metadata: {},
+	})
 	expect(isRetryableError(error)).toBe(true)
 })
 
-test('ClientError with RESOURCE_EXHAUSTED is retryable', () => {
-	let error = new ClientError('Resource exhausted', Status.RESOURCE_EXHAUSTED, 'test details')
+test('ServiceError with RESOURCE_EXHAUSTED is retryable', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.RESOURCE_EXHAUSTED,
+		details: 'test details',
+		metadata: {},
+	})
 	expect(isRetryableError(error)).toBe(true)
 })
 
-test('ClientError with UNAVAILABLE is retryable only for idempotent operations', () => {
-	let error = new ClientError('Unavailable', Status.UNAVAILABLE, 'test details')
+test('ServiceError with UNAVAILABLE is retryable only for idempotent operations', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.UNAVAILABLE,
+		details: 'test details',
+		metadata: {},
+	})
 	expect(isRetryableError(error, false)).toBe(false)
 	expect(isRetryableError(error, true)).toBe(true)
 })
 
-test('ClientError with other statuses is not retryable', () => {
-	let error = new ClientError('Not found', Status.NOT_FOUND, 'test details')
+test('ServiceError with other statuses is not retryable', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.NOT_FOUND,
+		details: 'test details',
+		metadata: {},
+	})
 	expect(isRetryableError(error)).toBe(false)
 	expect(isRetryableError(error, true)).toBe(false)
 })
@@ -127,8 +147,12 @@ test('defaultRetryConfig uses fixed(0) for SESSION_EXPIRED', () => {
 	expect(delay).toBe(0)
 })
 
-test('defaultRetryConfig uses fixed(0) for ClientError ABORTED', () => {
-	let error = new ClientError('Aborted', Status.ABORTED, 'test details')
+test('defaultRetryConfig uses fixed(0) for ServiceError ABORTED', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.ABORTED,
+		details: 'test details',
+		metadata: {},
+	})
 	let ctx = { attempt: 2, error }
 
 	let strategy = defaultRetryConfig.strategy as RetryStrategy
@@ -149,8 +173,12 @@ test('defaultRetryConfig uses exponential(1000) for OVERLOADED', () => {
 	expect(delay).toBe(2000)
 })
 
-test('defaultRetryConfig uses exponential(1000) for ClientError RESOURCE_EXHAUSTED', () => {
-	let error = new ClientError('Resource exhausted', Status.RESOURCE_EXHAUSTED, 'test details')
+test('defaultRetryConfig uses exponential(1000) for ServiceError RESOURCE_EXHAUSTED', () => {
+	let error = Object.assign(new Error('test details'), {
+		code: Status.RESOURCE_EXHAUSTED,
+		details: 'test details',
+		metadata: {},
+	})
 	let ctx = { attempt: 0, error }
 
 	let strategy = defaultRetryConfig.strategy as RetryStrategy
@@ -186,7 +214,11 @@ test('defaultRetryConfig has correct default values', () => {
 })
 
 test('defaultRetryConfig retry function uses isRetryableError', () => {
-	let retryableError = new ClientError('Aborted', Status.ABORTED, 'test details')
+	let retryableError = Object.assign(new Error('test details'), {
+		code: Status.ABORTED,
+		details: 'test details',
+		metadata: {},
+	})
 	let nonRetryableError = new Error('Generic error')
 
 	let retryFn = defaultRetryConfig.retry as (error: unknown, idempotent: boolean) => boolean

@@ -1,3 +1,9 @@
+import { create } from '@bufbuild/protobuf'
+import {
+	DiscoveryServiceDefinition,
+	ListEndpointsResponseSchema,
+	WhoAmIResponseSchema,
+} from '@ydbjs/api/discovery'
 import { context, propagation, trace } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { W3CTraceContextPropagator } from '@opentelemetry/core'
@@ -6,9 +12,8 @@ import {
 	InMemorySpanExporter,
 	SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base'
-import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
-import { Driver, addClientMiddleware } from '@ydbjs/core'
-import { createServer } from 'nice-grpc'
+import { Driver, addMetadataHook } from '@ydbjs/core'
+import { type Metadata, Server } from '@ydbjs/grpc'
 import { afterEach, beforeAll, expect, test } from 'vitest'
 
 import { propagator } from '../src/propagation.ts'
@@ -26,59 +31,45 @@ beforeAll(() => {
 
 afterEach(() => exporter.reset())
 
-// Real path only: `addClientMiddleware(propagator)` + a real `Driver` +
-// a real gRPC dispatch through a `nice-grpc` server on an ephemeral port
-// (no Docker/YDB needed, `whoAmI`/`listEndpoints` are stubbed). This
-// exercises nice-grpc's actual `composeClientMiddleware`/client-middleware
-// invocation contract, unlike a hand-rolled `call.next` fake, which would
-// keep passing even if nice-grpc changed how it drives client middleware.
-async function driveThroughRealDriver(): Promise<{ get(key: string): string | undefined }> {
-	using _ = addClientMiddleware(propagator)
+// A loopback server records the actual headers sent by Driver without requiring tracing support in YDB.
+async function driveThroughRealDriver(signal: AbortSignal): Promise<Metadata> {
+	using _ = addMetadataHook(propagator)
 
-	let server = createServer()
-	let received: { get(key: string): string | undefined } | undefined
-	let discoveryService = {
-		listEndpoints: DiscoveryServiceDefinition.listEndpoints,
-		whoAmI: DiscoveryServiceDefinition.whoAmI,
-	}
+	using server = new Server()
+	let received: Metadata | undefined
 
-	server.add(discoveryService, {
+	server.add(DiscoveryServiceDefinition, {
 		async listEndpoints(_request, callContext) {
 			received = callContext.metadata
-			return {}
+			return create(ListEndpointsResponseSchema, {})
 		},
 		async whoAmI() {
-			return {}
+			return create(WhoAmIResponseSchema, {})
 		},
 	})
 
 	let port = await server.listen('127.0.0.1:0')
-	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
 		'ydb.sdk.enable_discovery': false,
 	})
 
-	try {
-		let client = driver.createClient(discoveryService)
-		await client.listEndpoints({ database: driver.database })
+	let client = driver.createClient(DiscoveryServiceDefinition)
+	await client.listEndpoints({ database: driver.database }, { signal })
 
-		if (!received) {
-			throw new Error('listEndpoints was not invoked')
-		}
-
-		return received
-	} finally {
-		driver.close()
-		await server.shutdown()
+	if (!received) {
+		throw new Error('listEndpoints was not invoked')
 	}
+
+	return received
 }
 
-test('injects traceparent into metadata when a span is active', async () => {
+test('injects traceparent into metadata when a span is active', async (tc) => {
 	let tracer = trace.getTracer('test')
 	let span = tracer.startSpan('outer')
 	let traceparent: string | undefined
 	await context.with(trace.setSpan(context.active(), span), async () => {
-		let received = await driveThroughRealDriver()
-		traceparent = received.get('traceparent')
+		let received = await driveThroughRealDriver(tc.signal)
+		traceparent = String(received['traceparent'])
 	})
 	span.end()
 
@@ -86,24 +77,51 @@ test('injects traceparent into metadata when a span is active', async () => {
 	expect(traceparent).toContain(span.spanContext().traceId)
 })
 
-test('skips traceparent when no span is active', async () => {
-	let received = await driveThroughRealDriver()
-	expect(received.get('traceparent')).toBeUndefined()
+test('skips traceparent when no span is active', async (tc) => {
+	let received = await driveThroughRealDriver(tc.signal)
+	expect(received['traceparent']).toBeUndefined()
 })
 
-test('preserves existing metadata entries alongside traceparent', async () => {
+test('preserves existing metadata entries alongside traceparent', async (tc) => {
 	let tracer = trace.getTracer('test')
 	let span = tracer.startSpan('outer')
-	let received: { get(key: string): string | undefined } | undefined
+	let received: Metadata | undefined
 	await context.with(trace.setSpan(context.active(), span), async () => {
-		received = await driveThroughRealDriver()
+		received = await driveThroughRealDriver(tc.signal)
 	})
 	span.end()
 
-	// `x-ydb-database` is stamped onto outgoing metadata by core's own
-	// `stamp` middleware (composed ahead of the propagator), so its
-	// presence alongside traceparent confirms the propagator ran inside
-	// the real chain rather than replacing prior entries.
-	expect(received!.get('x-ydb-database')).toBe('/local')
-	expect(received!.get('traceparent')).toBeDefined()
+	expect(received!['x-ydb-database']).toBe('/local')
+	expect(received!['traceparent']).toBeDefined()
+})
+
+test('metadata hook leaves caller metadata unchanged', async (tc) => {
+	using server = new Server()
+	let receivedTrace: Metadata[string] | undefined
+	server.add(DiscoveryServiceDefinition, {
+		async whoAmI(_request, callContext) {
+			receivedTrace = callContext.metadata['traceparent']
+			return create(WhoAmIResponseSchema, {})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using _ = addMetadataHook(propagator)
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let client = driver.createClient(DiscoveryServiceDefinition)
+	let metadata = { 'x-existing': 'caller-value' }
+	let span = trace.getTracer('test').startSpan('outer')
+
+	try {
+		await context.with(trace.setSpan(context.active(), span), () =>
+			client.whoAmI({}, { metadata, signal: tc.signal })
+		)
+	} finally {
+		span.end()
+		client.close()
+	}
+
+	expect(receivedTrace).toContain(span.spanContext().traceId)
+	expect(metadata).toEqual({ 'x-existing': 'caller-value' })
 })

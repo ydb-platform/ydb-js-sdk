@@ -8,7 +8,7 @@ The SDK uses a structured debug logger exposed by `@ydbjs/debug`. You can enable
 
 ## Packages and namespaces
 
-- `ydbjs:driver:*` — driver internals (connections, discovery, middleware)
+- `ydbjs:driver:*` — driver internals (connections, discovery, routing)
 - `ydbjs:query:*` — Query client (SQL text, retries, stats)
 - `ydbjs:topic:*` — Topic reader/writer (streaming, commits, acks)
 - `ydbjs:retry:*` — retry helper decisions

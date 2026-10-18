@@ -4,7 +4,7 @@
 
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 
-import { connectivityState, credentials } from '@grpc/grpc-js'
+import type { Client } from '@ydbjs/grpc'
 
 import type { Connection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
@@ -117,7 +117,7 @@ export let makeFakeDiscovery = function makeFakeDiscovery(): FakeDiscovery {
 
 export type FakeConnection = Connection & {
 	closed: boolean
-	driveState: (state: connectivityState) => void
+	driveState: (state: Client['state']) => void
 }
 
 export type FakeConnectionFactory = {
@@ -131,21 +131,31 @@ export let makeFakeConnectionFactory = function makeFakeConnectionFactory(): Fak
 	let materialized: FakeConnection[] = []
 
 	let factory = function factory(ref: EndpointRef): Connection {
-		let state = connectivityState.IDLE
+		let state: Client['state'] = 'idle'
 		let endpointInfo: EndpointInfo = Object.freeze({
 			nodeId: ref.nodeId,
 			address: ref.address,
 			location: ref.location,
 			pile: ref.pile,
 		})
-		let channel = {
-			getConnectivityState: (_tryToConnect: boolean) => state,
-			close: () => {},
-		} as unknown as Connection['channel']
+		let client: Connection['client'] = {
+			get state() {
+				return state
+			},
+			async connect() {
+				state = 'ready'
+			},
+			call() {
+				throw new Error('No RPC expected in an endpoint lifecycle test')
+			},
+			close() {
+				state = 'closed'
+			},
+		}
 
 		let conn: FakeConnection = {
 			endpoint: endpointInfo,
-			channel,
+			client,
 			closed: false,
 			driveState: (next) => {
 				state = next
@@ -221,7 +231,6 @@ export let makeEndpointPool = function makeEndpointPool(
 	let runtime = createEndpointsRuntime({
 		identity: TEST_IDENTITY,
 		listEndpoints: discovery.listEndpoints,
-		channelCredentials: credentials.createInsecure(),
 		connectionFactory: connections.factory,
 		hooks: over.hooks,
 		localityEnabled: over.localityEnabled,

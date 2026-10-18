@@ -51,7 +51,6 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.16.0",
-		"@grpc/grpc-js": "^1.14.0",
 		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/api": "^6.0.7",
 		"@ydbjs/auth": "^6.3.1",
@@ -59,13 +58,13 @@
 		"@ydbjs/error": "^6.0.6",
 		"@ydbjs/fsm": "^6.1.1",
 		"@ydbjs/retry": "^6.3.0",
-		"nice-grpc": "^2.1.13"
+		"@ydbjs/grpc": "^0.1.0"
 	},
 	"devDependencies": {
 		"@types/debug": "^4.1.12"
 	},
 	"engines": {
-		"node": ">=20.19.0",
+		"node": "^22.15.0 || >=23.8.0",
 		"npm": ">=10"
 	},
 	"engineStrict": true

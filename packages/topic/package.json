@@ -76,7 +76,7 @@
 		"@ydbjs/retry": "^6.3.0",
 		"@ydbjs/value": "^6.0.8",
 		"ms": "^2.1.3",
-		"nice-grpc": "^2.1.13"
+		"@ydbjs/grpc": "^0.1.0"
 	},
 	"devDependencies": {
 		"@types/ms": "^2.1.0"

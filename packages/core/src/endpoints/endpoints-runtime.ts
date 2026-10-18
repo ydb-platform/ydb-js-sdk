@@ -11,7 +11,6 @@
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
-import { connectivityState } from '@grpc/grpc-js'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import { PileState_State } from '@ydbjs/api/bridge'
 import { EndpointInfoSchema } from '@ydbjs/api/discovery'
@@ -19,7 +18,7 @@ import type { ListEndpointsResult, EndpointInfo as ProtoEndpointInfo } from '@yd
 import { loggers } from '@ydbjs/debug'
 import { isRetryableError } from '@ydbjs/retry'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
-import type { ChannelCredentials, ChannelOptions } from 'nice-grpc'
+import type { ClientOptions } from '@ydbjs/grpc'
 
 import { type Connection, GrpcConnection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
@@ -93,10 +92,7 @@ type EndpointsEnv = {
 	pinnedChannels: Map<bigint, Connection>
 	banStart: Map<bigint, number>
 	retiredAt: Map<bigint, number>
-	// When a retired channel was first seen in TRANSIENT_FAILURE — used to require
-	// a SUSTAINED failure (not one blip) before reaping it.
-	transientSince: Map<bigint, number>
-	// Per-node in-flight RPC count, maintained by BalancedChannel around each call.
+	// Per-node in-flight RPC count, maintained by routing transport around each call.
 	// Lets graceful close finalize as soon as a channel's streams have drained.
 	inflight: Map<bigint, number>
 	// While closing: the nodeIds whose channels are still busy and must drain
@@ -176,7 +172,6 @@ let dropChannel = function dropChannel(
 	env.pinnedChannels.delete(nodeId)
 	env.banStart.delete(nodeId)
 	env.retiredAt.delete(nodeId)
-	env.transientSince.delete(nodeId)
 	env.inflight.delete(nodeId)
 	env.draining?.delete(nodeId)
 	if (conn !== undefined) {
@@ -428,27 +423,17 @@ let effects = {
 		}
 	},
 
-	// Reap retired channels that are genuinely gone. A working (READY / idle-but-
-	// reconnectable) channel is KEPT so a returning node reuses it — no churn.
-	// SHUTDOWN is closed at once; a TRANSIENT_FAILURE must be SUSTAINED past the
-	// grace window (one blip is absorbed), same as any other non-READY idle state.
+	// Retired connections keep their current session until it closes or the idle grace expires.
 	'endpoints.effect.idle_sweep': (ctx: FullCtx, _effect, runtime) => {
 		let now = Date.now()
 		for (let [nodeId, conn] of ctx.retiredChannels) {
-			let state = conn.channel.getConnectivityState(false)
-			if (state === connectivityState.READY) {
-				ctx.transientSince.delete(nodeId)
-				continue
-			}
-			if (state === connectivityState.SHUTDOWN) {
+			if ((ctx.inflight.get(nodeId) ?? 0) > 0) continue
+			let state = conn.client.state
+			if (state === 'ready') continue
+			if (state === 'closed') {
 				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 				continue
 			}
-			if (state === connectivityState.TRANSIENT_FAILURE && !ctx.transientSince.has(nodeId)) {
-				ctx.transientSince.set(nodeId, now)
-			}
-			// Non-READY (incl. sustained TRANSIENT_FAILURE) at/past the grace window
-			// (>= so a zero grace reaps a non-READY channel on the first sweep).
 			if (now - (ctx.retiredAt.get(nodeId) ?? now) >= ctx.retiredGraceMs) {
 				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 			}
@@ -501,6 +486,14 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		return this.#snapshot
 	}
 
+	get closed(): boolean {
+		return (
+			this.#machine.signal.aborted ||
+			this.#machine.state === 'closing' ||
+			this.#machine.state === 'closed'
+		)
+	}
+
 	// ── SYNCHRONOUS hot path — one Map.get or one random index + lazy materialize ──
 	acquire(preferNodeId?: bigint): Connection {
 		if (this.#env.isFinalized) throw new EndpointsUnavailableError('Endpoints closed')
@@ -531,7 +524,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 		this.#machine.dispatch({ type: 'endpoints.rpc_ok', nodeId })
 	}
 
-	// Call-lifecycle bookkeeping used by BalancedChannel to keep a per-node
+	// Call-lifecycle bookkeeping used by routing transport to keep a per-node
 	// in-flight count. Graceful close consults it to finalize as soon as a
 	// channel's streams have drained instead of waiting the full close deadline.
 	callStarted(nodeId: bigint): void {
@@ -865,8 +858,8 @@ let toEndpointInfo = function toEndpointInfo(e: {
 export type EndpointsRuntimeConfig = {
 	identity: DriverIdentity
 	listEndpoints: ListEndpoints
-	channelCredentials: ChannelCredentials
-	channelOptions?: ChannelOptions | undefined
+	secure?: boolean
+	transportOptions?: ClientOptions | undefined
 	connectionFactory?: ConnectionFactory | undefined
 	hooks?: DriverHooks | undefined
 	localityEnabled?: boolean | undefined
@@ -884,9 +877,8 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 ): EndpointsRuntime {
 	let defaultFactory: ConnectionFactory = (ref) =>
 		new GrpcConnection(
-			defaultProtoEndpoint(ref),
-			config.channelCredentials,
-			config.channelOptions
+			{ ...defaultProtoEndpoint(ref), ssl: config.secure ?? false },
+			config.transportOptions
 		)
 
 	let env: EndpointsEnv = {
@@ -899,7 +891,6 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		pinnedChannels: new Map(),
 		banStart: new Map(),
 		retiredAt: new Map(),
-		transientSince: new Map(),
 		inflight: new Map(),
 		draining: undefined,
 		discoveryTimeoutMs: config.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS,

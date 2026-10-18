@@ -6,10 +6,10 @@ import {
 	StreamWriteMessage_WriteRequest_MessageDataSchema,
 } from '@ydbjs/api/topic'
 import { loggers } from '@ydbjs/debug'
-import { YDBError } from '@ydbjs/error'
+import { YDBError, isServiceError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
 import { isRetryableError, isRetryableStreamError } from '@ydbjs/retry'
-import { ClientError, Status } from 'nice-grpc'
+import { MessageSizeError, Status } from '@ydbjs/grpc'
 
 import type { AckStatus, WriteAck } from './types.js'
 
@@ -235,20 +235,11 @@ export let isRetryableWriterError = function isRetryableWriterError(
 	return isRetryableStreamError(error) || isRetryableError(error, true)
 }
 
-// A size-limit rejection is deterministic — resending the same oversized frame can
-// only fail again, so it must be fatal (Go demotes this case explicitly). Every
-// size rejection observed against a real server (tests/writer-protocol.test.ts) is
-// a gRPC ClientError RESOURCE_EXHAUSTED whose details carry a size complaint:
-//   server frame cap: 'Received message larger than max (66060326 vs. 64000000)'
-//   client send cap:  'Attempted to send message with a size larger than 67108864'
-// (grpc-js receive paths use the same 'larger than' wording). The code alone is not
-// enough — RESOURCE_EXHAUSTED also covers genuine throttling, which SHOULD be
-// retried — so the details text narrows it. Everything else the server could send
-// (e.g. a YDBError BAD_REQUEST issue) is already non-retryable via the generic
-// classifier and needs no special case here.
+// Size-limit failures are deterministic; throttling with the same status can recover.
 let isPayloadTooLargeError = function isPayloadTooLargeError(error: unknown): boolean {
+	if (error instanceof MessageSizeError) return true
 	return (
-		error instanceof ClientError &&
+		isServiceError(error) &&
 		error.code === Status.RESOURCE_EXHAUSTED &&
 		/larger than/i.test(error.details)
 	)
