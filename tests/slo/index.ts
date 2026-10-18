@@ -302,9 +302,20 @@ if (!runFailed && !ctrl.signal.aborted && cli.workers.length > 0) {
 			let read = new Worker(resolveWorker('topic.read'), {
 				workerData: { ...topic, name: 'topic.read' },
 			})
-			let write = new Worker(resolveWorker('topic.write'), {
-				workerData: { ...topic, name: 'topic.write' },
-			})
+			let write = Array.from(
+				{ length: topic.writerCount },
+				(_, writerIndex) =>
+					new Worker(resolveWorker('topic.write'), {
+						workerData: {
+							...topic,
+							name:
+								topic.writerCount === 1
+									? 'topic.write'
+									: `topic.write.${writerIndex}`,
+							writerIndex,
+						},
+					})
+			)
 			results = await runTopicWorkers({ read, write }, topic, ctrl.signal)
 		} else {
 			await Promise.all(cli.workers.map((name) => runForever(name)))
@@ -330,17 +341,40 @@ if (cli.teardown && (!topic || !runFailed)) {
 
 if (topic) {
 	let summary = {
-		...results?.read.summary,
 		success: !runFailed && results !== undefined,
+		...results?.read.summary,
 		errors: failure ? [failure] : (results?.read.summary?.errors ?? []),
 		topic: topic.topic,
 		codec: topic.codec,
 		rps: topic.rps,
+		maxPendingMessages: topic.maxPendingMessages,
 		phase: runFailed ? 'failed' : 'complete',
 		startedAt: startedAt ? new Date(startedAt).toISOString() : undefined,
 		elapsedMs: startedAt ? Date.now() - startedAt : 0,
+		runtime: results?.read.runtime,
+		stability:
+			results?.read.stability && results.write.every((writer) => writer.stability)
+				? {
+						windows: Math.min(
+							results.read.stability.windows,
+							...results.write.map((writer) => writer.stability!.windows)
+						),
+						workers: {
+							read: results.read.stability,
+							write: results.write.map((writer) => writer.stability),
+						},
+					}
+				: undefined,
+		tokenRenewal: {
+			read: results?.read.tokenRenewal,
+			write: results?.write.map((writer) => writer.tokenRenewal),
+		},
+		drainedMemory: {
+			read: results?.read.drainedMemory,
+			write: results?.write.map((writer) => writer.drainedMemory),
+		},
 		reconnects: {
-			writer: results?.write.reconnects ?? 0,
+			writer: results?.write.reduce((sum, writer) => sum + writer.reconnects, 0) ?? 0,
 			reader: results?.read.reconnects ?? 0,
 		},
 	}

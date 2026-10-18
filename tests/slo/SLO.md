@@ -76,6 +76,39 @@ node tests/slo/dist/index.js \
   --teardown=topic.teardown
 ```
 
+## Nightly stability
+
+The `Nightly topic stability` workflow runs daily at 22:17 UTC (01:17 Europe/Minsk) after it reaches the default branch. Each Node.js 22/24/26 and Bun job runs for four hours on `large-runner-js-sdk`, using TLS, two database nodes, no chaos and no baseline workload. Runtime image tags track their major release; the result records the actual runtime version and container image ID.
+
+The profile runs without an RPS limit (`rps=0`): four producer workers feed one reader across 24 partitions with 32 KiB payloads and mixed RAW/GZIP/ZSTD codecs. Producers own disjoint partitions and share an 8,192-message budget, divided equally between them. Reader commits release capacity, bounding accepted-but-uncommitted payloads to 256 MiB before SDK, codec and verifier overhead. `writers` defaults to one outside the nightly profile; positive `rps` retains paced generation.
+
+The topic write quota is explicitly set to 50 MiB/s per partition (`writeSpeedBytesPerSecond=52428800`), avoiding the default topic quota as a low artificial ceiling.
+
+Each workload container gets 6 CPU and 12 GiB on the 24 CPU / 72 GiB runner. Topic retention is limited to 512 MiB per partition (12 GiB total before storage overhead), protecting the runner's 93 GiB disk during sustained writing. Final flush/read/commit drain is limited to 50 seconds.
+
+Throughput is an observed limit of the whole workload, including message identity checks, commit, network and YDB. `suppliedFraction` reports the fraction of one-second samples with acknowledged messages still awaiting delivery; `minimumSuppliedFraction` retains the lowest window value. A low fraction indicates that the reader may be waiting for producers. A nonempty backlog alone does not prove a runtime CPU limit. Prometheus retains pending-message counts and process CPU time alongside throughput and memory; CPU and RSS cover all worker threads and must not be summed across workers.
+
+`--topic.write.auth=login` uses the disposable cluster's built-in root account and five-minute login tokens. Each worker must observe an accepted changed token and subsequent successful traffic after the old token expired on the same stream. Reconnecting with a new token does not satisfy that check.
+
+Run manually from Actions with a selected runtime and a duration of 1,200–14,400 seconds. The workflow never cancels an active nightly when another run is queued. Separate jobs have separate clusters; use dedicated runners because the upstream Compose services use fixed container names.
+
+`--topic.write.stability=true` enables absolute checks inside the workload, independently of report comparisons:
+
+- One sample per second; a gap above ten seconds fails after warmup.
+- Five minutes of warmup, then five-minute windows. At least a baseline and one comparison window must finish.
+- With `rps=0`, the first post-warmup window establishes observed throughput; subsequent windows must sustain at least 80% of it, with nonzero progress and backlog within the configured message budget. With a positive `rps`, the existing 90% rate and ten-second backlog limits apply.
+- Successful flush and read/commit operations must complete within ten seconds after warmup. Existing p50/p95/p99 gauges remain available for diagnosis.
+- RSS must stay below 2 GiB, including warmup. Compared with the first complete post-warmup window, subsequent window minima may grow by at most 256 MiB RSS, 64 MiB V8 heap/external memory and 32 MiB ArrayBuffers. Bun uses JavaScriptCore heap/native counters with 64 MiB growth limits instead of its incomplete Node-compatible counters.
+- Every accepted message must pass payload, ACK, delivery and commit reconciliation. Missing results, process errors, OOM and interrupted runs fail.
+
+Writer stability uses accepted/acknowledged progress and writer-isolate memory. Reader stability uses writer checkpoints, verified delivery and commits, and reader-isolate memory. Final results include both window reports; all workers must pass. RSS remains shared and is never summed. Steady-state checks stop when generation stops; the reader continues final drain.
+
+Window minima reduce sensitivity to normal GC cycles; they are stability bounds, not proof that every retained allocation is a leak. No forced GC or reconnect is used to hide accumulation. Final drained memory is recorded separately. The result and window logs include the measured counters; monitor failures are sticky even if later samples recover.
+
+For a short local verification of the memory and throughput checks without `auth=login`, set `--topic.write.warmupSeconds=10 --topic.write.windowSeconds=20` and run for at least 90 seconds. Token-renewal verification needs a run longer than the five-minute token lifetime. Short verification does not qualify the four-hour nightly profile. A TLS-enabled YDB endpoint and its trusted CA are required to reproduce TLS-specific failures.
+
+`topic-result.json`, container state, source commit and workload logs are retained for 14 days. The shared action also collects Prometheus metrics and cluster logs. Initial limits are explicit acceptance criteria; adjust them only alongside evidence from the same offered load and runner resources.
+
 ## KV and lightweight development
 
 The existing KV workers retain their restart policy. Start the full KV stack with:

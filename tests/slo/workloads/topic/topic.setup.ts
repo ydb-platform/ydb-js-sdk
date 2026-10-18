@@ -3,22 +3,35 @@ import { workerData } from 'node:worker_threads'
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Codec, CreateTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
-import { Driver } from '@ydbjs/core'
+import { createTopicAuth } from '../../lib/topic-auth.ts'
 
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import type { TopicWorkerData } from '../../lib/worker-api.ts'
 
 installSafetyHandlers()
 
-let { topic, consumer, partitions } = workerData as TopicWorkerData
+let {
+	topic,
+	consumer,
+	partitions,
+	params,
+	writeSpeedBytesPerSecond,
+	retentionStorageMb,
+	retentionSeconds,
+} = workerData as TopicWorkerData
 {
-	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+	let auth = createTopicAuth(process.env['YDB_CONNECTION_STRING']!, params['auth'] === 'login')
+	using driver = auth.createDriver()
 	let signal = AbortSignal.timeout(60_000)
 	await driver.ready(signal)
 	let service = driver.createClient(TopicServiceDefinition)
 	let response = await service.createTopic(
 		create(CreateTopicRequestSchema, {
 			path: topic,
+			partitionWriteSpeedBytesPerSecond: BigInt(writeSpeedBytesPerSecond),
+			...(retentionStorageMb > 0
+				? { retentionStorageMb: BigInt(retentionStorageMb) }
+				: { retentionPeriod: { seconds: BigInt(retentionSeconds), nanos: 0 } }),
 			partitioningSettings: {
 				minActivePartitions: BigInt(partitions),
 				maxActivePartitions: BigInt(partitions),

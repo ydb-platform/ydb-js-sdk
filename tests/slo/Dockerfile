@@ -2,6 +2,7 @@
 ARG image="node"
 
 FROM ${image}
+ENV TOPIC_RESULT_FILE=/tmp/topic-result.json
 WORKDIR /usr/src/app
 
 COPY package.json dist/ ./
