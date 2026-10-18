@@ -71,23 +71,24 @@ let destroyAndRegister = async function destroyAndRegister(
 }
 
 test('reclaims a destroyed reader with no lingering references', async () => {
-	let collected = false
-	let registry = new FinalizationRegistry<string>(() => {
-		collected = true
-	})
+	let observation = {
+		collected: false,
+		registry: new FinalizationRegistry<string>(() => {
+			observation.collected = true
+		}),
+	}
 
-	await destroyAndRegister(registry)
+	await destroyAndRegister(observation.registry)
 
-	// `collected` is flipped by the FinalizationRegistry callback, which oxlint's
-	// static analysis cannot see.
+	// Keep the registry reachable together with the result until finalization is observed.
 	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !collected; i++) {
+	for (let i = 0; i < 50 && !observation.collected; i++) {
 		globalThis.gc?.()
 		// oxlint-disable-next-line no-await-in-loop
 		await new Promise((resolve) => setTimeout(resolve, 10))
 	}
 
-	expect(collected).toBe(true)
+	expect(observation.collected).toBe(true)
 })
 
 // Same reclaim check for the graceful path: close() drains and terminates, after
@@ -107,21 +108,23 @@ let closeAndRegister = async function closeAndRegister(
 }
 
 test('reclaims a gracefully closed reader with no lingering references', async () => {
-	let collected = false
-	let registry = new FinalizationRegistry<string>(() => {
-		collected = true
-	})
+	let observation = {
+		collected: false,
+		registry: new FinalizationRegistry<string>(() => {
+			observation.collected = true
+		}),
+	}
 
-	await closeAndRegister(registry)
+	await closeAndRegister(observation.registry)
 
 	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !collected; i++) {
+	for (let i = 0; i < 50 && !observation.collected; i++) {
 		globalThis.gc?.()
 		// oxlint-disable-next-line no-await-in-loop
 		await new Promise((resolve) => setTimeout(resolve, 10))
 	}
 
-	expect(collected).toBe(true)
+	expect(observation.collected).toBe(true)
 })
 
 // One reader lifecycle threading a shared signal through a read() window: #nextChunk

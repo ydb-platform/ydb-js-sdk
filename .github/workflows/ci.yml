@@ -35,18 +35,22 @@ jobs:
       - run: npm run check:surface --workspace=@ydbjs/drizzle-adapter
 
   test:
-    name: Test
+    name: Test (${{ matrix.name }})
     runs-on: ubuntu-latest
     needs: build
 
     concurrency:
-      group: ${{ github.event_name }}-${{ github.ref }}-${{ matrix.node-version }}
+      group: test-${{ github.event_name }}-${{ github.ref }}-${{ matrix.name }}
       cancel-in-progress: true
 
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24, 26]
+        include:
+          - { name: 22, node-version: 22, runtime: node }
+          - { name: 24, node-version: 24, runtime: node }
+          - { name: 26, node-version: 26, runtime: node }
+          - { name: 'Bun 1.4', node-version: 24, runtime: bun }
 
     services:
       ydb:
@@ -63,6 +67,8 @@ jobs:
         options: '-h localhost'
 
     env:
+      TEST_RUNTIME: ${{ matrix.runtime }}
+      GRPC_TEST_GO_SERVER: ${{ runner.temp }}/grpc-interop-go
       YDB_STATIC_CREDENTIALS_USER: root
       YDB_STATIC_CREDENTIALS_PASSWORD: 1234
       YDB_STATIC_CREDENTIALS_ENDPOINT: grpc://localhost:2136
@@ -76,17 +82,31 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node-version }}
+          bun-version: '1.4.3'
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.5'
+          cache-dependency-path: packages/grpc/tests/interop-go/go.sum
+      - name: Build Go interoperability peer
+        working-directory: packages/grpc/tests/interop-go
+        env:
+          GOTOOLCHAIN: local
+        run: go build -mod=readonly -o "$GRPC_TEST_GO_SERVER" .
 
       - name: Test
-        if: matrix.node-version != 26
+        if: matrix.runtime == 'node' && matrix.node-version != 26
         run: npm run test
 
+      - name: Test on Bun
+        if: matrix.runtime == 'bun'
+        run: bun --bun node_modules/vitest/vitest.mjs run
+
       - name: Test with coverage
-        if: matrix.node-version == 26
+        if: matrix.runtime == 'node' && matrix.node-version == 26
         run: npm run coverage -- --reporter=default --reporter=html --reporter=github-actions
 
       - name: Upload coverage to Codecov
-        if: matrix.node-version == 26
+        if: matrix.runtime == 'node' && matrix.node-version == 26
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -94,7 +114,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Publish coverage report to Object Storage
-        if: matrix.node-version == 26
+        if: matrix.runtime == 'node' && matrix.node-version == 26
         continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
