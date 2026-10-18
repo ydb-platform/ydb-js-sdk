@@ -96,6 +96,24 @@ await driver.ready()
 
 You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from `@ydbjs/auth`.
 
+### Token acquisition timeout
+
+`ydb.sdk.token_timeout_ms` limits the time spent waiting for `credentialsProvider.getToken()` before each RPC (default 10000 ms). Values must be integers from 0 to 4294967295; zero leaves no time budget. Expiry rejects the call with `RpcError` and `Status.DEADLINE_EXCEEDED` without cancelling the provider's refresh. No RPC is sent after token acquisition fails or its wait times out.
+
+An earlier call deadline or caller cancellation takes precedence. The original absolute deadline still covers both authentication and the RPC; obtaining a token does not restart it. Driver calls `getToken()` without forwarding the RPC signal. Each caller owns only its wait: cancelling one RPC or closing its Driver does not interrupt a refresh shared with another caller. Providers bound their own network work independently. The `driver.token` getter follows the same wait timeout and is cancelled when its Driver closes.
+
+```ts
+using driver = new Driver(connectionString, {
+  credentialsProvider,
+  'ydb.sdk.token_timeout_ms': 1000,
+})
+
+let discovery = driver.createClient(DiscoveryServiceDefinition)
+await discovery.whoAmI({}, { deadline: Date.now() + 5000, signal })
+```
+
+The call allows up to one second for credentials within the overall five-second budget.
+
 ### Bridge (2DC) clusters
 
 On a bridge cluster, discovery reports a pile per endpoint. The driver routes only to
@@ -114,14 +132,6 @@ const driver = new Driver('grpc://localhost:2136/local', {
 It is opt-in, soft (fallback preserved), and a no-op on a non-bridge cluster. In bridge
 mode it takes precedence over `ydb.sdk.locality_enabled` (a pile already maps to a
 datacenter, so the two are not combined).
-
-### Closing the Driver
-
-Always close the driver when done to release resources:
-
-```ts
-driver.close()
-```
 
 ## Observability via `node:diagnostics_channel`
 

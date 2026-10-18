@@ -183,60 +183,54 @@ await driver.ready()
 
 ## Создание своего провайдера
 
-Реализуйте `CredentialsProvider` и метод `getToken(force?, signal?)`. Мидлварь провайдера автоматически проставит заголовок `x-ydb-auth-ticket` для всех вызовов.
+Реализуйте `CredentialsProvider.getToken(force?, signal?)`. Driver получает токен и перед отправкой RPC добавляет `x-ydb-auth-ticket`, заголовки базы данных и SDK. Провайдер управляет кешем и обновлением токена; middleware для него не требуется.
+
+Одно обновление должно обслуживать несколько одновременных вызовов. В примере `fetchTokenSomehow(signal)` запрашивает токен и возвращает `{ value, expiresAt }`, где `expiresAt` — время истечения токена в миллисекундах Unix. Передайте сигнал провайдера в этот сетевой запрос.
 
 ```ts
+import { abortable } from '@ydbjs/abortable'
 import { CredentialsProvider } from '@ydbjs/auth'
+import { Driver } from '@ydbjs/core'
 
 class MyCredentialsProvider extends CredentialsProvider {
-  #token: string | null = null
+  #token: { value: string; expiresAt: number } | undefined
+  #refreshPromise: Promise<string> | undefined
+
   async getToken(force = false, signal?: AbortSignal): Promise<string> {
-    if (!force && this.#token) return this.#token
-    const token = await fetchTokenSomehow(signal)
-    this.#token = token
-    return token
+    signal?.throwIfAborted()
+    if (!force && this.#token && this.#token.expiresAt > Date.now()) {
+      return this.#token.value
+    }
+
+    if (!this.#refreshPromise) {
+      let timeout = AbortSignal.timeout(5000)
+      this.#refreshPromise = fetchTokenSomehow(timeout)
+        .then((token) => {
+          this.#token = token
+          return token.value
+        })
+        .finally(() => {
+          this.#refreshPromise = undefined
+        })
+    }
+
+    return signal ? abortable(signal, this.#refreshPromise) : this.#refreshPromise
   }
 }
 
-const driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!, {
   credentialsProvider: new MyCredentialsProvider(),
 })
+await driver.ready()
 ```
 
-Советы:
+Таймаут создаётся только при запуске нового запроса токена. Чтение из кеша и присоединение к уже запущенному обновлению не создают дополнительных таймаутов провайдера. После успеха или ошибки `#refreshPromise` очищается, поэтому следующий вызов сможет повторить попытку. Для короткоживущих токенов можно также начинать обновление заранее, продолжая возвращать действующий токен.
 
-- Кешируйте токен и продлевайте его заранее (как делает `StaticCredentialsProvider`).
-- Учтите таймауты: `ydb.sdk.token_timeout_ms` в опциях драйвера.
+### Deadline RPC и отмена ожидания
 
-### Почему важен AbortSignal и как правильно реагировать на abort
+Driver вызывает `getToken()` без сигнала RPC. Он ограничивает собственное ожидание настройкой `ydb.sdk.token_timeout_ms` (по умолчанию 10000 мс), общим deadline вызова и отменой вызывающего кода. Таймаут ожидания токена возвращает `Status.DEADLINE_EXCEEDED`; отмена сохраняет исходную причину. Один абсолютный deadline покрывает авторизацию и сам RPC и не перезапускается после получения токена.
 
-- Driver передаёт в `getToken()` `signal` с таймаутом (`ydb.sdk.token_timeout_ms`). Это гарантирует, что получение токена не «зависнет» и общий вызов к YDB не превысит SLA.
-- Ваш провайдер обязан:
-  - передавать этот `signal` во все сетевые вызовы (fetch/gRPC/HTTP);
-  - при `signal.aborted` как можно быстрее завершаться и пробрасывать отмену (обычно ошибка с именем `AbortError`).
-- Это важно для корректных ретраев и быстрой деградации: драйвер сможет повторить попытку или корректно завершить операцию.
-
-Пример корректной обработки:
-
-```ts
-class MyCredentialsProvider extends CredentialsProvider {
-  #token: string | null = null
-
-  async getToken(force = false, signal: AbortSignal = AbortSignal.timeout(10_000)) {
-    if (!force && this.#token) return this.#token
-    const abort = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
-    const res = await fetch(this.#endpoint, {
-      method: 'POST',
-      body: '{}',
-      signal: abort,
-    })
-    if (!res.ok) throw new Error(`Auth failed: ${res.status}`)
-    const { token } = await res.json()
-    this.#token = token
-    return token
-  }
-}
-```
+При прямом вызове `provider.getToken(false, signal)` функция `abortable` отменяет только ожидание этого вызывающего кода. Запрос токена продолжает работать с собственным таймаутом провайдера, может заполнить кеш и вернуть результат остальным ожидающим. Поэтому отмена одного RPC или закрытие его Driver не прерывает обновление, нужное другому запросу.
 
 ## Низкоуровневые сервис‑клиенты
 

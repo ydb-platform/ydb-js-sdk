@@ -166,7 +166,7 @@ test.for([false, true])(
 )
 
 test.for([false, true])(
-	'close cancels pending authentication before opening an RPC (discovery: %s)',
+	'close cancels pending token waits before opening an RPC (discovery: %s)',
 	async (discovery, tc) => {
 		let entered = Promise.withResolvers<void>()
 		let token = Promise.withResolvers<string>()
@@ -201,10 +201,29 @@ test.for([false, true])(
 
 		driver.close()
 
-		expect(providerSignal?.aborted).toBe(true)
+		expect(providerSignal).toBeUndefined()
 		await expect(request).rejects.toThrow('Driver is closed')
 		token.resolve('late-token')
 		await new Promise<void>((resolve) => setImmediate(resolve))
 		expect(calls).toBe(0)
 	}
 )
+
+test('rejects token reads after close without requesting credentials', async () => {
+	let requests = 0
+	class TestCredentials extends CredentialsProvider {
+		async getToken(): Promise<string> {
+			requests++
+			return 'unused-token'
+		}
+	}
+	using driver = new Driver('grpc://127.0.0.1:1/local', {
+		'ydb.sdk.enable_discovery': false,
+		credentialsProvider: new TestCredentials(),
+	})
+	driver.close()
+	let token = driver.token
+
+	await expect(token).rejects.toThrow('Driver is closed')
+	expect(requests).toBe(0)
+})
