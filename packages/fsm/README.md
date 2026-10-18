@@ -40,17 +40,18 @@ type Output = { type: 'counter.state'; value: State } | { type: 'counter.value';
 
 type Context = { count: number }
 
-let runtime = createMachineRuntime<State, Context, Event, Effect, Output>({
+let runtime = createMachineRuntime<State, Context, {}, Event, Effect, Output>({
   initialState: 'idle',
-  context: { count: 0 },
-  transition(context, state, event, runtime) {
+  ctx: { count: 0 },
+  env: {},
+  transition(context, event, runtime) {
     switch (event.type) {
       case 'counter.start':
         runtime.emit({ type: 'counter.state', value: 'running' })
         return { state: 'running', effects: [{ type: 'counter.log', message: 'started' }] }
 
       case 'counter.increment':
-        if (state !== 'running') return
+        if (runtime.state !== 'running') return
         context.count += event.step ?? 1
         runtime.emit({ type: 'counter.value', value: context.count })
         return { effects: [{ type: 'counter.log', message: `count=${context.count}` }] }
@@ -61,7 +62,7 @@ let runtime = createMachineRuntime<State, Context, Event, Effect, Output>({
     }
   },
   effects: {
-    'counter.log'(effect) {
+    'counter.log'(_ctx, effect) {
       console.log('[effect]', effect.message)
     },
   },
@@ -85,7 +86,7 @@ await runtime.destroy('finalized')
 
 ### Transition
 
-`transition(context, state, event, runtime)` is called for every event in queue order.
+`transition(ctx, event, runtime)` is called for every event in queue order.
 
 It can:
 
@@ -96,7 +97,7 @@ It can:
 ### Effects
 
 `effects` is a typed map keyed by `effect.type`.
-Each effect handler receives `(effect, context, state, runtime)`.
+Each effect handler receives `(ctx, effect, runtime)`.
 
 This map-based approach keeps handlers exhaustive and explicit.
 
@@ -148,6 +149,8 @@ Notes:
 - `map` can filter by returning `null`
 - `ingest` is rejected after runtime is closing/closed/destroyed
 - ingest handle is `AsyncDisposable`
+- an already-aborted signal does not open the source
+- cancellation cannot interrupt an arbitrary pending `source.next()`; cancel or close an idle source before awaiting ingestion disposal
 
 ## API Summary
 
