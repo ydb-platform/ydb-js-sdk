@@ -69,13 +69,14 @@ test('accepts aborted signal', async () => {
 		throw new Error('should not reach here')
 	})
 
-	await expect(result).rejects.toThrow('This operation was aborted')
+	await expect(result).rejects.toBe(controller.signal.reason)
 	expect(attempts).eq(0)
 })
 
 test('aborts an in-flight attempt', async () => {
 	let attempts = 0
 	let controller = new AbortController()
+	let reason = new DOMException('Caller cancelled', 'AbortError')
 
 	let result = retry({ retry: isError, signal: controller.signal, budget: 5 }, async (signal) => {
 		attempts++
@@ -89,9 +90,9 @@ test('aborts an in-flight attempt', async () => {
 
 	// Aborting after fn has started (not before retry() is called) exercises
 	// the abortable() race in the loop body, not the throwIfAborted() guard.
-	queueMicrotask(() => controller.abort())
+	queueMicrotask(() => controller.abort(reason))
 
-	await expect(result).rejects.toThrow('This operation was aborted')
+	await expect(result).rejects.toBe(reason)
 	expect(attempts).eq(1)
 })
 

@@ -713,23 +713,24 @@ let registerForCollection = async function registerForCollection(
 }
 
 test('reclaims a destroyed writer with no lingering references', async () => {
-	let collected = false
-	let registry = new FinalizationRegistry<string>(() => {
-		collected = true
-	})
+	let observation = {
+		collected: false,
+		registry: new FinalizationRegistry<string>(() => {
+			observation.collected = true
+		}),
+	}
 
-	await registerForCollection(registry)
+	await registerForCollection(observation.registry)
 
-	// `collected` is flipped by the FinalizationRegistry callback, which oxlint's
-	// static analysis cannot see.
+	// Keep the registry reachable together with the result until finalization is observed.
 	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !collected; i++) {
+	for (let i = 0; i < 50 && !observation.collected; i++) {
 		globalThis.gc?.()
 		// oxlint-disable-next-line no-await-in-loop
 		await new Promise((resolve) => setTimeout(resolve, 10))
 	}
 
-	expect(collected).toBe(true)
+	expect(observation.collected).toBe(true)
 })
 
 // ── review fixes ─────────────────────────────────────────────────────────────────
@@ -1306,21 +1307,23 @@ let disposeAndRegister = async function disposeAndRegister(
 }
 
 test('reclaims a gracefully disposed writer with no lingering references', async () => {
-	let collected = false
-	let registry = new FinalizationRegistry<string>(() => {
-		collected = true
-	})
+	let observation = {
+		collected: false,
+		registry: new FinalizationRegistry<string>(() => {
+			observation.collected = true
+		}),
+	}
 
-	await disposeAndRegister(registry)
+	await disposeAndRegister(observation.registry)
 
 	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !collected; i++) {
+	for (let i = 0; i < 50 && !observation.collected; i++) {
 		globalThis.gc?.()
 		// oxlint-disable-next-line no-await-in-loop
 		await new Promise((resolve) => setTimeout(resolve, 10))
 	}
 
-	expect(collected).toBe(true)
+	expect(observation.collected).toBe(true)
 })
 
 test('stays flat in memory across ~1M written+acked messages', { timeout: 240_000 }, async () => {

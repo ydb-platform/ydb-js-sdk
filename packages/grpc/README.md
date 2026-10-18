@@ -101,3 +101,20 @@ Timer options (`connectTimeoutMs`, `keepaliveIntervalMs`, and `keepaliveTimeoutM
 Authorities support `http:`, `https:`, `grpc:`, `grpcs:`, and `unix:`. Responses support identity, gzip, and deflate; requests use identity encoding. GOAWAY retires the connection for new calls while accepted streams finish. Subsequent calls open a new connection. A `too_many_pings` GOAWAY doubles the keepalive interval for subsequent connections without replaying requests.
 
 The transport does not replay RPCs, balance nodes, or refresh credentials. YDB Driver and its clients own those decisions. It does not implement HTTP proxy tunneling, service-config resolution, xDS, or hedging.
+
+## Development
+
+From the repository root, build the independent Go peer once and run the transport tests from TypeScript:
+
+```sh
+go build -C packages/grpc/tests/interop-go -mod=readonly -o /tmp/ydb-grpc-interop .
+GRPC_TEST_GO_SERVER=/tmp/ydb-grpc-interop npm run test:grpc
+```
+
+For Bun:
+
+```sh
+GRPC_TEST_GO_SERVER=/tmp/ydb-grpc-interop TEST_RUNTIME=bun bun --bun node_modules/vitest/vitest.mjs run --config vitest.grpc.config.ts
+```
+
+CI runs the complete test suite on Node 22, 24, 26 and Bun 1.4, including the Go interoperability cases. Local `npm test` and integration-test runs also need `GRPC_TEST_GO_SERVER` pointing to the built peer.

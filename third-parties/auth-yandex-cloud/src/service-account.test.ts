@@ -436,7 +436,9 @@ test('throws error on invalid private key format', async () => {
 		return response
 	})
 
+	// OpenSSL and BoringSSL use different error codes for malformed PEM.
 	await expect(provider.getToken(true)).rejects.toMatchObject({
-		message: expect.stringMatching(/DECODER|unsupported/i),
+		code: expect.stringMatching(/^ERR_OSSL_(UNSUPPORTED|PEM_NO_START_LINE)$/),
 	})
+	expect(global.fetch).not.toHaveBeenCalled()
 })
