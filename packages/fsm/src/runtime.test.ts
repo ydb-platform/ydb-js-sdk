@@ -1,6 +1,9 @@
 // oxlint-disable no-await-in-loop
 
-import { setTimeout as sleep } from 'node:timers/promises'
+import { createHook } from 'node:async_hooks'
+import { setImmediate, setTimeout as sleep } from 'node:timers/promises'
+
+import { abortable } from '@ydbjs/abortable'
 
 import { expect, test } from 'vitest'
 
@@ -81,6 +84,453 @@ test('close drains queued events and runs effects before shutdown', async () => 
 	expect(initialCtx.sum).toBe(6)
 	expect(initialCtx.recorded).toEqual([1, 2, 3])
 })
+
+test('close waits for a blocked effect and drains the accepted burst in FIFO order', async (tc) => {
+	type Event = { type: 'block' } | { type: 'item'; value: number }
+	type Effect = { type: 'wait' }
+
+	let gate = Promise.withResolvers<void>()
+	let values = Array.from({ length: 64 }, (_, index) => index)
+	await using machine = createMachineRuntime<
+		'ready',
+		{ seen: number[] },
+		{},
+		Event,
+		Effect,
+		number
+	>({
+		initialState: 'ready',
+		ctx: { seen: [] },
+		env: {},
+		transition(ctx, event, runtime) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait' }] }
+			}
+
+			ctx.seen.push(event.value)
+			runtime.emit(event.value)
+		},
+		effects: { wait: () => gate.promise },
+	})
+	let received = (async () => {
+		let outputs: number[] = []
+		for await (let output of machine) {
+			outputs.push(output)
+		}
+		return outputs
+	})()
+
+	try {
+		machine.dispatch({ type: 'block' })
+		for (let value of values) {
+			machine.dispatch({ type: 'item', value })
+		}
+		expect(machine.ctx.seen).toEqual([])
+
+		let reason = new Error('close after accepted burst')
+		let settled = false
+		let closing = machine.close(reason).then(() => {
+			settled = true
+			return undefined
+		})
+		machine.dispatch({ type: 'item', value: 64 })
+		await setImmediate(undefined, { signal: tc.signal })
+		expect(settled).toBe(false)
+		expect(machine.signal.aborted).toBe(false)
+
+		gate.resolve()
+		await closing
+		expect(machine.ctx.seen).toEqual(values)
+		expect(await received).toEqual(values)
+		expect(machine.signal.reason).toBe(reason)
+	} finally {
+		gate.resolve()
+	}
+})
+
+test('queues reentrant events after a blocked burst and accepts a later drain', async (tc) => {
+	type Event = { type: 'block' } | { type: 'item'; value: number }
+	type Effect = { type: 'wait' }
+
+	let gate = Promise.withResolvers<void>()
+	let reentrantProcessed = Promise.withResolvers<void>()
+	let laterProcessed = Promise.withResolvers<void>()
+	let values = Array.from({ length: 32 }, (_, index) => index)
+	await using machine = createMachineRuntime<
+		'ready',
+		{ seen: number[] },
+		{},
+		Event,
+		Effect,
+		never
+	>({
+		initialState: 'ready',
+		ctx: { seen: [] },
+		env: {},
+		transition(ctx, event, runtime) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait' }] }
+			}
+
+			ctx.seen.push(event.value)
+			if (event.value === 0) {
+				runtime.dispatch({ type: 'item', value: 33 })
+			}
+			if (event.value === 33) {
+				reentrantProcessed.resolve()
+			}
+			if (event.value === 34) {
+				laterProcessed.resolve()
+			}
+		},
+		effects: {
+			async wait(_ctx, _effect, runtime) {
+				await gate.promise
+				runtime.dispatch({ type: 'item', value: 32 })
+			},
+		},
+	})
+
+	try {
+		machine.dispatch({ type: 'block' })
+		for (let value of values) {
+			machine.dispatch({ type: 'item', value })
+		}
+		expect(machine.ctx.seen).toEqual([])
+
+		gate.resolve()
+		await abortable(tc.signal, reentrantProcessed.promise)
+		expect(machine.ctx.seen).toEqual([...values, 32, 33])
+		machine.dispatch({ type: 'item', value: 34 })
+		await abortable(tc.signal, laterProcessed.promise)
+		expect(machine.ctx.seen).toEqual([...values, 32, 33, 34])
+		await machine.close()
+	} finally {
+		gate.resolve()
+	}
+})
+
+test('drops a queued burst when its blocked effect rejects', async (tc) => {
+	type Event = { type: 'block' } | { type: 'item'; value: number }
+	type Effect = { type: 'wait' }
+
+	let gate = Promise.withResolvers<void>()
+	let reason = new Error('blocked effect failed')
+	await using machine = createMachineRuntime<
+		'ready',
+		{ seen: number[] },
+		{},
+		Event,
+		Effect,
+		number
+	>({
+		initialState: 'ready',
+		ctx: { seen: [] },
+		env: {},
+		transition(ctx, event, runtime) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait' }] }
+			}
+
+			ctx.seen.push(event.value)
+			runtime.emit(event.value)
+		},
+		effects: { wait: () => gate.promise },
+	})
+	let received: number[] = []
+	let failure = (async () => {
+		try {
+			for await (let output of machine) {
+				received.push(output)
+			}
+		} catch (error) {
+			return error
+		}
+	})()
+
+	try {
+		machine.dispatch({ type: 'block' })
+		for (let value = 0; value < 64; value++) {
+			machine.dispatch({ type: 'item', value })
+		}
+		gate.reject(reason)
+
+		expect(await abortable(tc.signal, failure)).toBe(reason)
+		machine.dispatch({ type: 'item', value: 64 })
+		expect(machine.ctx.seen).toEqual([])
+		expect(received).toEqual([])
+		expect(machine.signal.reason).toBe(reason)
+	} finally {
+		gate.resolve()
+	}
+})
+
+test('preserves FIFO across large bursts, reentrant tails, and subsequent drains', async (tc) => {
+	type Event = { type: 'block' } | { type: 'item'; value: number }
+	type Effect = { type: 'wait' }
+	let gate = Promise.withResolvers<void>()
+	let drained = Promise.withResolvers<void>()
+	await using machine = createMachineRuntime<
+		'ready',
+		{ seen: number[]; reentrantAt: number; tail: number },
+		{},
+		Event,
+		Effect,
+		never
+	>({
+		initialState: 'ready',
+		ctx: { seen: [], reentrantAt: 0, tail: 0 },
+		env: {},
+		transition(ctx, event, runtime) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait' }] }
+			}
+			ctx.seen.push(event.value)
+			if (event.value === ctx.reentrantAt) {
+				runtime.dispatch({ type: 'item', value: ctx.tail })
+			}
+			if (event.value === ctx.tail) {
+				drained.resolve()
+			}
+		},
+		effects: { wait: () => gate.promise },
+	})
+
+	try {
+		let offset = 0
+		for (let count of [4096, 16384, 65536]) {
+			gate = Promise.withResolvers<void>()
+			drained = Promise.withResolvers<void>()
+			machine.ctx.reentrantAt = offset + Math.floor(count / 2)
+			machine.ctx.tail = offset + count
+			machine.dispatch({ type: 'block' })
+			for (let index = 0; index < count; index++) {
+				machine.dispatch({ type: 'item', value: offset + index })
+			}
+			gate.resolve()
+			await abortable(tc.signal, drained.promise)
+			offset += count + 1
+			expect(machine.ctx.seen).toEqual(Array.from({ length: offset }, (_, index) => index))
+		}
+	} finally {
+		gate.resolve()
+	}
+})
+
+test('destroy discards the remaining tail after a large burst partially drains', async (tc) => {
+	type Event = { type: 'block' } | { type: 'item'; value: number }
+	type Effect = { type: 'wait'; checkpoint: boolean }
+	let gate = Promise.withResolvers<void>()
+	let checkpoint = Promise.withResolvers<void>()
+	let checkpointEntered = Promise.withResolvers<void>()
+	await using machine = createMachineRuntime<
+		'ready',
+		{ processed: number },
+		{},
+		Event,
+		Effect,
+		never
+	>({
+		initialState: 'ready',
+		ctx: { processed: 0 },
+		env: {},
+		transition(ctx, event) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait', checkpoint: false }] }
+			}
+			ctx.processed += 1
+			if (event.value === 2048) {
+				return { effects: [{ type: 'wait', checkpoint: true }] }
+			}
+		},
+		effects: {
+			wait(_ctx, effect) {
+				if (effect.checkpoint) {
+					checkpointEntered.resolve()
+					return checkpoint.promise
+				}
+				return gate.promise
+			},
+		},
+	})
+
+	try {
+		machine.dispatch({ type: 'block' })
+		for (let value = 0; value < 16384; value++) {
+			machine.dispatch({ type: 'item', value })
+		}
+		gate.resolve()
+		await abortable(tc.signal, checkpointEntered.promise)
+		expect(machine.ctx.processed).toBe(2049)
+		await machine.destroy()
+		checkpoint.resolve()
+		await setImmediate(undefined, { signal: tc.signal })
+		machine.dispatch({ type: 'item', value: 16384 })
+		expect(machine.ctx.processed).toBe(2049)
+		await expect(machine[Symbol.asyncIterator]().next()).resolves.toMatchObject({ done: true })
+	} finally {
+		gate.resolve()
+		checkpoint.resolve()
+	}
+})
+
+test('releases a consumed event while a later effect blocks the remaining queue', async (tc) => {
+	type Event = { type: 'block'; checkpoint: boolean } | { type: 'item'; payload?: Uint8Array }
+	type Effect = { type: 'wait'; checkpoint: boolean }
+	let gate = Promise.withResolvers<void>()
+	let checkpoint = Promise.withResolvers<void>()
+	let checkpointEntered = Promise.withResolvers<void>()
+	let collected = false
+	let registry = new FinalizationRegistry<void>(() => {
+		collected = true
+	})
+	await using machine = createMachineRuntime<
+		'ready',
+		{ processed: number },
+		{},
+		Event,
+		Effect,
+		never
+	>({
+		initialState: 'ready',
+		ctx: { processed: 0 },
+		env: {},
+		transition(ctx, event) {
+			if (event.type === 'block') {
+				return { effects: [{ type: 'wait', checkpoint: event.checkpoint }] }
+			}
+			ctx.processed += 1
+		},
+		effects: {
+			wait(_ctx, effect) {
+				if (effect.checkpoint) {
+					checkpointEntered.resolve()
+					return checkpoint.promise
+				}
+				return gate.promise
+			},
+		},
+	})
+	let enqueuePayload = () => {
+		let payload = new Uint8Array(8 * 1024 * 1024)
+		registry.register(payload.buffer, undefined)
+		machine.dispatch({ type: 'item', payload })
+	}
+
+	try {
+		machine.dispatch({ type: 'block', checkpoint: false })
+		enqueuePayload()
+		machine.dispatch({ type: 'block', checkpoint: true })
+		for (let index = 0; index < 32; index++) {
+			machine.dispatch({ type: 'item' })
+		}
+		gate.resolve()
+		await abortable(tc.signal, checkpointEntered.promise)
+		expect(machine.ctx.processed).toBe(1)
+
+		// The runtime and unprocessed tail stay alive throughout collection.
+		// oxlint-disable-next-line no-unmodified-loop-condition
+		for (let attempt = 0; attempt < 40 && !collected; attempt++) {
+			globalThis.gc!()
+			await sleep(10, undefined, { signal: tc.signal })
+		}
+		expect(collected).toBe(true)
+		checkpoint.resolve()
+		await machine.close()
+		expect(machine.ctx.processed).toBe(33)
+	} finally {
+		gate.resolve()
+		checkpoint.resolve()
+	}
+})
+
+// async_hooks counts instrumented PROMISE resources, not physical heap allocations.
+function countPromiseResources(action: () => void): number {
+	let count = 0
+	let hook = createHook({
+		init(_id, type) {
+			if (type === 'PROMISE') {
+				count += 1
+			}
+		},
+	})
+
+	hook.enable()
+	try {
+		action()
+	} finally {
+		hook.disable()
+	}
+	return count
+}
+
+test.skipIf(Boolean(process.versions.bun))(
+	'keeps the PROMISE resource count constant while an effect blocks queued events',
+	async (tc) => {
+		let probe = countPromiseResources(() => {
+			void Promise.resolve()
+		})
+		expect(probe).toBeGreaterThan(0)
+
+		type Event = { type: 'block' } | { type: 'item' }
+		type Effect = { type: 'wait' }
+		let gate = Promise.withResolvers<void>()
+		await using machine = createMachineRuntime<
+			'ready',
+			{ processed: number },
+			{},
+			Event,
+			Effect,
+			never
+		>({
+			initialState: 'ready',
+			ctx: { processed: 0 },
+			env: {},
+			transition(ctx, event) {
+				if (event.type === 'block') {
+					return { effects: [{ type: 'wait' }] }
+				}
+				ctx.processed += 1
+			},
+			effects: { wait: () => gate.promise },
+		})
+
+		try {
+			let processed = 0
+			for (let round = 0; round < 3; round++) {
+				gate = Promise.withResolvers<void>()
+				machine.dispatch({ type: 'block' })
+				let single = countPromiseResources(() => {
+					machine.dispatch({ type: 'item' })
+				})
+				for (let size of [64, 4000]) {
+					let burst = countPromiseResources(() => {
+						for (let index = 0; index < size; index++) {
+							machine.dispatch({ type: 'item' })
+						}
+					})
+					// Queueing behind an active drain must not create a waiter for every event.
+					expect(burst).toBeLessThanOrEqual(single + 1)
+				}
+				expect(machine.ctx.processed).toBe(processed)
+				gate.resolve()
+				await setImmediate(undefined, { signal: tc.signal })
+				processed += 4065
+				expect(machine.ctx.processed).toBe(processed)
+			}
+			await machine.close()
+			let stopped = countPromiseResources(() => {
+				for (let index = 0; index < 4000; index++) {
+					machine.dispatch({ type: 'item' })
+				}
+			})
+			expect(stopped).toBe(0)
+			expect(machine.ctx.processed).toBe(processed)
+		} finally {
+			gate.resolve()
+		}
+	}
+)
 
 test('ingests async iterable source and maps input to events', async () => {
 	let initialCtx: TestCtx = {
@@ -205,6 +655,47 @@ test('destroy aborts signal and disposes active ingest resources', async () => {
 
 	expect(machine.signal.aborted).toBe(true)
 	expect(sourceDisposed).toBe(true)
+})
+
+test('does not open an ingest source when its signal is already aborted', async () => {
+	let opened = 0
+	let pulled = 0
+	let source: AsyncIterable<number> = {
+		[Symbol.asyncIterator]() {
+			opened += 1
+			return {
+				async next(): Promise<IteratorResult<number>> {
+					pulled += 1
+					return { done: true, value: undefined }
+				},
+			}
+		},
+	}
+	await using machine = createMachineRuntime<
+		'ready',
+		{ processed: number },
+		{},
+		{ type: 'item' },
+		never,
+		never
+	>({
+		initialState: 'ready',
+		ctx: { processed: 0 },
+		env: {},
+		transition(ctx) {
+			ctx.processed += 1
+		},
+		effects: {},
+	})
+	let ac = new AbortController()
+	ac.abort(new Error('Cancelled before ingestion'))
+	await using handle = machine.ingest(source, () => ({ type: 'item' }), ac.signal)
+	await handle[Symbol.asyncDispose]()
+	expect(opened).toBe(0)
+	expect(pulled).toBe(0)
+	expect(machine.signal.aborted).toBe(false)
+	machine.dispatch({ type: 'item' })
+	expect(machine.ctx.processed).toBe(1)
 })
 
 test('ingest throws after close and after destroy', async () => {

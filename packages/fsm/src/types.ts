@@ -203,7 +203,8 @@ export interface MachineRuntime<S, LC, E extends MachineEvent, O>
 	dispatch(event: E): void
 	/**
 	 * Ingests an async iterable source, mapping each item to an event (or `null` to skip).
-	 * Stops automatically when the machine closes, the source ends, or the returned handle is disposed.
+	 * Stops accepting items when the machine closes or ingestion is cancelled.
+	 * Disposal waits for the source iteration to finish; the source must unblock any pending next().
 	 *
 	 * @throws If the machine is already closed or destroyed.
 	 */
