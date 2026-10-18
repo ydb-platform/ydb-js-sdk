@@ -55,6 +55,29 @@ console.log(endpoints)
 driver.close()
 ```
 
+### Closing the driver
+
+`using driver = new Driver(...)` and `driver.close()` immediately cancel active RPCs and close all connections, with or without discovery. The driver has no asynchronous disposal or shutdown grace period.
+
+Declare topic readers and writers after the driver so their `await using` cleanup finishes before the driver's synchronous cleanup:
+
+```ts
+import { Driver } from '@ydbjs/core'
+import { createTopicWriter } from '@ydbjs/topic'
+
+using driver = new Driver('grpc://localhost:2136/local')
+await using writer = createTopicWriter(driver, {
+  topic: '/local/events',
+  producer: 'example',
+})
+
+writer.write(new TextEncoder().encode('hello'))
+```
+
+At scope exit, the writer first drains accepted messages and waits for acknowledgements under its own shutdown timeout. The driver then closes its connections. Readers likewise retain their graceful commit handling; closing the driver first cancels that work.
+
+Closing the Driver cancels local RPCs. A request already received by YDB may still complete; cancellation does not confirm that its server-side work was rolled back.
+
 ### Using Authentication Providers
 
 ```ts
@@ -174,7 +197,7 @@ Additional channels surface bridge (2DC) topology and an aggregate routing snaps
 
 | Channel                             | Type    | Extra fields                                                                                                                                                                                   |
 | ----------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ydb:driver.connection.pool.opened` | publish | `config: { localityEnabled, preferPrimaryPile, degradedThreshold, discoveryIntervalMs, idleIntervalMs, retiredGraceMs, closeDeadlineMs }` — fired once at construction                         |
+| `ydb:driver.connection.pool.opened` | publish | `config: { localityEnabled, preferPrimaryPile, degradedThreshold, discoveryIntervalMs, idleIntervalMs, retiredGraceMs }` — fired once at construction                                          |
 | `ydb:driver.connection.pool.stats`  | publish | `total, prefer, fallback, pessimized: number, piles: { name, status, nodes }[]` — emitted whenever routing changes                                                                             |
 | `ydb:driver.pile.changed`           | publish | `selfLocation, before: {name,status}[], after: {name,status}[], primaryBefore?, primaryAfter?: string` — fired only when the pile roster/statuses change (published inside the discovery span) |
 | `ydb:driver.pile.fallback`          | publish | `active: boolean, primaryPile?: string` — edge-triggered when `preferPrimaryPile` starts/stops serving from the SYNCHRONIZED fallback tier                                                     |

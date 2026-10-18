@@ -592,11 +592,20 @@ test('closes gracefully via async disposal', async () => {
 	writer.write(bytes(1))
 	await stream.waitForWrite()
 
-	let disposing = writer[Symbol.asyncDispose]()
+	let disposed = false
+	let disposing = writer[Symbol.asyncDispose]().then(() => {
+		disposed = true
+		return undefined
+	})
+	await settle()
+	expect(disposed).toBe(false)
+	expect(stream.wasAborted()).toBe(false)
+
 	stream.respond(writeResponse([{ seqNo: 1n }]))
 	await disposing
 	await settle()
 
+	expect(disposed).toBe(true)
 	expect(stream.wasAborted()).toBe(true)
 	expect(() => writer.write(bytes(2))).toThrow(/closed/)
 

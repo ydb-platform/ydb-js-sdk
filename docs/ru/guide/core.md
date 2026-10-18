@@ -16,12 +16,10 @@ title: Начало работы
 ```ts
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
+using driver = new Driver(process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local')
 await driver.ready()
 
-// используйте driver для Query/Topic или низкоуровневых клиентов
-
-await driver.close()
+// Use the driver with Query/Topic or low-level clients
 ```
 
 ## Провайдеры аутентификации (`@ydbjs/auth`)

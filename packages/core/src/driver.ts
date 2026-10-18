@@ -30,7 +30,6 @@ import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
 import {
 	type DiscoveryResult,
-	type EndpointPool,
 	type EndpointsRuntime,
 	type ListEndpoints,
 	createEndpointsRuntime,
@@ -163,7 +162,7 @@ let defaultTransportOptions: ClientOptions = {
 	maxReceiveBytes: 64 * 1024 * 1024,
 }
 
-export class Driver implements Disposable, AsyncDisposable {
+export class Driver implements Disposable {
 	readonly cs: URL
 	readonly options: DriverOptions = {}
 
@@ -293,9 +292,14 @@ export class Driver implements Disposable, AsyncDisposable {
 	}
 
 	close(): void {
-		// Synchronous teardown — dispatch destroy; the pool closes connections and
-		// publishes ydb:driver.closed on a later turn.
-		this.#teardown((pool) => pool[Symbol.dispose]())
+		if (this.#closed) return
+		this.#closed = true
+
+		dbg.log('closing driver')
+		this.#closedController.abort(new Error('Driver is closed'))
+		this.#connection.close()
+		if (this.#endpoints) this.#endpoints.pool.close()
+		else this.#markClosedDisabled()
 	}
 
 	/** Create an async service client that borrows the driver's connections. */
@@ -363,30 +367,6 @@ export class Driver implements Disposable, AsyncDisposable {
 
 	[Symbol.dispose](): void {
 		this.close()
-	}
-
-	async [Symbol.asyncDispose](): Promise<void> {
-		// Graceful teardown — drain in-flight streams before closing channels.
-		await this.#teardown((pool) => pool.close())
-	}
-
-	// The single teardown path. `closePool` is the only sync/async fork:
-	// `close()` destroys synchronously, `asyncDispose` awaits a graceful drain.
-	#teardown(closePool: (pool: EndpointPool) => void | Promise<void>): void | Promise<void> {
-		if (this.#closed) return
-		this.#closed = true
-
-		dbg.log('closing driver')
-		let closed = this.#endpoints ? closePool(this.#endpoints.pool) : this.#markClosedDisabled()
-
-		let finish = () => {
-			this.#closedController.abort(new Error('Driver is closed'))
-			this.#connection.close()
-		}
-		if (closed instanceof Promise) {
-			return closed.finally(finish)
-		}
-		finish()
 	}
 
 	#markReadyDisabled(): void {

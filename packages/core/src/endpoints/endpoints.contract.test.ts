@@ -35,14 +35,14 @@ let setup = function setup(
 }
 
 test('acquire routes to a discovered node after ready', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)])
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 	let conn = h.pool.acquire()
 	expect([1n, 2n]).toContain(conn.endpoint.nodeId)
 })
 
 test('channels are materialized lazily on first acquire, then reused', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)])
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 	expect(h.connections.factoryCalls()).toBe(0)
 
@@ -54,7 +54,7 @@ test('channels are materialized lazily on first acquire, then reused', async (tc
 })
 
 test('a pessimized node is skipped on the next acquire', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)])
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 
 	h.pool.penalize(1n)
@@ -65,7 +65,7 @@ test('a pessimized node is skipped on the next acquire', async (tc) => {
 })
 
 test('a successful RPC optimistically un-bans a node', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)])
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 
 	h.pool.penalize(1n)
@@ -79,7 +79,7 @@ test('a successful RPC optimistically un-bans a node', async (tc) => {
 
 test('a new discovery round is reflected in routing', async (tc) => {
 	let discovery = makeFakeDiscovery()
-	await using h = setup([endpoint(1), endpoint(2)], { discovery })
+	using h = setup([endpoint(1), endpoint(2)], { discovery })
 	await h.pool.ready(tc.signal)
 
 	using added = capture('ydb:driver.connection.added')
@@ -113,7 +113,7 @@ test('publishes ydb:driver.connection.pool.opened once with the driver config', 
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
 	using opened = capture('ydb:driver.connection.pool.opened')
-	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
 	await h.pool.ready(tc.signal)
 
 	expect(opened.events).toHaveLength(1)
@@ -126,7 +126,7 @@ test('publishes discovery.completed with selfLocation, pile roster and primaryPi
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
 	using completed = capture('ydb:driver.discovery.completed')
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await h.pool.ready(tc.signal)
 
 	expect(completed.events.at(-1)).toMatchObject({
@@ -143,7 +143,7 @@ test('tags connection.added with the pile name', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
 	using added = capture('ydb:driver.connection.added')
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await h.pool.ready(tc.signal)
 
 	expect(added.events).toEqual(
@@ -154,7 +154,7 @@ test('tags connection.added with the pile name', async (tc) => {
 test('publishes pile.changed when the primary pile moves', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await h.pool.ready(tc.signal)
 
 	using changed = capture('ydb:driver.pile.changed')
@@ -170,7 +170,7 @@ test('publishes pile.changed when the primary pile moves', async (tc) => {
 test('does not publish pile.changed when the roster is unchanged', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await h.pool.ready(tc.signal)
 
 	using changed = capture('ydb:driver.pile.changed')
@@ -184,7 +184,7 @@ test('does not publish pile.changed when the roster is unchanged', async (tc) =>
 test('publishes pile.fallback when preferPrimaryPile has no primary node left', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
-	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
 	await h.pool.ready(tc.signal)
 
 	using fallback = capture('ydb:driver.pile.fallback')
@@ -205,7 +205,7 @@ test('publishes pool.stats with tier counts and pile composition', async (tc) =>
 	let discovery = makeFakeDiscovery()
 	discovery.push(bridgeRound())
 	using stats = capture('ydb:driver.connection.pool.stats')
-	await using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
+	using h = makeEndpointPool({ discovery, preferPrimaryPile: true })
 	await h.pool.ready(tc.signal)
 
 	expect(stats.events.at(-1)).toMatchObject({
@@ -239,7 +239,7 @@ test('defaultProtoEndpoint carries the pile onto the production dial proto', () 
 })
 
 test('direct-IO: pin then acquire the exact server-named node', async (tc) => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
 	h.pool.pin(9n, 'node-9', 2136)
@@ -253,7 +253,7 @@ test.for([false, true])(
 	'keeps pinned and discovered channels separate (pin first: %s)',
 	async (pinFirst, tc) => {
 		// Discovery and pin publication order must be controlled independently of network timing.
-		await using h = setup([endpoint(1)])
+		using h = setup([endpoint(1)])
 		await h.pool.ready(tc.signal)
 		h.pool.pin(1n, 'direct-node', 2137)
 		await settle()
@@ -262,7 +262,7 @@ test.for([false, true])(
 		let second = pinFirst ? h.pool.acquire(1n) : direct()
 		expect(first.endpoint.address).toBe(pinFirst ? 'direct-node:2137' : 'node-1:2136')
 		expect(second.endpoint.address).toBe(pinFirst ? 'node-1:2136' : 'direct-node:2137')
-		await h.pool.close()
+		h.pool.close()
 		expect(h.connections.materialized).toHaveLength(2)
 		expect(h.connections.materialized.every((connection) => connection.closed)).toBe(true)
 	}
@@ -271,20 +271,20 @@ test.for([false, true])(
 test('publishes an explicit pin while initial discovery is still pending', async () => {
 	let discovery = makeFakeDiscovery()
 	discovery.hang()
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 	await h.pool.pin(9n, 'direct-node', 2136)
 	expect(h.machine.state).toBe('discovering')
 	expect(h.pool.acquireNode(9n, { hard: true }).endpoint.address).toBe('direct-node:2136')
 })
 
 test('direct-IO: a hard-pin to an absent node throws', async (tc) => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	expect(() => h.pool.acquireNode(99n, { hard: true })).toThrow(EndpointsUnavailableError)
 })
 
 test('invalidating a pin preserves the discovered channel for the same node', async (tc) => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	let discovered = h.pool.acquire(1n)
 	h.pool.pin(1n, 'direct-node', 2137)
@@ -297,7 +297,7 @@ test('invalidating a pin preserves the discovered channel for the same node', as
 })
 
 test('retiring discovery preserves the pinned channel for the same node', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)], { retiredGraceMs: 0 })
+	using h = setup([endpoint(1), endpoint(2)], { retiredGraceMs: 0 })
 	await h.pool.ready(tc.signal)
 	h.pool.acquire(1n)
 	h.pool.pin(1n, 'direct-node', 2137)
@@ -312,28 +312,22 @@ test('retiring discovery preserves the pinned channel for the same node', async 
 	expect(h.connections.materialized.map((connection) => connection.closed)).toEqual([true, false])
 })
 
-test('close waits for a busy pin when its discovered channel was never opened', async (tc) => {
-	await using h = setup([endpoint(1)])
+test('close immediately aborts a busy pin with no discovered channel', async (tc) => {
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
-	h.pool.pin(1n, 'direct-node', 2137)
-	await settle()
+	await h.pool.pin(1n, 'direct-node', 2137)
 	h.pool.acquireNode(1n, { hard: true })
 	h.pool.callStarted(1n)
-	let closed = false
-	let closing = h.pool.close().then(() => {
-		closed = true
-		return closed
-	})
-	await settle()
-	expect(closed).toBe(false)
-	expect(h.connections.materialized[0]!.closed).toBe(false)
-	h.pool.callEnded(1n)
-	await closing
+
+	h.pool.close()
+
 	expect(h.connections.materialized[0]!.closed).toBe(true)
+	expect(h.pool.closed).toBe(true)
+	h.pool.callEnded(1n)
 })
 
 test('releasing the last pin makes an undiscovered node unreachable', async (tc) => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 
 	await h.pool.pin(9n, 'node-9', 2136)
@@ -345,12 +339,12 @@ test('releasing the last pin makes an undiscovered node unreachable', async (tc)
 })
 
 test('acquire before ready throws EndpointsUnavailableError', async () => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
 })
 
 test('publishes ydb:driver.connection.pessimized when a node is reported failed', async (tc) => {
-	await using h = setup([endpoint(1), endpoint(2)])
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 
 	using pessimized = capture('ydb:driver.connection.pessimized')
@@ -364,17 +358,18 @@ test('publishes ydb:driver.connection.pessimized when a node is reported failed'
 
 test('publishes ydb:driver.ready once discovery succeeds', async (tc) => {
 	using ready = capture('ydb:driver.ready')
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	expect(ready.events).toHaveLength(1)
 })
 
-test('close drains and publishes ydb:driver.closed', async (tc) => {
+test('close publishes ydb:driver.closed once', async (tc) => {
 	using closed = capture('ydb:driver.closed')
 	let h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
-	await h.pool.close()
-	expect(closed.events).toHaveLength(1)
+	h.pool.close()
+	h.pool.close()
+	await expect.poll(() => closed.events.length).toBe(1)
 })
 
 test('close closes every materialized channel', async (tc) => {
@@ -384,48 +379,44 @@ test('close closes every materialized channel', async (tc) => {
 	h.pool.acquire(1n)
 	h.pool.acquire(2n)
 
-	await h.pool.close()
+	h.pool.close()
 	expect(connections.materialized.every((c) => c.closed)).toBe(true)
 })
 
-// ── graceful close drain (no full-deadline stall) ────────────────────────────
+// ── immediate shutdown ──────────────────────────────────────────────────────
 
-test('close finalizes promptly without waiting the close deadline', async (tc) => {
-	// A 30s deadline: if close() stalled on it, the 5s test timeout would fire.
-	await using h = setup([endpoint(1), endpoint(2)], { closeDeadlineMs: 30_000 })
+test('close immediately clears routing and rejects new pins', async (tc) => {
+	using h = setup([endpoint(1), endpoint(2)])
 	await h.pool.ready(tc.signal)
 	h.pool.acquire(1n)
 	h.pool.acquire(2n)
 
-	await h.pool.close()
-	expect(h.connections.materialized.every((c) => c.closed)).toBe(true)
+	h.pool.close()
+
+	expect(h.pool.snapshot.byNodeId.size).toBe(0)
+	expect(h.connections.materialized.every((connection) => connection.closed)).toBe(true)
+	expect(() => h.pool.pin(3n, 'node-3', 2136)).toThrow(/closed/i)
+	expect(() => h.pool.acquireNode(1n)).toThrow(EndpointsUnavailableError)
 })
 
-test('close waits for an in-flight call to drain, then finalizes', async (tc) => {
-	let closed = false
-	let h = setup([endpoint(1)], { closeDeadlineMs: 30_000 })
+test('dispose immediately closes a channel with an active RPC', async (tc) => {
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
 	h.pool.acquire(1n)
-	h.pool.callStarted(1n) // simulate an in-flight RPC on node 1
+	h.pool.callStarted(1n)
 
-	let closing = h.pool.close().then(() => {
-		closed = true
-	})
-	await settle()
-	// The busy channel keeps close() pending.
-	expect(closed).toBe(false)
-	expect(h.connections.byNode(1n)!.closed).toBe(false)
+	h.pool[Symbol.dispose]()
 
-	h.pool.callEnded(1n) // the RPC finishes → channel drains → finalize
-	await closing
-	expect(closed).toBe(true)
+	expect(h.pool.closed).toBe(true)
 	expect(h.connections.byNode(1n)!.closed).toBe(true)
+	h.pool.callEnded(1n)
+	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
 })
 
 test('acquire after close throws EndpointsUnavailableError', async (tc) => {
 	let h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
-	await h.pool.close()
+	h.pool.close()
 	expect(() => h.pool.acquire()).toThrow(EndpointsUnavailableError)
 	expect(() => h.pool.acquire(1n)).toThrow(EndpointsUnavailableError)
 })
@@ -446,7 +437,7 @@ let retireNode2 = async function retireNode2(
 test('reaps a closed retired connection during idle sweep', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	let connections = makeFakeConnectionFactory()
-	await using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
+	using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
 	await h.pool.ready(tc.signal)
 	await retireNode2(h, discovery)
 
@@ -461,7 +452,7 @@ test('reaps a closed retired connection during idle sweep', async (tc) => {
 test('keeps a ready retired connection during idle sweep', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	let connections = makeFakeConnectionFactory()
-	await using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
+	using h = setup([endpoint(1), endpoint(2)], { discovery, connections })
 	await h.pool.ready(tc.signal)
 	await retireNode2(h, discovery)
 
@@ -476,7 +467,7 @@ test('keeps a ready retired connection during idle sweep', async (tc) => {
 test('reaps a retired connection idle past the grace window', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	let connections = makeFakeConnectionFactory()
-	await using h = setup([endpoint(1), endpoint(2)], {
+	using h = setup([endpoint(1), endpoint(2)], {
 		discovery,
 		connections,
 		retiredGraceMs: 0,
@@ -504,7 +495,7 @@ test('a retryable initial failure recovers on the next successful round', async 
 		})
 	)
 	discovery.push(discoveryResult([endpoint(1)])) // backoff retry succeeds
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 
 	await h.pool.ready(tc.signal)
 	expect(discovery.callCount()).toBeGreaterThanOrEqual(2)
@@ -515,7 +506,7 @@ test('a non-retryable initial failure rejects ready with the cause', async (tc) 
 	let discovery = makeFakeDiscovery()
 	let boom = new TypeError('access denied')
 	discovery.fail(boom)
-	await using h = makeEndpointPool({ discovery })
+	using h = makeEndpointPool({ discovery })
 
 	// A non-retryable failure is terminal; ready() rejects with the real cause,
 	// not a generic 'Endpoints closed'/'finalized'.
@@ -529,7 +520,7 @@ test('a throwing onDiscovery hook does not break the pool', async (tc) => {
 	// Two nodes so pessimizing one stays under the degraded threshold (no forced
 	// round that would blanket-un-ban it).
 	discovery.push(discoveryResult([endpoint(1), endpoint(2)]))
-	await using h = makeEndpointPool({
+	using h = makeEndpointPool({
 		discovery,
 		hooks: {
 			onDiscovery() {
@@ -608,7 +599,7 @@ test('mapDiscoveryResult maps every PileState_State to its status', () => {
 
 test('releasing the last pin closes its materialized channel', async (tc) => {
 	let connections = makeFakeConnectionFactory()
-	await using h = setup([endpoint(1)], { connections })
+	using h = setup([endpoint(1)], { connections })
 	await h.pool.ready(tc.signal)
 
 	await h.pool.pin(9n, 'node-9', 2136)
@@ -625,7 +616,7 @@ test('a hung round times out and recovers on the retry', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	discovery.hang() // first round never resolves — the per-round timeout must fire
 	discovery.push(discoveryResult([endpoint(1)])) // the retry succeeds
-	await using h = makeEndpointPool({ discovery, discoveryTimeoutMs: 10 })
+	using h = makeEndpointPool({ discovery, discoveryTimeoutMs: 10 })
 
 	await h.pool.ready(tc.signal)
 	expect(discovery.callCount()).toBeGreaterThanOrEqual(2)
@@ -645,7 +636,7 @@ test('mapDiscoveryResult leaves pile states empty for a non-bridge cluster', () 
 test('keeps a live channel through repeated retirement and revival', async (tc) => {
 	// Fake discovery changes the roster without interrupting the channel's active RPC.
 	let discovery = makeFakeDiscovery()
-	await using h = setup([endpoint(1), endpoint(2)], { discovery })
+	using h = setup([endpoint(1), endpoint(2)], { discovery })
 	await h.pool.ready(tc.signal)
 	h.pool.acquire(2n)
 	let connection = h.connections.byNode(2n)!
@@ -667,31 +658,32 @@ test('keeps a live channel through repeated retirement and revival', async (tc) 
 })
 
 test('rejects ready after a previously ready pool closes', async (tc) => {
-	await using h = setup([endpoint(1)])
+	using h = setup([endpoint(1)])
 	await h.pool.ready(tc.signal)
-	await h.pool.close()
+	h.pool.close()
 	await expect(h.pool.ready(tc.signal)).rejects.toThrow(/closed/i)
 })
 
-test('rejects ready while a live call keeps the pool closing', async (tc) => {
-	await using h = setup([endpoint(1)])
-	await h.pool.ready(tc.signal)
-	h.pool.acquire(1n)
-	h.pool.callStarted(1n)
-	let closing = h.pool.close()
-	try {
-		await settle()
-		await expect(h.pool.ready(tc.signal)).rejects.toThrow(/clos/i)
-	} finally {
-		h.pool.callEnded(1n)
-		await closing
-	}
+test('close rejects readiness and queued pins before discovery completes', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	discovery.hang()
+	using h = makeEndpointPool({ discovery })
+	await discovery.waitForRound(1)
+	let ready = h.pool.ready(tc.signal)
+	let pinned = h.pool.pin(9n, 'direct-node', 2137)
+
+	h.pool.close()
+
+	expect(discovery.lastSignal()!.aborted).toBe(true)
+	await expect(ready).rejects.toThrow(/closed/i)
+	await expect(pinned).rejects.toThrow(/closed/i)
+	expect(() => h.pool.acquireNode(9n, { hard: true })).toThrow(EndpointsUnavailableError)
 })
 
 test('keeps a retired connection while its GOAWAY session drains a live RPC', async (tc) => {
 	let discovery = makeFakeDiscovery()
 	let connections = makeFakeConnectionFactory()
-	await using h = setup([endpoint(1), endpoint(2)], { discovery, connections, retiredGraceMs: 0 })
+	using h = setup([endpoint(1), endpoint(2)], { discovery, connections, retiredGraceMs: 0 })
 	await h.pool.ready(tc.signal)
 	await retireNode2(h, discovery)
 	connections.byNode(2n)!.driveState('idle')

@@ -23,11 +23,11 @@ selects a `RoutingSnapshot` ref (pure), and lazily materializes a channel. The o
 per-RPC dispatch is a fire-and-forget `penalize()` / `recover()` (enqueue only;
 handled off the hot path). Reads never dispatch; writes never happen inline.
 
-The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache, even when a pin and discovery share a nodeId. Discovery retirement and pin invalidation each close only their own channel; pool shutdown drains and closes both.
+The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache, even when a pin and discovery share a nodeId. Discovery retirement and pin invalidation each close only their own channel; pool shutdown immediately closes both.
 
 ### States (discovery lifecycle)
 
-`idle → discovering → ready ⇄ degraded → closing → closed`
+`idle → discovering → ready ⇄ degraded → closed`
 
 Per-endpoint health is **not** a machine state — it is a `subState`
 (`active | pessimized | retired | pinned`) on a `Map<nodeId, EndpointEntry>` in the
@@ -35,41 +35,33 @@ context, so a 10k-node cluster is one machine with two maps.
 
 ### Transition table
 
-Global guard: `endpoints.destroy` from any non-terminal state → `closed` (immediate).
+Global guard: `endpoints.close` from any non-terminal state → `closed` (immediate).
 
-| State          | Event                                            | →                | Notes                                                                                                |
-| -------------- | ------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------- |
-| idle           | discovery.start                                  | discovering      | run first round                                                                                      |
-| idle           | pin                                              | idle             | rebuild snapshot                                                                                     |
-| idle           | close                                            | closed           | close-before-start                                                                                   |
-| discovering    | round_succeeded                                  | ready / degraded | apply round, settle readiness waiters, arm interval+idle_sweep                                       |
-| discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                                                          |
-| discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                                                                    |
-| discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                                                           |
-| discovering    | timer.discovery_backoff                          | discovering      | run round                                                                                            |
-| discovering    | close                                            | closing/closed   | graceful drain                                                                                       |
-| ready/degraded | round_succeeded                                  | ready / degraded | apply round (revive/add/retire + blanket un-ban)                                                     |
-| ready/degraded | round_succeeded (0 endpoints)                    | —                | rejected — keep last snapshot/registry, arm backoff                                                  |
-| ready/degraded | round_failed                                     | ready/degraded   | background failure is **never** terminal; arm backoff                                                |
-| ready/degraded | discovery.force / timer.interval / timer.backoff | —                | single-flight (dropped while a round is in flight)                                                   |
-| ready/degraded | rpc_failed                                       | ready / degraded | ban active→pessimized; force a round if `>threshold` pessimized                                      |
-| ready/degraded | rpc_ok                                           | ready / degraded | optimistic un-ban pessimized→active                                                                  |
-| ready/degraded | timer.idle_sweep                                 | —                | emit idle_sweep effect                                                                               |
-| ready/degraded | channel_closeable                                | —                | drop a retired channel, emit `removed{idle}`                                                         |
-| ready/degraded | pin                                              | —                | update pins, rebuild snapshot                                                                        |
-| ready/degraded | close                                            | closing/closed   | freeze routing, begin drain (immediate if nothing registered)                                        |
-| closing        | channel_closeable                                | closing/closed   | close a drained channel; finalize when the last one goes                                             |
-| closing        | timer.close_deadline                             | closed           | force-close the rest                                                                                 |
-| any live       | invalidate                                       | same / closed    | decrement the pin reference count; remove it at zero; finish a closing pool when no endpoints remain |
-| closed         | \*                                               | closed           | ignored                                                                                              |
+| State          | Event                                            | →                | Notes                                                           |
+| -------------- | ------------------------------------------------ | ---------------- | --------------------------------------------------------------- |
+| idle           | discovery.start                                  | discovering      | run first round                                                 |
+| idle           | pin                                              | idle             | rebuild snapshot                                                |
+| idle           | close                                            | closed           | close-before-start                                              |
+| discovering    | round_succeeded                                  | ready / degraded | apply round, settle readiness waiters, arm interval+idle_sweep  |
+| discovering    | round_succeeded (0 endpoints)                    | discovering      | rejected as retryable failure — arm backoff                     |
+| discovering    | round_failed (retryable)                         | discovering      | arm backoff, stay                                               |
+| discovering    | round_failed (non-retryable)                     | closed           | emit `failed` (only terminal-failure path)                      |
+| discovering    | timer.discovery_backoff                          | discovering      | run round                                                       |
+| discovering    | close                                            | closed           | immediate shutdown                                              |
+| ready/degraded | round_succeeded                                  | ready / degraded | apply round (revive/add/retire + blanket un-ban)                |
+| ready/degraded | round_succeeded (0 endpoints)                    | —                | rejected — keep last snapshot/registry, arm backoff             |
+| ready/degraded | round_failed                                     | ready/degraded   | background failure is **never** terminal; arm backoff           |
+| ready/degraded | discovery.force / timer.interval / timer.backoff | —                | single-flight (dropped while a round is in flight)              |
+| ready/degraded | rpc_failed                                       | ready / degraded | ban active→pessimized; force a round if `>threshold` pessimized |
+| ready/degraded | rpc_ok                                           | ready / degraded | optimistic un-ban pessimized→active                             |
+| ready/degraded | timer.idle_sweep                                 | —                | emit idle_sweep effect                                          |
+| ready/degraded | channel_closeable                                | —                | drop a retired channel, emit `removed{idle}`                    |
+| ready/degraded | pin                                              | —                | update pins, rebuild snapshot                                   |
+| ready/degraded | close                                            | closed           | cancel RPCs and close all connections                           |
+| any live       | invalidate                                       | same             | decrement the pin reference count; remove it at zero            |
+| closed         | \*                                               | closed           | ignored                                                         |
 
-On `close`, routing is frozen (an empty snapshot is emitted so `acquire()` throws
-rather than vending a channel), then the runtime's `begin_close_drain` effect
-closes every idle channel at once and registers the busy ones. A busy channel is
-finalized as soon as its in-flight RPCs drain (the routing transport tracks an
-in-flight count per node); `close_deadline` is the hard cap. So `await using
-driver` returns immediately when nothing is in flight instead of always waiting
-the deadline.
+`EndpointPool.close()` synchronously blocks routing, clears timers, cancels discovery and pending readiness/pin waits, and closes discovered and pinned connections. The terminal FSM event clears registry state and publishes shutdown diagnostics. There is no shutdown drain state or deadline. Per-node in-flight counts remain necessary during normal discovery retirement so a live RPC is not reaped before its endpoint returns or its stream finishes.
 
 **Snapshot rebuild** fires only when the routable set changes (add / remove / ban /
 un-ban / retire / pin) — never on `rpc_ok` of an already-active node — so RCU emission
