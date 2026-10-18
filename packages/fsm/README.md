@@ -159,6 +159,17 @@ Notes:
 - `runtime[Symbol.asyncIterator]()`
 - `runtime[Symbol.asyncDispose]()`
 
+## Queues
+
+`AsyncQueue` and `AsyncPriorityQueue` are exported from `@ydbjs/fsm/queue`.
+Both support iteration and cancellable `take(signal)` calls.
+
+- `pause()` suspends delivery until `resume()`; repeating pause after resume takes effect before the next dequeue.
+- `close()` drains buffered values and ends reading; `fail(error)` drains them and then throws the error.
+- `destroy()` discards buffered values and unassigned failure, then ends reading.
+- `reset()` clears the buffer and ends unserved reads from the previous generation; new readers can use the queue again.
+- A value or terminal result already assigned to a waiting reader is preserved when a later abort or reset occurs.
+
 ## Design Notes
 
 This package is runtime infrastructure, not a domain framework.
