@@ -1,4 +1,4 @@
-import { create, protoInt64 } from '@bufbuild/protobuf'
+import { clone, create, protoInt64 } from '@bufbuild/protobuf'
 import {
 	type Duration,
 	DurationSchema,
@@ -80,5 +80,7 @@ export let parseReadSettings = function parseReadSettings(
 		}
 	}
 
-	return settings
+	return settings.map((setting) =>
+		clone(StreamReadMessage_InitRequest_TopicReadSettingsSchema, setting)
+	)
 }

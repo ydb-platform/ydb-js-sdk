@@ -75,6 +75,47 @@ let stopResponses = function stopResponses(sent: SentFrames): number {
 	return sent.filter((m) => m.clientMessage.case === 'stopPartitionSessionResponse').length
 }
 
+test('keeps registered callbacks after the caller mutates its options', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let calls: string[] = []
+	let options = {
+		topic: '/t',
+		consumer: 'c',
+		onCommittedOffset: () => {
+			calls.push('registered-commit')
+		},
+		onPartitionSessionStop: async () => {
+			calls.push('registered-stop')
+		},
+	}
+	using reader = createTopicReader(driver, options)
+	options.onCommittedOffset = () => {
+		calls.push('replacement-commit')
+	}
+	options.onPartitionSessionStop = async () => {
+		calls.push('replacement-stop')
+	}
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
+		})
+	)
+	let messages = await collect(reader, 1, tc.signal)
+	let committing = reader.commit(messages)
+	await stream.waitForCommit()
+	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
+	await committing
+	stream.respond(
+		stopPartitionSession({ partitionSessionId: 1n, graceful: false, committedOffset: 1n })
+	)
+	await settle()
+	expect(calls).toEqual(['registered-commit', 'registered-stop'])
+})
+
 // The protocol's soft stop holds the partition on the server until the client sends
 // StopPartitionSessionResponse — the delay is the mechanism that lets the app finish
 // processing and commit. onPartitionSessionStop is that last-chance window: it runs
@@ -205,7 +246,9 @@ test('escalates a stalled graceful stop to force without answering either stop',
 	// the callback they are distinguishable via session.isStopped (false during the
 	// window, true once lost).
 	expect(stopCalls).toBe(2)
-	expect(stopped.payloads).toEqual([expect.objectContaining({ partitionId: 10n, reason: 'lost' })])
+	expect(stopped.payloads).toEqual([
+		expect.objectContaining({ partitionId: 10n, reason: 'lost' }),
+	])
 
 	// The uncovered commit is held for a possible re-grant, not settled by the stop.
 	expect(heldSettled).toBe(false)

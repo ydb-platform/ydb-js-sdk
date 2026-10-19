@@ -16,7 +16,7 @@ export class TopicPartitionSession {
 	 */
 	partitionOffsets = { start: 0n, end: 0n }
 	/**
-	 * Offset of the last committed message from the partition.
+	 * Exclusive committed offset: messages below it are committed.
 	 */
 	partitionCommittedOffset = 0n
 	/**
