@@ -778,7 +778,7 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 					})
 					break
 				case 'endpoints.closed':
-					let reason = this.#machine.signal.reason ?? new Error('Endpoints closed')
+					let reason = out.reason ?? this.#machine.signal.reason ?? new Error('Endpoints closed')
 
 					this.#rejectReadyWaiters(reason)
 					this.#rejectPendingPins(reason)
