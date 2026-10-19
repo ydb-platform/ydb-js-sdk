@@ -30,7 +30,8 @@ export type onPartitionSessionStartCallback = (
 // deliverable and committable, and is awaited before the stop response is sent —
 // the last chance to commit processed offsets before the partition moves to
 // another reader (bounded by gracefulShutdownTimeoutMs). On a forced stop or
-// end-of-partition it is informational: the session is already stopped.
+// end-of-partition it is informational. Forced stops invalidate the session;
+// an ended partition remains committable until the server stops its session.
 export type onPartitionSessionStopCallback = (
 	partitionSession: TopicPartitionSession,
 	committedOffset: bigint

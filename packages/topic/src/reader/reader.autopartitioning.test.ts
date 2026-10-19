@@ -11,6 +11,7 @@ import {
 	readResponse,
 	settle,
 	startPartitionSession,
+	stopPartitionSession,
 } from './reader.fixtures.ts'
 
 // Autopartitioning split flow over the wire: the InitRequest opt-in flag, and the
@@ -309,4 +310,52 @@ test('delivers child data granted before the parent commit is acked', async (tc)
 
 	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
 	await expect(commit).resolves.toBeUndefined()
+})
+
+// A controlled stream can interleave EndPartition, forced Stop and already granted child data.
+test('delivers a granted child after an ended parent is forcibly stopped', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		autoPartitioningSupport: true,
+		maxBufferBytes: 100n,
+	})
+	let stream = await primeStream(reader, waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 0n }))
+	await waitForStartAck(stream, 1n)
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			bytesSize: 11n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('parent') }],
+		})
+	)
+	stream.respond(endPartitionSession({ partitionSessionId: 1n, childPartitionIds: [1n] }))
+	stream.respond(startPartitionSession({ partitionSessionId: 2n, partitionId: 1n }))
+	await waitForStartAck(stream, 2n)
+	stream.respond(
+		readResponse({
+			partitionSessionId: 2n,
+			bytesSize: 17n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('child') }],
+		})
+	)
+	stream.respond(stopPartitionSession({ partitionSessionId: 1n, graceful: false }))
+	await settle()
+
+	let messages = await collectUpTo(reader, 1, tc.signal)
+	expect(messages.map((message) => text(message.payload))).toEqual(['child'])
+	let commit = reader.commit(messages)
+	let request = await stream.waitForCommit()
+	expect(request.commitOffsets[0]!.partitionSessionId).toBe(2n)
+	stream.respond(commitOffsetResponse([{ partitionSessionId: 2n, committedOffset: 1n }]))
+	await commit
+	await settle()
+
+	let grants = stream.sent.flatMap((frame) =>
+		frame.clientMessage.case === 'readRequest' ? [frame.clientMessage.value.bytesSize] : []
+	)
+	expect(grants.reduce((sum, grant) => sum + grant, 0n)).toBe(128n)
+	expect(reader.bufferedBytes).toBe(0n)
 })

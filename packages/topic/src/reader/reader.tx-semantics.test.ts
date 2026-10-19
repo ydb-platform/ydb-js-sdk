@@ -195,20 +195,77 @@ test('preserves tracked read offsets when the reader closes before the tx commit
 	)
 	await collect(reader, 1, tc.signal)
 
-	let closeError: unknown
-	try {
-		await reader.close()
-	} catch (error) {
-		closeError = error
-	}
-	let commitError: unknown
-	try {
-		await fake.commit()
-	} catch (error) {
-		commitError = error
-	}
+	await expect(reader.close()).resolves.toBeUndefined()
+	await expect(fake.commit()).resolves.toBeUndefined()
+	expect(txOffsetRequests).toHaveLength(1)
+	expect(txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets).toEqual([
+		expect.objectContaining({ start: 0n, end: 1n }),
+	])
+})
 
-	expect(
-		closeError !== undefined || commitError !== undefined || txOffsetRequests.length === 1
-	).toBe(true)
+test('keeps the transaction consumer registered at reader creation', async (tc) => {
+	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
+	let fake = makeFakeTx()
+	let options = { topic: '/t', consumer: 'registered' }
+	using reader = new TopicReader(driver, options, { tx: fake.tx })
+	options.consumer = 'replacement'
+	let stream = await primeStream(waitForNextStream)
+	expect((await stream.waitForInit()).consumer).toBe('registered')
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
+		})
+	)
+	await collect(reader, 1, tc.signal)
+	await fake.commit()
+	expect(txOffsetRequests).toHaveLength(1)
+	expect(txOffsetRequests[0]!.consumer).toBe('registered')
+})
+
+// The stalled unary call makes cancellation observable before a server response;
+// a live server cannot guarantee that ordering deterministically.
+test('cancels a pending transaction-offset request with the commit hook signal', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let entered = Promise.withResolvers<void>()
+	let innerCreateClient = driver.createClient.bind(driver) as (...args: unknown[]) => object
+	;(driver as unknown as { createClient: (...args: unknown[]) => unknown }).createClient = (
+		...args
+	) => ({
+		...innerCreateClient(...args),
+		updateOffsetsInTransaction(_request: unknown, options?: { signal?: AbortSignal }) {
+			entered.resolve()
+			let signal = options?.signal
+			if (!signal) {
+				return Promise.reject(new Error('Missing transaction commit signal'))
+			}
+			return new Promise((_, reject) => {
+				if (signal.aborted) {
+					reject(signal.reason)
+				} else {
+					signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+				}
+			})
+		},
+	})
+	let fake = makeFakeTx()
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
+	let stream = await primeStream(waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
+		})
+	)
+	await collect(reader, 1, tc.signal)
+	let ctrl = new AbortController()
+	let reason = new Error('Transaction cancelled')
+	let outcome = Promise.resolve(fake.commit(ctrl.signal)).catch((error: unknown) => error)
+	await entered.promise
+	ctrl.abort(reason)
+	expect(await outcome).toBe(reason)
 })

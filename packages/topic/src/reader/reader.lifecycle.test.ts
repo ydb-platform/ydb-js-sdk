@@ -1,15 +1,145 @@
+import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 import { getEventListeners } from 'node:events'
 
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { createTopicReader } from './index.ts'
-import { initResponse, makeFakeTopicDriver, settle } from './reader.fixtures.ts'
+import {
+	initResponse,
+	makeFakeTopicDriver,
+	partitionStatusResponse,
+	settle,
+	startPartitionSession,
+	stopPartitionSession,
+} from './reader.fixtures.ts'
+import { ReaderTransport } from './transport.ts'
 
 // Resource-lifecycle coverage for the reader against the fake wire, mirroring the
 // writer's leak tests in writer.contract.test.ts: create/destroy churn must stay flat
 // in memory, finished readers must be GC-reclaimable, and a shared long-lived abort
 // signal must not accumulate listeners across lifecycles. The suite runs with
 // --expose-gc (see vitest.config.ts), so globalThis.gc is available.
+
+// Synchronous callback reentry must not publish another lifecycle event after destruction.
+test.for(['committed', 'stopped'] as const)(
+	'stops lifecycle notifications when the $0 callback destroys the reader',
+	async (event) => {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		let reason = new Error('Stopped by callback')
+		using reader = createTopicReader(driver, {
+			topic: '/t',
+			consumer: 'c',
+			onCommittedOffset: () => {
+				if (event === 'committed') reader.destroy(reason)
+			},
+			onPartitionSessionStop: async () => {
+				if (event === 'stopped') reader.destroy(reason)
+			},
+		})
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		stream.respond(initResponse())
+		await stream.waitForReadRequest()
+		stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 0n }))
+		await stream.waitForStartResponse()
+		let events: string[] = []
+		let channels = [
+			'ydb:topic.reader.closed',
+			'ydb:topic.reader.committed',
+			'ydb:topic.reader.partition.stopped',
+		]
+		let record = (value: unknown, name: string | symbol) => {
+			if ((value as { driver: unknown }).driver === driver.identity) events.push(String(name))
+		}
+		for (let name of channels) subscribe(name, record)
+		try {
+			stream.respond(
+				event === 'committed'
+					? partitionStatusResponse(1n, 1n)
+					: stopPartitionSession({ partitionSessionId: 1n, graceful: false })
+			)
+			await settle()
+			expect(events).toEqual(['ydb:topic.reader.closed'])
+			expect(stream.wasAborted()).toBe(true)
+			let next = reader.read()[Symbol.asyncIterator]().next()
+			await expect(next).rejects.toBe(reason)
+		} finally {
+			for (let name of channels) unsubscribe(name, record)
+		}
+	}
+)
+
+test('stops immediately without opening a stream after destruction', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver } = makeFakeTopicDriver()
+		using createClient = vi.spyOn(driver, 'createClient')
+		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+		let reason = new Error('Stopped before initialization')
+		reader.destroy(reason)
+		expect(vi.getTimerCount()).toBe(0)
+		await settle()
+		expect(createClient).not.toHaveBeenCalled()
+		expect(vi.getTimerCount()).toBe(0)
+		let next = reader.read()[Symbol.asyncIterator]().next()
+		await expect(next).rejects.toBe(reason)
+	} finally {
+		vi.useRealTimers()
+	}
+})
+
+// A server failure is a protocol event; only an injected effect exception can
+// deterministically exercise the runtime's fault path without a terminal transition.
+test('closes the stream and clears timers when a reader effect throws', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		let error = new Error('Injected transport send failure')
+		using send = vi.spyOn(ReaderTransport.prototype, 'send').mockImplementation(() => {
+			throw error
+		})
+		stream.respond(initResponse())
+		await settle()
+		expect(stream.wasAborted()).toBe(true)
+		expect(vi.getTimerCount()).toBe(0)
+		await expect(reader.close()).rejects.toBe(error)
+		await vi.advanceTimersByTimeAsync(60_000)
+		expect(send).toHaveBeenCalledTimes(1)
+	} finally {
+		vi.useRealTimers()
+	}
+})
+
+test('preserves a zero destroy reason for reads commits and close', async () => {
+	let { driver } = makeFakeTopicDriver()
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	reader.destroy(0)
+	let iterator = reader.read()[Symbol.asyncIterator]()
+	await expect(iterator.next()).rejects.toBe(0)
+	await expect(reader.commit([])).rejects.toBe(0)
+	await expect(reader.close()).rejects.toBe(0)
+})
+
+test('releases the live transport and every timer before graceful close resolves', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		stream.respond(initResponse())
+		await stream.waitForReadRequest()
+		expect(vi.getTimerCount()).toBeGreaterThan(0)
+		await reader.close()
+		expect(stream.wasAborted()).toBe(true)
+		expect(vi.getTimerCount()).toBe(0)
+	} finally {
+		vi.useRealTimers()
+	}
+})
 
 // Bring one reader to `ready`, then destroy it. Returns nothing so the
 // reader/driver/stream locals leave the stack and become collectable.
