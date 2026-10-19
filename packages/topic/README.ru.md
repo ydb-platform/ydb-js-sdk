@@ -142,7 +142,7 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `tx?`: `TX` — транзакция для записи
 - `producer?`: `string` — id продюсера (по умолчанию генерируется)
 - `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
-- `maxBufferBytes?`: `bigint` — лимит буфера (по умолчанию 256 МБ)
+- `maxBufferBytes?`: `bigint` — лимит неподтверждённых payload после сжатия и байтов ключей/значений metadata (по умолчанию 256 МиБ); служебные JS-объекты в него не входят
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
 - `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
@@ -151,6 +151,8 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `retryOnSchemeError?`: `boolean` — ретраить SCHEME_ERROR (например, топик ещё не создан); по умолчанию выключено, включите, чтобы ждать создания топика
 - `partitionId?` / `messageGroupId?` — привязка/маршрутизация записи (взаимоисключающие)
 - `onAck?(seqNo, status)` — колбэк подтверждений
+
+`write()` отклоняет metadata, если сумма байтов ключей в UTF-8 и значений превышает 4096, до копирования и изменения seqNo. ACK и восстановление после reconnect освобождают бюджет payload и metadata.
 
 ### Запись
 

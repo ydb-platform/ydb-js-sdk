@@ -1,13 +1,13 @@
+import { randomUUID } from 'node:crypto'
+
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 
 import { type CompressionCodec, RAW_CODEC } from '../codec.js'
 import type { TX } from '../tx.js'
-import { generateProducerId } from './producer-id.js'
 import {
 	type WriterScope,
-	ackBreakdown,
 	publishAcknowledged,
 	publishClosed,
 	publishErrored,
@@ -34,6 +34,9 @@ import type { OnAckCallback, TopicWriterOptions, WriteExtra } from './types.js'
 // per-message noise (that lives under `ydb:topic:writer:event`).
 let dbg = loggers.topic.extend('writer')
 
+let MAX_SEQ_NO = (1n << 63n) - 1n
+let MAX_METADATA_BYTES = 4096
+
 // Synchronous seqNo validator, owned by the facade so write() can reject bad
 // input at the call site without racing the FSM's async event queue.
 class SeqNoValidator {
@@ -43,6 +46,9 @@ class SeqNoValidator {
 	// Returns the message seqNo (0n means "assign at send time" in auto mode).
 	validate(userSeqNo: bigint | undefined): bigint {
 		let provided = userSeqNo !== undefined
+		if (provided && (userSeqNo! < 1n || userSeqNo! > MAX_SEQ_NO)) {
+			throw new RangeError('seqNo must be a positive int64')
+		}
 
 		if (this.#mode === null) {
 			this.#mode = provided ? 'manual' : 'auto'
@@ -85,7 +91,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 	// Byte budget mirrored here so write() can reject a full buffer synchronously,
 	// ahead of the FSM's async mailbox. Incremented on write, decremented as the
-	// FSM reports acked bytes leaving the window (writer.acknowledgments.freedBytes).
+	// FSM reports reserved bytes leaving the window (writer.acknowledgments.freedBufferBytes).
 	#maxBufferBytes: bigint
 	#bufferedBytes = 0n
 
@@ -123,7 +129,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		if (options.producer === '') {
 			throw new Error('producer must be a non-empty string — omit it to get a generated id')
 		}
-		options = { ...options, producer: options.producer ?? generateProducerId() }
+		options = { ...options, producer: options.producer ?? randomUUID() }
 
 		this.#onAck = options.onAck
 		this.#transactional = options.tx !== undefined
@@ -172,6 +178,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		}
 	}
 
+	/** RAW buffers may be shared by writes; keep their bytes unchanged until all corresponding ACKs. */
 	write(data: Uint8Array, extra?: WriteExtra): void {
 		if (this.#closed || this.#closing) {
 			throw new Error('Writer is closed — cannot write messages')
@@ -186,15 +193,47 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			)
 		}
 
+		let createdAt = new Date(extra?.createdAt?.getTime() ?? Date.now())
+		if (!Number.isFinite(createdAt.getTime())) {
+			throw new RangeError('createdAt must be a valid date')
+		}
+
 		let uncompressedSize = BigInt(data.length)
 		let payload = this.#codec.compress(data)
-		let bufferedSize = BigInt(payload.length)
+		let metadataItems = extra?.metadataItems
+		let metadataEntries = metadataItems ? Object.entries(metadataItems) : undefined
+		let metadataSize = 0
+		if (metadataEntries) {
+			for (let [key, value] of metadataEntries) {
+				metadataSize += Buffer.byteLength(key, 'utf8') + value.byteLength
+				if (metadataSize > MAX_METADATA_BYTES) {
+					throw new RangeError(
+						`Message metadata of ${metadataSize} bytes exceeds the ${MAX_METADATA_BYTES} byte limit`
+					)
+				}
+			}
+		}
+		let bufferedSize = BigInt(payload.length + metadataSize)
 
-		// Fail-fast cap on retained (un-acknowledged) bytes to bound memory. Checked
-		// before the seqNo validator mutates, so a rejected write leaves no state behind.
+		// Check retained bytes before copying snapshots or consuming a sequence number.
 		if (this.#bufferedBytes + bufferedSize > this.#maxBufferBytes) {
 			throw new Error(
 				`Writer buffer is full: ${this.#bufferedBytes + bufferedSize} bytes would exceed the ${this.#maxBufferBytes} byte limit`
+			)
+		}
+
+		// Copy short or growable views so accepted data cannot retain an unbudgeted backing allocation.
+		let backing = payload.buffer
+		if (
+			payload.byteLength !== backing.byteLength ||
+			('resizable' in backing && backing.resizable) ||
+			('growable' in backing && backing.growable)
+		) {
+			payload = new Uint8Array(payload)
+		}
+		if (metadataEntries) {
+			metadataItems = Object.fromEntries(
+				metadataEntries.map(([key, value]) => [key, new Uint8Array(value)])
 			)
 		}
 
@@ -206,9 +245,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			message: {
 				data: payload,
 				uncompressedSize,
+				bufferedSize,
 				seqNo,
-				createdAt: extra?.createdAt ?? new Date(),
-				...(extra?.metadataItems && { metadataItems: extra.metadataItems }),
+				createdAt,
+				...(metadataItems && { metadataItems }),
 			},
 		})
 	}
@@ -322,14 +362,11 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 				case 'writer.acknowledgments':
 					// Acked bytes left the window — reclaim the budget write() checks against.
-					this.#bufferedBytes -= output.freedBytes
+					this.#bufferedBytes -= output.freedBufferBytes
 					if (this.#bufferedBytes < 0n) {
 						this.#bufferedBytes = 0n
 					}
-					publishAcknowledged(
-						this.#scope,
-						ackBreakdown(output.acknowledgments, output.freedBytes)
-					)
+					publishAcknowledged(this.#scope, output.acknowledgments)
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {
 							try {

@@ -176,6 +176,41 @@ test(
 	}
 )
 
+test('accepts 4096 metadata bytes and keeps writing after rejecting 4097', async (tc) => {
+	await using writer = createTopicWriter(driver, {
+		topic: testTopicName,
+		producer: testProducerName,
+	})
+	let payload = encode('metadata boundary')
+	let metadataItems = { ключ: new Uint8Array(4088).fill(7) }
+	let oversizedOptions = {
+		seqNo: 99n,
+		metadataItems: { ключ: new Uint8Array(4089) },
+	}
+	expect(() => writer.write(payload, oversizedOptions)).toThrow(/metadata.*4096/)
+
+	writer.write(payload, { metadataItems })
+	let lastSeqNo = await writer.flush(tc.signal)
+	expect(lastSeqNo).toBe(1n)
+	await using reader = createTopicReader(driver, {
+		topic: testTopicName,
+		consumer: testConsumerName,
+	})
+	let received: TopicMessage | undefined
+	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
+		if (batch.length === 0) continue
+		received = batch[0]
+		await reader.commit(batch)
+		break
+	}
+	expect(received?.seqNo).toBe(1n)
+	let receivedMetadata = received?.metadataItems ?? {}
+	let metadataKeys = Object.keys(receivedMetadata)
+	expect(metadataKeys).toEqual(['ключ'])
+	let metadataValue = new Uint8Array(receivedMetadata.ключ!)
+	expect(metadataValue).toEqual(metadataItems.ключ)
+})
+
 test('writes GZIP-compressed messages that read back decompressed', async () => {
 	await using writer = createTopicWriter(driver, {
 		topic: testTopicName,

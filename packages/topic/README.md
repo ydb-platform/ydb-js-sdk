@@ -146,7 +146,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `tx?`: `TX` — transaction to write within
 - `producer?`: `string` — producer id (auto‑generated if omitted)
 - `codec?`: `CompressionCodec` — compression (default RAW; built-ins: RAW, GZIP, ZSTD)
-- `maxBufferBytes?`: `bigint` — writer buffer cap (default 256 MiB)
+- `maxBufferBytes?`: `bigint` — limit for unacknowledged compressed payloads plus metadata key/value bytes (default 256 MiB); JavaScript object overhead is not included
 - `maxInflightCount?`: `number` — max messages in‑flight (default 1000)
 - `flushIntervalMs?`: `number` — periodic flush tick (default 1000ms)
 - `updateTokenIntervalMs?`: `number` — auth token refresh interval (default 60000)
@@ -155,6 +155,8 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 - `retryOnSchemeError?`: `boolean` — retry on SCHEME_ERROR (e.g. the topic does not exist yet); off by default, enable to wait until the topic is created
 - `partitionId?` / `messageGroupId?` — pin/route writes (mutually exclusive)
 - `onAck?(seqNo, status)`: callback on message acknowledgment
+
+`write()` rejects metadata larger than 4096 combined UTF-8 key and value bytes before copying it or changing sequence numbers. Acknowledgments and reconnect recovery release the reserved payload and metadata bytes.
 
 ### Writing messages
 
@@ -178,7 +180,7 @@ writer.write(payload) // fire-and-forget (void)
 const lastSeqNo = await writer.flush()
 ```
 
-`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed.
+`write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. With RAW, the writer may retain your buffer without copying it. The same unchanged buffer may be passed to multiple `write()` calls, including while earlier writes are awaiting acknowledgment. Do not change its bytes or detach its backing buffer until all writes using it are acknowledged through `onAck` or a completed `flush()` called after those writes. Metadata and timestamps are copied when `write()` accepts the message.
 
 ## Transactions
 
