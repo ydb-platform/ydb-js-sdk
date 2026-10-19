@@ -28,7 +28,13 @@ let ctxWith = function ctxWith(overrides: Partial<WriterCtx> = {}): WriterCtx {
 }
 
 let msg = function msg(byte: number, seqNo = 0n): BufferedMessage {
-	return { data: new Uint8Array([byte]), uncompressedSize: 1n, seqNo, createdAt: new Date(0) }
+	return {
+		data: new Uint8Array([byte]),
+		uncompressedSize: 1n,
+		bufferedSize: 1n,
+		seqNo,
+		createdAt: new Date(0),
+	}
 }
 
 type Driven = {
@@ -278,11 +284,31 @@ test('moves acknowledged messages out of the inflight window', () => {
 
 	expect(d.ctx.inflightLength).toBe(0)
 	let acks = d.emitted.find((o) => o.type === 'writer.acknowledgments')
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
-		'written'
-	)
+	expect(acks?.acknowledgments.get(1n)).toBe('written')
 	// Two 1-byte messages left the window — reported so the facade can free budget.
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.freedBytes).toBe(2n)
+	expect(acks?.freedBufferBytes).toBe(2n)
+})
+
+test('reclaims metadata only once', () => {
+	let ctx = ctxWith({ hasEverConnected: true })
+	let message = { ...msg(1), metadataItems: { trace: new Uint8Array(4) }, bufferedSize: 10n }
+	drive('ready', { type: 'writer.write', message }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
+	let response: WriterEvent = {
+		type: 'writer.stream.write_response',
+		acks: [{ seqNo: 1n, status: 'written' }],
+	}
+
+	let acknowledged = drive('ready', response, ctx)
+	expect(acknowledged.emitted).toContainEqual({
+		type: 'writer.acknowledgments',
+		acknowledgments: new Map([[1n, 'written']]),
+		freedBufferBytes: 10n,
+	})
+	expect(ctx.messages).toHaveLength(0)
+
+	let duplicate = drive('ready', response, ctx)
+	expect(duplicate.emitted).toEqual([])
 })
 
 test('acknowledges only the contiguous prefix on a non-prefix ack set', () => {
@@ -461,15 +487,50 @@ test('resends unacked inflight and drops server-acked on reconnect init', () => 
 	expect(d.ctx.inflightLength).toBe(0)
 	expect(d.ctx.bufferLength).toBe(1)
 	let recovered = d.emitted.find((o) => o.type === 'writer.acknowledgments')
-	expect(
-		recovered &&
-			recovered.type === 'writer.acknowledgments' &&
-			recovered.acknowledgments.get(1n)
-	).toBe('skipped')
+	expect(recovered?.acknowledgments.get(1n)).toBe('skipped')
 	// The one server-acked message (1 byte) is reported as freed on recovery.
-	expect(recovered && recovered.type === 'writer.acknowledgments' && recovered.freedBytes).toBe(
-		1n
+	expect(recovered?.freedBufferBytes).toBe(1n)
+})
+
+test('reclaims metadata for recovered messages and preserves the resend budget', () => {
+	let ctx = ctxWith({ hasEverConnected: true })
+	let first = { ...msg(1), metadataItems: { trace: new Uint8Array(4) }, bufferedSize: 10n }
+	let second = { ...msg(2), metadataItems: { trace: new Uint8Array(6) }, bufferedSize: 12n }
+	drive('ready', { type: 'writer.write', message: first }, ctx)
+	drive('ready', { type: 'writer.write', message: second }, ctx)
+	drive('ready', { type: 'writer.timer.flush_tick' }, ctx)
+
+	let recovered = drive(
+		'connecting',
+		{ type: 'writer.stream.init_response', sessionId: 's2', lastSeqNo: 1n },
+		ctx
 	)
+	expect(recovered.emitted).toContainEqual({
+		type: 'writer.acknowledgments',
+		acknowledgments: new Map([[1n, 'skipped']]),
+		freedBufferBytes: 10n,
+	})
+	expect(ctx.messages).toEqual([second])
+	expect(ctx.bufferLength).toBe(1)
+
+	drive('ready', { type: 'writer.pump' }, ctx)
+	let acknowledged = drive(
+		'ready',
+		{
+			type: 'writer.stream.write_response',
+			acks: [
+				{ seqNo: 1n, status: 'skipped' },
+				{ seqNo: 2n, status: 'written' },
+			],
+		},
+		ctx
+	)
+	expect(acknowledged.emitted).toContainEqual({
+		type: 'writer.acknowledgments',
+		acknowledgments: new Map([[2n, 'written']]),
+		freedBufferBytes: 12n,
+	})
+	expect(ctx.messages).toHaveLength(0)
 })
 
 // ── close / destroy ──────────────────────────────────────────────────────────────
@@ -605,10 +666,8 @@ test('emits acknowledgments for acks landing during the closing drain', () => {
 		ctx
 	)
 	let acks = partial.emitted.find((o) => o.type === 'writer.acknowledgments')
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.freedBytes).toBe(1n)
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
-		'written'
-	)
+	expect(acks?.freedBufferBytes).toBe(1n)
+	expect(acks?.acknowledgments.get(1n)).toBe('written')
 	expect(partial.state).toBe('closing')
 
 	let final = drive(
@@ -646,12 +705,8 @@ test('orders recovered acks before flushed before closed on a mid-close reconnec
 		'writer.closed',
 	])
 	let acks = d.emitted.find((o) => o.type === 'writer.acknowledgments')
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(1n)).toBe(
-		'skipped'
-	)
-	expect(acks && acks.type === 'writer.acknowledgments' && acks.acknowledgments.get(2n)).toBe(
-		'skipped'
-	)
+	expect(acks?.acknowledgments.get(1n)).toBe('skipped')
+	expect(acks?.acknowledgments.get(2n)).toBe('skipped')
 })
 
 test('resolves a flush issued during closing when the ack drains the window', () => {
@@ -764,7 +819,7 @@ test('reports each seqNo exactly once when a mid-close init dedups part of the w
 	for (let out of init.emitted) {
 		if (out.type === 'writer.acknowledgments') {
 			seen.push(...out.acknowledgments.keys())
-			freed += out.freedBytes
+			freed += out.freedBufferBytes
 		}
 	}
 	expect(init.state).toBe('closing')
@@ -781,7 +836,7 @@ test('reports each seqNo exactly once when a mid-close init dedups part of the w
 	for (let out of acked.emitted) {
 		if (out.type === 'writer.acknowledgments') {
 			seen.push(...out.acknowledgments.keys())
-			freed += out.freedBytes
+			freed += out.freedBufferBytes
 		}
 	}
 

@@ -4,7 +4,7 @@ import { getEventListeners } from 'node:events'
 import { Codec } from '@ydbjs/api/topic'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
@@ -17,6 +17,8 @@ import {
 	writeResponse,
 } from './writer.fixtures.ts'
 import { createTopicTxWriter, createTopicWriter } from './writer.ts'
+import { publishAcknowledged } from './diagnostics.ts'
+import type { AckStatus } from './types.ts'
 
 let bytes = function bytes(...values: number[]): Uint8Array {
 	return new Uint8Array(values)
@@ -118,13 +120,19 @@ test('assigns auto seqNos at send time and acknowledges a flush', async () => {
 	await writer.close()
 })
 
-test('generates a producer id when none is provided', async () => {
+test('uses distinct producer identities for independently created default writers', async () => {
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using _writer = createTopicWriter(driver, { topic: '/t' })
-
-	let stream = await waitForNextStream()
-	let init = await stream.waitForInit()
-	expect(init.producerId).toMatch(/^producer-/)
+	using first = createTopicWriter(driver, { topic: '/t' })
+	using second = createTopicWriter(driver, { topic: '/t' })
+	first.write(bytes(1))
+	second.write(bytes(2))
+	let firstStream = await waitForNextStream()
+	let secondStream = await waitForNextStream()
+	let firstInit = await firstStream.waitForInit()
+	let secondInit = await secondStream.waitForInit()
+	expect(firstInit.producerId).not.toBe('')
+	expect(secondInit.producerId).not.toBe('')
+	expect(secondInit.producerId).not.toBe(firstInit.producerId)
 })
 
 test('continues auto seqNo from the recovered server high-water mark', async () => {
@@ -373,7 +381,7 @@ test('publishes opened, session, and acknowledgment diagnostics events', async (
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 
 	type Opened = { producer: string; config: { maxInflightCount: number; maxBufferBytes: bigint } }
-	type Ack = { written: number; skipped: number; writtenInTx: number; bytes: bigint }
+	type Ack = { written: number; skipped: number; writtenInTx: number }
 	using opened = collect<Opened>('ydb:topic.writer.opened')
 	using sessions = collect<{ producer: string; lastSeqNo: bigint }>(
 		'ydb:topic.writer.session.started'
@@ -401,9 +409,29 @@ test('publishes opened, session, and acknowledgment diagnostics events', async (
 	expect(sessions.payloads).toHaveLength(1)
 	expect(sessions.payloads[0]).toMatchObject({ producer: 'p', lastSeqNo: 7n })
 
-	// acknowledged: per-status breakdown + acked bytes, not just a total count.
-	expect(acks.payloads.reduce((sum, a) => sum + a.written, 0)).toBe(1)
-	expect(acks.payloads.reduce((sum, a) => sum + a.bytes, 0n)).toBeGreaterThan(0n)
+	let writtenCount = acks.payloads.reduce((sum, ack) => sum + ack.written, 0)
+	expect(writtenCount).toBe(1)
+	expect(acks.payloads).toMatchObject([{ written: 1, skipped: 0, writtenInTx: 0 }])
+})
+
+test('counts acknowledgment statuses only when diagnostics have subscribers', () => {
+	let { driver } = makeFakeTopicDriver()
+	let scope = { driver: driver.identity, topic: '/t', producer: 'p' }
+	let statuses = new Map<bigint, AckStatus>([
+		[1n, 'written'],
+		[2n, 'written'],
+		[3n, 'skipped'],
+		[4n, 'writtenInTx'],
+	])
+	let values = vi.spyOn(statuses, 'values')
+
+	publishAcknowledged(scope, statuses)
+	expect(values).not.toHaveBeenCalled()
+
+	using acknowledged = collect('ydb:topic.writer.acknowledged')
+	publishAcknowledged(scope, statuses)
+	expect(values).toHaveBeenCalledOnce()
+	expect(acknowledged.payloads).toEqual([{ ...scope, written: 2, skipped: 1, writtenInTx: 1 }])
 })
 
 test('emits a flush tracing span', async () => {
@@ -1414,4 +1442,215 @@ test('coalesces update-token requests until one is acknowledged', async () => {
 
 	let tokenFrames = stream.sent.filter((m) => m.clientMessage.case === 'updateTokenRequest')
 	expect(tokenFrames).toHaveLength(1)
+})
+
+test('rejects an invalid date before accepting the write and remains usable', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let invalidDateOptions = { createdAt: new Date(NaN), seqNo: 10n }
+	expect(() => writer.write(bytes(1), invalidDateOptions)).toThrow(/valid date/)
+	writer.write(bytes(2))
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let request = await stream.waitForWrite()
+	expect(request.messages[0]!.seqNo).toBe(1n)
+	let flushed = writer.flush()
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await expect(flushed).resolves.toBe(1n)
+})
+
+test('charges payload and metadata bytes and restores capacity after acknowledgment', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 211n })
+	let metadataItems = { trace: new Uint8Array(100) }
+	writer.write(bytes(), { metadataItems })
+	writer.write(bytes(1), { metadataItems })
+	writer.write(bytes())
+	expect(() => writer.write(bytes(2))).toThrow(/buffer is full/)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let flushed = writer.flush()
+	let request = await stream.waitForWrite()
+	let payloadSizes = request.messages.map((message) => message.data.length)
+	expect(payloadSizes).toEqual([0, 1, 0])
+	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }, { seqNo: 3n }]))
+	await flushed
+	expect(() => writer.write(bytes(3), { metadataItems })).not.toThrow()
+})
+
+test('reserves compressed payload bytes together with metadata', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let payload = new Uint8Array(1024)
+	let compressedSize = GZIP_CODEC.compress(payload).byteLength
+	let metadataItems = { trace: bytes(7) }
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		codec: GZIP_CODEC,
+		maxBufferBytes: BigInt(compressedSize + 6),
+	})
+	writer.write(payload, { metadataItems })
+	expect(() => writer.write(payload, { metadataItems })).toThrow(/buffer is full/)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let request = await stream.waitForWrite()
+	let message = request.messages[0]!
+	expect(message.uncompressedSize).toBe(1024n)
+	expect(message.data.byteLength).toBe(compressedSize)
+})
+
+test('restores payload and metadata budget when reconnect initialization acknowledges a message', async () => {
+	// The fake drops the response after persistence, then reports the recovered seqNo.
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 106n })
+	let metadataItems = { trace: new Uint8Array(100) }
+	let first = await waitForNextStream()
+	first.respond(initResponse(0n))
+	writer.write(bytes(1), { metadataItems })
+	await first.waitForWrite()
+	expect(() => writer.write(bytes(2), { metadataItems })).toThrow(/buffer is full/)
+	let flushed = writer.flush()
+	first.disconnect()
+	let second = await waitForNextStream()
+	second.respond(initResponse(1n))
+	await expect(flushed).resolves.toBe(1n)
+	expect(() => writer.write(bytes(2), { metadataItems })).not.toThrow()
+})
+
+test.for([
+	{ name: 'ASCII', sizes: [['trace', 4091]] },
+	{ name: 'UTF-8', sizes: [['ключ', 4088]] },
+	{
+		name: 'multiple',
+		sizes: [
+			['a', 2047],
+			['b', 2047],
+		],
+	},
+] satisfies { name: string; sizes: [string, number][] }[])(
+	'validates the 4096-byte metadata limit with $name keys before admission',
+	async ({ sizes }) => {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+		let payload = bytes(1)
+		let metadataItems = Object.fromEntries(
+			sizes.map(([key, size]) => [key, new Uint8Array(size)])
+		)
+		let [key, size] = sizes.at(-1)!
+		let oversized = { ...metadataItems, [key]: new Uint8Array(size + 1) }
+		let invalidMetadataOptions = { seqNo: 99n, metadataItems: oversized }
+		{
+			using copies = vi.spyOn(globalThis, 'Uint8Array')
+			expect(() => writer.write(payload, invalidMetadataOptions)).toThrow(/metadata.*4096/)
+			expect(copies).not.toHaveBeenCalled()
+		}
+
+		writer.write(payload, { metadataItems })
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		let request = await stream.waitForWrite()
+		let message = request.messages[0]!
+		expect(message.seqNo).toBe(1n)
+		let receivedMetadata = message.metadataItems.map(({ key, value }) => ({ key, value }))
+		let expectedMetadata = Object.entries(metadataItems).map(([key, value]) => ({ key, value }))
+		expect(receivedMetadata).toEqual(expectedMetadata)
+	}
+)
+
+test('bounds shared metadata snapshots while writes wait for initialization', () => {
+	let { driver } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		maxBufferBytes: 16n,
+		maxInflightCount: 1,
+	})
+	let payload = bytes(1, 2)
+	let metadataItems = { tag: bytes(3, 4, 5) }
+	writer.write(payload, { metadataItems })
+	writer.write(payload, { metadataItems })
+
+	using copies = vi.spyOn(globalThis, 'Uint8Array')
+	expect(() => writer.write(payload, { metadataItems })).toThrow(/buffer is full/)
+	expect(copies).not.toHaveBeenCalled()
+})
+
+test('keeps auto numbering available after rejecting a metadata reservation', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1n })
+	let payload = bytes(1)
+	let metadataItems = { tag: bytes(2) }
+	{
+		using copies = vi.spyOn(globalThis, 'Uint8Array')
+		expect(() => writer.write(payload, { seqNo: 99n, metadataItems })).toThrow(/buffer is full/)
+		expect(copies).not.toHaveBeenCalled()
+	}
+
+	writer.write(payload)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let request = await stream.waitForWrite()
+	expect(request.messages[0]!.seqNo).toBe(1n)
+})
+
+test('snapshots metadata and avoids retaining a larger backing buffer', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let backing = new Uint8Array(1024 * 1024)
+	let payload = backing.subarray(0, 3)
+	let metadataItems = { trace: bytes(7) }
+	writer.write(payload, { metadataItems })
+	metadataItems.trace[0] = 9
+	metadataItems.trace = new Uint8Array(1024)
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	let request = await stream.waitForWrite()
+	let message = request.messages[0]!
+	expect(message.data.buffer.byteLength).toBe(3)
+	expect(message.metadataItems).toMatchObject([{ key: 'trace', value: bytes(7) }])
+})
+
+test.each([0n, -1n, 1n << 63n])(
+	'keeps auto numbering available after rejecting seqNo %s',
+	async (seqNo) => {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+		expect(() => writer.write(bytes(1), { seqNo })).toThrow(/positive int64/)
+		writer.write(bytes(2))
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		let request = await stream.waitForWrite()
+		expect(request.messages[0]!.seqNo).toBe(1n)
+	}
+)
+
+test('borrows a whole RAW buffer and permits reuse after acknowledgment', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let stream = await waitForNextStream()
+	await stream.waitForInit()
+	stream.respond(initResponse(0n))
+
+	let payload = bytes(1, 2, 3)
+	writer.write(payload)
+	let flushed = writer.flush(tc.signal)
+	let first = await stream.waitForWrite()
+	expect(first.messages[0]!.data).toBe(payload)
+	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await flushed
+
+	payload.fill(4)
+	writer.write(payload)
+	let reused = writer.flush(tc.signal)
+	await settle()
+	let requests = stream.sent.flatMap((frame) =>
+		frame.clientMessage.case === 'writeRequest' ? frame.clientMessage.value.messages : []
+	)
+	let reusedMessage = requests[1]!
+	let reusedPayload = [...reusedMessage.data]
+	expect(reusedMessage.seqNo).toBe(2n)
+	expect(reusedPayload).toEqual([4, 4, 4])
+
+	stream.respond(writeResponse([{ seqNo: 2n }]))
+	await expect(reused).resolves.toBe(2n)
 })

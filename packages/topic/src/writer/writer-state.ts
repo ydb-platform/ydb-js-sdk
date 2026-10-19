@@ -49,6 +49,8 @@ export type BufferedMessage = {
 	data: Uint8Array
 	// Original (pre-compression) payload size reported to the server.
 	uncompressedSize: bigint
+	// Payload and metadata bytes reserved at admission.
+	bufferedSize: bigint
 	seqNo: bigint
 	createdAt: Date
 	metadataItems?: Record<string, Uint8Array>
@@ -159,12 +161,11 @@ export type WriterEffect =
 
 export type WriterOutput =
 	| { type: 'writer.session'; sessionId: string; lastSeqNo: bigint; nextSeqNo: bigint }
-	// `freedBytes` = compressed bytes that left the window with this ack batch, so
-	// the facade can decrement its byte budget without re-tracking message sizes.
 	| {
 			type: 'writer.acknowledgments'
 			acknowledgments: Map<bigint, AckStatus>
-			freedBytes: bigint
+			// Payload and metadata bytes released from the admission budget.
+			freedBufferBytes: bigint
 	  }
 	| { type: 'writer.flushed'; lastSeqNo: bigint }
 	| { type: 'writer.reconnecting'; attempt: number; error?: unknown }
@@ -376,9 +377,13 @@ let applyInit = function applyInit(
 		ctx.hasEverConnected = true
 	}
 
-	let { recovered, freedBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
+	let { recovered, freedBufferBytes } = dropAckedAndRewind(ctx, serverLastSeqNo)
 	if (recovered.size > 0) {
-		runtime.emit({ type: 'writer.acknowledgments', acknowledgments: recovered, freedBytes })
+		runtime.emit({
+			type: 'writer.acknowledgments',
+			acknowledgments: recovered,
+			freedBufferBytes,
+		})
 	}
 
 	runtime.emit({
@@ -396,9 +401,12 @@ let applyInit = function applyInit(
 let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx: WriterCtx,
 	serverLastSeqNo: bigint
-): { recovered: Map<bigint, AckStatus>; freedBytes: bigint } {
+): {
+	recovered: Map<bigint, AckStatus>
+	freedBufferBytes: bigint
+} {
 	let recovered = new Map<bigint, AckStatus>()
-	let freedBytes = 0n
+	let freedBufferBytes = 0n
 
 	// In-flight seqNos are strictly increasing (assigned in order in formBatch), so
 	// `seqNo <= serverLastSeqNo` splits the in-flight range at one boundary — walk
@@ -410,7 +418,7 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 		if (message.seqNo === 0n || message.seqNo > serverLastSeqNo) {
 			break
 		}
-		freedBytes += BigInt(message.data.length)
+		freedBufferBytes += message.bufferedSize
 		recovered.set(message.seqNo, 'skipped')
 		i += 1
 	}
@@ -419,8 +427,9 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 	ctx.bufferLength = ctx.messages.length - i
 	ctx.inflightStart = i
 	ctx.inflightLength = 0
+	compactGarbage(ctx)
 
-	return { recovered, freedBytes }
+	return { recovered, freedBufferBytes }
 }
 
 // Move server-acknowledged messages out of the in-flight window into garbage.
@@ -431,14 +440,17 @@ let dropAckedAndRewind = function dropAckedAndRewind(
 let acknowledge = function acknowledge(
 	ctx: WriterCtx,
 	acks: WriteAck[]
-): { acknowledgments: Map<bigint, AckStatus>; freedBytes: bigint } {
+): {
+	acknowledgments: Map<bigint, AckStatus>
+	freedBufferBytes: bigint
+} {
 	let status = new Map<bigint, AckStatus>()
 	for (let ack of acks) {
 		status.set(ack.seqNo, ack.status)
 	}
 
 	let acknowledgments = new Map<bigint, AckStatus>()
-	let freedBytes = 0n
+	let freedBufferBytes = 0n
 	let inflightEnd = ctx.bufferStart
 	while (ctx.inflightStart < inflightEnd) {
 		let message = ctx.messages[ctx.inflightStart]!
@@ -448,14 +460,14 @@ let acknowledge = function acknowledge(
 		}
 
 		acknowledgments.set(message.seqNo, messageStatus)
-		freedBytes += BigInt(message.data.length)
+		freedBufferBytes += message.bufferedSize
 		ctx.inflightStart += 1
 		ctx.inflightLength -= 1
 	}
 
 	compactGarbage(ctx)
 
-	return { acknowledgments, freedBytes }
+	return { acknowledgments, freedBufferBytes }
 }
 
 // Reclaim the garbage prefix by splicing it out and rebasing the window pointers.
@@ -768,12 +780,12 @@ export let writerTransition = function writerTransition(
 					return pump(ctx, runtime)
 
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBufferBytes } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
-							freedBytes,
+							freedBufferBytes,
 						})
 					}
 					resolveFlushIfDrained(ctx, runtime)
@@ -851,12 +863,12 @@ export let writerTransition = function writerTransition(
 		case 'closing': {
 			switch (event.type) {
 				case 'writer.stream.write_response': {
-					let { acknowledgments, freedBytes } = acknowledge(ctx, event.acks)
+					let { acknowledgments, freedBufferBytes } = acknowledge(ctx, event.acks)
 					if (acknowledgments.size > 0) {
 						runtime.emit({
 							type: 'writer.acknowledgments',
 							acknowledgments,
-							freedBytes,
+							freedBufferBytes,
 						})
 					}
 					resolveFlushIfDrained(ctx, runtime)

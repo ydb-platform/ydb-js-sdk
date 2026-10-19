@@ -21,6 +21,7 @@ export type WriteExtra = {
 	// manual mode: every subsequent message must then also provide a seqNo.
 	seqNo?: bigint
 	createdAt?: Date
+	// Combined UTF-8 key and value bytes must not exceed 4096. Values are copied on write.
 	metadataItems?: Record<string, Uint8Array>
 }
 
@@ -44,8 +45,8 @@ export type TopicWriterOptions = {
 	// Route writes by message group (mutually exclusive with partitionId).
 	messageGroupId?: string
 
-	// Hard cap on the un-acknowledged bytes held in memory; write() throws when a
-	// message would exceed it. Default 256MiB.
+	// Byte limit for unacknowledged compressed payloads and metadata key/value bytes.
+	// write() throws when the budget would be exceeded. Default 256MiB.
 	maxBufferBytes?: bigint
 	// Cap the number of un-acknowledged (in-flight) messages. Default 1000.
 	maxInflightCount?: number

@@ -33,15 +33,6 @@ export type WriterConfig = {
 	messageGroupId?: string
 }
 
-// Per-write-response breakdown, so a metrics subscriber can split written vs
-// server-deduplicated (`skipped`) vs `writtenInTx` and track acked byte throughput.
-export type AckBreakdown = {
-	written: number
-	skipped: number
-	writtenInTx: number
-	bytes: bigint
-}
-
 let openedCh = dc('ydb:topic.writer.opened')
 let sessionStartedCh = dc('ydb:topic.writer.session.started')
 let acknowledgedCh = dc('ydb:topic.writer.acknowledged')
@@ -74,14 +65,25 @@ export let publishSessionStarted = function publishSessionStarted(
 	}
 }
 
-// Fired per server write-response with the per-status breakdown and acked bytes.
 export let publishAcknowledged = function publishAcknowledged(
 	scope: WriterScope,
-	acks: AckBreakdown
+	acknowledgments: ReadonlyMap<bigint, AckStatus>
 ): void {
-	if (acknowledgedCh.hasSubscribers) {
-		acknowledgedCh.publish({ ...scope, ...acks })
+	if (!acknowledgedCh.hasSubscribers) return
+
+	let written = 0
+	let skipped = 0
+	let writtenInTx = 0
+	for (let status of acknowledgments.values()) {
+		if (status === 'written') {
+			written += 1
+		} else if (status === 'skipped') {
+			skipped += 1
+		} else {
+			writtenInTx += 1
+		}
 	}
+	acknowledgedCh.publish({ ...scope, written, skipped, writtenInTx })
 }
 
 // Fired when the stream drops and the writer enters transparent reconnect.
@@ -116,24 +118,4 @@ export let traceFlush = function traceFlush(
 	fn: () => Promise<bigint>
 ): Promise<bigint> {
 	return flushCh.tracePromise(fn, { ...scope })
-}
-
-// Build the per-status breakdown for a write-response acknowledgment.
-export let ackBreakdown = function ackBreakdown(
-	acknowledgments: Map<bigint, AckStatus>,
-	bytes: bigint
-): AckBreakdown {
-	let written = 0
-	let skipped = 0
-	let writtenInTx = 0
-	for (let status of acknowledgments.values()) {
-		if (status === 'written') {
-			written += 1
-		} else if (status === 'skipped') {
-			skipped += 1
-		} else {
-			writtenInTx += 1
-		}
-	}
-	return { written, skipped, writtenInTx, bytes }
 }

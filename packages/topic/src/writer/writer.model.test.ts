@@ -178,7 +178,7 @@ let onWriterOutput = function onWriterOutput(sim: Sim, output: WriterOutput): vo
 			sim.outstandingFlush = false
 			break
 		case 'writer.acknowledgments':
-			sim.modelBytes -= output.freedBytes
+			sim.modelBytes -= output.freedBufferBytes
 			if (sim.modelBytes < 0n) {
 				sim.modelBytes = 0n
 			}
@@ -363,7 +363,7 @@ let checkInvariants = function checkInvariants(sim: Sim, where: string): void {
 	if (sim.writerState !== 'closing') {
 		let expected = 0n
 		for (let i = ctx.inflightStart; i < n; i++) {
-			expected += BigInt(ctx.messages[i]!.data.length)
+			expected += ctx.messages[i]!.bufferedSize
 		}
 		if (sim.modelBytes !== expected) {
 			throw new Error(
@@ -466,11 +466,13 @@ let runOne = function runOne(seed: number, cfg: RunConfig): void {
 					let message: BufferedMessage = {
 						data,
 						uncompressedSize: BigInt(size),
+						bufferedSize: BigInt(size * 2 + 5),
+						metadataItems: { trace: new Uint8Array(size) },
 						seqNo,
 						createdAt: new Date(0),
 					}
 					sim.writtenCount++
-					sim.modelBytes += BigInt(size)
+					sim.modelBytes += message.bufferedSize
 					sim.writerEvents.push({ type: 'writer.write', message })
 				},
 			})
