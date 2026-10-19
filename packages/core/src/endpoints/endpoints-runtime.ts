@@ -88,7 +88,6 @@ type EndpointsEnv = {
 
 	// I/O-owned channel state — NEVER touched by the transition.
 	channels: Map<bigint, Connection>
-	retiredChannels: Map<bigint, Connection>
 	pinnedChannels: Map<bigint, Connection>
 	banStart: Map<bigint, number>
 	retiredAt: Map<bigint, number>
@@ -144,39 +143,25 @@ let clearTimerByKey = function clearTimerByKey(env: EndpointsEnv, key: string): 
 	}
 }
 
-// Physically close a materialized channel. `store: 'pinned'` closes only the pin
-// (leaving a discovered channel that shares the nodeId intact); otherwise the
-// channel is dropped from whichever store holds it. No diagnostics here — the FSM
-// emits the `removed` output and the facade republishes it.
+// Discovery and explicit pins may dial different addresses for the same nodeId.
+// Close only the selected store during retirement/invalidation, and both at shutdown.
 let dropChannel = function dropChannel(
 	env: EndpointsEnv,
 	nodeId: bigint,
-	store: 'any' | 'pinned' = 'any'
+	store: 'any' | 'discovered' | 'pinned' = 'any'
 ): void {
-	if (store === 'pinned') {
-		let pinned = env.pinnedChannels.get(nodeId)
-		env.pinnedChannels.delete(nodeId)
-		if (pinned !== undefined) {
-			dbg.log('close pinned channel to node %d', nodeId)
-			pinned.close()
-		}
-		return
+	let stores =
+		store === 'any'
+			? [env.channels, env.pinnedChannels]
+			: [store === 'pinned' ? env.pinnedChannels : env.channels]
+	for (let channels of stores) {
+		let connection = channels.get(nodeId)
+		channels.delete(nodeId)
+		connection?.close()
 	}
-
-	let conn =
-		env.channels.get(nodeId) ??
-		env.retiredChannels.get(nodeId) ??
-		env.pinnedChannels.get(nodeId)
-	env.channels.delete(nodeId)
-	env.retiredChannels.delete(nodeId)
-	env.pinnedChannels.delete(nodeId)
-	env.banStart.delete(nodeId)
-	env.retiredAt.delete(nodeId)
-	env.inflight.delete(nodeId)
-	env.draining?.delete(nodeId)
-	if (conn !== undefined) {
-		dbg.log('close channel to node %d', nodeId)
-		conn.close()
+	if (store !== 'pinned') {
+		env.banStart.delete(nodeId)
+		env.retiredAt.delete(nodeId)
 	}
 }
 
@@ -189,13 +174,10 @@ let finalizeEnv = function finalizeEnv(env: EndpointsEnv): void {
 	env.draining = undefined
 	for (let handle of env.timers.values()) clearTimeout(handle)
 	env.timers.clear()
-	for (let nodeId of [
-		...env.channels.keys(),
-		...env.retiredChannels.keys(),
-		...env.pinnedChannels.keys(),
-	]) {
+	for (let nodeId of [...env.channels.keys(), ...env.pinnedChannels.keys()]) {
 		dropChannel(env, nodeId)
 	}
+	env.inflight.clear()
 	if (!env.ac.signal.aborted) env.ac.abort(new Error('Endpoints finalized'))
 }
 
@@ -384,18 +366,14 @@ let effects = {
 		clearTimerByKey(ctx, effect.which)
 	},
 
-	// Retire-to-drain: keep the channel open, move it to the drain-watch set. If
-	// the node was never dialed there is nothing to drain — tell the FSM it is
-	// closeable now so the registry entry is reaped instead of leaking forever
-	// (idle_sweep only scans materialized retired channels).
+	// The registry owns active/retired state; one cache owns discovered channels
+	// through every retirement and revival. Undialed endpoints need no drain.
 	'endpoints.effect.retire_channel': (ctx: FullCtx, effect, runtime) => {
 		let conn = ctx.channels.get(effect.nodeId)
 		if (conn === undefined) {
 			runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId: effect.nodeId })
 			return
 		}
-		ctx.channels.delete(effect.nodeId)
-		ctx.retiredChannels.set(effect.nodeId, conn)
 		ctx.retiredAt.set(effect.nodeId, Date.now())
 	},
 
@@ -415,18 +393,17 @@ let effects = {
 			if (busy) ctx.draining!.add(nodeId)
 			else runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 		}
-		for (let nodeId of ctx.byNodeId.keys()) {
-			watch(nodeId, ctx.channels.has(nodeId) || ctx.retiredChannels.has(nodeId))
-		}
-		for (let nodeId of ctx.pinned.keys()) {
-			watch(nodeId, ctx.pinnedChannels.has(nodeId))
+		for (let nodeId of new Set([...ctx.byNodeId.keys(), ...ctx.pinned.keys()])) {
+			watch(nodeId, ctx.channels.has(nodeId) || ctx.pinnedChannels.has(nodeId))
 		}
 	},
 
-	// Retired connections keep their current session until it closes or the idle grace expires.
+	// Keep ready connections for bound streams. Other states are reaped after the
+	// retirement grace; closed connections can be removed immediately.
 	'endpoints.effect.idle_sweep': (ctx: FullCtx, _effect, runtime) => {
 		let now = Date.now()
-		for (let [nodeId, conn] of ctx.retiredChannels) {
+		for (let [nodeId, conn] of ctx.channels) {
+			if (ctx.byNodeId.get(nodeId)?.subState !== 'retired') continue
 			if ((ctx.inflight.get(nodeId) ?? 0) > 0) continue
 			let state = conn.client.state
 			if (state === 'ready') continue
@@ -434,6 +411,7 @@ let effects = {
 				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 				continue
 			}
+			// A zero grace reaps a non-READY channel on the first sweep.
 			if (now - (ctx.retiredAt.get(nodeId) ?? now) >= ctx.retiredGraceMs) {
 				runtime.dispatch({ type: 'endpoints.channel_closeable', nodeId })
 			}
@@ -616,25 +594,13 @@ export class EndpointPool implements Disposable, AsyncDisposable {
 
 	#materialize(ref: EndpointRef): Connection {
 		let nodeId = ref.nodeId
-		let existing =
-			this.#env.channels.get(nodeId) ??
-			this.#env.retiredChannels.get(nodeId) ??
-			this.#env.pinnedChannels.get(nodeId)
+		let channels = ref.state === 'pinned' ? this.#env.pinnedChannels : this.#env.channels
+		let existing = channels.get(nodeId)
 		if (existing !== undefined) return existing
 		let conn = this.#env.connectionFactory(ref)
-		if (ref.state === 'pinned') {
-			this.#env.pinnedChannels.set(nodeId, conn)
-		} else if (ref.state === 'retired') {
-			// A channel first dialed after the node was retired must land in the
-			// retired store so idle_sweep governs it. Defensive: a retired ref with
-			// no channel is reaped before it can be selected.
-			/* node:coverage ignore start */
-			this.#env.retiredChannels.set(nodeId, conn)
-			this.#env.retiredAt.set(nodeId, Date.now())
-			/* node:coverage ignore stop */
-		} else {
-			this.#env.channels.set(nodeId, conn)
-		}
+		channels.set(nodeId, conn)
+		// Affinity can materialize a retired endpoint before its queued reap is applied.
+		if (ref.state === 'retired') this.#env.retiredAt.set(nodeId, Date.now())
 		return conn
 	}
 
@@ -887,7 +853,6 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 		listEndpoints: config.listEndpoints,
 		connectionFactory: config.connectionFactory ?? defaultFactory,
 		channels: new Map(),
-		retiredChannels: new Map(),
 		pinnedChannels: new Map(),
 		banStart: new Map(),
 		retiredAt: new Map(),

@@ -21,9 +21,9 @@ registry, and health. On any change to the routable set it rebuilds an **immutab
 `acquireNode()` — reads the latest snapshot reference (swapped by `#consume`),
 selects a `RoutingSnapshot` ref (pure), and lazily materializes a channel. The only
 per-RPC dispatch is a fire-and-forget `penalize()` / `recover()` (enqueue only;
-handled off the hot path). Reads never dispatch; writes never happen inline. `#channels` / `#retired` /
-`#pinned` are facade-owned I/O the transition never touches — that is what makes the
-sync hot path race-free against the async FSM.
+handled off the hot path). Reads never dispatch; writes never happen inline.
+
+The runtime keeps discovered physical channels in one map across retirement and revival. The registry owns their active/retired state; retirement does not move the connection between stores. Explicitly pinned channels have a separate cache, even when a pin and discovery share a nodeId. Discovery retirement and pin invalidation each close only their own channel; pool shutdown drains and closes both.
 
 ### States (discovery lifecycle)
 
@@ -124,7 +124,7 @@ hard-pin, and the pile-relaxed last-resort tiers still route if every pile is un
 
 A connection dropped from discovery is **not** torn down while it works: live streams
 drain on it and a brief flap does not close it. New RPCs are simply not routed there.
-The `idle_sweep` effect keeps retired connections while they are ready or have calls in flight, removes closed connections immediately, and reaps other states after `retiredGraceMs` from retirement. Still-discovered connections are never proactively closed. The transport retires HTTP/2 sessions after GOAWAY while allowing accepted calls to finish.
+The `idle_sweep` effect keeps retired connections while they are ready or have calls in flight, removes closed connections immediately, and reaps other states after `retiredGraceMs` from retirement. A returning node reuses the same connection; another retirement starts a new grace interval. Still-discovered connections are never proactively closed. The transport retires HTTP/2 sessions after GOAWAY while allowing accepted calls to finish.
 
 ### Direct topic IO
 
