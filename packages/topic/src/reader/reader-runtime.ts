@@ -6,8 +6,7 @@ import { loggers } from '@ydbjs/debug'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
 
 import { parseReadSettings } from './read-settings.js'
-import { PRIORITY_CONTROL, ReaderTransport } from './transport.js'
-import type { TransportOutput } from './transport-state.js'
+import { PRIORITY_CONTROL, ReaderTransport, type TransportOutput } from './transport.js'
 import {
 	type ReaderCtx,
 	type ReaderEffect,
