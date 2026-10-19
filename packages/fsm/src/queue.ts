@@ -122,7 +122,7 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	async *[Symbol.asyncIterator](): AsyncIterator<T> {
 		while (true) {
 			// oxlint-disable-next-line no-await-in-loop
-			let next = await this.#next()
+			let next: IteratorResult<T> | undefined = await this.#next()
 			if (next.done) {
 				if (this.#failure) {
 					throw this.#failure.error
@@ -132,6 +132,8 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 			}
 
 			yield next.value
+			// Do not retain the delivered payload while waiting for another item.
+			next = undefined
 		}
 	}
 
@@ -143,9 +145,8 @@ export abstract class AbstractAsyncQueue<T, P> implements AsyncIterable<T>, Disp
 	// thus swallow) an item. For a bounded wait compose the deadline at the call site:
 	// linkSignals(signal, AbortSignal.timeout(ms)).
 	async take(signal?: AbortSignal): Promise<IteratorResult<T>> {
-		signal?.throwIfAborted()
-
 		for (;;) {
+			signal?.throwIfAborted()
 			if (this.#destroyed) {
 				return { value: undefined as never, done: true }
 			}
