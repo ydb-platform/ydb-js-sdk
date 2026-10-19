@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isPromise } from 'node:util/types'
 
 import { abortable } from '@ydbjs/abortable'
 import type { Driver } from '@ydbjs/core'
@@ -87,7 +88,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	#codec: CompressionCodec
 	#runtime: WriterRuntime
 	#validator = new SeqNoValidator()
-	#flushWaiters: Array<PromiseWithResolvers<bigint>> = []
+	#flushWaiters = new Map<number, PromiseWithResolvers<bigint>>()
+	// Per-writer flush call order, independent of message seqNos and gRPC requests.
+	#nextFlushId = 0
 
 	// Byte budget mirrored here so write() can reject a full buffer synchronously,
 	// ahead of the FSM's async mailbox. Incremented on write, decremented as the
@@ -137,8 +140,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES
 		this.#scope = { driver: driver.identity, topic: options.topic, producer: options.producer! }
 
-		// One-shot effective-config snapshot for late-joining metrics/traces
-		// subscribers — built from the runtime's own defaults, correct by construction.
+		// Publish the configuration once when the writer is created.
 		publishOpened(this.#scope, {
 			codec: this.#codec.codec,
 			maxInflightCount: options.maxInflightCount ?? DEFAULT_MAX_INFLIGHT_COUNT,
@@ -183,7 +185,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		if (this.#closed || this.#closing) {
 			throw new Error('Writer is closed — cannot write messages')
 		}
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw new Error('Writer has failed — cannot write messages', { cause: this.#lastError })
 		}
 		// Size limit applies to the uncompressed payload.
@@ -253,8 +255,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		})
 	}
 
+	/** Waits for ACKs of writes accepted before this call; later writes do not extend the wait. */
 	async flush(signal?: AbortSignal): Promise<bigint> {
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 		if (this.#closed) {
@@ -264,8 +267,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		// One span per flush covers batching + server acks + any reconnect in between.
 		return traceFlush(this.#scope, async () => {
 			let waiter = Promise.withResolvers<bigint>()
-			this.#flushWaiters.push(waiter)
-			this.#runtime.machine.dispatch({ type: 'writer.flush' })
+			let requestId = ++this.#nextFlushId
+			this.#flushWaiters.set(requestId, waiter)
+			this.#runtime.machine.dispatch({ type: 'writer.flush', requestId })
 
 			if (!signal) {
 				return waiter.promise
@@ -278,11 +282,8 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 				// waiter so it neither lingers in #flushWaiters — which would grow
 				// unbounded when a long-lived signal is threaded into many flush() calls
 				// — nor later rejects unhandled when the writer terminates. If the FSM
-				// already removed it (error/closed), indexOf is -1 and this is a no-op.
-				let index = this.#flushWaiters.indexOf(waiter)
-				if (index !== -1) {
-					this.#flushWaiters.splice(index, 1)
-				}
+				// already removed it (error/closed), deletion is a no-op.
+				this.#flushWaiters.delete(requestId)
 				throw error
 			}
 		})
@@ -291,7 +292,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	async close(signal?: AbortSignal): Promise<void> {
 		if (this.#closed) {
 			// A close that dropped data surfaces the failure even on a repeat call.
-			if (this.#lastError) {
+			if (this.#lastError !== undefined) {
 				throw this.#lastError
 			}
 			return
@@ -302,10 +303,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#runtime.machine.dispatch({ type: 'writer.close' })
 
 		let closed = this.#closedDeferred.promise
-		await (signal ? abortable(signal, closed) : closed)
+		await abortable(signal, closed)
 
 		// The graceful drain failed (errored / timed out with undelivered messages).
-		if (this.#lastError) {
+		if (this.#lastError !== undefined) {
 			throw this.#lastError
 		}
 	}
@@ -318,9 +319,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#closing = true
 		let error = reason ?? new Error('Writer destroyed')
 		this.#lastError = error
-		for (let waiter of this.#flushWaiters.splice(0)) {
+		for (let waiter of this.#flushWaiters.values()) {
 			waiter.reject(error)
 		}
+		this.#flushWaiters.clear()
 
 		this.#runtime.machine.dispatch({ type: 'writer.destroy', reason: error })
 	}
@@ -370,7 +372,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {
 							try {
-								this.#onAck(seqNo, status)
+								let result: unknown = this.#onAck(seqNo, status)
+								if (isPromise(result)) {
+									void result.catch((error) => dbg.log('onAck threw: %O', error))
+								}
 							} catch (error) {
 								// User callback errors are logged and ignored — a throwing
 								// callback must never break the writer.
@@ -381,7 +386,12 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					break
 
 				case 'writer.flushed':
-					for (let waiter of this.#flushWaiters.splice(0)) {
+					// Later calls can register while this completion waits in the output queue.
+					for (let [requestId, waiter] of this.#flushWaiters) {
+						if (requestId > output.requestId) {
+							break
+						}
+						this.#flushWaiters.delete(requestId)
 						waiter.resolve(output.lastSeqNo)
 					}
 					break
@@ -395,9 +405,10 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					dbg.log('errored: %O', output.error)
 					this.#lastError = output.error
 					publishErrored(this.#scope, output.error)
-					for (let waiter of this.#flushWaiters.splice(0)) {
+					for (let waiter of this.#flushWaiters.values()) {
 						waiter.reject(output.error)
 					}
+					this.#flushWaiters.clear()
 					break
 
 				case 'writer.closed':
@@ -424,11 +435,14 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 			return
 		}
 		this.#closed = true
+		this.#onAck = undefined
+		this.#codec = RAW_CODEC
 		this.#bufferedBytes = 0n
 		publishClosed(this.#scope)
-		for (let waiter of this.#flushWaiters.splice(0)) {
+		for (let waiter of this.#flushWaiters.values()) {
 			waiter.reject(this.#lastError ?? new Error('Writer closed before flush completed'))
 		}
+		this.#flushWaiters.clear()
 		// Resolved AFTER writer.error was processed (emitted first), so close()
 		// sees #lastError and can reject on an unclean close.
 		this.#closedDeferred.resolve()
