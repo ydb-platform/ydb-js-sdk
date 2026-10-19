@@ -520,6 +520,8 @@ test('a non-retryable initial failure rejects ready with the cause', async (tc) 
 	// A non-retryable failure is terminal; ready() rejects with the real cause,
 	// not a generic 'Endpoints closed'/'finalized'.
 	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
+	await settle()
+	await expect(h.pool.ready(tc.signal)).rejects.toBe(boom)
 })
 
 test('a throwing onDiscovery hook does not break the pool', async (tc) => {
@@ -661,6 +663,28 @@ test('keeps a live channel through repeated retirement and revival', async (tc) 
 		expect(h.connections.factoryCalls()).toBe(1)
 	} finally {
 		h.pool.callEnded(2n)
+	}
+})
+
+test('rejects ready after a previously ready pool closes', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	await h.pool.close()
+	await expect(h.pool.ready(tc.signal)).rejects.toThrow(/closed/i)
+})
+
+test('rejects ready while a live call keeps the pool closing', async (tc) => {
+	await using h = setup([endpoint(1)])
+	await h.pool.ready(tc.signal)
+	h.pool.acquire(1n)
+	h.pool.callStarted(1n)
+	let closing = h.pool.close()
+	try {
+		await settle()
+		await expect(h.pool.ready(tc.signal)).rejects.toThrow(/clos/i)
+	} finally {
+		h.pool.callEnded(1n)
+		await closing
 	}
 })
 
