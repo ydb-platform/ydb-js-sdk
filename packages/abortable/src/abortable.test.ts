@@ -4,6 +4,34 @@ import { expect, test } from 'vitest'
 
 import { abortable } from './index.ts'
 
+test('returns the original promise without a signal', async () => {
+	let pending = Promise.withResolvers<string>()
+	let result = abortable(undefined, pending.promise)
+
+	expect(result).toBe(pending.promise)
+	pending.resolve('success')
+	await expect(result).resolves.toBe('success')
+})
+
+test('preserves a completed result when the signal aborts in the same turn', async () => {
+	let controller = new AbortController()
+	let result = abortable(controller.signal, Promise.resolve('success'))
+
+	controller.abort(new Error('Cancelled after completion'))
+
+	await expect(result).resolves.toBe('success')
+})
+
+test('preserves a completed rejection when the signal aborts in the same turn', async () => {
+	let controller = new AbortController()
+	let failure = new Error('Operation failed')
+	let result = abortable(controller.signal, Promise.reject(failure))
+
+	controller.abort(new Error('Cancelled after failure'))
+
+	await expect(result).rejects.toBe(failure)
+})
+
 test('resolves when promise resolves before abort', async () => {
 	let controller = new AbortController()
 	let promise = Promise.resolve('success')
@@ -42,6 +70,17 @@ test('throws immediately when signal aborted with reason', async () => {
 	let result = abortable(controller.signal, promise)
 
 	await expect(result).rejects.toThrow('Custom abort reason')
+})
+
+test('observes a later rejection when the signal was already aborted', async () => {
+	let pending = Promise.withResolvers<string>()
+	let reason = new Error('Caller already cancelled')
+	let result = abortable(AbortSignal.abort(reason), pending.promise)
+
+	await expect(result).rejects.toBe(reason)
+	pending.reject(new Error('Independent operation failed later'))
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	await expect(result).rejects.toBe(reason)
 })
 
 test('aborts when signal aborted during promise execution', async () => {
@@ -116,19 +155,19 @@ test('handles promise that never resolves with abort', async () => {
 	await expect(result).rejects.toThrow('aborted')
 })
 
-test('handles promise rejection after abort signal', async () => {
+test('observes a later rejection after the caller cancels', async () => {
 	let controller = new AbortController()
-	let promise = new Promise((_, reject) => {
-		setTimeout(() => reject(new Error('late error')), 50)
-	})
+	let pending = Promise.withResolvers<string>()
+	let reason = new Error('Caller cancelled')
+	let result = abortable(controller.signal, pending.promise)
 
-	let result = abortable(controller.signal, promise)
+	controller.abort(reason)
 
-	// Abort immediately
-	controller.abort()
-
-	// Should reject with aborted, not the promise error
-	await expect(result).rejects.toThrow('aborted')
+	await expect(result).rejects.toBe(reason)
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+	pending.reject(new Error('Independent operation failed later'))
+	await new Promise<void>((resolve) => setImmediate(resolve))
+	await expect(result).rejects.toBe(reason)
 })
 
 test('rejects with reason when signal aborts during promise execution', async () => {
@@ -227,20 +266,29 @@ test('handles extremely fast abort timing', async () => {
 	await expect(result).rejects.toThrow('aborted')
 })
 
-test('handles abort signal from different controller', async () => {
-	let controller1 = new AbortController()
-	let controller2 = new AbortController()
+test('cancels one caller without cancelling another wait for the same promise', async () => {
+	let first = new AbortController()
+	let second = new AbortController()
+	let pending = Promise.withResolvers<string>()
+	let reason = new Error('First caller cancelled')
+	let firstResult = abortable(first.signal, pending.promise)
+	let secondResult = abortable(second.signal, pending.promise)
 
-	let promise = new Promise((resolve) => {
-		setTimeout(() => resolve('success'), 50)
-	})
+	first.abort(reason)
+	await expect(firstResult).rejects.toBe(reason)
+	expect(second.signal.aborted).toBe(false)
 
-	let result1 = abortable(controller1.signal, promise)
-	let result2 = abortable(controller2.signal, promise)
+	pending.resolve('success')
+	await expect(secondResult).resolves.toBe('success')
+	expect(getEventListeners(first.signal, 'abort')).toHaveLength(0)
+	expect(getEventListeners(second.signal, 'abort')).toHaveLength(0)
+})
 
-	// Only abort controller1
-	setTimeout(() => controller1.abort(), 10)
+test('removes the abort listener when the operation rejects', async () => {
+	let controller = new AbortController()
+	let failure = new Error('Operation failed')
+	let result = abortable(controller.signal, Promise.reject(failure))
 
-	await expect(result1).rejects.toThrow('aborted')
-	await expect(result2).resolves.eq('success')
+	await expect(result).rejects.toBe(failure)
+	expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
 })
