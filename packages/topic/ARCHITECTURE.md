@@ -1,52 +1,32 @@
 # @ydbjs/topic — state machine maps
 
-Contributor documentation. The reader and writer are each built from two finite state
-machines on top of `@ydbjs/fsm`, plus a thin public facade. This file is the map of
-every machine: states, transitions, timers, and the invariants the design rests on.
+The reader and writer each have one protocol state machine, an I/O runtime, a stream transport and a public facade. The transition tables map protocol events to state changes, effects and observable outputs.
 
-The transition tables below mirror the exhaustive `switch` dispatch in the `*-state.ts`
-files one-to-one — every `(state, event)` pair is either a table row or falls into the
-`(everything else)` row. **When you change a dispatch, update the matching table and
-diagram in the same commit.**
-
-## The two-FSM pipeline
+## Ownership
 
 ```mermaid
 flowchart LR
-    subgraph facade [Facade — writer.ts / reader.ts]
-        API[public API<br/>write/flush/close · read/commit/close]
-    end
-    subgraph domain [Domain FSM — writer-state.ts / reader-state.ts]
-        D[pure transition<br/>ctx mutations, effects, outputs]
-    end
-    subgraph transport [Transport FSM — transport-state.ts]
-        T[one gRPC stream lifecycle<br/>classify server frames]
-    end
-    G[(gRPC StreamWrite /<br/>StreamRead)]
-
-    API -- events --> D
-    D -- outputs (AsyncQueue) --> API
-    D -- effects --> R[runtime<br/>writer-runtime.ts / reader-runtime.ts]
+    API[Public facade<br/>write/flush/close · read/commit/close]
+    D[Protocol FSM<br/>writer-state.ts / reader-state.ts]
+    R[Runtime<br/>timers and I/O effects]
+    T[Transport<br/>one physical stream]
+    G[(gRPC StreamWrite / StreamRead)]
+    API -- commands --> D
+    D -- outputs --> API
+    D -- effects --> R
     R -- events --> D
     R -- connect/send --> T
-    T -- outputs --> R
+    T -- stream events --> R
     T <--> G
 ```
 
-- The **domain FSM** is pure and synchronous: it mutates `ctx` in place and returns the
-  next state plus a list of effects. All I/O lives in the **runtime**, which executes
-  effects (connect, send, timers) and feeds results back as events.
-- The **transport FSM** owns exactly one physical stream at a time: it classifies raw
-  server frames into typed facts and reports stream life/death. Reconnect policy lives
-  in the domain FSM, never in the transport.
-- Outputs flow to the facade through an `AsyncQueue` with drain-then-throw semantics:
-  on a fatal error the queue delivers already-emitted facts (acks, commit confirmations)
-  first, then throws the reason.
-- Convention: the domain FSMs log deliberately-ignored `(state, event)` pairs via
-  `ignored()`; the transport FSMs drop unhandled events silently — they are pure
-  classifiers, and every meaningful fact already has an explicit case.
+- The facade validates synchronous API calls and owns application promises, callbacks and delivered messages.
+- The protocol FSM owns sequence numbers, partition grants, unconfirmed work and reconnect policy. Transitions mutate their context and return effects; they do not perform I/O.
+- The runtime executes effects and feeds timer and transport events into the FSM.
+- The transport owns the physical stream and its outgoing queue. It reports received frames and disconnects without keeping a second protocol state machine.
+- Machine outputs drain already-emitted facts before a terminal error reaches the facade. A runtime fault also releases timers, transport resources and retained messages.
 
----
+Update the corresponding transition table when changing a protocol transition.
 
 ## Writer FSM (`writer-state.ts`)
 
@@ -146,51 +126,6 @@ retryable; payload-too-large (`ClientError RESOURCE_EXHAUSTED` + `/larger than/i
 always fatal; `SCHEME_ERROR` is retryable only with `retryOnSchemeError`; otherwise
 `isRetryableStreamError || isRetryableError(err, idempotent=true)` — writes are
 idempotent (producerId+seqNo dedup), so the conditionally-retryable YDB statuses retry.
-
-## Writer transport FSM (`writer/transport-state.ts`)
-
-- `idle` — created, no stream yet
-- `connecting` — `open_stream` issued, awaiting init (one physical streamWrite lifecycle)
-- `ready` — init seen; forwarding classified stream facts as outputs
-- `disconnected` — stream ended/errored; awaiting `transport.connect` (reopen) or `transport.close`
-- `closed` — terminal (final)
-
-```mermaid
-stateDiagram-v2
-    [*] --> idle
-    idle --> connecting: transport.connect
-    idle --> closed: transport.close
-    connecting --> ready: transport.init
-    connecting --> connecting: transport.connect (reopen)
-    connecting --> disconnected: transport.ended, transport.error
-    connecting --> closed: transport.close
-    ready --> connecting: transport.connect (reopen)
-    ready --> disconnected: transport.ended, transport.error
-    ready --> closed: transport.close
-    disconnected --> connecting: transport.connect
-    disconnected --> closed: transport.close
-    closed --> [*]
-    note right of closed
-        transport.destroy from any non-closed state lands here.
-    end note
-```
-
-| state              | event                                 | → next       | key effects / outputs                                                   |
-| ------------------ | ------------------------------------- | ------------ | ----------------------------------------------------------------------- |
-| any non-closed     | `transport.destroy`                   | closed       | `close_stream`, `finalize(reason ?? 'Transport destroyed')`             |
-| idle               | `transport.connect`                   | connecting   | `open_stream`                                                           |
-| idle               | `transport.close`                     | closed       | `finalize('Transport closed')` (nothing open — no `close_stream`)       |
-| connecting / ready | `transport.connect`                   | connecting   | `open_stream` (reopen; disposes the previous stream first)              |
-| connecting / ready | `transport.init`                      | ready / same | emit `transport.stream.init_response{sessionId,lastSeqNo,partitionId?}` |
-| connecting / ready | `transport.write`                     | same         | emit `transport.stream.write_response{acks}`                            |
-| connecting / ready | `transport.token`                     | same         | emit `transport.stream.token_response`                                  |
-| connecting / ready | `transport.ended` / `transport.error` | disconnected | emit `transport.stream.disconnected{error?}`; `close_stream`            |
-| connecting / ready | `transport.close`                     | closed       | `close_stream`, `finalize('Transport closed')`                          |
-| disconnected       | `transport.connect`                   | connecting   | `open_stream`                                                           |
-| disconnected       | `transport.close`                     | closed       | `finalize('Transport closed')`                                          |
-| any                | (everything else)                     | same         | silently dropped (pure classifier)                                      |
-
----
 
 ## Reader FSM (`reader-state.ts`)
 
@@ -319,48 +254,15 @@ stop watermarks, partition status responses). A start-response `commitOffset` re
 | closing                   | (everything else)                                                                                                        | same                             | ignored (logged)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | closed / errored          | (everything, incl. `reader.destroy`)                                                                                     | same                             | ignored (logged)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
-## Reader transport FSM (`reader/transport-state.ts`)
+## Transport lifecycle
 
-Same five states as the writer transport. The only structural difference: after init,
-every other server frame is forwarded verbatim as `transport.stream.message` — the
-protobuf → domain classification happens in `reader-runtime.ts` (`classifyServerMessage`),
-so the reader FSM never touches `serverMessage.case`.
+`connect()` replaces the current physical stream and queues its InitRequest first. Stream input and cancellation belong to that connection attempt. A continuation after `driver.ready()`, token retrieval or stream iteration can affect only its original attempt; cancellation makes late results inert.
 
-```mermaid
-stateDiagram-v2
-    [*] --> idle
-    idle --> connecting: transport.connect
-    idle --> closed: transport.close
-    connecting --> ready: transport.init
-    connecting --> connecting: transport.connect (reopen)
-    connecting --> disconnected: transport.ended, transport.error
-    connecting --> closed: transport.close
-    ready --> connecting: transport.connect (reopen)
-    ready --> disconnected: transport.ended, transport.error
-    ready --> closed: transport.close
-    disconnected --> connecting: transport.connect
-    disconnected --> closed: transport.close
-    closed --> [*]
-    note right of closed
-        transport.destroy from any non-closed state lands here.
-    end note
-```
+A disconnect aborts the stream, discards unsent transport frames and emits a disconnected event. The protocol FSM retains the messages or commit ranges needed for recovery. Already received frames remain ordered before that disconnect. The transport event queue stays open for the next connection.
 
-| state              | event                                 | → next       | key effects / outputs                                        |
-| ------------------ | ------------------------------------- | ------------ | ------------------------------------------------------------ |
-| any non-closed     | `transport.destroy`                   | closed       | `close_stream`, `finalize(reason ?? 'Transport destroyed')`  |
-| idle               | `transport.connect`                   | connecting   | `open_stream`                                                |
-| idle               | `transport.close`                     | closed       | `finalize('Transport closed')`                               |
-| connecting / ready | `transport.connect`                   | connecting   | `open_stream` (reopen)                                       |
-| connecting / ready | `transport.init`                      | ready / same | emit `transport.stream.init_response{sessionId}`             |
-| connecting / ready | `transport.message`                   | same         | emit `transport.stream.message{message}` (verbatim forward)  |
-| connecting / ready | `transport.ended` / `transport.error` | disconnected | emit `transport.stream.disconnected{error?}`; `close_stream` |
-| connecting / ready | `transport.close`                     | closed       | `close_stream`, `finalize('Transport closed')`               |
-| disconnected       | `transport.connect`                   | connecting   | `open_stream`                                                |
-| disconnected       | `transport.close`                     | closed       | `finalize('Transport closed')`                               |
-| any                | (everything else)                     | same         | silently dropped (pure classifier)                           |
+`close()` and `destroy()` terminate the transport, abort the stream and discard its queues. A closed event queue prevents later `connect()` calls from reopening it. The writer waits for UpdateTokenResponse before sending another token update. The reader coalesces refresh ticks until the update leaves its input queue, because YDB may omit an acknowledgment for an unchanged token. A refresh belongs to its original stream and cannot send into or clear the pending request of a replacement stream.
 
----
+The writer classifies InitResponse, WriteResponse and UpdateTokenResponse into typed events. The reader classifies InitResponse and forwards the remaining frames for `reader-runtime.ts` to decode into protocol events.
 
 ## Invariants the maps rest on
 

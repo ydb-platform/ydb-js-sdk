@@ -8,8 +8,7 @@ import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
 
-import { type InitParams, WriterTransport } from './transport.js'
-import type { TransportOutput } from './transport-state.js'
+import { type InitParams, type TransportOutput, WriterTransport } from './transport.js'
 import type { TopicWriterOptions } from './types.js'
 import {
 	type GlobalTimerName,
