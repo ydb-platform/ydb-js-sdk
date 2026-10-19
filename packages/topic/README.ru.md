@@ -144,7 +144,7 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 - `codec?`: `CompressionCodec` — сжатие (RAW/GZIP/ZSTD или своё)
 - `maxBufferBytes?`: `bigint` — лимит неподтверждённых payload после сжатия и байтов ключей/значений metadata (по умолчанию 256 МиБ); служебные JS-объекты в него не входят
 - `maxInflightCount?`: `number` — максимум сообщений «в полёте» (по умолчанию 1000)
-- `flushIntervalMs?`: `number` — периодический флаш (по умолчанию 1000 мс)
+- `flushIntervalMs?`: `number` — периодическая отправка неполного батча (по умолчанию 1000 мс)
 - `updateTokenIntervalMs?`: `number` — период обновления токена (по умолчанию 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — дедлайн принудительного закрытия для graceful `close()` (по умолчанию 30000)
 - `recoveryWindowMs?`: `number` — окно реконнекта; по умолчанию неограниченно (реконнект вечно, ждём сервер/топик), передайте конечное значение в мс, чтобы ограничить
@@ -236,7 +236,7 @@ await using writer = createTopicWriter(driver, {
 
 - `@ydbjs/topic`: `topic(driver)` и типы
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
-- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы
+- `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы, включая `TopicTxWriter`
 
 ## Лицензия
 
