@@ -1,6 +1,9 @@
+import { subscribe, tracingChannel, unsubscribe } from 'node:diagnostics_channel'
+
 import { expect, test, vi } from 'vitest'
 import { createTopicWriter } from './writer.ts'
 import { WriterTransport } from './transport.ts'
+import { RAW_CODEC } from '../codec.ts'
 import { initResponse, makeFakeTopicDriver, settle, writeResponse } from './writer.fixtures.ts'
 
 let bytes = (...values: number[]) => new Uint8Array(values)
@@ -251,4 +254,112 @@ test('sends a buffered partial batch despite reconnects shorter than the flush i
 		vi.clearAllTimers()
 		vi.useRealTimers()
 	}
+})
+
+// The fake fixes synchronous observer reentry independently of socket delivery.
+test('stops timers and remaining ACK callbacks during destroy', async () => {
+	vi.useFakeTimers()
+	try {
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		let acknowledged: bigint[] = []
+		let stopped = false
+		let reason = new Error('Stopped from onAck')
+		using writer = createTopicWriter(driver, {
+			topic: '/t',
+			producer: 'p',
+			onAck(seqNo) {
+				acknowledged.push(seqNo)
+				writer.destroy(reason)
+				stopped = stream.wasAborted() && vi.getTimerCount() === 0
+			},
+		})
+		let stream = await waitForNextStream()
+		stream.respond(initResponse(0n))
+		await settle()
+		writer.write(bytes(1))
+		writer.write(bytes(2))
+		let flushed = writer.flush().catch((error: unknown) => error)
+		let closed = writer.close().catch((error: unknown) => error)
+		await stream.waitForWrite()
+		stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
+		let [flushError, closeError] = await Promise.all([flushed, closed])
+		expect(flushError).toBe(reason)
+		expect(closeError).toBe(reason)
+		expect(stopped).toBe(true)
+		expect(acknowledged).toEqual([1n])
+	} finally {
+		vi.clearAllTimers()
+		vi.useRealTimers()
+	}
+})
+
+test('stops ACK delivery when an acknowledgment observer destroys the writer', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let reason = new Error('Stopped from acknowledgment observer')
+	let acknowledged: bigint[] = []
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		onAck: (seqNo) => acknowledged.push(seqNo),
+	})
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await settle()
+	let observe = () => writer.destroy(reason)
+	subscribe('ydb:topic.writer.acknowledged', observe)
+	try {
+		writer.write(bytes(1))
+		let flushed = writer.flush().catch((error: unknown) => error)
+		await stream.waitForWrite()
+		stream.respond(writeResponse([{ seqNo: 1n }]))
+		let failure = await flushed
+		expect(failure).toBe(reason)
+		expect(stream.wasAborted()).toBe(true)
+		expect(acknowledged).toEqual([])
+	} finally {
+		unsubscribe('ydb:topic.writer.acknowledged', observe)
+	}
+})
+
+test('rejects a flush destroyed by its synchronous tracing subscriber', async (tc) => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await settle()
+	writer.write(bytes(1))
+	let reason = new Error('Stopped from flush tracing')
+	let trace = tracingChannel('tracing:ydb:topic.writer.flush')
+	let destroy = () => writer.destroy(reason)
+	trace.start.subscribe(destroy)
+	try {
+		let flushed = writer.flush(tc.signal)
+		await expect(flushed).rejects.toBe(reason)
+		expect(stream.wasAborted()).toBe(true)
+	} finally {
+		trace.start.unsubscribe(destroy)
+	}
+})
+
+test('rejects a write when its codec destroys the writer', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let reason = new Error('Stopped from codec')
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		codec: {
+			...RAW_CODEC,
+			compress(data) {
+				writer.destroy(reason)
+				return data
+			},
+		},
+	})
+	let stream = await waitForNextStream()
+	stream.respond(initResponse(0n))
+	await settle()
+	let write = () => writer.write(bytes(1))
+	expect(write).toThrow('Writer is closed')
+	expect(stream.wasAborted()).toBe(true)
+	await expect(writer.flush()).rejects.toBe(reason)
 })

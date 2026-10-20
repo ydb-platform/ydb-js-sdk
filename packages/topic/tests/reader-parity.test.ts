@@ -235,9 +235,9 @@ test('skips messages written before readFrom', { timeout: 30_000 }, async (tc) =
 	await waitUntil(() => received.length >= 3, 10_000)
 	// Give any over-delivery of the pre-cutoff batch time to surface.
 	await new Promise((resolve) => setTimeout(resolve, 500))
-	expect(received.map((message) => message.payload[0]).toSorted((a, b) => a! - b!)).toEqual([
-		4, 5, 6,
-	])
+	let payloads = received.map((message) => message.payload[0])
+	payloads.sort((a, b) => a! - b!)
+	expect(payloads).toEqual([4, 5, 6])
 })
 
 test('delivers only partitions listed in partitionIds', { timeout: 30_000 }, async (tc) => {

@@ -1,11 +1,15 @@
 import { create } from '@bufbuild/protobuf'
+import { abortable } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	type StreamReadMessage_FromClient,
 	type StreamReadMessage_FromServer,
 	StreamWriteMessage_FromServerSchema,
+	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
 import { AsyncQueue } from '@ydbjs/fsm/queue'
+import { Server } from '@ydbjs/grpc'
 import { expect, test, vi } from 'vitest'
 
 import {
@@ -74,6 +78,49 @@ let transports = {
 }
 
 for (let [name, make] of Object.entries(transports)) {
+	test.for(['resolved', 'rejected'] as const)(
+		`${name} stops waiting for a $0 token when destroyed`,
+		async (outcome) => {
+			using fixture = make()
+			let token = Promise.withResolvers<string>()
+			let tokenError = new Error('Late token failure')
+			using acquisition = vi
+				.spyOn(fixture.driver, 'token', 'get')
+				.mockReturnValue(token.promise)
+			fixture.connect()
+			let stream = await fixture.nextStream()
+			let settled = false
+			let failure: unknown
+			let refresh = fixture.transport.sendUpdateToken().then(
+				() => {
+					settled = true
+				},
+				(error: unknown) => {
+					settled = true
+					failure = error
+				}
+			)
+			fixture.transport.destroy(new Error('Transport stopped'))
+			try {
+				await settle()
+				expect(settled).toBe(true)
+				expect(stream.wasAborted()).toBe(true)
+				expect(acquisition).toHaveBeenCalledOnce()
+			} finally {
+				if (outcome === 'resolved') token.resolve('shared-token')
+				else token.reject(tokenError)
+				await refresh
+			}
+			let updates = stream.sent.filter(
+				(message) => message.clientMessage.case === 'updateTokenRequest'
+			)
+			expect(updates).toHaveLength(0)
+			expect(failure).toBeUndefined()
+			let sharedResult = await token.promise.catch((error: unknown) => error)
+			expect(sharedResult).toBe(outcome === 'resolved' ? 'shared-token' : tokenError)
+		}
+	)
+
 	test(`${name} discards a token resolved after its stream was replaced`, async () => {
 		using fixture = make()
 		let oldToken = Promise.withResolvers<string>()
@@ -214,6 +261,74 @@ for (let [name, make] of Object.entries(transports)) {
 		expect(createClient).not.toHaveBeenCalled()
 	})
 }
+
+test.for(['reader', 'writer'] as const)(
+	'$0 retries token acquisition after a provider failure on the current stream',
+	async (name, tc) => {
+		let streams: AbortSignal[] = []
+		let tokens: string[] = []
+		let updated = Promise.withResolvers<void>()
+		using server = new Server()
+		server.add(TopicServiceDefinition, {
+			async *streamRead(requests, context) {
+				streams.push(context.signal)
+				for await (let request of requests) {
+					let message = request.clientMessage
+					if (message.case === 'initRequest') yield readInit()
+					else if (message.case === 'updateTokenRequest') {
+						tokens.push(message.value.token)
+						updated.resolve()
+					}
+				}
+			},
+			async *streamWrite(requests, context) {
+				streams.push(context.signal)
+				for await (let request of requests) {
+					let message = request.clientMessage
+					if (message.case === 'initRequest') yield writeInit(0n)
+					else if (message.case === 'updateTokenRequest') {
+						tokens.push(message.value.token)
+						updated.resolve()
+					}
+				}
+			},
+		})
+		let port = await server.listen('127.0.0.1:0')
+		let getToken = vi.fn<() => Promise<string>>().mockResolvedValue('initial-token')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+			credentialsProvider: { getToken },
+		})
+		let transport =
+			name === 'reader'
+				? new ReaderTransport(driver, { consumer: 'c', topicsReadSettings: [] })
+				: new WriterTransport(driver, { path: '/t', producerId: 'p' })
+		try {
+			if (transport instanceof WriterTransport) transport.connect(true)
+			else transport.connect()
+			let events = transport.events[Symbol.asyncIterator]()
+			let initialized = events.next().then((event) => !event.done && event.value.type)
+			let eventType = await abortable(tc.signal, initialized)
+			expect(eventType).toBe('transport.stream.init_response')
+
+			let failure = new Error('Token provider unavailable')
+			getToken.mockClear().mockRejectedValueOnce(failure).mockResolvedValue('renewed-token')
+			let failedRefresh = transport.sendUpdateToken()
+			await expect(failedRefresh).rejects.toBe(failure)
+			expect(tokens).toEqual([])
+			expect(streams[0]!.aborted).toBe(false)
+
+			await transport.sendUpdateToken()
+			await abortable(tc.signal, updated.promise)
+			expect(getToken).toHaveBeenCalledTimes(2)
+			expect(tokens).toEqual(['renewed-token'])
+			expect(streams).toHaveLength(1)
+			expect(streams[0]!.aborted).toBe(false)
+		} finally {
+			transport.destroy()
+		}
+	}
+)
 
 test('reader sends a new token when the server does not acknowledge an unchanged token', async () => {
 	using fixture = transports.reader()
