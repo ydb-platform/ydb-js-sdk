@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { createRuntime } from './session-runtime.ts'
+import { CoordinationSession } from '../session.ts'
 import {
 	makeFakeDriver,
 	sessionStartedResponse,
@@ -405,4 +406,61 @@ test('session signal carries the finalize reason', async () => {
 
 	expect(runtime.signal.aborted).toBe(true)
 	expect(runtime.signal.reason).toBe(destroyReason)
+})
+
+// A destroy during the initial effect drain must not wait for another microtask.
+test('destroy clears timers and aborts before returning during startup', async () => {
+	vi.useFakeTimers()
+	let { driver } = makeFakeDriver()
+	let runtime = createRuntime(driver, { path: '/test' })
+	let reason = new Error('stop immediately')
+
+	runtime.destroy(reason)
+
+	expect(runtime.status).toBe('closed')
+	expect(runtime.signal.aborted).toBe(true)
+	expect(runtime.signal.reason).toBe(reason)
+	await settle()
+	expect(vi.getTimerCount()).toBe(0)
+})
+
+test('destroy removes its listener from the external signal', async () => {
+	let { driver } = makeFakeDriver()
+	let controller = new AbortController()
+	let removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+	let runtime = createRuntime(driver, { path: '/test' }, controller.signal)
+
+	runtime.destroy()
+	await settle()
+
+	expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+})
+
+test('destroy drops queued watch notifications and refuses new watches', async () => {
+	let { driver } = makeFakeDriver()
+	let runtime = createRuntime(driver, { path: '/test' })
+	let subscription = runtime.transport.watch('semaphore')
+	subscription.queue.push({ dataChanged: true, ownersChanged: false })
+	let reason = new Error('stop watching')
+
+	runtime.destroy(reason)
+	await settle()
+
+	expect(subscription.queue.size).toBe(0)
+	expect(subscription.queue.isDestroyed).toBe(true)
+	expect(() => runtime.transport.watch('semaphore')).toThrow(reason)
+})
+
+test('using disposes a session before the startup effects can continue', async () => {
+	vi.useFakeTimers()
+	let { driver } = makeFakeDriver()
+	let signal: AbortSignal
+	{
+		using session = new CoordinationSession(driver, { path: '/test' })
+		signal = session.signal
+	}
+
+	expect(signal.aborted).toBe(true)
+	await settle()
+	expect(vi.getTimerCount()).toBe(0)
 })

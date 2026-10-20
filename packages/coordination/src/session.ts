@@ -14,7 +14,7 @@ export type CoordinationSessionStatus = SessionStatus
 
 export type { CreateSessionOptions }
 
-export class CoordinationSession implements AsyncDisposable {
+export class CoordinationSession implements Disposable, AsyncDisposable {
 	#runtime: SessionRuntime
 
 	constructor(driver: Driver, options: CreateSessionOptions, signal?: AbortSignal) {
@@ -55,6 +55,10 @@ export class CoordinationSession implements AsyncDisposable {
 
 	destroy(reason?: unknown): void {
 		this.#runtime.destroy(reason)
+	}
+
+	[Symbol.dispose](): void {
+		this.destroy()
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {

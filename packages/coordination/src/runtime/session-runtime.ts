@@ -1,8 +1,9 @@
-import { abortable, linkSignals } from '@ydbjs/abortable'
+import { abortable } from '@ydbjs/abortable'
 import { CoordinationServiceDefinition } from '@ydbjs/api/coordination'
 import type { Driver } from '@ydbjs/core'
 import { loggers } from '@ydbjs/debug'
 
+import { SessionClosedError } from '../errors.js'
 import { type Deferred, createDeferred } from './session-registry.js'
 import {
 	type CoordinationSessionClient,
@@ -44,7 +45,6 @@ type SessionEnv = {
 
 	ac: AbortController
 	transport: SessionTransport
-	isFinalized: boolean
 	closedDeferred: Deferred<void>
 
 	timerStartTimeout: ReturnType<typeof setTimeout> | null
@@ -66,19 +66,6 @@ let clearAllTimers = function clearAllTimers(ctx: FullCtx): void {
 	ctx.timerStartTimeout = clearTimer(ctx.timerStartTimeout)
 	ctx.timerRetryBackoff = clearTimer(ctx.timerRetryBackoff)
 	ctx.timerRecoveryWindow = clearTimer(ctx.timerRecoveryWindow)
-}
-
-let finalize = function finalize(ctx: FullCtx, reason: unknown, kind: 'closed' | 'expired'): void {
-	if (ctx.isFinalized) {
-		return
-	}
-
-	ctx.isFinalized = true
-	ctx.closedDeferred.resolve()
-	ctx.ac.abort(reason)
-	ctx.transport.destroy(reason)
-
-	dbg.log('session finalized as %s: %O', kind, reason)
 }
 
 // Maps a TransportOutput event to a SessionEvent for the session FSM.
@@ -131,6 +118,24 @@ export function createRuntime(
 	let retryBackoff = options.retryBackoff ?? 30
 	let startTimeout = options.startTimeout ?? 3_000
 	let recoveryWindow = options.recoveryWindow ?? 30_000
+	let finalStatus: 'closed' | 'expired' | undefined
+
+	let finalize = (reason: unknown, kind: 'closed' | 'expired'): void => {
+		if (finalStatus) return
+
+		finalStatus = kind
+		let ctx = machineRuntime.ctx as FullCtx
+		clearAllTimers(ctx)
+		outerSignal?.removeEventListener('abort', onAbort)
+		ctx.transport.destroy(reason)
+		void machineRuntime.destroy(reason)
+		ctx.ac.abort(reason)
+		ctx.closedDeferred.resolve()
+
+		dbg.log('session finalized as %s: %O', kind, reason)
+	}
+
+	let onAbort = (): void => finalize(outerSignal!.reason, 'closed')
 
 	let machineRuntime = createMachineRuntime<
 		SessionState,
@@ -151,7 +156,6 @@ export function createRuntime(
 
 			ac: new AbortController(),
 			transport,
-			isFinalized: false,
 			closedDeferred: createDeferred<void>(),
 
 			timerStartTimeout: null,
@@ -236,14 +240,12 @@ export function createRuntime(
 
 			'session.effect.runtime.mark_closed': async (ctx, effect) => {
 				dbg.log('session closed on %s', ctx.path)
-				clearAllTimers(ctx)
-				finalize(ctx, effect.reason, 'closed')
+				finalize(effect.reason, 'closed')
 			},
 
 			'session.effect.runtime.mark_expired': async (ctx, effect) => {
 				dbg.log('session expired on %s: %O', ctx.path, effect.reason)
-				clearAllTimers(ctx)
-				finalize(ctx, effect.reason, 'expired')
+				finalize(effect.reason, 'expired')
 			},
 		},
 	})
@@ -253,29 +255,13 @@ export function createRuntime(
 	// fatal) as an AsyncIterable — the session FSM maps and processes them.
 	machineRuntime.ingest(transport.events, mapTransportOutput)
 
-	if (outerSignal) {
-		if (outerSignal.aborted) {
-			dbg.log('not starting session on %s: signal already aborted', path)
-			machineRuntime.dispatch({ type: 'session.destroy', reason: outerSignal.reason })
-		} else {
-			outerSignal.addEventListener(
-				'abort',
-				() => {
-					dbg.log('outer signal aborted, stopping session on %s', path)
-					machineRuntime.dispatch({
-						type: 'session.destroy',
-						reason: outerSignal.reason,
-					})
-				},
-				{ once: true }
-			)
-		}
+	if (outerSignal?.aborted) {
+		onAbort()
+	} else {
+		outerSignal?.addEventListener('abort', onAbort, { once: true })
+		dbg.log('starting coordination session on %s (recoveryWindow=%dms)', path, recoveryWindow)
+		machineRuntime.dispatch({ type: 'session.start' })
 	}
-
-	dbg.log('starting coordination session on %s (recoveryWindow=%dms)', path, recoveryWindow)
-	machineRuntime.dispatch({ type: 'session.start' })
-
-	let ctx = (): FullCtx => machineRuntime.ctx as unknown as FullCtx
 
 	return {
 		transport,
@@ -285,7 +271,7 @@ export function createRuntime(
 		},
 
 		get status(): SessionStatus {
-			return machineRuntime.state
+			return finalStatus ?? machineRuntime.state
 		},
 
 		get signal(): AbortSignal {
@@ -293,16 +279,17 @@ export function createRuntime(
 		},
 
 		async close(signal?: AbortSignal): Promise<void> {
+			if (finalStatus) return
+
 			dbg.log('closing session %s on %s', machineRuntime.ctx.sessionId, path)
 			machineRuntime.dispatch({ type: 'session.close' })
-			let fullCtx = ctx()
-			using combined = linkSignals(fullCtx.ac.signal, signal)
-			await abortable(combined.signal, fullCtx.closedDeferred.promise)
+			let ctx = machineRuntime.ctx as FullCtx
+			await abortable(signal, ctx.closedDeferred.promise)
 		},
 
 		destroy(reason?: unknown): void {
 			dbg.log('destroying session %s on %s', machineRuntime.ctx.sessionId, path)
-			machineRuntime.dispatch({ type: 'session.destroy', reason })
+			finalize(reason ?? new SessionClosedError('Session destroyed'), 'closed')
 		},
 	}
 }

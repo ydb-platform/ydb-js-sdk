@@ -67,7 +67,7 @@ export class WatchSubscription implements Disposable {
 
 		this.#disposed = true
 		this.#transport.removeWatch(this.#name, this)
-		this.queue.close()
+		this.queue.destroy()
 	}
 }
 
@@ -75,7 +75,7 @@ export class WatchSubscription implements Disposable {
 
 export class SessionTransport implements Disposable {
 	#ac = new AbortController()
-	#client: CoordinationSessionClient
+	#client: CoordinationSessionClient | undefined
 	#registry = new SessionRequestRegistry()
 	#readyDeferred: Deferred<void> = createDeferred<void>()
 	#destroyed = false
@@ -148,7 +148,7 @@ export class SessionTransport implements Disposable {
 	}
 
 	get state(): TransportState {
-		return this.#machine.state
+		return this.#destroyed ? 'closed' : this.#machine.state
 	}
 
 	// The parent session FSM iterates this to receive transport events.
@@ -159,6 +159,8 @@ export class SessionTransport implements Disposable {
 	// ── Commands (called by parent session FSM) ────────────────────────────────
 
 	connect(params: StreamOpenParams): void {
+		if (this.#destroyed) return
+
 		this.#streamParams = params
 		this.#machine.dispatch({ type: 'transport.connect' })
 	}
@@ -199,7 +201,9 @@ export class SessionTransport implements Disposable {
 			try {
 				this.send(buildEnvelope(reqId))
 				// oxlint-disable-next-line no-await-in-loop
-				return await abortable(combined.signal, pending.promise)
+				let response = await abortable(combined.signal, pending.promise)
+				this.#ac.signal.throwIfAborted()
+				return response
 			} catch (error) {
 				if (error instanceof SessionReconnectError) {
 					continue
@@ -224,11 +228,14 @@ export class SessionTransport implements Disposable {
 
 			try {
 				// oxlint-disable-next-line no-await-in-loop
-				return await abortable(combined.signal, pending.promise)
+				let response = await abortable(combined.signal, pending.promise)
+				this.#ac.signal.throwIfAborted()
+				return response
 			} catch (error) {
 				if (error instanceof SessionReconnectError) {
 					// oxlint-disable-next-line no-await-in-loop
 					await this.waitReady(signal)
+					combined.signal.throwIfAborted()
 					resend()
 					continue
 				}
@@ -241,6 +248,8 @@ export class SessionTransport implements Disposable {
 	// ── Watch subscriptions ────────────────────────────────────────────────────
 
 	watch(name: string): WatchSubscription {
+		this.#ac.signal.throwIfAborted()
+
 		let previous = this.#watchesByName.get(name)
 		if (previous) {
 			previous[Symbol.dispose]()
@@ -296,6 +305,7 @@ export class SessionTransport implements Disposable {
 			try {
 				// oxlint-disable-next-line no-await-in-loop
 				await abortable(combined.signal, this.#readyDeferred.promise)
+				combined.signal.throwIfAborted()
 				return
 			} catch (error) {
 				if (combined.signal.aborted) {
@@ -318,6 +328,8 @@ export class SessionTransport implements Disposable {
 	// ── Internal ───────────────────────────────────────────────────────────────
 
 	#openStream(): void {
+		if (this.#destroyed) return
+
 		let params = this.#streamParams
 		if (!params) {
 			throw new Error('No stream params set — call connect() first')
@@ -325,11 +337,12 @@ export class SessionTransport implements Disposable {
 
 		// Dispose previous stream if any (fire-and-forget).
 		void this.#closeStream()
+		if (this.#destroyed) return
 
 		let ac = new AbortController()
 		let input = new AsyncQueue<StreamEnvelope>()
-
-		let grpcStream = this.#client.session(input, { signal: ac.signal })
+		this.#streamAC = ac
+		this.#streamInput = input
 
 		input.push({
 			request: {
@@ -344,6 +357,9 @@ export class SessionTransport implements Disposable {
 				}),
 			},
 		})
+
+		let grpcStream = this.#client!.session(input, { signal: ac.signal })
+		if (ac.signal.aborted) return
 
 		dbg.log(
 			'connecting to %s (sessionId=%s, recoveryWindow=%dms)',
@@ -360,6 +376,8 @@ export class SessionTransport implements Disposable {
 		let ingestTask = (async () => {
 			try {
 				for await (let response of grpcStream) {
+					if (ac.signal.aborted) return
+
 					// Responses and watch notifications are resolved directly —
 					// they bypass the FSM because they don't affect transport state.
 					let msg = classifyMessage(response)
@@ -381,7 +399,7 @@ export class SessionTransport implements Disposable {
 					dispatch({ type: 'transport.stream.error', error })
 				}
 			} finally {
-				input.close()
+				input.destroy()
 
 				if (!endEmitted) {
 					endEmitted = true
@@ -390,9 +408,7 @@ export class SessionTransport implements Disposable {
 			}
 		})()
 
-		this.#streamAC = ac
-		this.#streamInput = input
-		this.#streamIngestTask = ingestTask
+		if (!ac.signal.aborted) this.#streamIngestTask = ingestTask
 	}
 
 	async #closeStream(): Promise<void> {
@@ -411,7 +427,7 @@ export class SessionTransport implements Disposable {
 		// Abort first so the gRPC read unblocks — without this
 		// the ingest task deadlocks waiting for a message that never arrives.
 		ac.abort(new Error('Stream disposed'))
-		input?.close()
+		input?.destroy()
 
 		// Wait for the ingest finally{} block so the ended event
 		// is dispatched before we return.
@@ -456,6 +472,10 @@ export class SessionTransport implements Disposable {
 		}
 
 		this.#destroyed = true
+		void this.#machine.destroy(reason)
+		void this.#closeStream()
+		this.#streamParams = null
+		this.#client = undefined
 
 		let watches = Array.from(this.#watchesByName.values())
 		for (let subscription of watches) {
@@ -464,11 +484,6 @@ export class SessionTransport implements Disposable {
 
 		this.#registry.destroy(reason)
 
-		// Replace the deferred with an already-rejected one so that any future
-		// waitReady() call rejects immediately. The old deferred is safe to
-		// reject because createDeferred attaches a no-op .catch() guard.
-		this.#readyDeferred.reject(reason)
-		this.#readyDeferred = createDeferred<void>()
 		this.#readyDeferred.reject(reason)
 
 		this.#ac.abort(reason)
