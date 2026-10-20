@@ -261,7 +261,9 @@ test('survives background rediscovery failure and keeps serving requests', async
 	let unhandled: unknown[] = []
 	let trap = (reason: unknown) => unhandled.push(reason)
 	process.on('unhandledRejection', trap)
-	tc.onTestFinished(() => process.off('unhandledRejection', trap))
+	tc.onTestFinished(() => {
+		process.off('unhandledRejection', trap)
+	})
 
 	using server = new Server()
 	let port = 0

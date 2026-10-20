@@ -34,9 +34,14 @@ let ctxOf = function ctxOf(
 		pinned?: EndpointEntry[]
 	} = {}
 ): EndpointsCtx {
+	let pinned: EndpointsCtx['pinned'] = new Map()
+	for (let endpoint of over.pinned ?? []) {
+		pinned.set(endpoint.nodeId, { ...endpoint, references: 1 })
+	}
+
 	return {
 		byNodeId: new Map(entries.map((e) => [e.nodeId, e])),
-		pinned: new Map((over.pinned ?? []).map((e) => [e.nodeId, e])),
+		pinned,
 		attempts: 0,
 		roundInFlight: false,
 		selfLocation: over.selfLocation ?? 'A',

@@ -4,7 +4,7 @@ import { abortable } from '@ydbjs/abortable'
 import { DiscoveryServiceDefinition, ListEndpointsResultSchema } from '@ydbjs/api/discovery'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { CredentialsProvider } from '@ydbjs/auth'
-import { Server } from '@ydbjs/grpc'
+import { Server, Status } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
 import { Driver } from './driver.js'
@@ -227,3 +227,149 @@ test('rejects token reads after close without requesting credentials', async () 
 	await expect(token).rejects.toThrow('Driver is closed')
 	expect(requests).toBe(0)
 })
+
+test.for([false, true])(
+	'closing one service client cancels its active RPC and preserves sibling calls (discovery: %s)',
+	async (discovery, tc) => {
+		let requestReceived = Promise.withResolvers<void>()
+		let requestCancelled = Promise.withResolvers<void>()
+		let blockedResponse = Promise.withResolvers<{}>()
+
+		using server = new Server()
+		server.add(DiscoveryServiceDefinition, {
+			whoAmI(_request, context) {
+				if (context.metadata['x-caller'] !== 'blocked') {
+					return {}
+				}
+
+				context.signal.addEventListener('abort', () => requestCancelled.resolve(), {
+					once: true,
+				})
+				requestReceived.resolve()
+				return abortable(context.signal, blockedResponse.promise)
+			},
+		})
+
+		let connectionString = await listenWithDiscovery(server)
+		using driver = new Driver(connectionString, { 'ydb.sdk.enable_discovery': discovery })
+		await driver.ready(tc.signal)
+
+		let clientToClose = driver.createClient(DiscoveryServiceDefinition)
+		let sibling = driver.createClient(DiscoveryServiceDefinition)
+		let pendingRequest = clientToClose.whoAmI(
+			{},
+			{ signal: tc.signal, metadata: { 'x-caller': 'blocked' } }
+		)
+		await abortable(tc.signal, requestReceived.promise)
+
+		clientToClose.close()
+		clientToClose.close()
+
+		await expect(pendingRequest).rejects.toThrow('Client is closed')
+		await abortable(tc.signal, requestCancelled.promise)
+
+		let siblingResponse = await sibling.whoAmI({}, { signal: tc.signal })
+		expect(siblingResponse).toBeDefined()
+
+		let driverReady = await driver.ready(tc.signal)
+		expect(driverReady).toBeUndefined()
+	}
+)
+
+test.for([false, true])(
+	'closing a service client discards its buffered responses after OK (discovery: %s)',
+	async (discovery, tc) => {
+		using server = new Server()
+		server.add(messagesService, {
+			async *messages() {
+				yield 'first'
+				yield 'buffered'
+			},
+		})
+		server.add(DiscoveryServiceDefinition, { whoAmI: () => ({}) })
+
+		let connectionString = await listenWithDiscovery(server)
+		using driver = new Driver(connectionString, { 'ydb.sdk.enable_discovery': discovery })
+		await driver.ready(tc.signal)
+
+		let client = driver.createClient(messagesService)
+		let terminalStatus = Promise.withResolvers<number>()
+		let stream = client.messages(
+			{},
+			{ signal: tc.signal, onStatus: (status) => terminalStatus.resolve(status.code) }
+		)
+		let responses = stream[Symbol.asyncIterator]()
+
+		let firstResponse = await responses.next()
+		expect(firstResponse).toEqual({ done: false, value: 'first' })
+		let statusCode = await abortable(tc.signal, terminalStatus.promise)
+		expect(statusCode).toBe(Status.OK)
+
+		client.close()
+
+		let nextResponse = responses.next()
+		await expect(nextResponse).rejects.toThrow('Client is closed')
+
+		let sibling = driver.createClient(DiscoveryServiceDefinition)
+		let siblingResponse = await sibling.whoAmI({}, { signal: tc.signal })
+		expect(siblingResponse).toBeDefined()
+	}
+)
+
+test.for([false, true])(
+	'closing a service client cancels only its shared token wait (discovery: %s)',
+	async (discovery, tc) => {
+		let tokenRequested = Promise.withResolvers<void>()
+		let refreshedToken = Promise.withResolvers<string>()
+		let refreshPending = false
+		let credentialsProvider: CredentialsProvider = {
+			getToken(): Promise<string> {
+				if (!refreshPending) {
+					return Promise.resolve('initial-token')
+				}
+
+				tokenRequested.resolve()
+				return refreshedToken.promise
+			},
+		}
+
+		let receivedCallers: unknown[] = []
+		using server = new Server()
+		server.add(DiscoveryServiceDefinition, {
+			whoAmI(_request, context) {
+				receivedCallers.push(context.metadata['x-caller'])
+				return {}
+			},
+		})
+
+		let connectionString = await listenWithDiscovery(server)
+		using driver = new Driver(connectionString, {
+			'ydb.sdk.enable_discovery': discovery,
+			credentialsProvider,
+		})
+		await driver.ready(tc.signal)
+		refreshPending = true
+
+		let clientToClose = driver.createClient(DiscoveryServiceDefinition)
+		let sibling = driver.createClient(DiscoveryServiceDefinition)
+		let pendingRequest = clientToClose.whoAmI(
+			{},
+			{ signal: tc.signal, metadata: { 'x-caller': 'closed' } }
+		)
+		await abortable(tc.signal, tokenRequested.promise)
+		let siblingRequest = sibling.whoAmI(
+			{},
+			{ signal: tc.signal, metadata: { 'x-caller': 'sibling' } }
+		)
+
+		clientToClose.close()
+
+		await expect(pendingRequest).rejects.toThrow('Client is closed')
+		expect(receivedCallers).toEqual([])
+
+		refreshedToken.resolve('shared-token')
+		let siblingResponse = await siblingRequest
+		expect(siblingResponse).toBeDefined()
+		expect(receivedCallers).toEqual(['sibling'])
+	}
+)

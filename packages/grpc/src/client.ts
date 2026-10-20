@@ -569,6 +569,9 @@ export class Client implements Transport, Disposable {
 				}
 				try {
 					options.onHeader?.(responseMetadata(headers, rawHeaders))
+					if (responseSettled) {
+						return
+					}
 					acceptServerStatus(headers, rawHeaders)
 					if (responseSettled) {
 						return

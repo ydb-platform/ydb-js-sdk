@@ -33,10 +33,13 @@ export function createRoutingTransport(
 ): Transport {
 	let pool = 'acquire' in source ? source : undefined
 	let closed = false
+	let closedController = new AbortController()
 
 	return {
 		close() {
+			if (closed) return
 			closed = true
+			closedController.abort(new Error('Client is closed'))
 		},
 		async *call<Request, Response>(
 			method: MethodDefinition<Request, Response>,
@@ -47,7 +50,7 @@ export function createRoutingTransport(
 				throw new Error('Client is closed')
 			}
 
-			using linked = linkSignals(options.signal, routing.signal)
+			using linked = linkSignals(options.signal, routing.signal, closedController.signal)
 			let connection: Connection | undefined
 			let registeredWithPool = false
 			let statusReported = false

@@ -12,7 +12,8 @@ import { expect, test } from 'vitest'
 
 import { collect, deferred, frame, rawServer, reply, requests, service } from '../tests/fixtures.ts'
 import { Client } from './client.ts'
-import { Status } from './error.ts'
+import { RpcError, Status } from './error.ts'
+import { Server } from './server.ts'
 
 // Loopback sessions let tests control GOAWAY and stream reset ordering independently of YDB discovery.
 
@@ -114,6 +115,45 @@ test('close terminates outstanding calls without waiting for the peer', async (t
 	expect(await failure).toBeInstanceOf(Error)
 	expect(client.state).toBe('closed')
 })
+
+test.for(['close', 'dispose'] as const)(
+	'%s in a header observer prevents later trailer callbacks',
+	async (operation, tc) => {
+		using server = new Server()
+		server.add(service, {
+			unary() {
+				throw new RpcError(Status.PERMISSION_DENIED, 'Rejected')
+			},
+		})
+
+		let port = await server.listen()
+		using client = new Client(`http://127.0.0.1:${port}`)
+
+		let events: string[] = []
+		let call = client.call(service.unary, '', {
+			signal: tc.signal,
+			onHeader() {
+				events.push('header')
+
+				if (operation === 'close') {
+					client.close()
+				} else {
+					client[Symbol.dispose]()
+				}
+			},
+			onTrailer() {
+				events.push('trailer')
+			},
+			onStatus(status) {
+				events.push(`status:${status.code}`)
+			},
+		})
+		let response = collect(call)
+
+		await expect(response).rejects.toMatchObject({ code: Status.CANCELLED })
+		expect(events).toEqual(['header', `status:${Status.CANCELLED}`])
+	}
+)
 
 test('cancelling one RPC preserves another call on the same session', async (tc) => {
 	let firstStarted = deferred()
