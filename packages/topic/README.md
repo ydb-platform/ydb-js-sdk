@@ -186,6 +186,8 @@ const lastSeqNo = await writer.flush()
 
 `flush()` waits for acknowledgments of the writes accepted before that call and returns the sequence number at that boundary. Later `write()` calls do not extend its wait. Concurrent flush calls may cover different boundaries; a terminal failure rejects any that are still pending. `close()` stops accepting writes and drains the entire queue.
 
+`destroy(reason?)` immediately stops the transport and timers, discards pending writes, rejects outstanding flush and close operations, and releases acknowledgment callbacks and custom codecs. It stops further `onAck` calls, including the remaining acknowledgments in the current batch; the writer cannot be reused. Synchronous `using` calls `destroy()`, while `await using` drains accepted writes through `close()`.
+
 Acknowledgment observers (`onAck` and the reader's `onCommittedOffset`) do not delay flush or commit completion. Synchronous exceptions and rejected async callbacks are logged; use an explicit application task when callback work must finish before shutdown.
 
 ## Transactions

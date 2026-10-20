@@ -1,3 +1,4 @@
+import { abortable } from '@ydbjs/abortable'
 import { create } from '@bufbuild/protobuf'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
@@ -105,14 +106,15 @@ export class WriterTransport {
 
 	async sendUpdateToken(): Promise<void> {
 		let input = this.#streamInput
-		if (!input || this.#tokenPending) {
+		let signal = this.#streamAC?.signal
+		if (!input || !signal || signal.aborted || this.#tokenPending) {
 			return
 		}
 
 		this.#tokenPending = true
 
 		try {
-			let token = await this.#driver.token
+			let token = await abortable(signal, this.#driver.token)
 
 			// A refresh belongs to the stream that requested it, even across token-provider awaits.
 			if (input !== this.#streamInput) {
@@ -129,10 +131,8 @@ export class WriterTransport {
 				PRIORITY_TOKEN
 			)
 		} catch (error) {
-			if (input === this.#streamInput) {
-				this.#tokenPending = false
-			}
-
+			if (input !== this.#streamInput) return
+			this.#tokenPending = false
 			throw error
 		}
 	}

@@ -92,6 +92,37 @@ test('releases custom codec captures while a closed writer remains reachable', a
 	await expect(result.writer.close(tc.signal)).resolves.toBeUndefined()
 })
 
+test.for(['onAck', 'codec'] as const)(
+	'releases %s captures while a destroyed writer remains reachable',
+	async (owner, tc) => {
+		let observed = {
+			collected: false,
+			registry: new FinalizationRegistry<void>(() => {
+				observed.collected = true
+			}),
+		}
+		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		let acknowledged: bigint[] = []
+		using writer = capturingWriter(driver, owner, observed.registry, acknowledged)
+		let stream = await waitForNextStream()
+		writer.write(new Uint8Array([1]))
+		let reason = new Error('Hard stop')
+		writer.destroy(reason)
+		expect(stream.wasAborted()).toBe(true)
+
+		// The registry callback updates this condition between GC rounds.
+		// oxlint-disable-next-line no-unmodified-loop-condition
+		for (let attempt = 0; attempt < 40 && !observed.collected; attempt++) {
+			globalThis.gc!()
+			// oxlint-disable-next-line no-await-in-loop
+			await sleep(10, undefined, { signal: tc.signal })
+		}
+		expect(observed.collected).toBe(true)
+		expect(acknowledged).toEqual([])
+		await expect(writer.flush()).rejects.toBe(reason)
+	}
+)
+
 let bytes = (...values: number[]) => new Uint8Array(values)
 
 // These tests inspect writer-owned references and allocations; wire serialization would replace them.

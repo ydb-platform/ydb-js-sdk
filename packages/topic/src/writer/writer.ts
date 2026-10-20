@@ -102,6 +102,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 	#closing = false
 	#closed = false
+	#destroyed = false
 	#closedDeferred = Promise.withResolvers<void>()
 
 	#onAck: OnAckCallback | undefined
@@ -202,6 +203,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 		let uncompressedSize = BigInt(data.length)
 		let payload = this.#codec.compress(data)
+		if (this.#closed || this.#closing) {
+			throw new Error('Writer is closed — cannot write messages')
+		}
 		let metadataItems = extra?.metadataItems
 		let metadataEntries = metadataItems ? Object.entries(metadataItems) : undefined
 		let metadataSize = 0
@@ -266,6 +270,9 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 
 		// One span per flush covers batching + server acks + any reconnect in between.
 		return traceFlush(this.#scope, async () => {
+			if (this.#closed) {
+				throw this.#lastError ?? new Error('Writer is closed')
+			}
 			let waiter = Promise.withResolvers<bigint>()
 			let requestId = ++this.#nextFlushId
 			this.#flushWaiters.set(requestId, waiter)
@@ -312,19 +319,23 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	}
 
 	destroy(reason?: unknown): void {
-		if (this.#closed) {
+		if (this.#closed || this.#destroyed) {
 			return
 		}
 
+		this.#destroyed = true
 		this.#closing = true
-		let error = reason ?? new Error('Writer destroyed')
-		this.#lastError = error
-		for (let waiter of this.#flushWaiters.values()) {
-			waiter.reject(error)
+		let machine = this.#runtime.machine
+		// Fatal teardown can invoke user hooks before the facade receives the error.
+		if (machine.state === 'errored') {
+			this.#lastError = machine.ctx.lastError
+		} else if (machine.signal.aborted && machine.state !== 'closed') {
+			this.#lastError = machine.signal.reason
+		} else {
+			this.#lastError = reason ?? new Error('Writer destroyed')
 		}
-		this.#flushWaiters.clear()
-
-		this.#runtime.machine.dispatch({ type: 'writer.destroy', reason: error })
+		void machine.destroy(this.#lastError)
+		this.#markClosed()
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
@@ -352,6 +363,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 	// Drain the FSM output stream, resolving/rejecting the promises the facade owns.
 	async #consume(): Promise<void> {
 		for await (let output of this.#runtime.machine) {
+			if (this.#closed) continue
 			switch (output.type) {
 				case 'writer.session':
 					dbg.log(
@@ -371,6 +383,7 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 					publishAcknowledged(this.#scope, output.acknowledgments)
 					if (this.#onAck) {
 						for (let [seqNo, status] of output.acknowledgments) {
+							if (this.#closed) break
 							try {
 								let result: unknown = this.#onAck(seqNo, status)
 								if (isPromise(result)) {
@@ -438,7 +451,6 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		this.#onAck = undefined
 		this.#codec = RAW_CODEC
 		this.#bufferedBytes = 0n
-		publishClosed(this.#scope)
 		for (let waiter of this.#flushWaiters.values()) {
 			waiter.reject(this.#lastError ?? new Error('Writer closed before flush completed'))
 		}
@@ -446,18 +458,21 @@ export class TopicWriter implements AsyncDisposable, Disposable {
 		// Resolved AFTER writer.error was processed (emitted first), so close()
 		// sees #lastError and can reject on an unclean close.
 		this.#closedDeferred.resolve()
+		publishClosed(this.#scope)
 	}
 
 	// Terminal fallback when the machine stops without emitting writer.error /
 	// writer.closed (an internal runtime error): record the failure, then close.
 	#fail(error: unknown): void {
-		if (this.#closed) {
+		if (this.#closed || this.#destroyed) {
 			return
 		}
-		if (this.#lastError === undefined) {
-			this.#lastError = error
-			publishErrored(this.#scope, error)
-		}
+		this.#destroyed = true
+		this.#closing = true
+		let firstFailure = this.#lastError === undefined
+		if (firstFailure) this.#lastError = error
+		void this.#runtime.machine.destroy(this.#lastError)
+		if (firstFailure) publishErrored(this.#scope, error)
 		this.#markClosed()
 	}
 }

@@ -92,17 +92,17 @@ coverage:
   status:
     project:
       default:
-        target: auto       # do not drop below the current level...
-        threshold: 1%      # ...by more than 1%
+        target: auto # do not drop below the current level...
+        threshold: 1% # ...by more than 1%
     patch:
       default:
-        target: 80%        # new/changed code in the PR diff must be >= 80% covered
+        target: 80% # new/changed code in the PR diff must be >= 80% covered
 
 # Coverage still uploads and status checks stay, but Codecov must not post
 # PR comments — status/components are enough, the comment is just noise.
 comment: false
 
-# Coverage is collected once (Node 24 leg) and uploaded from CI; do not wait for
+# Coverage is uploaded from a single CI matrix leg; do not wait for
 # multiple uploads before building the report.
 codecov:
   notify:
