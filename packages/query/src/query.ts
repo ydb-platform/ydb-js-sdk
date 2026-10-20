@@ -144,20 +144,33 @@ export class Query<T extends any[] = unknown[]>
 			return this.#promise
 		}
 
+		this.#sessionPool.signal.throwIfAborted()
+
 		if (this.#active) {
 			dbg.log('query is already executing, aborting')
 			throw new Error('Query is already executing.')
 		}
 
-		dbg.log('starting query execution: %s', this.text)
-		this.#active = true
+		let transactionOwned =
+			txSession && store.sessionPool === this.#sessionPool && !txSignal?.aborted
 
-		let signals: AbortSignal[] = [this.#controller.signal]
+		dbg.log('starting query execution: %s', this.text)
+
+		let signals: AbortSignal[] = [this.#controller.signal, this.#sessionPool.signal]
 		if (txSignal) signals.push(txSignal)
 		if (this.#signal) signals.push(this.#signal)
 		if (this.#timeout) signals.push(AbortSignal.timeout(this.#timeout))
 
 		let linkedSignal = linkSignals(...signals)
+		try {
+			this.#sessionPool.beginOperation(Boolean(transactionOwned))
+		} catch (error) {
+			linkedSignal[Symbol.dispose]()
+			throw error
+		}
+		this.#active = true
+		let onDestroy = () => this.destroy()
+		this.#sessionPool.signal.addEventListener('abort', onDestroy, { once: true })
 
 		let sessionDiedLastAttempt = false
 
@@ -179,168 +192,173 @@ export class Query<T extends any[] = unknown[]>
 			},
 		}
 
-		await this.#driver.ready(linkedSignal.signal)
-
 		let runAttempt = async (retrySignal: AbortSignal) => {
-			// Transaction-owned session stays pinned; out-of-transaction
-			// attempts always get a fresh lease — no cross-attempt reuse.
-			using sessionLease = txSession
-				? undefined
-				: await sessionAcquireCh.tracePromise(
-						() => this.#sessionPool.acquire(retrySignal),
-						{ driver: this.#driver.identity }
-					)
-			let session = txSession ?? sessionLease!.session
-			let attemptSessionId = session.id
-			let attemptNodeId = session.nodeId
+			// Cancellation may settle the retry wrapper before this attempt finishes cleanup.
+			this.#sessionPool.beginOperation(true)
+			try {
+				// Transaction-owned session stays pinned; out-of-transaction
+				// attempts always get a fresh lease — no cross-attempt reuse.
+				using sessionLease = txSession
+					? undefined
+					: await sessionAcquireCh.tracePromise(
+							() => this.#sessionPool.acquire(retrySignal),
+							{ driver: this.#driver.identity }
+						)
+				let session = txSession ?? sessionLease!.session
+				let attemptSessionId = session.id
+				let attemptNodeId = session.nodeId
 
-			// Single-threaded session guard. YDB processes RPCs on a session
-			// sequentially, so concurrent statements on the same session
-			// (e.g. `Promise.all([tx`a`, tx`b`])`) hang on a server-side lock
-			// and confuse retry semantics. `claim()` throws SessionBusyError
-			// (non-retryable) and is released on scope exit via `using`.
-			using _claim = session.claim()
+				// Single-threaded session guard. YDB processes RPCs on a session
+				// sequentially, so concurrent statements on the same session
+				// (e.g. `Promise.all([tx`a`, tx`b`])`) hang on a server-side lock
+				// and confuse retry semantics. `claim()` throws SessionBusyError
+				// (non-retryable) and is released on scope exit via `using`.
+				using _claim = session.claim()
 
-			// linkSignals cleans up listeners on dispose — no accumulation
-			// on the long-lived session signal across many queries. We link to
-			// `session.signal` directly: in a tx body there's no lease (the tx
-			// owns the session), so the lease-mirrored signal isn't available.
-			using linked = linkSignals(retrySignal, session.signal)
-			let signal = linked.signal
+				// linkSignals cleans up listeners on dispose — no accumulation
+				// on the long-lived session signal across many queries. We link to
+				// `session.signal` directly: in a tx body there's no lease (the tx
+				// owns the session), so the lease-mirrored signal isn't available.
+				using linked = linkSignals(retrySignal, session.signal)
+				let signal = linked.signal
 
-			if (sessionLease) {
-				dbg.log('acquired session %s from pool', sessionLease.id)
-			}
-
-			dbg.log('creating query client for nodeId: %s', attemptNodeId)
-			let client = this.#driver.createClient(QueryServiceDefinition, attemptNodeId)
-
-			let parameters: Record<string, TypedValue> = {}
-			for (let key in this.#parameters) {
-				parameters[key] = create(TypedValueSchema, {
-					type: this.#parameters[key]!.type.encode(),
-					value: this.#parameters[key]!.encode(),
-				})
-			}
-
-			// If we have a transactionId, we should use it
-			// If we have an isolation level, we should use it
-			let txControl: TransactionControl | undefined
-			if (transactionId) {
-				txControl = create(TransactionControlSchema, {
-					txSelector: {
-						case: 'txId',
-						value: transactionId,
-					},
-				})
-			} else if (this.#isolation !== 'implicit') {
-				txControl = create(TransactionControlSchema, {
-					commitTx: true,
-					txSelector: {
-						case: 'beginTx',
-						value: {
-							txMode: {
-								case: this.#isolation,
-								value: this.#isolationSettings as {},
-							},
-						},
-					},
-				})
-			}
-
-			let executeCtx: QueryExecuteContext = {
-				driver: this.#driver.identity,
-				text: this.text,
-				sessionId: attemptSessionId,
-				nodeId: attemptNodeId,
-				idempotent: this.#idempotent,
-				isolation: this.#isolation,
-			}
-
-			return await executeQueryCh.tracePromise(async () => {
-				let stream = client.executeQuery(
-					{
-						sessionId: attemptSessionId,
-						execMode: ExecMode.EXECUTE,
-						query: {
-							case: 'queryContent',
-							value: {
-								syntax: this.#syntax,
-								text: this.text,
-							},
-						},
-						parameters,
-						statsMode: this.#statsMode,
-						...(this.#poolId && { poolId: this.#poolId }),
-						...(txControl && { txControl }),
-					},
-					{
-						signal,
-						onTrailer: (trailer) => {
-							this.emit('metadata', trailer)
-						},
-					}
-				)
-
-				let results = [] as ArrayifyTuple<T>
-
-				try {
-					for await (let part of stream) {
-						signal.throwIfAborted()
-
-						if (part.status !== StatusIds_StatusCode.SUCCESS) {
-							dbg.log('query part failed, status: %d', part.status)
-							throw new YDBError(part.status, part.issues)
-						}
-
-						if (part.execStats) {
-							dbg.log('received query stats')
-							this.#stats = part.execStats
-						}
-
-						if (!part.resultSet) {
-							continue
-						}
-
-						while (part.resultSetIndex >= results.length) {
-							results.push([])
-						}
-
-						for (let i = 0; i < part.resultSet.rows.length; i++) {
-							let result: any = this.#values ? [] : {}
-
-							for (let j = 0; j < part.resultSet.columns.length; j++) {
-								let column = part.resultSet.columns[j]!
-								let value = part.resultSet.rows[i]!.items[j]!
-
-								if (this.#values) {
-									result.push(
-										this.#raw ? value : toJs(fromYdb(value, column.type!))
-									)
-									continue
-								}
-
-								result[column.name] = this.#raw
-									? value
-									: toJs(fromYdb(value, column.type!))
-							}
-
-							results[Number(part.resultSetIndex)]!.push(result)
-						}
-					}
-				} catch (err) {
-					// Record whether this attempt failed because the session died.
-					// The retry callback uses this to decide — together with the
-					// idempotent flag — whether to retry against a fresh session.
-					if (session.signal.aborted) {
-						sessionDiedLastAttempt = true
-					}
-					throw err
+				if (sessionLease) {
+					dbg.log('acquired session %s from pool', sessionLease.id)
 				}
 
-				dbg.log('query executed successfully')
-				return results
-			}, executeCtx)
+				dbg.log('creating query client for nodeId: %s', attemptNodeId)
+				let client = this.#driver.createClient(QueryServiceDefinition, attemptNodeId)
+
+				let parameters: Record<string, TypedValue> = {}
+				for (let key in this.#parameters) {
+					parameters[key] = create(TypedValueSchema, {
+						type: this.#parameters[key]!.type.encode(),
+						value: this.#parameters[key]!.encode(),
+					})
+				}
+
+				// If we have a transactionId, we should use it
+				// If we have an isolation level, we should use it
+				let txControl: TransactionControl | undefined
+				if (transactionId) {
+					txControl = create(TransactionControlSchema, {
+						txSelector: {
+							case: 'txId',
+							value: transactionId,
+						},
+					})
+				} else if (this.#isolation !== 'implicit') {
+					txControl = create(TransactionControlSchema, {
+						commitTx: true,
+						txSelector: {
+							case: 'beginTx',
+							value: {
+								txMode: {
+									case: this.#isolation,
+									value: this.#isolationSettings as {},
+								},
+							},
+						},
+					})
+				}
+
+				let executeCtx: QueryExecuteContext = {
+					driver: this.#driver.identity,
+					text: this.text,
+					sessionId: attemptSessionId,
+					nodeId: attemptNodeId,
+					idempotent: this.#idempotent,
+					isolation: this.#isolation,
+				}
+
+				return await executeQueryCh.tracePromise(async () => {
+					let stream = client.executeQuery(
+						{
+							sessionId: attemptSessionId,
+							execMode: ExecMode.EXECUTE,
+							query: {
+								case: 'queryContent',
+								value: {
+									syntax: this.#syntax,
+									text: this.text,
+								},
+							},
+							parameters,
+							statsMode: this.#statsMode,
+							...(this.#poolId && { poolId: this.#poolId }),
+							...(txControl && { txControl }),
+						},
+						{
+							signal,
+							onTrailer: (trailer) => {
+								if (!this.#disposed && !signal.aborted)
+									this.emit('metadata', trailer)
+							},
+						}
+					)
+
+					let results = [] as ArrayifyTuple<T>
+
+					try {
+						for await (let part of stream) {
+							signal.throwIfAborted()
+
+							if (part.status !== StatusIds_StatusCode.SUCCESS) {
+								dbg.log('query part failed, status: %d', part.status)
+								throw new YDBError(part.status, part.issues)
+							}
+
+							if (part.execStats) {
+								dbg.log('received query stats')
+								this.#stats = part.execStats
+							}
+
+							if (!part.resultSet) {
+								continue
+							}
+
+							while (part.resultSetIndex >= results.length) {
+								results.push([])
+							}
+
+							for (let i = 0; i < part.resultSet.rows.length; i++) {
+								let result: any = this.#values ? [] : {}
+
+								for (let j = 0; j < part.resultSet.columns.length; j++) {
+									let column = part.resultSet.columns[j]!
+									let value = part.resultSet.rows[i]!.items[j]!
+
+									if (this.#values) {
+										result.push(
+											this.#raw ? value : toJs(fromYdb(value, column.type!))
+										)
+										continue
+									}
+
+									result[column.name] = this.#raw
+										? value
+										: toJs(fromYdb(value, column.type!))
+								}
+
+								results[Number(part.resultSetIndex)]!.push(result)
+							}
+						}
+					} catch (err) {
+						// Record whether this attempt failed because the session died.
+						// The retry callback uses this to decide — together with the
+						// idempotent flag — whether to retry against a fresh session.
+						if (session.signal.aborted) {
+							sessionDiedLastAttempt = true
+						}
+						throw err
+					}
+
+					dbg.log('query executed successfully')
+					return results
+				}, executeCtx)
+			} finally {
+				this.#sessionPool.endOperation()
+			}
 		}
 
 		// Inside a transaction body, the txn callback (`sql.begin()`) owns the
@@ -348,27 +366,34 @@ export class Query<T extends any[] = unknown[]>
 		// `transactionId` after a server-side abort cannot recover the
 		// transaction. Skip the retry wrapper entirely; the tx retries the
 		// whole body if it needs to.
-		this.#promise = (
-			txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt)
-		)
+		this.#promise = this.#driver
+			.ready(linkedSignal.signal)
+			.then(() =>
+				txSession ? runAttempt(linkedSignal.signal) : retry(retryConfig, runAttempt)
+			)
 			.then((results) => {
+				linkedSignal.signal.throwIfAborted()
 				if (this.#stats) {
 					this.emit('stats', this.#stats)
 				}
 
+				linkedSignal.signal.throwIfAborted()
 				this.emit('done', results)
+				linkedSignal.signal.throwIfAborted()
 
 				return results
 			})
 			.catch((err) => {
-				this.emit('error', err)
+				if (!this.#disposed && !this.#sessionPool.signal.aborted) this.emit('error', err)
 				throw err
 			})
-			.finally(async () => {
+			.finally(() => {
 				this.#active = false
 				this.#controller.abort('Query completed.')
 
 				linkedSignal[Symbol.dispose]()
+				this.#sessionPool.signal.removeEventListener('abort', onDestroy)
+				this.#sessionPool.endOperation()
 			})
 
 		return this.#promise
@@ -529,7 +554,7 @@ export class Query<T extends any[] = unknown[]>
 
 	/** Executes the query */
 	execute(): Query<T> {
-		void this.#execute()
+		void this.#execute().catch(() => {})
 
 		return this
 	}
@@ -550,21 +575,30 @@ export class Query<T extends any[] = unknown[]>
 
 	/**
 	 * Disposes the query and releases all resources.
-	 * This method is called automatically when the query is done.
-	 * It is recommended to call this method explicitly when the query is no longer needed.
+	 * Cancel pending work and discard the query's retained results and parameters.
 	 */
 	async dispose(): Promise<void> {
+		this.destroy()
+	}
+
+	destroy(): void {
 		if (this.#disposed) {
 			return
 		}
 
+		this.#disposed = true
+		this.#active = false
+		this.removeAllListeners()
 		this.#controller.abort('Query disposed.')
 		this.#promise = null
-		this.#disposed = true
+		this.#parameters = {}
+		this.#stats = undefined
+		this.#signal = undefined
+		this.#text = ''
 	}
 
 	[Symbol.dispose](): void {
-		this.dispose()
+		this.destroy()
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {

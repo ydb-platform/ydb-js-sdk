@@ -12,6 +12,7 @@
 
 import { tracingChannel } from 'node:diagnostics_channel'
 
+import { linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { QueryServiceDefinition, type SessionState } from '@ydbjs/api/query'
 import type { Driver, DriverIdentity } from '@ydbjs/core'
@@ -92,6 +93,8 @@ export class Session {
 	#life = new AbortController()
 	#attach = new AbortController()
 	#closing = false
+	#deleting = new AbortController()
+	#closed: Promise<void> | undefined
 	#closeReason: SessionCloseReason | undefined
 	// In-flight RPCs on this session. YDB sessions are single-threaded, so
 	// this counter must never exceed 1. `claim()` throws SessionBusyError on
@@ -151,7 +154,11 @@ export class Session {
 	 * doesn't pay latency for cleanup, and if the RPC fails the server-side
 	 * TTL reaps the session anyway.
 	 */
-	static async open(driver: Driver, signal?: AbortSignal): Promise<Session> {
+	static async open(
+		driver: Driver,
+		signal?: AbortSignal,
+		cleanupSignal?: AbortSignal
+	): Promise<Session> {
 		let bootstrap = driver.createClient(QueryServiceDefinition)
 		let resp = await bootstrap.createSession({}, signal ? { signal } : {})
 		if (resp.status !== StatusIds_StatusCode.SUCCESS) {
@@ -165,7 +172,9 @@ export class Session {
 		} catch (err) {
 			dbg.log('attach failed for %s, firing DeleteSession in background', session.id)
 			session.#attach.abort() // defensive: ensure stream is torn down
-			session.#deleteOnServer('attach_failed') // fire-and-forget
+			if (!cleanupSignal?.aborted) {
+				void session.#deleteOnServer('attach_failed', cleanupSignal)
+			}
 			throw err
 		}
 	}
@@ -236,10 +245,8 @@ export class Session {
 		dbg.log('session %s marked broken (%s)', this.id, reason)
 	}
 
-	// Fire-and-forget RPC, traced for subscribers. Server TTL cleans up if
-	// the call is lost.
-	#deleteOnServer(reason: SessionCloseReason): void {
-		let client = this.#driver.createClient(QueryServiceDefinition, this.nodeId)
+	async #deleteOnServer(reason: SessionCloseReason, signal?: AbortSignal): Promise<void> {
+		using linked = linkSignals(signal, this.#deleting.signal)
 		let ctx: SessionDeleteCtx = {
 			driver: this.#driver.identity,
 			sessionId: this.id,
@@ -247,23 +254,30 @@ export class Session {
 			reason,
 			uptime: Date.now() - this.createdAt,
 		}
-		sessionDeleteCh
-			.tracePromise(() => client.deleteSession({ sessionId: this.id }), ctx)
+		await sessionDeleteCh
+			.tracePromise(async () => {
+				linked.signal.throwIfAborted()
+				let client = this.#driver.createClient(QueryServiceDefinition, this.nodeId)
+				await client.deleteSession({ sessionId: this.id }, { signal: linked.signal })
+			}, ctx)
 			.catch((err) => {
 				dbg.log('deleteSession for %s failed: %O', this.id, err)
 			})
 	}
 
-	/**
-	 * Synchronous shutdown: flip state, fire DeleteSession in the
-	 * background. Callers never wait on the RPC. Reason is required —
-	 * the pool always knows why it's tearing a session down, and there's
-	 * no sensible default in the absence of `user_close`.
-	 */
-	close(reason: SessionCloseReason): void {
-		if (this.#closing) return
+	close(reason: SessionCloseReason): Promise<void> {
+		if (this.#closed) return this.#closed
+		if (this.#closing) return Promise.resolve()
 		this.#closing = true
-		if (this.alive) this.#deleteOnServer(reason)
+		let alive = this.alive
+		this.#markBroken(reason)
+		this.#closed = alive ? this.#deleteOnServer(reason) : Promise.resolve()
+		return this.#closed
+	}
+
+	destroy(reason: SessionCloseReason): void {
+		this.#closing = true
+		this.#deleting.abort()
 		this.#markBroken(reason)
 	}
 }
