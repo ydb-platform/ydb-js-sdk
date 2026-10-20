@@ -1,23 +1,27 @@
+import type {
+	StreamWriteMessage_InitRequest,
+	StreamWriteMessage_WriteRequest,
+} from '@ydbjs/api/topic'
 import { subscribe, tracingChannel, unsubscribe } from 'node:diagnostics_channel'
-import { getEventListeners } from 'node:events'
 
-import { Codec } from '@ydbjs/api/topic'
+import { Codec, type StreamWriteMessage_FromServer, TopicServiceDefinition } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { YDBError } from '@ydbjs/error'
 import { expect, test, vi } from 'vitest'
-import { Status } from '@ydbjs/grpc'
+import { RpcError, Server, Status } from '@ydbjs/grpc'
 
-import { GZIP_CODEC, RAW_CODEC } from '../codec.ts'
+import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
 import {
+	type WriteStream,
 	failureResponse,
 	initResponse,
-	makeFakeTopicDriver,
-	settle,
+	nextRequest,
 	tick,
 	writeResponse,
 } from './writer.fixtures.ts'
-import { WriterTransport } from './transport.ts'
 import { createTopicTxWriter, createTopicWriter } from './writer.ts'
 import { publishAcknowledged } from './diagnostics.ts'
 import type { AckStatus } from './types.ts'
@@ -25,10 +29,6 @@ import type { AckStatus } from './types.ts'
 let bytes = function bytes(...values: number[]): Uint8Array {
 	return new Uint8Array(values)
 }
-
-// A fake transaction that captures the lifecycle hooks the writer registers (it
-// registers exactly one of each), so a test can fire commit / rollback / close and
-// observe how the writer reacts.
 let makeFakeTx = function makeFakeTx() {
 	let onCommit: ((signal?: AbortSignal) => Promise<void> | void) | undefined
 	let onRollback: ((error: unknown, signal?: AbortSignal) => Promise<void> | void) | undefined
@@ -49,8 +49,6 @@ let makeFakeTx = function makeFakeTx() {
 		close: (committed: boolean): Promise<void> | void => onClose?.(committed),
 	}
 }
-
-// Subscribe to an event channel and collect its payloads; `using` auto-unsubscribes.
 let collect = function collect<T = unknown>(name: string): { payloads: T[] } & Disposable {
 	let payloads: T[] = []
 	let fn = (message: unknown) => payloads.push(message as T)
@@ -62,8 +60,6 @@ let collect = function collect<T = unknown>(name: string): { payloads: T[] } & D
 		},
 	}
 }
-
-// Subscribe to a tracing channel and count span phases; `using` auto-unsubscribes.
 let collectTrace = function collectTrace(
 	name: string
 ): { counts: { start: number; asyncEnd: number; error: number } } & Disposable {
@@ -87,110 +83,162 @@ let collectTrace = function collectTrace(
 	}
 }
 
-test('assigns auto seqNos at send time and acknowledges a flush', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('assigns auto seqNos at send time and acknowledges a flush', async (tc) => {
+	let initialized = Promise.withResolvers<StreamWriteMessage_InitRequest>()
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					initialized.resolve(message.value)
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-
-	let stream = await waitForNextStream()
-	let init = await stream.waitForInit()
-	expect(init.getLastSeqNo).toBe(true)
-	expect(init.producerId).toBe('p')
-
-	stream.respond(initResponse(0n))
-	await settle()
-
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	let flushed = writer.flush()
-	await settle()
-
-	let seqNos = stream.sent
-		.filter((m) => m.clientMessage.case === 'writeRequest')
-		.flatMap((m) =>
-			m.clientMessage.case === 'writeRequest'
-				? m.clientMessage.value.messages.map((x) => x.seqNo)
-				: []
-		)
+	let flushed = writer.flush(tc.signal)
+	let init = await initialized.promise
+	expect(init.getLastSeqNo).toBe(true)
+	expect(init.producerId).toBe('p')
+	let request = await received.promise
+	let seqNos = request.messages.map((message) => message.seqNo)
 	expect(seqNos).toEqual([1n, 2n])
-
-	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
-
 	await expect(flushed).resolves.toBe(2n)
-
-	await writer.close()
+	await writer.close(tc.signal)
 })
 
-test('uses distinct producer identities for independently created default writers', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('uses distinct producer identities for independently created default writers', async (tc) => {
+	let producers: string[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					producers.push(message.value.producerId)
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') yield writeResponse(message.value.messages)
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using first = createTopicWriter(driver, { topic: '/t' })
 	using second = createTopicWriter(driver, { topic: '/t' })
 	first.write(bytes(1))
 	second.write(bytes(2))
-	let firstStream = await waitForNextStream()
-	let secondStream = await waitForNextStream()
-	let firstInit = await firstStream.waitForInit()
-	let secondInit = await secondStream.waitForInit()
-	expect(firstInit.producerId).not.toBe('')
-	expect(secondInit.producerId).not.toBe('')
-	expect(secondInit.producerId).not.toBe(firstInit.producerId)
+	await Promise.all([first.flush(tc.signal), second.flush(tc.signal)])
+	expect(producers).toHaveLength(2)
+	expect(producers[0]).not.toBe('')
+	expect(producers[1]).not.toBe('')
+	expect(producers[1]).not.toBe(producers[0])
 })
 
-test('continues auto seqNo from the recovered server high-water mark', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('continues auto seqNo from the recovered server high-water mark', async (tc) => {
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					yield initResponse(41n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(41n))
-	await settle()
-
 	writer.write(bytes(1))
-	let request = await stream.waitForWrite()
+	await writer.flush(tc.signal)
+	let request = await received.promise
 	expect(request.messages[0]!.seqNo).toBe(42n)
 })
 
-test('buffers writes received before the session is initialized', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('buffers writes received before the session is initialized', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-
-	// Write before init response arrives — must be buffered, not lost.
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
 	writer.write(bytes(7))
 
-	stream.respond(initResponse(10n))
+	stream.responses.push(initResponse(10n))
 
-	let request = await stream.waitForWrite()
+	let request = await nextRequest(stream.requests, 'writeRequest')
 	expect(request.messages[0]!.seqNo).toBe(11n)
 })
 
-test('resends unacked messages after a transparent reconnect', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('resends unacked messages after a transparent reconnect', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
+	first.responses.push(writeResponse([{ seqNo: 1n }]))
 
-	// Server persisted only seqNo 1; ack it, then drop the stream.
-	first.respond(writeResponse([{ seqNo: 1n }]))
-	await settle()
-	first.disconnect()
-
-	// A second stream opens for the reconnect and must NOT re-request last_seq_no.
-	let second = await waitForNextStream()
-	let secondInit = await second.waitForInit()
+	first.responses.close()
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	let secondInit = await nextRequest(second.requests, 'initRequest')
 	expect(secondInit.getLastSeqNo).toBe(false)
 
-	second.respond(initResponse(1n))
+	second.responses.push(initResponse(1n))
 
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([2n])
 })
 
@@ -208,137 +256,271 @@ test.for([
 	{ name: 'expired session', error: new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, []) },
 	{ name: 'indeterminate result', error: new YDBError(StatusIds_StatusCode.UNDETERMINED, []) },
 ])('preserves the pending flush across $name', async ({ error }, tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 
 	let flushed = writer.flush(tc.signal)
 	let settledEarly = false
 	void flushed.then(() => (settledEarly = true)).catch(() => (settledEarly = true))
 
 	if (error instanceof YDBError) {
-		first.respond(failureResponse(error.code))
+		first.responses.push(failureResponse(error.code))
 	} else if (error) {
-		first.fail(error)
+		first.responses.fail(error)
 	} else {
-		first.disconnect()
+		first.responses.close()
 	}
-	await settle()
+
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
 	expect(settledEarly).toBe(false)
+	second.responses.push(initResponse(0n))
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(0n))
-
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages[0]!.seqNo).toBe(1n)
-	second.respond(writeResponse([{ seqNo: 1n }]))
+	second.responses.push(writeResponse([{ seqNo: 1n }]))
 
 	await expect(flushed).resolves.toBe(1n)
 })
 
-test('resolves a pending flush when a reconnect deduplicates all inflight messages', async () => {
-	// Real reconnect path. YDB reports the persisted last_seq_no on init even when
-	// get_last_seq_no is false (tests/writer-protocol.test.ts), so the reconnect's
-	// init here reports 2, deduplicating both inflight messages ('skipped') and
-	// draining the window with NO write_response. The flush must still resolve from
-	// the init path — otherwise it (and any tx commit awaiting it) hangs forever.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+test('resolves a pending flush when a reconnect deduplicates all inflight messages', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let acknowledged: Array<[bigint, AckStatus]> = []
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		onAck: (seqNo, status) => acknowledged.push([seqNo, status]),
+	})
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 
-	let flushed = writer.flush()
-	first.disconnect()
+	let flushed = writer.flush(tc.signal)
+	first.responses.close()
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(2n))
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(2n))
 
 	await expect(flushed).resolves.toBe(2n)
+	expect(acknowledged).toEqual([
+		[1n, 'skipped'],
+		[2n, 'skipped'],
+	])
+
+	writer.write(bytes(3))
+	let nextFlush = writer.flush(tc.signal)
+	let request = await nextRequest(second.requests, 'writeRequest')
+	let sequenceNumbers = request.messages.map((message) => message.seqNo)
+	expect(sequenceNumbers).toEqual([3n])
+	let payload = Array.from(request.messages[0]!.data)
+	expect(payload).toEqual([3])
+
+	second.responses.push(writeResponse([{ seqNo: 3n }]))
+	await expect(nextFlush).resolves.toBe(3n)
+	expect(acknowledged).toEqual([
+		[1n, 'skipped'],
+		[2n, 'skipped'],
+		[3n, 'written'],
+	])
+})
+
+test('does not replay an acknowledged write after the stream disconnects', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let acknowledged: Array<[bigint, AckStatus]> = []
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		onAck: (seqNo, status) => acknowledged.push([seqNo, status]),
+	})
+
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
+	writer.write(bytes(1))
+	let firstFlush = writer.flush(tc.signal)
+	let firstWrite = await nextRequest(first.requests, 'writeRequest')
+	let firstSequences = firstWrite.messages.map((message) => message.seqNo)
+	expect(firstSequences).toEqual([1n])
+
+	first.responses.push(writeResponse([{ seqNo: 1n }]))
+	await expect(firstFlush).resolves.toBe(1n)
+	expect(acknowledged).toEqual([[1n, 'written']])
+	first.responses.close()
+
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(1n))
+	writer.write(bytes(2))
+	let secondFlush = writer.flush(tc.signal)
+	let secondWrite = await nextRequest(second.requests, 'writeRequest')
+	let secondSequences = secondWrite.messages.map((message) => message.seqNo)
+	expect(secondSequences).toEqual([2n])
+	let payload = Array.from(secondWrite.messages[0]!.data)
+	expect(payload).toEqual([2])
+
+	second.responses.push(writeResponse([{ seqNo: 2n }]))
+	await expect(secondFlush).resolves.toBe(2n)
+	await writer.close(tc.signal)
+	expect(acknowledged).toEqual([
+		[1n, 'written'],
+		[2n, 'written'],
+	])
 })
 
 test('rejects a non-positive maxInflightCount', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	expect(() =>
 		createTopicWriter(driver, { topic: '/t', producer: 'p', maxInflightCount: 0 })
 	).toThrow(/maxInflightCount/)
 })
 
 test('rejects a non-positive maxBufferBytes', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	expect(() =>
 		createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 0n })
 	).toThrow(/maxBufferBytes/)
 })
 
-test('fails terminally and rejects the flush on a non-retryable error', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('fails terminally and rejects the flush on a non-retryable error', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let flushed = writer.flush()
-	stream.respond(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
+	stream.responses.push(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
 
 	await expect(flushed).rejects.toBeDefined()
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
 })
 
-test('drains buffered messages before a graceful close resolves', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('drains buffered messages before a graceful close resolves', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let closed = false
 	let closing = writer.close().then(() => (closed = true))
 
-	await settle()
 	expect(closed).toBe(false)
 
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await closing
 	expect(closed).toBe(true)
 })
 
-test('rejects pending flush when destroyed', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects pending flush when destroyed', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let flushed = writer.flush()
 	writer.destroy(new Error('stopped'))
@@ -347,7 +529,7 @@ test('rejects pending flush when destroyed', async () => {
 })
 
 test('rejects a manual seqNo after auto mode was chosen', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
 	writer.write(bytes(1))
@@ -355,57 +537,91 @@ test('rejects a manual seqNo after auto mode was chosen', async () => {
 })
 
 test('rejects a non-increasing manual seqNo', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
 	writer.write(bytes(1), { seqNo: 5n })
 	expect(() => writer.write(bytes(2), { seqNo: 5n })).toThrow(/strictly increasing/)
 })
 
-test('throws synchronously when a write would exceed maxBufferBytes', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('throws synchronously when a write would exceed maxBufferBytes', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		maxBufferBytes: 4n,
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1, 2, 3)) // 3 bytes buffered, under the 4-byte cap
-	// +2 would total 5 > 4 — a full buffer must throw, not silently drop the write.
 	expect(() => writer.write(bytes(4, 5))).toThrow(/buffer is full/i)
 })
 
-test('reclaims buffer budget once acknowledgments free bytes', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('reclaims buffer budget once acknowledgments free bytes', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		maxBufferBytes: 3n,
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1, 2, 3)) // fills the 3-byte cap exactly
 	expect(() => writer.write(bytes(4))).toThrow(/buffer is full/i)
 
-	await stream.waitForWrite()
-	stream.respond(writeResponse([{ seqNo: 1n }])) // ack frees the 3 buffered bytes
-	await settle()
-
-	// Budget reclaimed — the next write fits again.
+	await nextRequest(stream.requests, 'writeRequest')
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
+	await writer.flush(tc.signal)
 	expect(() => writer.write(bytes(4, 5, 6))).not.toThrow()
 })
 
-test('publishes opened, session, and acknowledgment diagnostics events', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('publishes opened, session, and acknowledgment diagnostics events', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	type Opened = { producer: string; config: { maxInflightCount: number; maxBufferBytes: bigint } }
 	type Ack = { written: number; skipped: number; writtenInTx: number }
@@ -417,18 +633,15 @@ test('publishes opened, session, and acknowledgment diagnostics events', async (
 
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxInflightCount: 7 })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(7n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(7n))
 
 	writer.write(bytes(1))
 	let flushed = writer.flush()
-	await stream.waitForWrite()
-	stream.respond(writeResponse([{ seqNo: 8n }]))
+	await nextRequest(stream.requests, 'writeRequest')
+	stream.responses.push(writeResponse([{ seqNo: 8n }]))
 	await flushed
-
-	// opened: once, carrying the effective config snapshot.
 	expect(opened.payloads).toHaveLength(1)
 	expect(opened.payloads[0]).toMatchObject({ producer: 'p', config: { maxInflightCount: 7 } })
 	expect(opened.payloads[0]!.config.maxBufferBytes).toBeGreaterThan(0n)
@@ -442,7 +655,7 @@ test('publishes opened, session, and acknowledgment diagnostics events', async (
 })
 
 test('counts acknowledgment statuses only when diagnostics have subscribers', () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	let scope = { driver: driver.identity, topic: '/t', producer: 'p' }
 	let statuses = new Map<bigint, AckStatus>([
 		[1n, 'written'],
@@ -461,30 +674,53 @@ test('counts acknowledgment statuses only when diagnostics have subscribers', ()
 	expect(acknowledged.payloads).toEqual([{ ...scope, written: 2, skipped: 1, writtenInTx: 1 }])
 })
 
-test('emits a flush tracing span', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('emits a flush tracing span', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	using flush = collectTrace('tracing:ydb:topic.writer.flush')
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	let flushed = writer.flush()
-	await stream.waitForWrite()
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	await nextRequest(stream.requests, 'writeRequest')
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await flushed
-
-	// One flush() → one span (start + resolution).
 	expect(flush.counts.start).toBe(1)
 	expect(flush.counts.asyncEnd).toBe(1)
 })
 
-test('invokes the onAck callback for every acknowledged message', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('invokes the onAck callback for every acknowledged message', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	let acked: Array<[bigint, string]> = []
 	using writer = createTopicWriter(driver, {
@@ -493,18 +729,17 @@ test('invokes the onAck callback for every acknowledged message', async () => {
 		onAck: (seqNo, status) => acked.push([seqNo, status]),
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await stream.waitForWrite()
-	await settle()
-	stream.respond(writeResponse([{ seqNo: 1n, status: 'written' }]))
-	stream.respond(writeResponse([{ seqNo: 2n, status: 'skipped' }]))
-	await settle()
+	await nextRequest(stream.requests, 'writeRequest')
+
+	stream.responses.push(writeResponse([{ seqNo: 1n, status: 'written' }]))
+	stream.responses.push(writeResponse([{ seqNo: 2n, status: 'skipped' }]))
+	await writer.flush(tc.signal)
 
 	expect(acked).toEqual([
 		[1n, 'written'],
@@ -512,358 +747,395 @@ test('invokes the onAck callback for every acknowledged message', async () => {
 	])
 })
 
-test('surfaces a non-retryable failure during connect as a terminal error', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('surfaces a non-retryable failure during connect as a terminal error', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
 
 	writer.write(bytes(1))
 	let flushed = writer.flush()
-
-	// Fail before init ever completes.
-	stream.respond(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
+	stream.responses.push(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
 
 	await expect(flushed).rejects.toBeDefined()
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
 })
 
-test('keeps draining a graceful close across a mid-close reconnect', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('keeps draining a graceful close across a mid-close reconnect', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 
 	let closed = false
 	let closing = writer.close().then(() => (closed = true))
+	first.responses.close()
 
-	// Stream drops mid-close before the ack — the writer must reconnect and resend.
-	first.disconnect()
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(0n))
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(0n))
-
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages[0]!.seqNo).toBe(1n)
-	second.respond(writeResponse([{ seqNo: 1n }]))
+	second.responses.push(writeResponse([{ seqNo: 1n }]))
 
 	await closing
 	expect(closed).toBe(true)
 })
 
-test('publishes a reconnecting diagnostics event on a retryable disconnect', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('publishes a reconnecting diagnostics event on a retryable disconnect', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	using reconnects = collect<{ attempt: number }>('ydb:topic.writer.reconnecting')
-	using _writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
-
-	first.disconnect()
-
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(0n))
-	await settle()
-
-	expect(reconnects.payloads.length).toBeGreaterThanOrEqual(1)
-})
-
-test('closes gracefully via async disposal', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
+
+	first.responses.close()
+
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(0n))
+
+	expect(reconnects.payloads.length).toBeGreaterThanOrEqual(1)
+	await writer.close(tc.signal)
+})
+
+test('closes gracefully via async disposal', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let disposed = false
 	let disposing = writer[Symbol.asyncDispose]().then(() => {
 		disposed = true
 		return undefined
 	})
-	await settle()
-	expect(disposed).toBe(false)
-	expect(stream.wasAborted()).toBe(false)
 
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	expect(disposed).toBe(false)
+	expect(stream.signal.aborted).toBe(false)
+
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await disposing
-	await settle()
 
 	expect(disposed).toBe(true)
-	expect(stream.wasAborted()).toBe(true)
+	await expect.poll(() => stream.signal.aborted).toBe(true)
 	expect(() => writer.write(bytes(2))).toThrow(/closed/)
-
-	// A second close is a no-op.
 	await writer.close()
 })
 
-test('tags writes with the transaction identity', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-
-	let tx = {
-		sessionId: 'tx-session',
-		transactionId: 'tx-1',
-		onCommit() {},
-		onRollback() {},
-		onClose() {},
-	}
-
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', tx: tx as never })
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
+test('tags writes with the transaction identity', async (tc) => {
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let { tx } = makeFakeTx()
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', tx })
 	writer.write(bytes(1))
-	let request = await stream.waitForWrite()
-
+	await writer.flush(tc.signal)
+	let request = await received.promise
 	expect(request.tx?.id).toBe('tx-1')
 	expect(request.tx?.session).toBe('tx-session')
 })
 
-test('reconnects after a mid-stream network error', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('reconnects after a mid-stream network error', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
+	first.responses.fail(new RpcError(Status.UNAVAILABLE, 'Connection lost'))
 
-	// The gRPC stream throws a retryable transport error mid-flight.
-	first.fail(new YDBError(StatusIds_StatusCode.UNAVAILABLE, []))
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(0n))
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(0n))
-
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages[0]!.seqNo).toBe(1n)
 
 	let flushed = writer.flush()
-	second.respond(writeResponse([{ seqNo: 1n }]))
+	second.responses.push(writeResponse([{ seqNo: 1n }]))
 	await expect(flushed).resolves.toBe(1n)
 })
 
-// ── resource cleanup ─────────────────────────────────────────────────────────────
-
-test('tears down the underlying stream on destroy', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('tears down the underlying stream on destroy', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.destroy()
-	await settle()
 
-	expect(stream.wasAborted()).toBe(true)
+	await expect.poll(() => stream.signal.aborted).toBe(true)
 })
 
-test('tears down the underlying stream after a graceful close', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('tears down the underlying stream after a graceful close', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let closing = writer.close()
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await closing
-	await settle()
 
-	expect(stream.wasAborted()).toBe(true)
+	await expect.poll(() => stream.signal.aborted).toBe(true)
 })
 
-test('rejects writes and flushes after close, and a second close is a no-op', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects writes and flushes after close, and a second close is a no-op', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	await writer.close()
 
 	expect(() => writer.write(bytes(1))).toThrow(/closed/)
 	await expect(writer.flush()).rejects.toBeDefined()
-	// Idempotent — must not hang or throw.
 	await writer.close()
 })
-
-// Bring one writer to `ready`, do a write, then destroy it. Returns nothing so
-// the writer/driver/stream locals leave the stack and become collectable.
-let spinUpAndDestroy = async function spinUpAndDestroy(): Promise<void> {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle(2)
-	writer.write(bytes(1))
-	writer.destroy()
-	await settle(2)
-}
-
-test('does not leak across 50k writer lifecycles', { timeout: 240_000 }, async () => {
-	// A leak (uncleared timers, retained closures, dangling listeners, un-freed
-	// buffers) grows the heap roughly linearly with the number of created-and-
-	// destroyed writers. A healthy run stays flat.
-	let cycles = 50_000
-
-	// Warm up so steady-state allocations (module caches etc.) don't count.
-	for (let i = 0; i < 1000; i++) {
-		// oxlint-disable-next-line no-await-in-loop
-		await spinUpAndDestroy()
-	}
-	globalThis.gc?.()
-	let before = process.memoryUsage().heapUsed
-
-	for (let i = 0; i < cycles; i++) {
-		// oxlint-disable-next-line no-await-in-loop
-		await spinUpAndDestroy()
-	}
-	globalThis.gc?.()
-	let after = process.memoryUsage().heapUsed
-
-	// 50k leaked writers would add hundreds of MB; a healthy run stays within a
-	// few MB of steady-state fragmentation. Generous bound to avoid GC noise.
-	expect(after - before).toBeLessThan(16 * 1024 * 1024)
-})
-
-// Bun's memory-leak idiom (bun:jsc heapStats().objectTypeCounts) forces GC and
-// asserts a class's live instance count returned to baseline. The node-idiomatic
-// equivalent: a FinalizationRegistry callback fires only once the object is
-// actually reclaimed. (A polled WeakRef.deref() loop is wrong here — each deref
-// keeps the target alive for the current job and prevents collection.)
-let registerForCollection = async function registerForCollection(
-	registry: FinalizationRegistry<string>
-): Promise<void> {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle(2)
-	writer.write(bytes(1))
-	writer.destroy()
-	await settle(2)
-	registry.register(writer as unknown as object, 'writer')
-	// Returning drops every strong local (writer/driver/stream) off the stack.
-}
-
-test('reclaims a destroyed writer with no lingering references', async () => {
-	let observation = {
-		collected: false,
-		registry: new FinalizationRegistry<string>(() => {
-			observation.collected = true
-		}),
-	}
-
-	await registerForCollection(observation.registry)
-
-	// Keep the registry reachable together with the result until finalization is observed.
-	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !observation.collected; i++) {
-		globalThis.gc?.()
-		// oxlint-disable-next-line no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 10))
-	}
-
-	expect(observation.collected).toBe(true)
-})
-
-// ── review fixes ─────────────────────────────────────────────────────────────────
-
-test('compresses the payload with a non-RAW codec and reports the uncompressed size', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('compresses the payload with a non-RAW codec and reports the uncompressed size', async (tc) => {
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec: GZIP_CODEC })
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
 	let raw = new Uint8Array(1000).fill(65)
 	writer.write(raw)
-
-	let request = await stream.waitForWrite()
+	await writer.flush(tc.signal)
+	let request = await received.promise
 	expect(request.codec).toBe(Codec.GZIP)
 	let message = request.messages[0]!
-	// Compressed on the wire, but the server is told the true uncompressed size.
 	expect(message.data.length).toBeLessThan(raw.length)
 	expect(message.uncompressedSize).toBe(1000n)
 })
 
-test('throws on write() issued during a graceful close', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('throws on write() issued during a graceful close', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let closing = writer.close()
-	// close() flips #closing synchronously — a racing write must throw, not vanish.
 	expect(() => writer.write(bytes(2))).toThrow(/closed/)
 
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await closing
 })
 
-test('rejects close() when the drain fails terminally (no silent data loss)', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects close() when the drain fails terminally (no silent data loss)', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let closing = writer.close()
-	// A non-retryable failure while draining must surface, not resolve close().
-	stream.respond(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
+	stream.responses.push(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
 
 	await expect(closing).rejects.toBeDefined()
 })
 
 test('rejects mixing partitionId and messageGroupId', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	expect(() =>
 		createTopicWriter(driver, {
 			topic: '/t',
@@ -874,177 +1146,205 @@ test('rejects mixing partitionId and messageGroupId', async () => {
 	).toThrow(/mutually exclusive/)
 })
 
-test('resends unacked manual-seqNo messages after a reconnect', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('resends unacked manual-seqNo messages after a reconnect', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1), { seqNo: 10n })
 	writer.write(bytes(2), { seqNo: 20n })
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
+	first.responses.push(writeResponse([{ seqNo: 10n }]))
 
-	// Server persisted seqNo 10 only; drop the stream before the rest is acked.
-	first.respond(writeResponse([{ seqNo: 10n }]))
-	await settle()
-	first.disconnect()
+	first.responses.close()
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(10n))
-
-	// seqNo 20 must be resent verbatim (manual seqNos are never renumbered).
-	let resent = await second.waitForWrite()
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(10n))
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([20n])
 })
 
-// ── graceful close drain ─────────────────────────────────────────────────────────
-
-test('holds the closing drain until init recovers the seqNo high-water mark', async () => {
-	// Regression: `write(); close()` before the first InitResponse must NOT push the
-	// message with a seqNo assigned from the unrecovered mark (0n): a producer with
-	// server-side history would get the batch deduplicated as already-written and
-	// close() would resolve over silently lost data (review B1 / WRITER-1).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('holds the closing drain until init recovers the seqNo high-water mark', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	let acked: Array<{ seqNo: bigint; status: string }> = []
-	let writer = createTopicWriter(driver, {
+	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		onAck: (seqNo, status) => acked.push({ seqNo, status: status ?? 'unknown' }),
 	})
 
-	let stream = await waitForNextStream()
-	// The server has received InitRequest but deliberately does NOT respond yet.
-	let init = await stream.waitForInit()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	let init = await nextRequest(stream.requests, 'initRequest')
 	expect(init.getLastSeqNo).toBe(true)
-
-	// User writes and closes immediately — the classic short-lived producer.
 	writer.write(bytes(1, 2, 3))
 	let closed = writer.close()
-
-	// Nothing may go out before the init response: the seqNo mark is unknown.
-	await settle()
-	let writeFrames = () =>
-		stream.sent.filter((m) => m.clientMessage.case === 'writeRequest').length
-	expect(writeFrames()).toBe(0)
-
-	// The init arrives: this producer already has lastSeqNo=100 on the server. The
-	// drain resumes and numbers the message from the RECOVERED mark.
-	stream.respond(initResponse(100n))
-	let writeReq = await stream.waitForWrite()
+	let receivedWrite = false
+	let pendingWrite = nextRequest(stream.requests, 'writeRequest').then((request) => {
+		receivedWrite = true
+		return request
+	})
+	await tick()
+	expect(receivedWrite).toBe(false)
+	stream.responses.push(initResponse(100n))
+	let writeReq = await pendingWrite
 	expect(writeReq.messages.map((m) => m.seqNo)).toEqual([101n])
-
-	// The server persists it; close() completes with the message delivered.
-	stream.respond(writeResponse([{ seqNo: 101n }]))
+	stream.responses.push(writeResponse([{ seqNo: 101n }]))
 	await expect(closed).resolves.toBeUndefined()
 	expect(acked).toEqual([{ seqNo: 101n, status: 'written' }])
 })
 
-test('rejects close and flush when the gated drain times out before any init', async () => {
-	// Init never arrives, graceful timeout elapses — close() must REJECT (undelivered
-	// messages) and a pending flush must reject too; the message must never have been
-	// pushed onto the wire with a made-up seqNo (review B1).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	let writer = createTopicWriter(driver, {
+test('rejects close and flush when the gated drain times out before any init', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		gracefulShutdownTimeoutMs: 30,
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
 
+	let pendingWrite = nextRequest(stream.requests, 'writeRequest')
+	void pendingWrite.catch(() => {})
 	writer.write(bytes(1))
 	let flushed = writer.flush()
 	let closed = writer.close()
+	void flushed.catch(() => {})
 
 	await expect(closed).rejects.toThrow(/undelivered/i)
 	await expect(flushed).rejects.toBeDefined()
-
-	// nothing was ever sent with an unrecovered seqNo
-	expect(stream.sent.filter((m) => m.clientMessage.case === 'writeRequest')).toHaveLength(0)
-
-	// repeat close surfaces the same failure (documented contract)
+	await expect(pendingWrite).rejects.toBeDefined()
 	await expect(writer.close()).rejects.toThrow(/undelivered/i)
 })
 
-test('invokes onAck for messages acknowledged during graceful close', async () => {
-	// Regression: acks that arrive while the writer drains in 'closing' must still
-	// reach onAck (documented "Called for every acknowledged message") and the
-	// ydb:topic.writer.acknowledged channel — this is the normal "write then await
-	// close()" shutdown pattern (review WRITER-2).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('invokes onAck for messages acknowledged during graceful close', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using acknowledged = collect('ydb:topic.writer.acknowledged')
 
 	let acked: bigint[] = []
-	let writer = createTopicWriter(driver, {
+	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		onAck: (seqNo) => acked.push(seqNo),
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await settle()
-
-	// close() before the acks arrive — the drain happens in the 'closing' state
 	let closed = writer.close()
-	await settle()
 
-	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
+	let request = await nextRequest(stream.requests, 'writeRequest')
+	let seqNos = request.messages.map((message) => message.seqNo)
+	expect(seqNos).toEqual([1n, 2n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
 	await closed
 
 	expect(acked).toEqual([1n, 2n])
 	expect(acknowledged.payloads.length).toBeGreaterThan(0)
 })
 
-test('invokes onAck exactly once per message across a mid-close reconnect drain', async () => {
-	// Acks emitted during closing free the byte budget exactly once — onAck sees each
-	// message once even when the drain spans a mid-close reconnect dedup plus a
-	// write_response (review WRITER-2).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('invokes onAck exactly once per message across a mid-close reconnect drain', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 
 	let acked: Array<{ seqNo: bigint; status: string }> = []
-	let writer = createTopicWriter(driver, {
+	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
 		onAck: (seqNo, status) => acked.push({ seqNo, status: String(status) }),
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await settle()
-	await stream.waitForWrite()
+
+	await nextRequest(stream.requests, 'writeRequest')
 
 	let closed = writer.close()
-	await settle()
-
-	// drop the stream mid-close before any ack; the writer reconnects to drain
-	stream.disconnect()
-	let stream2 = await waitForNextStream()
-	let init2 = await stream2.waitForInit()
+	stream.responses.close()
+	let stream2: WriteStream = (await streams.take(tc.signal)).value
+	let init2 = await nextRequest(stream2.requests, 'initRequest')
 	expect(init2.getLastSeqNo).toBe(false) // mark already recovered — never re-request
-
-	// the server persisted seqNo 1 before the drop: dedup on init, resend only 2
-	stream2.respond(initResponse(1n))
-	let resend = await stream2.waitForWrite()
+	stream2.responses.push(initResponse(1n))
+	let resend = await nextRequest(stream2.requests, 'writeRequest')
 	expect(resend.messages.map((m) => m.seqNo)).toEqual([2n])
 
-	stream2.respond(writeResponse([{ seqNo: 2n }]))
+	stream2.responses.push(writeResponse([{ seqNo: 2n }]))
 	await tick()
 	await closed
 
@@ -1054,60 +1354,78 @@ test('invokes onAck exactly once per message across a mid-close reconnect drain'
 	expect(new Set(acked.map((a) => a.seqNo)).size).toBe(acked.length)
 })
 
-test('resolves a pending flush when close drains the buffer successfully', async () => {
-	// Regression: a flush() pending when close() is issued was rejected with 'Writer
-	// closed before flush completed' even though the graceful drain then completed
-	// successfully — the flush semantics are fully satisfied (review WRITER-3).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	let writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+test('resolves a pending flush when close drains the buffer successfully', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await settle()
 
 	let flushed = writer.flush()
 	let closed = writer.close()
-	await settle()
 
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	let request = await nextRequest(stream.requests, 'writeRequest')
+	let seqNos = request.messages.map((message) => message.seqNo)
+	expect(seqNos).toEqual([1n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await closed // graceful close succeeded — the buffer fully drained
 
 	await expect(flushed).resolves.toBe(1n)
 })
 
-test('resolves a flush issued after close() once the closing drain completes', async () => {
-	// The facade has no #closing guard on flush(): one issued while the FSM is
-	// already in 'closing' must be served by the closing-state handler and resolve
-	// when the drain completes (review WRITER-3).
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	let writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+test('resolves a flush issued after close() once the closing drain completes', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await settle()
 
 	let closed = writer.close()
-	await settle()
-	let flushed = writer.flush() // issued while the FSM is already in 'closing'
-	await settle()
 
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	let flushed = writer.flush() // issued while the FSM is already in 'closing'
+
+	let request = await nextRequest(stream.requests, 'writeRequest')
+	let seqNos = request.messages.map((message) => message.seqNo)
+	expect(seqNos).toEqual([1n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await closed
 	await expect(flushed).resolves.toBe(1n)
 })
 
-// ── transaction lifecycle ──────────────────────────────────────────────────────
-
 test('renders the tx distinction in the inspect tag', () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	let fake = makeFakeTx()
 	using plain = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 	using tx = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
@@ -1116,95 +1434,146 @@ test('renders the tx distinction in the inspect tag', () => {
 	expect(Object.prototype.toString.call(tx)).toBe('[object TopicTxWriter]')
 })
 
-test('flushes and closes when the transaction commits', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('flushes and closes when the transaction commits', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	let init = await stream.waitForInit()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	let init = await nextRequest(stream.requests, 'initRequest')
 	expect(init.producerId).toBe('p')
-	stream.respond(initResponse(0n))
-	await settle()
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
-
-	// Commit runs the onCommit hook, which awaits writer.close() (drains first).
+	await nextRequest(stream.requests, 'writeRequest')
 	let committed = fake.commit()
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await committed
 
 	expect(() => writer.write(bytes(2))).toThrow(/closed/)
 })
 
-test('destroys the writer when the transaction rolls back', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('destroys the writer when the transaction rolls back', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
+
 	writer.write(bytes(1))
 
 	await fake.rollback(new Error('boom'))
-	await settle()
 
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
-	expect(stream.wasAborted()).toBe(true)
+	await expect.poll(() => stream.signal.aborted).toBe(true)
 })
 
-test('destroys the writer when the transaction closes without commit', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('destroys the writer when the transaction closes without commit', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
+
 	writer.write(bytes(1))
 
 	await fake.close(false)
-	await settle()
 
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
 })
 
-test('keeps running when the transaction closes after commit', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('keeps running when the transaction closes after commit', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
-	// committed=true → the onClose hook must NOT destroy the writer.
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 	await fake.close(true)
-	await settle()
 
 	expect(() => writer.write(bytes(1))).not.toThrow()
 })
 
-// ── user abort signals ─────────────────────────────────────────────────────────
-
-test('rejects a pending flush when the caller aborts the signal', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects a pending flush when the caller aborts the signal', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
-
-	// The message is never acked; aborting the caller's signal must reject flush().
+	await nextRequest(stream.requests, 'writeRequest')
 	let ac = new AbortController()
 	let flushed = writer.flush(ac.signal)
 	ac.abort(new Error('caller cancelled'))
@@ -1212,14 +1581,26 @@ test('rejects a pending flush when the caller aborts the signal', async () => {
 	await expect(flushed).rejects.toThrow('caller cancelled')
 })
 
-test('rejects a flush immediately when the signal is already aborted', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects a flush immediately when the signal is already aborted', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	let ac = new AbortController()
@@ -1228,19 +1609,29 @@ test('rejects a flush immediately when the signal is already aborted', async () 
 	await expect(writer.flush(ac.signal)).rejects.toThrow('already gone')
 })
 
-test('rejects a close when the caller aborts the signal', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects a close when the caller aborts the signal', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
-
-	// close() blocks draining the unacked message; aborting must reject the close.
+	await nextRequest(stream.requests, 'writeRequest')
 	let ac = new AbortController()
 	let closing = writer.close(ac.signal)
 	ac.abort(new Error('shutdown cancelled'))
@@ -1248,245 +1639,138 @@ test('rejects a close when the caller aborts the signal', async () => {
 	await expect(closing).rejects.toThrow('shutdown cancelled')
 })
 
-test('keeps abort listeners flat across flushes on a long-lived signal', async () => {
-	// A long-lived app threads ONE shutdown/request signal into every flush(). If
-	// abortable() failed to detach its abort listener when the flush settles, the
-	// signal would gain a listener per flush — the classic signal-chain leak (the
-	// reason AbortSignal.any is banned here). The count must stay flat.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('ignores destroy after a graceful close', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
-	let ac = new AbortController()
-	for (let i = 1; i <= 200; i++) {
-		writer.write(bytes(1))
-		let flushed = writer.flush(ac.signal)
-		// oxlint-disable-next-line no-await-in-loop
-		await settle()
-		stream.respond(writeResponse([{ seqNo: BigInt(i) }]))
-		// oxlint-disable-next-line no-await-in-loop
-		await flushed
-	}
-
-	// Every settled flush detached its listener — no accumulation on the shared signal.
-	expect(getEventListeners(ac.signal, 'abort')).toHaveLength(0)
-})
-
-test('frees the flush waiter on every abort of a global signal', async () => {
-	// The internal flush waiter must be dropped on abort. Otherwise a long-lived
-	// aborted signal threaded into many flush() calls piles up waiters that reject
-	// unhandled on terminate — Vitest fails the run on any unhandled rejection.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
-	let ac = new AbortController()
-	ac.abort(new Error('shutdown'))
-
-	for (let i = 0; i < 200; i++) {
-		writer.write(bytes(1))
-		// oxlint-disable-next-line no-await-in-loop
-		await expect(writer.flush(ac.signal)).rejects.toThrow('shutdown')
-	}
-
-	// No accumulated waiters → terminate rejects nothing → no unhandled rejection.
-	writer.destroy()
-	await settle()
-})
-
-// ── destroy / dispose: unusable + freed ────────────────────────────────────────
-
-test('ignores destroy after a graceful close', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	await writer.close()
-
-	// Already closed → destroy short-circuits, must not throw or re-tear-down.
 	expect(() => writer.destroy()).not.toThrow()
 	expect(() => writer.destroy(new Error('x'))).not.toThrow()
 })
 
-test('rejects writes and flushes after destroy', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects writes and flushes after destroy', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.destroy(new Error('stopped'))
 
 	expect(() => writer.write(bytes(1))).toThrow(/failed|closed/)
 	await expect(writer.flush()).rejects.toBeDefined()
-	// A repeat destroy is a no-op.
 	expect(() => writer.destroy()).not.toThrow()
 })
 
-test('rethrows and destroys on async disposal when the drain fails', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rethrows and destroys on async disposal when the drain fails', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
-
-	// Dispose triggers close(); a fatal drain makes close() reject, so dispose must
-	// destroy the writer and rethrow rather than swallow the failure.
+	await nextRequest(stream.requests, 'writeRequest')
 	let disposing = writer[Symbol.asyncDispose]()
-	stream.respond(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
+	stream.responses.push(failureResponse(StatusIds_StatusCode.SCHEME_ERROR))
 
 	await expect(disposing).rejects.toBeDefined()
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
 })
-
-// Bring one writer to `ready`, dispose it gracefully, then drop all locals so it
-// becomes collectable — mirrors the destroy-path reclaim test for the close path.
-let disposeAndRegister = async function disposeAndRegister(
-	registry: FinalizationRegistry<string>
-): Promise<void> {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle(2)
-	await writer[Symbol.asyncDispose]()
-	await settle(2)
-	registry.register(writer as unknown as object, 'writer')
-}
-
-test('reclaims a gracefully disposed writer with no lingering references', async () => {
-	let observation = {
-		collected: false,
-		registry: new FinalizationRegistry<string>(() => {
-			observation.collected = true
-		}),
-	}
-
-	await disposeAndRegister(observation.registry)
-
-	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let i = 0; i < 50 && !observation.collected; i++) {
-		globalThis.gc?.()
-		// oxlint-disable-next-line no-await-in-loop
-		await new Promise((resolve) => setTimeout(resolve, 10))
-	}
-
-	expect(observation.collected).toBe(true)
-})
-
-test('stays flat in memory across ~1M written+acked messages', { timeout: 240_000 }, async () => {
-	// The steady-state leak test the lifecycle test can't catch: a single writer that
-	// writes forever. Each chunk is written, sent, fully acked and drained, so the
-	// sliding window must compact back to empty — a leak (window not compacting,
-	// retained payloads/Dates/protobufs, waiter/output buildup) would grow the heap
-	// roughly linearly with the ~1M total messages.
-	let CHUNK = 10_000
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('coalesces update-token requests until one is acknowledged', async (tc) => {
+	let tokens: string[] = []
+	let firstToken = Promise.withResolvers<void>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') yield initResponse(0n)
+				if (message.case === 'updateTokenRequest') {
+					tokens.push(message.value.token)
+					firstToken.resolve()
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
 		producer: 'p',
-		maxInflightCount: CHUNK, // whole chunk goes inflight, one ack batch drains it
+		updateTokenIntervalMs: 5,
 	})
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
-	let payload = new Uint8Array(16) // reused → we measure writer retention, not payloads
-	let nextSeqNo = 1n
-
-	let driveChunk = async function driveChunk(): Promise<void> {
-		for (let i = 0; i < CHUNK; i++) {
-			writer.write(payload)
-		}
-		let flushed = writer.flush()
-		await settle()
-
-		let acks: Array<{ seqNo: bigint }> = []
-		for (let i = 0; i < CHUNK; i++) {
-			acks.push({ seqNo: nextSeqNo++ })
-		}
-		stream.respond(writeResponse(acks))
-		await flushed // resolves only once the window has fully drained
-
-		// Drop the frames the fake harness retains — that is test-side memory, not
-		// the writer's, and would otherwise masquerade as a leak.
-		stream.sent.length = 0
-	}
-
-	// Warm up so steady-state allocations don't count toward the delta.
-	for (let c = 0; c < 3; c++) {
-		// oxlint-disable-next-line no-await-in-loop
-		await driveChunk()
-	}
-	globalThis.gc?.()
-	let before = process.memoryUsage().heapUsed
-
-	// ~1M messages through the one long-lived writer.
-	for (let c = 0; c < 100; c++) {
-		// oxlint-disable-next-line no-await-in-loop
-		await driveChunk()
-	}
-	globalThis.gc?.()
-	let after = process.memoryUsage().heapUsed
-
-	// A per-message retention of even 50 bytes over 1M messages would be ~50 MB.
-	// A healthy steady state stays flat (observed: heap actually drops a little).
-	expect(after - before).toBeLessThan(16 * 1024 * 1024)
-})
-
-test('coalesces update-token requests until one is acknowledged', async () => {
-	// The token interval fires on a schedule with no inflight gate. If the stream is
-	// open but not draining and we never ack the token, un-coalesced pushes would
-	// pile token frames into the stream queue indefinitely (a slow long-lived leak).
-	// With coalescing, at most one un-acknowledged token is ever queued.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using _writer = createTopicWriter(driver, {
-		topic: '/t',
-		producer: 'p',
-		updateTokenIntervalMs: 5, // fire many times quickly
-	})
-
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
-
-	// Let the token interval fire many times without ever sending updateTokenResponse.
+	await firstToken.promise
 	await new Promise((resolve) => setTimeout(resolve, 60))
-
-	let tokenFrames = stream.sent.filter((m) => m.clientMessage.case === 'updateTokenRequest')
-	expect(tokenFrames).toHaveLength(1)
+	expect(tokens).toHaveLength(1)
+	await writer.close(tc.signal)
 })
 
-test('keeps a later flush pending until its preceding write is acknowledged', async () => {
-	// The fake controls ack delivery while both calls share the facade output queue.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('keeps a later flush pending until its preceding write is acknowledged', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
 
 	let first = writer.flush()
 	writer.write(bytes(1))
@@ -1496,75 +1780,99 @@ test('keeps a later flush pending until its preceding write is acknowledged', as
 		return seqNo
 	})
 	await expect(first).resolves.toBe(0n)
-	await settle()
+
+	let request = await nextRequest(stream.requests, 'writeRequest')
+	let seqNos = request.messages.map((message) => message.seqNo)
+	expect(seqNos).toEqual([1n])
 	expect(completed).toBe(false)
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await expect(second).resolves.toBe(1n)
 })
 
-test('rejects an invalid date before accepting the write and remains usable', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('rejects an invalid date before accepting the write and remains usable', async (tc) => {
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 	let invalidDateOptions = { createdAt: new Date(NaN), seqNo: 10n }
 	expect(() => writer.write(bytes(1), invalidDateOptions)).toThrow(/valid date/)
 	writer.write(bytes(2))
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	let request = await stream.waitForWrite()
+	let flushed = writer.flush(tc.signal)
+	let request = await received.promise
 	expect(request.messages[0]!.seqNo).toBe(1n)
-	let flushed = writer.flush()
-	stream.respond(writeResponse([{ seqNo: 1n }]))
 	await expect(flushed).resolves.toBe(1n)
 })
 
-test('cleans up the stream and timers when a runtime effect throws', async () => {
-	// A thrown effect is an internal fault; a real server cannot trigger it deterministically.
-	vi.useFakeTimers()
-	let failure = new Error('send effect failed')
-	let send = vi.spyOn(WriterTransport.prototype, 'sendBatch').mockImplementationOnce(() => {
-		throw failure
+test('charges payload and metadata bytes and restores capacity after acknowledgment', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
 	})
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await settle()
-		expect(vi.getTimerCount()).toBeGreaterThan(0)
-		writer.write(bytes(1))
-		await expect(writer.flush()).rejects.toBe(failure)
-		await settle()
-		expect(stream.wasAborted()).toBe(true)
-		expect(vi.getTimerCount()).toBe(0)
-		await expect(writer.close()).rejects.toBe(failure)
-	} finally {
-		send.mockRestore()
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('charges payload and metadata bytes and restores capacity after acknowledgment', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 211n })
 	let metadataItems = { trace: new Uint8Array(100) }
 	writer.write(bytes(), { metadataItems })
 	writer.write(bytes(1), { metadataItems })
 	writer.write(bytes())
 	expect(() => writer.write(bytes(2))).toThrow(/buffer is full/)
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
 	let flushed = writer.flush()
-	let request = await stream.waitForWrite()
+	let request = await nextRequest(stream.requests, 'writeRequest')
 	let payloadSizes = request.messages.map((message) => message.data.length)
 	expect(payloadSizes).toEqual([0, 1, 0])
-	stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }, { seqNo: 3n }]))
+	stream.responses.push(writeResponse([{ seqNo: 1n }, { seqNo: 2n }, { seqNo: 3n }]))
 	await flushed
 	expect(() => writer.write(bytes(3), { metadataItems })).not.toThrow()
 })
 
-test('reserves compressed payload bytes together with metadata', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('reserves compressed payload bytes together with metadata', async (tc) => {
+	let received = Promise.withResolvers<StreamWriteMessage_WriteRequest>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let payload = new Uint8Array(1024)
 	let compressedSize = GZIP_CODEC.compress(payload).byteLength
 	let metadataItems = { trace: bytes(7) }
@@ -1576,28 +1884,39 @@ test('reserves compressed payload bytes together with metadata', async () => {
 	})
 	writer.write(payload, { metadataItems })
 	expect(() => writer.write(payload, { metadataItems })).toThrow(/buffer is full/)
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	let request = await stream.waitForWrite()
+	await writer.flush(tc.signal)
+	let request = await received.promise
 	let message = request.messages[0]!
 	expect(message.uncompressedSize).toBe(1024n)
 	expect(message.data.byteLength).toBe(compressedSize)
 })
 
-test('restores payload and metadata budget when reconnect initialization acknowledges a message', async () => {
-	// The fake drops the response after persistence, then reports the recovered seqNo.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('restores payload and metadata budget when reconnect initialization acknowledges a message', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 106n })
 	let metadataItems = { trace: new Uint8Array(100) }
-	let first = await waitForNextStream()
-	first.respond(initResponse(0n))
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	first.responses.push(initResponse(0n))
 	writer.write(bytes(1), { metadataItems })
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 	expect(() => writer.write(bytes(2), { metadataItems })).toThrow(/buffer is full/)
 	let flushed = writer.flush()
-	first.disconnect()
-	let second = await waitForNextStream()
-	second.respond(initResponse(1n))
+	first.responses.close()
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	second.responses.push(initResponse(1n))
 	await expect(flushed).resolves.toBe(1n)
 	expect(() => writer.write(bytes(2), { metadataItems })).not.toThrow()
 })
@@ -1614,15 +1933,28 @@ test.for([
 	},
 ] satisfies { name: string; sizes: [string, number][] }[])(
 	'validates the 4096-byte metadata limit with $name keys before admission',
-	async ({ sizes }) => {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
+	async ({ sizes }, tc) => {
+		let streams = new AsyncQueue<WriteStream>()
+		using server = new Server()
+		server.add(TopicServiceDefinition, {
+			async *streamWrite(input, { signal }) {
+				using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+				streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+				signal.addEventListener('abort', () => responses.close(), { once: true })
+				yield* responses
+			},
+		})
+		let port = await server.listen('127.0.0.1:0')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+		})
 		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 		let payload = bytes(1)
 		let metadataItems = Object.fromEntries(
 			sizes.map(([key, size]) => [key, new Uint8Array(size)])
 		)
-		let [key, size] = sizes.at(-1)!
-		let oversized = { ...metadataItems, [key]: new Uint8Array(size + 1) }
+		let [lastKey, lastSize] = sizes.at(-1)!
+		let oversized = { ...metadataItems, [lastKey]: new Uint8Array(lastSize + 1) }
 		let invalidMetadataOptions = { seqNo: 99n, metadataItems: oversized }
 		{
 			using copies = vi.spyOn(globalThis, 'Uint8Array')
@@ -1631,37 +1963,38 @@ test.for([
 		}
 
 		writer.write(payload, { metadataItems })
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		let request = await stream.waitForWrite()
+		let stream: WriteStream = (await streams.take(tc.signal)).value
+		stream.responses.push(initResponse(0n))
+		let request = await nextRequest(stream.requests, 'writeRequest')
 		let message = request.messages[0]!
 		expect(message.seqNo).toBe(1n)
-		let receivedMetadata = message.metadataItems.map(({ key, value }) => ({ key, value }))
-		let expectedMetadata = Object.entries(metadataItems).map(([key, value]) => ({ key, value }))
+		let receivedMetadata = message.metadataItems.map(({ key, value }) => ({
+			key,
+			value: [...value],
+		}))
+		let expectedMetadata = Object.entries(metadataItems).map(([key, value]) => ({
+			key,
+			value: [...value],
+		}))
 		expect(receivedMetadata).toEqual(expectedMetadata)
 	}
 )
 
-test('bounds shared metadata snapshots while writes wait for initialization', () => {
-	let { driver } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, {
-		topic: '/t',
-		producer: 'p',
-		maxBufferBytes: 16n,
-		maxInflightCount: 1,
+test('keeps auto numbering available after rejecting a metadata reservation', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
 	})
-	let payload = bytes(1, 2)
-	let metadataItems = { tag: bytes(3, 4, 5) }
-	writer.write(payload, { metadataItems })
-	writer.write(payload, { metadataItems })
-
-	using copies = vi.spyOn(globalThis, 'Uint8Array')
-	expect(() => writer.write(payload, { metadataItems })).toThrow(/buffer is full/)
-	expect(copies).not.toHaveBeenCalled()
-})
-
-test('keeps auto numbering available after rejecting a metadata reservation', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', maxBufferBytes: 1n })
 	let payload = bytes(1)
 	let metadataItems = { tag: bytes(2) }
@@ -1672,39 +2005,35 @@ test('keeps auto numbering available after rejecting a metadata reservation', as
 	}
 
 	writer.write(payload)
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	let request = await stream.waitForWrite()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+	let request = await nextRequest(stream.requests, 'writeRequest')
 	expect(request.messages[0]!.seqNo).toBe(1n)
 })
 
-test('snapshots metadata and avoids retaining a larger backing buffer', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let backing = new Uint8Array(1024 * 1024)
-	let payload = backing.subarray(0, 3)
-	let metadataItems = { trace: bytes(7) }
-	writer.write(payload, { metadataItems })
-	metadataItems.trace[0] = 9
-	metadataItems.trace = new Uint8Array(1024)
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	let request = await stream.waitForWrite()
-	let message = request.messages[0]!
-	expect(message.data.buffer.byteLength).toBe(3)
-	expect(message.metadataItems).toMatchObject([{ key: 'trace', value: bytes(7) }])
-})
-
-test.each([0n, -1n, 1n << 63n])(
+test.for([0n, -1n, 1n << 63n])(
 	'keeps auto numbering available after rejecting seqNo %s',
-	async (seqNo) => {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
+	async (seqNo, tc) => {
+		let streams = new AsyncQueue<WriteStream>()
+		using server = new Server()
+		server.add(TopicServiceDefinition, {
+			async *streamWrite(input, { signal }) {
+				using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+				streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+				signal.addEventListener('abort', () => responses.close(), { once: true })
+				yield* responses
+			},
+		})
+		let port = await server.listen('127.0.0.1:0')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+		})
 		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 		expect(() => writer.write(bytes(1), { seqNo })).toThrow(/positive int64/)
 		writer.write(bytes(2))
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		let request = await stream.waitForWrite()
+		let stream: WriteStream = (await streams.take(tc.signal)).value
+		stream.responses.push(initResponse(0n))
+		let request = await nextRequest(stream.requests, 'writeRequest')
 		expect(request.messages[0]!.seqNo).toBe(1n)
 	}
 )
@@ -1712,7 +2041,9 @@ test.each([0n, -1n, 1n << 63n])(
 test('retains falsy destruction reasons on close and flush', async () => {
 	await Promise.all(
 		[0, false, ''].map(async (reason) => {
-			let { driver } = makeFakeTopicDriver()
+			using driver = new Driver('grpc://127.0.0.1:1/local', {
+				'ydb.sdk.enable_discovery': false,
+			})
 			using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 			writer.write(bytes(1))
 			writer.destroy(reason)
@@ -1722,392 +2053,279 @@ test('retains falsy destruction reasons on close and flush', async () => {
 	)
 })
 
-test('sends full in-flight windows without waiting for the flush interval', async () => {
-	// Hold the clock still to distinguish protocol progress from timer-driven sends.
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			maxInflightCount: 1,
-			flushIntervalMs: 2_147_483_647,
-		})
-		writer.write(bytes(1))
-		writer.write(bytes(2))
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await stream.waitForWrite()
-		await settle()
-		let writes = () =>
-			stream.sent.flatMap((frame) =>
-				frame.clientMessage.case === 'writeRequest'
-					? frame.clientMessage.value.messages
-					: []
-			)
-		expect(writes().map((message) => message.seqNo)).toEqual([1n])
-		stream.respond(writeResponse([{ seqNo: 1n }]))
-		await settle()
-		expect(writes().map((message) => message.seqNo)).toEqual([1n, 2n])
-		stream.respond(writeResponse([{ seqNo: 2n }]))
-		await settle()
-		writer.write(bytes(3))
-		await settle()
-		expect(writes().map((message) => message.seqNo)).toEqual([1n, 2n, 3n])
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
+test('sends full in-flight windows without waiting for the flush interval', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		maxInflightCount: 1,
+		flushIntervalMs: 2_147_483_647,
+	})
+	writer.write(bytes(1))
+	writer.write(bytes(2))
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+	let first = await nextRequest(stream.requests, 'writeRequest')
+	expect(first.messages.map((message) => message.seqNo)).toEqual([1n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
+	let second = await nextRequest(stream.requests, 'writeRequest')
+	expect(second.messages.map((message) => message.seqNo)).toEqual([2n])
+	stream.responses.push(writeResponse([{ seqNo: 2n }]))
+	await writer.flush(tc.signal)
+	writer.write(bytes(3))
+	let third = await nextRequest(stream.requests, 'writeRequest')
+	expect(third.messages.map((message) => message.seqNo)).toEqual([3n])
 })
 
-test.each(['before', 'after'])(
+test.for(['before', 'after'])(
 	'preserves manual flush results when the first write arrives %s init',
-	async (timing) => {
-		// Control init delivery and lose the first ack to exercise reconnect reconciliation.
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
+	async (timing, tc) => {
+		let streams = new AsyncQueue<WriteStream>()
+		using server = new Server()
+		server.add(TopicServiceDefinition, {
+			async *streamWrite(input, { signal }) {
+				using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+				streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+				signal.addEventListener('abort', () => responses.close(), { once: true })
+				yield* responses
+			},
+		})
+		let port = await server.listen('127.0.0.1:0')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+		})
+		using sessions = collect('ydb:topic.writer.session.started')
 		let acknowledged: Array<[bigint, string]> = []
 		using writer = createTopicWriter(driver, {
 			topic: '/t',
 			producer: 'p',
 			onAck: (seqNo, status) => acknowledged.push([seqNo, status]),
 		})
-		let first = await waitForNextStream()
-		await first.waitForInit()
+		let first: WriteStream = (await streams.take(tc.signal)).value
+		await nextRequest(first.requests, 'initRequest')
 		if (timing === 'before') {
 			writer.write(bytes(1), { seqNo: 1n })
 		}
-		first.respond(initResponse(100n))
-		await settle()
+		first.responses.push(initResponse(100n))
+
+		await expect.poll(() => sessions.payloads.length).toBe(1)
 		if (timing === 'after') {
 			writer.write(bytes(1), { seqNo: 1n })
 		}
-		let request = await first.waitForWrite()
+		let request = await nextRequest(first.requests, 'writeRequest')
 		expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
 		let flushed = writer.flush()
-		first.disconnect()
-		let second = await waitForNextStream()
-		second.respond(initResponse(100n))
+		first.responses.close()
+		let second: WriteStream = (await streams.take(tc.signal)).value
+		second.responses.push(initResponse(100n))
 		await expect(flushed).resolves.toBe(1n)
 		expect(acknowledged).toEqual([[1n, 'skipped']])
 		writer.write(bytes(2), { seqNo: 2n })
-		let next = await second.waitForWrite()
+		let next = await nextRequest(second.requests, 'writeRequest')
 		expect(next.messages.map((message) => message.seqNo)).toEqual([2n])
 		let nextFlush = writer.flush()
-		second.respond(writeResponse([{ seqNo: 2n, status: 'skipped' }]))
+		second.responses.push(writeResponse([{ seqNo: 2n, status: 'skipped' }]))
 		await expect(nextFlush).resolves.toBe(2n)
 	}
 )
 
-test('cancels a stale reconnect backoff when a late init arrives during close', async () => {
-	// The server init must land between the connection watchdog and its retry timer.
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			gracefulShutdownTimeoutMs: 60_000,
-		})
-		writer.write(bytes(1))
-		let closed = writer.close()
-		void closed.catch(() => {})
-		let stream = await waitForNextStream()
-		await stream.waitForInit()
-		await vi.advanceTimersByTimeAsync(30_000)
-		stream.respond(initResponse(0n))
-		await stream.waitForWrite()
-		await vi.advanceTimersByTimeAsync(50)
-		expect(stream.wasAborted()).toBe(false)
-		stream.respond(writeResponse([{ seqNo: 1n }]))
-		await closed
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
+test('waits for every reconnect init before sending a closing drain', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	first.responses.push(initResponse(0n))
+	writer.write(bytes(1))
+	let flushed = writer.flush()
+	await nextRequest(first.requests, 'writeRequest')
+	first.responses.push(writeResponse([{ seqNo: 1n }]))
+	await flushed
+	first.responses.close()
+
+	writer.write(bytes(2))
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	let closed = writer.close()
+	void closed.catch(() => {})
+	let receivedWrite = false
+	let pendingWrite = nextRequest(second.requests, 'writeRequest').then((request) => {
+		receivedWrite = true
+		return request
+	})
+	await tick()
+	expect(receivedWrite).toBe(false)
+	second.responses.push(initResponse(1n))
+	let request = await pendingWrite
+	expect(request.messages.map((message) => message.seqNo)).toEqual([2n])
+	second.responses.push(writeResponse([{ seqNo: 2n }]))
+	await closed
 })
 
-test('waits for every reconnect init before sending a closing drain', async () => {
-	// Pause the replacement stream before init so closing cannot bypass its handshake.
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-		let first = await waitForNextStream()
-		first.respond(initResponse(0n))
-		writer.write(bytes(1))
-		let flushed = writer.flush()
-		await first.waitForWrite()
-		first.respond(writeResponse([{ seqNo: 1n }]))
-		await flushed
-		first.disconnect()
-		await settle()
-		writer.write(bytes(2))
-		await vi.advanceTimersByTimeAsync(50)
-		let second = await waitForNextStream()
-		await second.waitForInit()
-		let closed = writer.close()
-		void closed.catch(() => {})
-		await settle()
-		expect(
-			second.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		).toHaveLength(0)
-		second.respond(initResponse(1n))
-		let request = await second.waitForWrite()
-		expect(request.messages.map((message) => message.seqNo)).toEqual([2n])
-		second.respond(writeResponse([{ seqNo: 2n }]))
-		await closed
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
+test('sends a count-full batch before the interval expires', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using sessions = collect('ydb:topic.writer.session.started')
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		maxInflightCount: 2,
+		flushIntervalMs: 60_000,
+	})
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+	await expect.poll(() => sessions.payloads.length).toBe(1)
+
+	writer.write(bytes(1))
+	let receivedWrite = false
+	let pendingWrite = nextRequest(stream.requests, 'writeRequest').then((request) => {
+		receivedWrite = true
+		return request
+	})
+	await tick()
+	expect(receivedWrite).toBe(false)
+	writer.write(bytes(2))
+	let request = await pendingWrite
+	expect(request.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
 })
 
-test('flushes isolated messages on their interval even after a long idle period', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await settle()
-		let sent = () =>
-			stream.sent.flatMap((frame) =>
-				frame.clientMessage.case === 'writeRequest'
-					? frame.clientMessage.value.messages.map((message) => message.seqNo)
-					: []
-			)
-		writer.write(bytes(1))
-		await settle()
-		expect(sent()).toEqual([])
-		await vi.advanceTimersByTimeAsync(999)
-		expect(sent()).toEqual([])
-		await vi.advanceTimersByTimeAsync(1)
-		expect(sent()).toEqual([1n])
-		stream.respond(writeResponse([{ seqNo: 1n }]))
-		await settle()
-		await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-		writer.write(bytes(2))
-		await settle()
-		expect(sent()).toEqual([1n])
-		await vi.advanceTimersByTimeAsync(999)
-		expect(sent()).toEqual([1n])
-		await vi.advanceTimersByTimeAsync(1)
-		expect(sent()).toEqual([1n, 2n])
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
+test('sends a byte-full batch when the next message cannot fit', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using sessions = collect('ydb:topic.writer.session.started')
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		flushIntervalMs: 60_000,
+	})
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+	await expect.poll(() => sessions.payloads.length).toBe(1)
+	writer.write(new Uint8Array(25 * 1024 * 1024))
+	let receivedWrite = false
+	let pendingWrite = nextRequest(stream.requests, 'writeRequest').then((request) => {
+		receivedWrite = true
+		return request
+	})
+	await tick()
+	expect(receivedWrite).toBe(false)
+	writer.write(new Uint8Array(25 * 1024 * 1024))
+	let request = await pendingWrite
+	expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
+	let receivedSecond = false
+	let pendingSecond = nextRequest(stream.requests, 'writeRequest').then((next) => {
+		receivedSecond = true
+		return next
+	})
+	await tick()
+	expect(receivedSecond).toBe(false)
+	let flushed = writer.flush(tc.signal)
+	let second = await pendingSecond
+	expect(second.messages.map((message) => message.seqNo)).toEqual([2n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
+	await flushed
 })
 
-test('sends a count-full batch before the interval expires', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			maxInflightCount: 2,
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await settle()
-		writer.write(bytes(1))
-		await settle()
-		expect(
-			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		).toHaveLength(0)
-		writer.write(bytes(2))
-		let request = await stream.waitForWrite()
-		expect(request.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
+test('flush and close send a partial batch without waiting for its interval', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = createTopicWriter(driver, {
+		topic: '/t',
+		producer: 'p',
+		flushIntervalMs: 60_000,
+	})
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+
+	writer.write(bytes(1))
+	let flushed = writer.flush()
+	let first = await nextRequest(stream.requests, 'writeRequest')
+	expect(first.messages.map((message) => message.seqNo)).toEqual([1n])
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
+	await expect(flushed).resolves.toBe(1n)
+	writer.write(bytes(2))
+	let closed = writer.close()
+	let second = await nextRequest(stream.requests, 'writeRequest')
+	expect(second.messages.map((message) => message.seqNo)).toEqual([2n])
+	stream.responses.push(writeResponse([{ seqNo: 2n }]))
+	await closed
 })
 
-test('sends a byte-full batch when the next message cannot fit', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await settle()
-		// Two 25 MiB payloads exceed the 48 MiB batch target.
-		writer.write(new Uint8Array(25 * 1024 * 1024))
-		await settle()
-		expect(
-			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		).toHaveLength(0)
-		writer.write(new Uint8Array(25 * 1024 * 1024))
-		let request = await stream.waitForWrite()
-		expect(request.messages.map((message) => message.seqNo)).toEqual([1n])
-		await settle()
-		expect(
-			stream.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		).toHaveLength(1)
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('sends an overdue partial batch as soon as acknowledgments free the window', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			maxInflightCount: 2,
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		writer.write(bytes(1))
-		writer.write(bytes(2))
-		await stream.waitForWrite()
-		writer.write(bytes(3))
-		await vi.advanceTimersByTimeAsync(1000)
-		let sent = () =>
-			stream.sent.flatMap((frame) =>
-				frame.clientMessage.case === 'writeRequest'
-					? frame.clientMessage.value.messages.map((message) => message.seqNo)
-					: []
-			)
-		expect(sent()).toEqual([1n, 2n])
-		stream.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
-		await settle()
-		expect(sent()).toEqual([1n, 2n, 3n])
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('flush and close send a partial batch without waiting for its interval', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		stream.respond(initResponse(0n))
-		await settle()
-		writer.write(bytes(1))
-		let flushed = writer.flush()
-		await stream.waitForWrite()
-		stream.respond(writeResponse([{ seqNo: 1n }]))
-		await expect(flushed).resolves.toBe(1n)
-		writer.write(bytes(2))
-		let closed = writer.close()
-		await settle()
-		let sent = stream.sent.flatMap((frame) =>
-			frame.clientMessage.case === 'writeRequest'
-				? frame.clientMessage.value.messages.map((message) => message.seqNo)
-				: []
-		)
-		expect(sent).toEqual([1n, 2n])
-		stream.respond(writeResponse([{ seqNo: 2n }]))
-		await closed
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('retains an overdue batch across reconnect without sending before initialization', async () => {
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			maxInflightCount: 2,
-			flushIntervalMs: 1000,
-		})
-		let first = await waitForNextStream()
-		first.respond(initResponse(0n))
-		writer.write(bytes(1))
-		writer.write(bytes(2))
-		await first.waitForWrite()
-		writer.write(bytes(3))
-		await vi.advanceTimersByTimeAsync(1000)
-		first.disconnect()
-		await settle()
-		await vi.advanceTimersByTimeAsync(50)
-		let second = await waitForNextStream()
-		await second.waitForInit()
-		await vi.advanceTimersByTimeAsync(1000)
-		expect(
-			second.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		).toHaveLength(0)
-		second.respond(initResponse(2n))
-		await settle()
-		let request = await second.waitForWrite()
-		expect(request.messages.map((message) => message.seqNo)).toEqual([3n])
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('sends a buffered partial batch despite reconnects shorter than the flush interval', async () => {
-	// Each stream ends before its flush tick, making timer postponement deterministic.
-	vi.useFakeTimers()
-	try {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
-		using writer = createTopicWriter(driver, {
-			topic: '/t',
-			producer: 'p',
-			flushIntervalMs: 1000,
-		})
-		let stream = await waitForNextStream()
-		let streams = [stream]
-		stream.respond(initResponse(0n))
-		await settle()
-		writer.write(bytes(1))
-
-		for (let attempt = 0; attempt < 3; attempt++) {
-			// oxlint-disable-next-line no-await-in-loop
-			await vi.advanceTimersByTimeAsync(450)
-			stream.disconnect()
-			// oxlint-disable-next-line no-await-in-loop
-			await settle()
-			// oxlint-disable-next-line no-await-in-loop
-			await vi.advanceTimersByTimeAsync(50)
-			// oxlint-disable-next-line no-await-in-loop
-			stream = await waitForNextStream()
-			streams.push(stream)
-			stream.respond(initResponse(0n))
-			// oxlint-disable-next-line no-await-in-loop
-			await settle()
-		}
-
-		let sent = streams.flatMap((connection) =>
-			connection.sent.filter((frame) => frame.clientMessage.case === 'writeRequest')
-		)
-		expect(sent.length).toBeGreaterThan(0)
-	} finally {
-		vi.clearAllTimers()
-		vi.useRealTimers()
-	}
-})
-
-test('handles a rejected async onAck without delaying flush', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('handles a rejected async onAck without delaying flush', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let observer = Promise.withResolvers<void>()
 	using writer = createTopicWriter(driver, {
 		topic: '/t',
@@ -2119,17 +2337,15 @@ test('handles a rejected async onAck without delaying flush', async () => {
 	})
 	writer.write(bytes(1))
 	let flushed = writer.flush()
-	let stream = await waitForNextStream()
-	stream.respond(initResponse(0n))
-	await stream.waitForWrite()
-	stream.respond(writeResponse([{ seqNo: 1n }]))
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	stream.responses.push(initResponse(0n))
+	await nextRequest(stream.requests, 'writeRequest')
+	stream.responses.push(writeResponse([{ seqNo: 1n }]))
 	await expect(flushed).resolves.toBe(1n)
 	observer.resolve()
 	await new Promise<void>((resolve) => setImmediate(resolve))
 	await expect(writer.close()).resolves.toBeUndefined()
 })
-
-// Controlled ACKs separate flush boundaries even when all writes share a stream and batch.
 test.for([
 	{ mode: 'auto', recovery: 'ack' },
 	{ mode: 'auto', recovery: 'resend' },
@@ -2140,7 +2356,20 @@ test.for([
 ])(
 	'settles each flush at its captured write boundary ($mode, $recovery)',
 	async ({ mode, recovery }, tc) => {
-		let { driver, waitForNextStream } = makeFakeTopicDriver()
+		let streams = new AsyncQueue<WriteStream>()
+		using server = new Server()
+		server.add(TopicServiceDefinition, {
+			async *streamWrite(input, { signal }) {
+				using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+				streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+				signal.addEventListener('abort', () => responses.close(), { once: true })
+				yield* responses
+			},
+		})
+		let port = await server.listen('127.0.0.1:0')
+		using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+			'ydb.sdk.enable_discovery': false,
+		})
 		using writer = createTopicWriter(driver, {
 			topic: '/t',
 			producer: 'p',
@@ -2162,104 +2391,39 @@ test.for([
 		})
 		writer.write(bytes(3), mode === 'manual' ? { seqNo: seq[2] } : undefined)
 
-		let stream = await waitForNextStream()
-		await stream.waitForInit()
-		stream.respond(initResponse(0n))
-		await stream.waitForWrite()
+		let stream: WriteStream = (await streams.take(tc.signal)).value
+		await nextRequest(stream.requests, 'initRequest')
+		stream.responses.push(initResponse(0n))
+		await nextRequest(stream.requests, 'writeRequest')
 
 		if (recovery !== 'ack') {
-			stream.disconnect()
-			stream = await waitForNextStream()
-			await stream.waitForInit()
-			stream.respond(initResponse(recovery === 'dedup' ? seq[0] : 0n))
-			await stream.waitForWrite()
+			stream.responses.close()
+			stream = (await streams.take(tc.signal)).value
+			await nextRequest(stream.requests, 'initRequest')
+			stream.responses.push(initResponse(recovery === 'dedup' ? seq[0] : 0n))
+			await nextRequest(stream.requests, 'writeRequest')
 		}
 		if (recovery !== 'dedup') {
-			stream.respond(writeResponse([{ seqNo: seq[0] }]))
+			stream.responses.push(writeResponse([{ seqNo: seq[0] }]))
 		}
-		await settle()
+		await first
 
 		expect(firstDone).toBe(true)
 		expect(secondDone).toBe(false)
 		await expect(first).resolves.toBe(seq[0])
 		await expect(sameBoundary).resolves.toBe(seq[0])
 
-		stream.respond(writeResponse([{ seqNo: seq[1] }]))
+		stream.responses.push(writeResponse([{ seqNo: seq[1] }]))
 		await expect(second).resolves.toBe(seq[1])
 		let thirdDone = false
 		let third = writer.flush(tc.signal).then((seqNo) => {
 			thirdDone = true
 			return seqNo
 		})
-		await settle()
+
 		expect(thirdDone).toBe(false)
-		stream.respond(writeResponse([{ seqNo: seq[2] }]))
+		stream.responses.push(writeResponse([{ seqNo: seq[2] }]))
 		await expect(third).resolves.toBe(seq[2])
 		await writer.close()
 	}
 )
-
-test('borrows a whole RAW buffer and permits reuse after acknowledgment', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-
-	let payload = bytes(1, 2, 3)
-	writer.write(payload)
-	let flushed = writer.flush(tc.signal)
-	let first = await stream.waitForWrite()
-	expect(first.messages[0]!.data).toBe(payload)
-	stream.respond(writeResponse([{ seqNo: 1n }]))
-	await flushed
-
-	payload.fill(4)
-	writer.write(payload)
-	let reused = writer.flush(tc.signal)
-	await settle()
-	let requests = stream.sent.flatMap((frame) =>
-		frame.clientMessage.case === 'writeRequest' ? frame.clientMessage.value.messages : []
-	)
-	let reusedMessage = requests[1]!
-	let reusedPayload = [...reusedMessage.data]
-	expect(reusedMessage.seqNo).toBe(2n)
-	expect(reusedPayload).toEqual([4, 4, 4])
-
-	stream.respond(writeResponse([{ seqNo: 2n }]))
-	await expect(reused).resolves.toBe(2n)
-})
-
-// Controlled ACKs keep both writes pending across the same reconnect.
-test.for([
-	{ name: 'RAW', codec: RAW_CODEC },
-	{ name: 'GZIP', codec: GZIP_CODEC },
-])('resends writes sharing one unchanged input buffer with $name', async ({ codec }, tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec })
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-
-	let payload = bytes(1, 2, 3)
-	writer.write(payload)
-	writer.write(payload)
-	let flushed = writer.flush(tc.signal)
-	await first.waitForWrite()
-	first.disconnect()
-
-	let replacement = await waitForNextStream()
-	await replacement.waitForInit()
-	replacement.respond(initResponse(0n))
-	let resent = await replacement.waitForWrite()
-	expect(resent.messages.map((message) => message.seqNo)).toEqual([1n, 2n])
-	expect(resent.messages.map((message) => [...codec.decompress(message.data)])).toEqual([
-		[1, 2, 3],
-		[1, 2, 3],
-	])
-	expect([...payload]).toEqual([1, 2, 3])
-	expect(resent.messages.every((message) => message.data === payload)).toBe(codec === RAW_CODEC)
-
-	replacement.respond(writeResponse([{ seqNo: 1n }, { seqNo: 2n }]))
-	await expect(flushed).resolves.toBe(2n)
-})

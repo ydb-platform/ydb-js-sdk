@@ -1,17 +1,25 @@
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { Codec, type StreamWriteMessage_FromServer } from '@ydbjs/api/topic'
+import { create } from '@bufbuild/protobuf'
+import {
+	Codec,
+	type StreamWriteMessage_FromServer,
+	StreamWriteMessage_FromServerSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 import { YDBError } from '@ydbjs/error'
-import { Status } from '@ydbjs/grpc'
+import { Server, Status } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
 import { isRetryableTopicError } from '../retry.ts'
 import { GZIP_CODEC } from '../codec.ts'
 import type { TX } from '../tx.ts'
 import {
+	type WriteStream,
 	failureResponse,
 	initResponse,
-	makeFakeTopicDriver,
-	settle,
+	nextRequest,
 	writeResponse,
 } from './writer.fixtures.ts'
 import { TopicWriter, createTopicTxWriter, createTopicWriter } from './writer.ts'
@@ -26,7 +34,7 @@ let initResponseWithCodecs = function initResponseWithCodecs(
 	lastSeqNo: bigint,
 	codecs: number[]
 ): StreamWriteMessage_FromServer {
-	return {
+	return create(StreamWriteMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
@@ -38,7 +46,7 @@ let initResponseWithCodecs = function initResponseWithCodecs(
 				supportedCodecs: { codecs },
 			},
 		},
-	} as unknown as StreamWriteMessage_FromServer
+	})
 }
 
 // A fake transaction capturing the lifecycle hooks the writer registers, so a
@@ -182,124 +190,176 @@ test.each(classifierTable)('$name', ({ error, retryOnSchemeError, retryable }) =
 // deduplicated by producerId+seqNo. The writer's reconnect path relies on that
 // dedup as its correctness backstop, so the constructor generates a producer id
 // when omitted — exactly like the factory.
-test('sends a non-empty producer id from the public constructor', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using _writer = new TopicWriter(driver, { topic: '/t' })
-
-	let stream = await waitForNextStream()
-	let init = await stream.waitForInit()
-
-	expect(init.producerId).not.toBe('')
+test('sends a non-empty producer id from the public constructor', async (tc) => {
+	let initialized = Promise.withResolvers<string>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') {
+					initialized.resolve(message.value.producerId)
+					yield initResponse(0n)
+				}
+				if (message.case === 'writeRequest') yield writeResponse(message.value.messages)
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using writer = new TopicWriter(driver, { topic: '/t' })
+	writer.write(bytes(1))
+	await writer.flush(tc.signal)
+	let producer = await initialized.promise
+	expect(producer).not.toBe('')
 })
 
 test('rejects an explicit empty producer id', () => {
 	// producer: '' is not a way to opt out of deduplication — it would silently
 	// duplicate in-flight messages on every reconnect.
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', { 'ydb.sdk.enable_discovery': false })
 	expect(() => new TopicWriter(driver, { topic: '/t', producer: '' })).toThrow(/producer/)
 })
 
-test('resends unacked messages under the same generated producer id', async () => {
+test('resends unacked messages under the same generated producer id', async (tc) => {
 	// The generated producer id is what makes reconnect resends safe: the second
 	// stream must init with the SAME id so the server can deduplicate the resend.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = new TopicWriter(driver, { topic: '/t' })
 
-	let first = await waitForNextStream()
-	let init = await first.waitForInit()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	let init = await nextRequest(first.requests, 'initRequest')
 	expect(init.producerId).not.toBe('')
 
-	first.respond(initResponse(0n))
-	await settle()
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 
 	// Drop the stream before the ack — the message is still in flight.
-	first.disconnect()
+	first.responses.close()
 
-	let second = await waitForNextStream()
-	let reinit = await second.waitForInit()
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	let reinit = await nextRequest(second.requests, 'initRequest')
 	expect(reinit.producerId).toBe(init.producerId)
-	second.respond(initResponse(0n))
+	second.responses.push(initResponse(0n))
 
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([1n])
 })
 
 // ── mid-stream retryable status frame ────────────────────────────────────────────
 
-test('reconnects and resends after a retryable mid-stream status frame', async () => {
+test('reconnects and resends after a retryable mid-stream status frame', async (tc) => {
 	// The server can reject mid-stream with a status frame (a FromServer message
 	// whose status is not SUCCESS) instead of breaking the stream. A retryable
 	// status like UNAVAILABLE must behave exactly like a transport error:
 	// transparent reconnect, resend of unacked messages, and the flush resolves.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
 	writer.write(bytes(2))
-	await first.waitForWrite()
+	await nextRequest(first.requests, 'writeRequest')
 
 	// The server persists seqNo 1, then sends a non-SUCCESS UNAVAILABLE frame.
-	first.respond(writeResponse([{ seqNo: 1n }]))
-	await settle()
-	first.respond(failureResponse(StatusIds_StatusCode.UNAVAILABLE))
+	first.responses.push(writeResponse([{ seqNo: 1n }]))
 
-	let second = await waitForNextStream()
-	let secondInit = await second.waitForInit()
+	first.responses.push(failureResponse(StatusIds_StatusCode.UNAVAILABLE))
+
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	let secondInit = await nextRequest(second.requests, 'initRequest')
 	expect(secondInit.getLastSeqNo).toBe(false)
 
-	second.respond(initResponse(1n))
+	second.responses.push(initResponse(1n))
 
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([2n])
 
 	let flushed = writer.flush()
-	second.respond(writeResponse([{ seqNo: 2n }]))
+	second.responses.push(writeResponse([{ seqNo: 2n }]))
 	await expect(flushed).resolves.toBe(2n)
 })
 
 // ── transaction identity across reconnect ────────────────────────────────────────
 
-test('keeps the transaction identity on writes resent after a reconnect', async () => {
+test('keeps the transaction identity on writes resent after a reconnect', async (tc) => {
 	// A tx message resent after a reconnect must carry the same tx identity as
 	// the original send — a resend without the tx tag would be a plain write:
 	// immediately visible and surviving rollback, silently breaking atomicity.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, { topic: '/t', producer: 'p' })
 
-	let first = await waitForNextStream()
-	await first.waitForInit()
-	first.respond(initResponse(0n))
-	await settle()
+	let first: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(first.requests, 'initRequest')
+	first.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	let original = await first.waitForWrite()
+	let original = await nextRequest(first.requests, 'writeRequest')
 	expect(original.tx?.id).toBe('tx-1')
 	expect(original.tx?.session).toBe('tx-session')
 
 	// Drop the stream before the ack — the tx message is still in flight.
-	first.disconnect()
+	first.responses.close()
 
-	let second = await waitForNextStream()
-	await second.waitForInit()
-	second.respond(initResponse(0n))
+	let second: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(second.requests, 'initRequest')
+	second.responses.push(initResponse(0n))
 
-	let resent = await second.waitForWrite()
+	let resent = await nextRequest(second.requests, 'writeRequest')
 	expect(resent.messages.map((m) => m.seqNo)).toEqual([1n])
 	expect(resent.tx?.id).toBe('tx-1')
 	expect(resent.tx?.session).toBe('tx-session')
 
 	// The drain spans the reconnect: the commit resolves once the resend is acked.
 	let committed = fake.commit()
-	second.respond(writeResponse([{ seqNo: 1n }]))
+	second.responses.push(writeResponse([{ seqNo: 1n }]))
 	await committed
 
 	expect(() => writer.write(bytes(2))).toThrow(/closed/)
@@ -307,12 +367,25 @@ test('keeps the transaction identity on writes resent after a reconnect', async 
 
 // ── graceful-drain failure fails the tx commit ───────────────────────────────────
 
-test('rejects the transaction commit when the graceful drain times out', async () => {
+test('rejects the transaction commit when the graceful drain times out', async (tc) => {
 	// Commit runs the onCommit hook, which awaits writer.close(). When the drain
 	// cannot complete (the server never acks within the graceful timeout), the
 	// commit must reject — a commit resolving over undelivered tx writes would
 	// silently commit a transaction that lost messages.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let fake = makeFakeTx()
 	using writer = createTopicTxWriter(fake.tx, driver, {
 		topic: '/t',
@@ -320,13 +393,12 @@ test('rejects the transaction commit when the graceful drain times out', async (
 		gracefulShutdownTimeoutMs: 30,
 	})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponse(0n))
 
 	writer.write(bytes(1))
-	await stream.waitForWrite()
+	await nextRequest(stream.requests, 'writeRequest')
 
 	// The server never acks; the graceful timeout fires with the message in flight.
 	await expect(Promise.resolve(fake.commit())).rejects.toThrow(/undelivered/i)
@@ -342,48 +414,86 @@ test('rejects the transaction commit when the graceful drain times out', async (
 // BAD_REQUEST at the first WriteRequest — after data is already buffered. The
 // writer must fail at init instead: terminally, with an error naming the codec,
 // and with no WriteRequest on the wire.
-test('fails terminally when the topic does not allow the configured codec', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('fails terminally when the topic does not allow the configured codec', async (tc) => {
+	let streams = new AsyncQueue<WriteStream>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(input, { signal }) {
+			using responses = new AsyncQueue<StreamWriteMessage_FromServer>()
+			streams.push({ requests: input[Symbol.asyncIterator](), responses, signal })
+			signal.addEventListener('abort', () => responses.close(), { once: true })
+			yield* responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec: GZIP_CODEC })
 
 	writer.write(bytes(1))
 	let flush = writer.flush()
 	flush.catch(() => {})
 
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponseWithCodecs(0n, [Codec.RAW]))
-	await settle()
+	let stream: WriteStream = (await streams.take(tc.signal)).value
+	await nextRequest(stream.requests, 'initRequest')
+	stream.responses.push(initResponseWithCodecs(0n, [Codec.RAW]))
 
 	await expect(flush).rejects.toThrow(/codec 2 .*supported codecs: 1/i)
-	expect(stream.sent.some((m) => m.clientMessage.case === 'writeRequest')).toBe(false)
+	let pendingWrite = nextRequest(stream.requests, 'writeRequest')
+	await expect(pendingWrite).rejects.toBeDefined()
 	expect(() => writer.write(bytes(2))).toThrow(/failed|closed/)
 })
 
-test('writes when the topic allows the configured codec', async () => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('writes when the topic allows the configured codec', async (tc) => {
+	let received = Promise.withResolvers<number>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest')
+					yield initResponseWithCodecs(0n, [Codec.RAW, Codec.GZIP])
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value.messages.length)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec: GZIP_CODEC })
-
 	writer.write(bytes(1))
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponseWithCodecs(0n, [Codec.RAW, Codec.GZIP]))
-
-	let request = await stream.waitForWrite()
-	expect(request.messages).toHaveLength(1)
+	await writer.flush(tc.signal)
+	let count = await received.promise
+	expect(count).toBe(1)
 })
 
-test('skips the codec check when the server sends no supported list', async () => {
-	// An absent / empty supported_codecs means the server-side codec check is
-	// disabled — the writer must not invent a restriction of its own.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+test('skips the codec check when the server sends no supported list', async (tc) => {
+	let received = Promise.withResolvers<number>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamWrite(requests) {
+			for await (let request of requests) {
+				let message = request.clientMessage
+				if (message.case === 'initRequest') yield initResponse(0n)
+				if (message.case === 'writeRequest') {
+					received.resolve(message.value.messages.length)
+					yield writeResponse(message.value.messages)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using writer = createTopicWriter(driver, { topic: '/t', producer: 'p', codec: GZIP_CODEC })
-
 	writer.write(bytes(1))
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(0n))
-
-	let request = await stream.waitForWrite()
-	expect(request.messages).toHaveLength(1)
+	await writer.flush(tc.signal)
+	let count = await received.promise
+	expect(count).toBe(1)
 })
