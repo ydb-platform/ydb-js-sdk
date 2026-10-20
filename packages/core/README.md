@@ -29,7 +29,7 @@ npm install @ydbjs/core
 
 `Driver.createClient()` returns a typed asynchronous client: unary methods return a `Promise`, response streams return an `AsyncIterable`, and request streams accept an `AsyncIterable`. Pass `{ signal }` to cancel a call. Per-call options accept an absolute `deadline`, plain `metadata` records, and `onHeader` / `onTrailer` callbacks. RPC failures expose `RpcError.code`, `details`, and trailing `metadata` from `@ydbjs/grpc`.
 
-The driver owns connections. A service client's `close()` prevents new calls through that client while other clients remain usable. Existing calls continue until completion or cancellation through their `AbortSignal`.
+The driver owns connections. A service client's `close()` immediately cancels its active calls and token waits, discards buffered responses, and prevents new calls through that client. Other service clients and the driver's shared connections remain usable.
 
 For an endpoint absent from discovery, await `driver.createPinnedClient(service, { nodeId, endpoint, hard }, signal)`. It requires discovery to be enabled, waits for pin publication, and returns a disposable async client. `close()` or `[Symbol.dispose]()` releases that client's pin. Ordinary `createClient(service, nodeId)` and `createClient(service, { nodeId, hard })` remain synchronous.
 

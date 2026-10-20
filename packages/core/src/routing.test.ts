@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { getEventListeners } from 'node:events'
 
 import {
 	type CallOptions,
@@ -29,7 +30,7 @@ function fixture(state: EndpointRef['state'] = 'active') {
 	let started: bigint[] = []
 	let ended: bigint[] = []
 	let reports: Array<{ nodeId: bigint; ok: boolean }> = []
-	let selections: Array<{ nodeId?: bigint; hard: boolean }> = []
+	let selections: Array<{ nodeId: bigint | undefined; hard: boolean }> = []
 	let entered = Promise.withResolvers<CallOptions>()
 	let terminal = Promise.withResolvers<RpcStatus>()
 	let ref = { nodeId: 7n, address: 'h:1', location: 'A', state } as EndpointRef
@@ -170,16 +171,45 @@ test('keeps a borrowed connection open when its service client closes', async ()
 	expect(f.connection.client.close).not.toHaveBeenCalled()
 })
 
-test('allows an existing call to finish after its service client closes', async () => {
-	let f = fixture()
-	let transport = createRoutingTransport(f.pool, metadata)
-	let pending = transport.call(method, {})[Symbol.asyncIterator]().next()
-	await f.entered.promise
-	transport.close()
-	f.terminal.resolve({ code: Status.OK, details: '', metadata: {} })
+test('cancels existing calls and releases their parent signal listeners', async () => {
+	let routing = fixture()
+	let parentController = new AbortController()
+	let transport = createRoutingTransport(routing.pool, metadata, {
+		signal: parentController.signal,
+	})
 
-	await expect(pending).resolves.toMatchObject({ done: true })
-	expect(f.ended).toEqual([7n])
+	let stream = transport.call(method, {})
+	let responses = stream[Symbol.asyncIterator]()
+	let pendingResponse = responses.next()
+	let callOptions = await routing.entered.promise
+
+	transport.close()
+
+	expect(callOptions.signal?.aborted).toBe(true)
+	routing.terminal.resolve({ code: Status.CANCELLED, details: 'Client is closed', metadata: {} })
+	await expect(pendingResponse).rejects.toThrow('Client is closed')
+
+	let remainingListeners = getEventListeners(parentController.signal, 'abort')
+	expect(remainingListeners).toEqual([])
+	expect(routing.connection.close).not.toHaveBeenCalled()
+	expect(routing.ended).toEqual([7n])
+})
+
+test('does not retain idle service clients through driver cancellation listeners', () => {
+	let routing = fixture()
+	let parentController = new AbortController()
+	let transports = Array.from({ length: 20 }, () =>
+		createRoutingTransport(routing.pool, metadata, { signal: parentController.signal })
+	)
+	let idleListeners = getEventListeners(parentController.signal, 'abort')
+	expect(idleListeners).toEqual([])
+
+	for (let transport of transports) {
+		transport.close()
+	}
+
+	let remainingListeners = getEventListeners(parentController.signal, 'abort')
+	expect(remainingListeners).toEqual([])
 })
 
 test('rejects new calls after the endpoint pool closes', async () => {
