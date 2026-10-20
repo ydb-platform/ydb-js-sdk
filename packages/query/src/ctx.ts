@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import type { Abortable } from 'node:events'
 
 import type { Session } from './session.js'
+import type { SessionPool } from './session-pool.js'
 
 /**
  * Async-local context carried across an `sql.begin()` body. The Session
@@ -11,6 +12,7 @@ import type { Session } from './session.js'
  */
 type Context = Abortable & {
 	session?: Session
+	sessionPool?: SessionPool
 	transactionId?: string
 }
 

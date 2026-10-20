@@ -130,7 +130,7 @@ export class SessionLease implements Disposable {
 	}
 }
 
-export class SessionPool implements AsyncDisposable {
+export class SessionPool implements AsyncDisposable, Disposable {
 	#driver: Driver
 	#maxSize: number
 	#minSize: number
@@ -141,6 +141,12 @@ export class SessionPool implements AsyncDisposable {
 	#waiters: Waiter[] = [] // FIFO
 	#creates = new Set<Promise<unknown>>()
 	#close = new AbortController()
+	#closing = false
+	#destroyed = false
+	#finished = false
+	#operations = 0
+	#drained: (() => void) | undefined
+	#shutdown: Promise<void> | undefined
 
 	#evictionHandlers = new WeakMap<Session, () => void>()
 
@@ -170,7 +176,25 @@ export class SessionPool implements AsyncDisposable {
 	}
 
 	get closed(): boolean {
-		return this.#close.signal.aborted
+		return this.#closing
+	}
+
+	get signal(): AbortSignal {
+		return this.#close.signal
+	}
+
+	beginOperation(continuingOperation = false): void {
+		this.#close.signal.throwIfAborted()
+		if (this.closed && !continuingOperation) throw new SessionPoolClosedError()
+		this.#operations++
+	}
+
+	endOperation(): void {
+		this.#operations--
+		if (this.#operations === 0) {
+			this.#drained?.()
+			this.#drained = undefined
+		}
 	}
 
 	get stats() {
@@ -188,6 +212,11 @@ export class SessionPool implements AsyncDisposable {
 	async acquire(signal?: AbortSignal): Promise<SessionLease> {
 		try {
 			let session = await this.#acquireSession(signal)
+			this.#close.signal.throwIfAborted()
+			if (signal?.aborted) {
+				this.release(session)
+				signal.throwIfAborted()
+			}
 
 			dc('ydb:query.session.acquired').publish({
 				driver: this.#driver.identity,
@@ -195,6 +224,7 @@ export class SessionPool implements AsyncDisposable {
 				sessionId: session.id,
 			})
 
+			this.#close.signal.throwIfAborted()
 			return new SessionLease(this, session)
 		} catch (error) {
 			// Caller cancellation isn't a pool-side failure — the request was
@@ -231,7 +261,7 @@ export class SessionPool implements AsyncDisposable {
 			return
 		}
 
-		if (this.closed) {
+		if (this.#close.signal.aborted) {
 			// Pool was closed between acquire() and release(); already-tracked
 			// sessions get a `pool_close` event so subscribers see one event
 			// per session lifecycle regardless of timing. Detach the eviction
@@ -264,41 +294,80 @@ export class SessionPool implements AsyncDisposable {
 		this.#available.push(session)
 	}
 
-	async close(): Promise<void> {
-		if (this.closed) return
-		this.#close.abort(new SessionPoolClosedError())
+	close(): Promise<void> {
+		if (this.#shutdown) return this.#shutdown
+		this.#closing = true
+		this.#shutdown = Promise.resolve().then(() => this.#finishClose())
+		return this.#shutdown
+	}
 
-		// Reject every waiter with a clear cause.
-		let waiters = this.#waiters.splice(0)
-		for (let w of waiters) {
-			w.detach()
+	async #finishClose(): Promise<void> {
+		if (this.#operations > 0 && !this.#destroyed) {
+			await new Promise<void>((resolve) => {
+				this.#drained = resolve
+			})
+		}
+		if (this.#finished) return
+		this.#close.abort(new SessionPoolClosedError())
+		this.#rejectWaiters()
+		await Promise.allSettled([...this.#creates])
+		if (this.#finished) return
+
+		let closing: Promise<void>[] = []
+		for (let session of this.#all) {
+			if (this.#destroyed) break
+			this.#detachEviction(session)
+			this.#publishClosed(session, 'pool_close')
+			if (this.#destroyed) break
+			closing.push(session.close('pool_close'))
+		}
+		await Promise.all(closing)
+		this.#all.clear()
+		this.#available.length = 0
+		this.#publishPoolClosed()
+	}
+
+	destroy(): void {
+		if (this.#destroyed) return
+		this.#destroyed = true
+		this.#closing = true
+		this.#close.abort(new SessionPoolClosedError())
+		this.#rejectWaiters()
+		this.#creates.clear()
+
+		let sessions = [...this.#all]
+		this.#all.clear()
+		this.#available.length = 0
+		for (let session of sessions) {
+			this.#detachEviction(session)
+			if (session.alive) this.#publishClosed(session, 'pool_close')
+			session.destroy('pool_close')
+		}
+		this.#drained?.()
+		this.#drained = undefined
+		this.#publishPoolClosed()
+	}
+
+	#rejectWaiters(): void {
+		for (let waiter of this.#waiters.splice(0)) {
+			waiter.detach()
 
 			dc('ydb:query.session.waiter.dequeued').publish({
 				driver: this.#driver.identity,
 			})
 
-			w.reject(new SessionPoolClosedError())
+			waiter.reject(new SessionPoolClosedError())
 		}
+	}
 
-		// Only thing worth awaiting: in-flight Session.open calls. The
-		// pool-close signal already propagated into them, so they'll bail
-		// quickly. Once settled, nothing new can land in the pool.
-		await Promise.allSettled([...this.#creates])
-
-		let sessions = [...this.#all]
-		this.#all.clear()
-		this.#available.length = 0
-		// close() is sync + fire-and-forget — no need to await each RPC.
-		// Detach the eviction listener BEFORE close() so we don't double-fire
-		// `closed{stream_*}` for sessions that the pool itself is tearing down.
-		for (let s of sessions) {
-			this.#detachEviction(s)
-			this.#publishClosed(s, 'pool_close')
-			s.close('pool_close')
-		}
-		// Pairs with `pool.opened`; tells subscribers to drop per-pool state.
+	#publishPoolClosed(): void {
+		if (this.#finished) return
+		this.#finished = true
 		dc('ydb:query.session.pool.closed').publish({ driver: this.#driver.identity })
-		dbg.log('pool closed (%d sessions)', sessions.length)
+	}
+
+	[Symbol.dispose](): void {
+		this.destroy()
 	}
 
 	async [Symbol.asyncDispose](): Promise<void> {
@@ -308,7 +377,7 @@ export class SessionPool implements AsyncDisposable {
 	// --- internals -------------------------------------------------------
 
 	async #acquireSession(signal?: AbortSignal): Promise<Session> {
-		if (this.closed) throw new SessionPoolClosedError()
+		this.#close.signal.throwIfAborted()
 		signal?.throwIfAborted()
 
 		// 1. Fast path: pop a warm idle session (LIFO). Skip dead ones lazily.
@@ -335,7 +404,7 @@ export class SessionPool implements AsyncDisposable {
 
 		let createCtx: SessionCreateCtx = { driver: this.#driver.identity }
 		let promise = sessionCreateCh.tracePromise(
-			() => Session.open(this.#driver, linked.signal),
+			() => Session.open(this.#driver, linked.signal, this.#close.signal),
 			createCtx
 		)
 		this.#creates.add(promise)
@@ -344,8 +413,8 @@ export class SessionPool implements AsyncDisposable {
 			let session = await promise
 
 			// The pool closed while we were creating. Dispose it, don't leak.
-			if (this.closed) {
-				session.close('pool_close')
+			if (this.#close.signal.aborted) {
+				session.destroy('pool_close')
 				throw new SessionPoolClosedError()
 			}
 
@@ -415,7 +484,7 @@ export class SessionPool implements AsyncDisposable {
 	 * try again or another eviction will trigger another replacement.
 	 */
 	#pumpWaitersAfterEviction(): void {
-		if (this.closed) return
+		if (this.#close.signal.aborted) return
 		if (this.#waiters.length === 0) return
 		if (this.#all.size + this.#creates.size >= this.#maxSize) return
 
@@ -461,7 +530,7 @@ export class SessionPool implements AsyncDisposable {
 			return
 		}
 
-		if (this.closed) return // #grow already disposed it under this.closed
+		if (this.#close.signal.aborted) return
 
 		let waiter = this.#waiters.shift()
 		if (waiter) {

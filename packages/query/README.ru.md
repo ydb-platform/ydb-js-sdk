@@ -173,6 +173,32 @@ await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 
 Заметка по безопасности: identifier() лишь экранирует обратные кавычки и оборачивает имя в обратные кавычки. Не передавайте туда непроверенный ввод — используйте валидацию/allow‑list.
 
+## Завершение клиента
+
+`close()` запрещает запуск новых запросов и транзакций, ждёт завершения уже принятых операций и освобождает их сессии. Текущие операции могут закончить retry и commit. `await using` вызывает `close()`.
+
+```ts
+let sql = query(driver)
+let statement = sql`SELECT 1 AS id`.execute()
+await sql.close()
+let result = await statement
+```
+
+`destroy()` немедленно отменяет запросы, транзакции и работу с сессиями, очищает пул и запрещает дальнейшее выполнение. `using` вызывает `destroy()`. Новые RPC rollback и DeleteSession при этом не отправляются: после отмены attach-стримов сессии очищает YDB. Уже запущенный пользовательский callback получает отменённый сигнал; его собственный асинхронный код должен учитывать этот сигнал.
+
+```ts
+using sql = query(driver)
+let statement = sql`SELECT 1 AS id`
+let result = statement.then(
+  (rows) => rows,
+  (error) => error
+)
+sql.destroy()
+await result
+```
+
+Переданный `Driver` остаётся открытым, поэтому остальные клиенты могут продолжать его использовать. Чтобы очистить параметры, сохранённый результат и подписки отдельного запроса, вызовите `statement.destroy()` или `await statement.dispose()`. Метод `cancel()` только отменяет выполнение и публикует прежнее событие `cancel`.
+
 ## Разработка
 
 ### Сборка
