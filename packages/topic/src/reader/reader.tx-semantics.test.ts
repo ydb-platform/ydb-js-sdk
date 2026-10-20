@@ -1,271 +1,340 @@
-import { TopicServiceDefinition } from '@ydbjs/api/topic'
-import { expect, test } from 'vitest'
+import { create } from '@bufbuild/protobuf'
+import { abortable } from '@ydbjs/abortable'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import {
+	TopicServiceDefinition,
+	type UpdateOffsetsInTransactionRequest,
+	UpdateOffsetsInTransactionResponseSchema,
+} from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { Server } from '@ydbjs/grpc'
+import { expect, test, vi } from 'vitest'
 
 import type { TopicMessage } from '../message.ts'
 import { TopicReader } from './index.ts'
-import {
-	initResponse,
-	makeFakeTopicDriver,
-	makeFakeTx,
-	readResponse,
-	settle,
-	startPartitionSession,
-} from './reader.fixtures.ts'
+import { initResponse, makeFakeTx, readResponse, startPartitionSession } from './reader.fixtures.ts'
 
-// Transactional-reader offset semantics against the fake streamRead driver: which
-// offsets a tx commit binds (delivered vs merely buffered), where the commit range
-// is anchored relative to the server committed offset, how the resulting
-// UpdateOffsetsInTransaction call is routed, and what happens to the tracked
-// offsets when the reader is closed before the transaction commits.
+let bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
 
-let bytes = function bytes(text: string): Uint8Array {
-	return new TextEncoder().encode(text)
-}
-
-// Drive the shared read() iterator until `count` messages accumulate (idle ticks
-// yield empty batches and are skipped). `signal` bounds a hang if they never arrive.
-let collect = async function collect(
+async function collect(
 	reader: TopicReader,
 	count: number,
 	signal: AbortSignal
 ): Promise<TopicMessage[]> {
-	let out: TopicMessage[] = []
+	let messages: TopicMessage[] = []
 	for await (let batch of reader.read({ batchWindowMs: 5, signal })) {
-		out.push(...batch)
-		if (out.length >= count) {
-			break
-		}
+		messages.push(...batch)
+		if (messages.length >= count) break
 	}
-	return out
+	return messages
 }
 
-// init handshake + read-credit grant, the precondition for every test below.
-let primeStream = async function primeStream(
-	waitForNextStream: ReturnType<typeof makeFakeTopicDriver>['waitForNextStream']
-) {
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse('session-A'))
-	await stream.waitForReadRequest()
-	return stream
-}
-
-// At-least-once over processed messages: a transaction binds only offsets the
-// consumer actually received from read() — the wire range ends right after the last
-// DELIVERED offset, never covering buffered-but-undelivered messages.
 test('binds only offsets delivered through read() to the transaction commit', async (tc) => {
-	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
-	let fake = makeFakeTx()
-	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-
-	let stream = await primeStream(waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 0n, seqNo: 1n, data: bytes('a') },
-				{ offset: 1n, seqNo: 2n, data: bytes('b') },
-			],
-		})
-	)
+	let delivered = Promise.withResolvers<void>()
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n, 1n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+					await abortable(context.signal, delivered.promise)
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [2n, 3n, 4n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request) {
+			txOffsetRequests.push(request)
+			return create(UpdateOffsetsInTransactionResponseSchema, {
+				operation: { ready: true, status: StatusIds_StatusCode.SUCCESS },
+			})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let transaction = makeFakeTx()
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: transaction.tx })
 	await collect(reader, 2, tc.signal)
-
-	// Three more messages arrive and sit in the buffer; read() never yields them.
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 2n, seqNo: 3n, data: bytes('c') },
-				{ offset: 3n, seqNo: 4n, data: bytes('d') },
-				{ offset: 4n, seqNo: 5n, data: bytes('e') },
-			],
-		})
-	)
-	await settle()
-
-	await fake.commit()
+	delivered.resolve()
+	await expect.poll(() => reader.bufferedBytes).toBeGreaterThan(0n)
+	await transaction.commit(tc.signal)
 	expect(txOffsetRequests).toHaveLength(1)
-	expect(txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets).toEqual([
-		expect.objectContaining({ start: 0n, end: 2n }),
-	])
+	let offsets = txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets
+	expect(offsets).toEqual([expect.objectContaining({ start: 0n, end: 2n })])
 })
 
-// Like the non-tx commit path, the tx range is anchored at the server committed
-// offset (the first delivered message's stitched range start), so a head gap —
-// retention-expired offsets or a readOffset override — cannot make the server
-// reject the tx commit or stall the watermark.
 test('anchors the tx commit range at the server committed offset across a head gap', async (tc) => {
-	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
-	let fake = makeFakeTx()
-	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-
-	let stream = await primeStream(waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 3n })
-	)
-	await stream.waitForStartResponse()
-	// First delivery starts above the committed offset 3 — offsets 3..4 are gone
-	// (e.g. expired by retention).
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 5n, seqNo: 1n, data: bytes('a') },
-				{ offset: 6n, seqNo: 2n, data: bytes('b') },
-			],
-		})
-	)
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 3n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [5n, 6n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request) {
+			txOffsetRequests.push(request)
+			return create(UpdateOffsetsInTransactionResponseSchema, {
+				operation: { ready: true, status: StatusIds_StatusCode.SUCCESS },
+			})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let transaction = makeFakeTx()
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: transaction.tx })
 	await collect(reader, 2, tc.signal)
-
-	await fake.commit()
+	await transaction.commit(tc.signal)
 	expect(txOffsetRequests).toHaveLength(1)
-	expect(txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets).toEqual([
-		expect.objectContaining({ start: 3n, end: 7n }),
-	])
+	let offsets = txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets
+	expect(offsets).toEqual([expect.objectContaining({ start: 3n, end: 7n })])
 })
 
-// UpdateOffsetsInTransaction references the transaction's session, and session-bound
-// RPCs are pinned to the node hosting that session — the commit call passes the
-// transaction's nodeId to createClient, matching how the query package routes
-// every session call.
 test('routes UpdateOffsetsInTransaction to the transaction session node', async (tc) => {
-	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
-
-	// The shared fixture's createClient ignores its arguments — wrap it to observe the
-	// node preference each call carries.
-	let createClientArgs: unknown[][] = []
-	let innerCreateClient = driver.createClient.bind(driver) as (...args: unknown[]) => unknown
-	;(driver as unknown as { createClient: (...args: unknown[]) => unknown }).createClient = (
-		...args: unknown[]
-	) => {
-		createClientArgs.push(args)
-		return innerCreateClient(...args)
-	}
-
-	let fake = makeFakeTx()
-	Object.assign(fake.tx, { nodeId: 42n })
-	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-
-	let stream = await primeStream(waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request) {
+			txOffsetRequests.push(request)
+			return create(UpdateOffsetsInTransactionResponseSchema, {
+				operation: { ready: true, status: StatusIds_StatusCode.SUCCESS },
+			})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let createClient = vi.spyOn(driver, 'createClient')
+	let transaction = makeFakeTx()
+	Object.assign(transaction.tx, { nodeId: 42n })
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: transaction.tx })
 	await collect(reader, 1, tc.signal)
-
-	let callsBefore = createClientArgs.length
-	await fake.commit()
+	createClient.mockClear()
+	await transaction.commit(tc.signal)
 	expect(txOffsetRequests).toHaveLength(1)
-
-	let commitCalls = createClientArgs.slice(callsBefore)
-	expect(commitCalls.length).toBeGreaterThanOrEqual(1)
-	expect(commitCalls[0]![0]).toBe(TopicServiceDefinition)
-	expect(commitCalls[0]![1]).toBe(42n)
+	expect(createClient.mock.calls.length).toBeGreaterThanOrEqual(1)
+	expect(createClient.mock.calls[0]![0]).toBe(TopicServiceDefinition)
+	expect(createClient.mock.calls[0]![1]).toBe(42n)
 })
 
-// Offsets consumed inside a transaction survive an early close(): the commit hook
-// still binds them via UpdateOffsetsInTransaction — a tx reader closed before the
-// commit must not silently drop its progress (that would redeliver every consumed
-// message after the tx commits).
 test('preserves tracked read offsets when the reader closes before the tx commit', async (tc) => {
-	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
-	let fake = makeFakeTx()
-	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-
-	let stream = await primeStream(waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request) {
+			txOffsetRequests.push(request)
+			return create(UpdateOffsetsInTransactionResponseSchema, {
+				operation: { ready: true, status: StatusIds_StatusCode.SUCCESS },
+			})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let transaction = makeFakeTx()
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: transaction.tx })
 	await collect(reader, 1, tc.signal)
-
 	await expect(reader.close()).resolves.toBeUndefined()
-	await expect(fake.commit()).resolves.toBeUndefined()
+	let committing = transaction.commit(tc.signal)
+	await expect(committing).resolves.toBeUndefined()
 	expect(txOffsetRequests).toHaveLength(1)
-	expect(txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets).toEqual([
-		expect.objectContaining({ start: 0n, end: 1n }),
-	])
+	let offsets = txOffsetRequests[0]!.topics[0]!.partitions[0]!.partitionOffsets
+	expect(offsets).toEqual([expect.objectContaining({ start: 0n, end: 1n })])
 })
 
 test('keeps the transaction consumer registered at reader creation', async (tc) => {
-	let { driver, waitForNextStream, txOffsetRequests } = makeFakeTopicDriver()
-	let fake = makeFakeTx()
+	let consumer: string | undefined
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					consumer = clientMessage.value.consumer
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request) {
+			txOffsetRequests.push(request)
+			return create(UpdateOffsetsInTransactionResponseSchema, {
+				operation: { ready: true, status: StatusIds_StatusCode.SUCCESS },
+			})
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let transaction = makeFakeTx()
 	let options = { topic: '/t', consumer: 'registered' }
-	using reader = new TopicReader(driver, options, { tx: fake.tx })
+	using reader = new TopicReader(driver, options, { tx: transaction.tx })
 	options.consumer = 'replacement'
-	let stream = await primeStream(waitForNextStream)
-	expect((await stream.waitForInit()).consumer).toBe('registered')
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
 	await collect(reader, 1, tc.signal)
-	await fake.commit()
+	expect(consumer).toBe('registered')
+	await transaction.commit(tc.signal)
 	expect(txOffsetRequests).toHaveLength(1)
 	expect(txOffsetRequests[0]!.consumer).toBe('registered')
 })
 
-// The stalled unary call makes cancellation observable before a server response;
-// a live server cannot guarantee that ordering deterministically.
 test('cancels a pending transaction-offset request with the commit hook signal', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let entered = Promise.withResolvers<void>()
-	let innerCreateClient = driver.createClient.bind(driver) as (...args: unknown[]) => object
-	;(driver as unknown as { createClient: (...args: unknown[]) => unknown }).createClient = (
-		...args
-	) => ({
-		...innerCreateClient(...args),
-		updateOffsetsInTransaction(_request: unknown, options?: { signal?: AbortSignal }) {
-			entered.resolve()
-			let signal = options?.signal
-			if (!signal) {
-				return Promise.reject(new Error('Missing transaction commit signal'))
-			}
-			return new Promise((_, reject) => {
-				if (signal.aborted) {
-					reject(signal.reason)
-				} else {
-					signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+	let cancelled = Promise.withResolvers<void>()
+	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
 				}
-			})
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+		async updateOffsetsInTransaction(request, context) {
+			txOffsetRequests.push(request)
+			entered.resolve()
+			try {
+				await abortable(context.signal, new Promise<never>(() => {}))
+			} finally {
+				if (context.signal.aborted) cancelled.resolve()
+			}
+			return create(UpdateOffsetsInTransactionResponseSchema)
 		},
 	})
-	let fake = makeFakeTx()
-	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: fake.tx })
-	let stream = await primeStream(waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let transaction = makeFakeTx()
+	using reader = new TopicReader(driver, { topic: '/t', consumer: 'c' }, { tx: transaction.tx })
 	await collect(reader, 1, tc.signal)
-	let ctrl = new AbortController()
+	let controller = new AbortController()
 	let reason = new Error('Transaction cancelled')
-	let outcome = Promise.resolve(fake.commit(ctrl.signal)).catch((error: unknown) => error)
+	let outcome = Promise.resolve(transaction.commit(controller.signal)).catch(
+		(error: unknown) => error
+	)
 	await entered.promise
-	ctrl.abort(reason)
+	controller.abort(reason)
 	expect(await outcome).toBe(reason)
+	await cancelled.promise
+	expect(txOffsetRequests).toHaveLength(1)
 })

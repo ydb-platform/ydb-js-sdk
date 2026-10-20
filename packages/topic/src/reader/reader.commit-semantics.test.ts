@@ -1,14 +1,22 @@
+import { create } from '@bufbuild/protobuf'
+import { abortable } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import type { StreamReadMessage_FromServer } from '@ydbjs/api/topic'
+import {
+	type StreamReadMessage_CommitOffsetRequest,
+	type StreamReadMessage_FromServer,
+	StreamReadMessage_FromServerSchema,
+	TopicServiceDefinition,
+} from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { RpcError, Server, Status } from '@ydbjs/grpc'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 import { expect, test } from 'vitest'
 
 import type { TopicMessage } from '../message.ts'
 import { createTopicReader } from './index.ts'
-import type { FakeReadStream } from './reader.fixtures.ts'
 import {
 	commitOffsetResponse,
 	initResponse,
-	makeFakeTopicDriver,
 	partitionStatusResponse,
 	readResponse,
 	settle,
@@ -16,462 +24,563 @@ import {
 	stopPartitionSession,
 } from './reader.fixtures.ts'
 
-// Commit semantics over the wire: which offset ranges commit() actually sends, how the
-// gap-fill anchor distinguishes retention holes from delivered-but-unacked messages,
-// what a sparse or foreign-reader commit does, and when onCommittedOffset fires.
+let bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
 
-let bytes = function bytes(text: string): Uint8Array {
-	return new TextEncoder().encode(text)
-}
-
-// Drive the shared read() iterator until `count` messages accumulate (idle ticks yield
-// empty batches and are skipped). `signal` bounds a hang if the count never arrives.
-let collect = async function collect(
+async function collect(
 	reader: ReturnType<typeof createTopicReader>,
 	count: number,
 	signal: AbortSignal
 ): Promise<TopicMessage[]> {
-	let out: TopicMessage[] = []
+	let messages: TopicMessage[] = []
 	for await (let batch of reader.read({ batchWindowMs: 5, signal })) {
-		out.push(...batch)
-		if (out.length >= count) {
-			break
-		}
+		messages.push(...batch)
+		if (messages.length >= count) break
 	}
-	return out
+	return messages
 }
 
-// endPartitionSession is informational ("partition fully read") — not in the shared
-// fixtures because only a few tests exercise it.
-let endPartitionSession = function endPartitionSession(
-	partitionSessionId: bigint
-): StreamReadMessage_FromServer {
-	return {
+function endPartitionSession(partitionSessionId: bigint) {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
-		issues: [],
-		serverMessage: {
-			case: 'endPartitionSession',
-			value: { partitionSessionId, adjacentPartitionIds: [], childPartitionIds: [] },
-		},
-	} as unknown as StreamReadMessage_FromServer
-}
-
-// Every CommitOffsetRequest the reader put on this stream, in send order.
-let commitRequests = function commitRequests(stream: FakeReadStream) {
-	return stream.sent.flatMap((m) =>
-		m.clientMessage.case === 'commitOffsetRequest' ? [m.clientMessage.value] : []
-	)
-}
-
-// init handshake + read-credit grant, the precondition for every test below.
-let primeStream = async function primeStream(
-	reader: ReturnType<typeof createTopicReader>,
-	waitForNextStream: ReturnType<typeof makeFakeTopicDriver>['waitForNextStream'],
-	sessionId = 'session-A'
-) {
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(sessionId))
-	await stream.waitForReadRequest()
-	return stream
+		serverMessage: { case: 'endPartitionSession', value: { partitionSessionId } },
+	})
 }
 
 test('batches per-message commits from one turn behind one promise and one wire request', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-
 	let count = 1000
-	let source = Array.from({ length: count }, (_, offset) => ({
-		offset: BigInt(offset),
-		seqNo: BigInt(offset + 1),
-		data: bytes(String(offset)),
-	}))
-	stream.respond(readResponse({ partitionSessionId: 1n, messages: source }))
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: Array.from({ length: count }, (_, offset) => BigInt(offset)).map(
+							(offset, index) => ({
+								offset,
+								seqNo: BigInt(index + 1),
+								data: bytes(String(offset)),
+							})
+						),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1000n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 	let messages = await collect(reader, count, tc.signal)
-
 	let promises: Promise<void>[] = []
-	for (let message of messages) {
-		promises.push(reader.commit(message))
-	}
-
-	// Promise identity is the allocation contract: all synchronous calls join the
-	// same microtask batch instead of allocating one public promise per message.
+	for (let message of messages) promises.push(reader.commit(message))
 	expect(new Set(promises).size).toBe(1)
-
-	let request = await stream.waitForCommit()
+	let results = Promise.all(promises)
+	await expect(results).resolves.toHaveLength(count)
+	expect(commits).toHaveLength(1)
+	let request = commits[0]!
 	expect(request.commitOffsets).toHaveLength(1)
 	expect(request.commitOffsets[0]!.offsets).toMatchObject([{ start: 0n, end: BigInt(count) }])
-	await settle()
-	expect(commitRequests(stream)).toHaveLength(1)
-
-	stream.respond(
-		commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: BigInt(count) }])
-	)
-	await expect(Promise.all(promises)).resolves.toHaveLength(count)
 })
 
 test('merges message and array commit inputs into the same microtask batch', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n, 1n, 2n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 3n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 0n, seqNo: 1n, data: bytes('a') },
-				{ offset: 1n, seqNo: 2n, data: bytes('b') },
-				{ offset: 2n, seqNo: 3n, data: bytes('c') },
-			],
-		})
-	)
 	let messages = await collect(reader, 3, tc.signal)
-
 	let first = reader.commit(messages[0]!)
 	let rest = reader.commit(messages.slice(1))
 	expect(first).toBe(rest)
-
-	let request = await stream.waitForCommit()
-	expect(request.commitOffsets[0]!.offsets).toMatchObject([{ start: 0n, end: 3n }])
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 3n }]))
 	await expect(first).resolves.toBeUndefined()
+	expect(commits[0]!.commitOffsets[0]!.offsets).toMatchObject([{ start: 0n, end: 3n }])
 })
 
 test('keeps separate microtask batches pending behind the same server watermark', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 5n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [5n, 6n, 7n, 8n, 9n, 10n, 11n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					if (commits.length === 2)
+						yield commitOffsetResponse([
+							{ partitionSessionId: 1n, committedOffset: 12n },
+						])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: Array.from({ length: 7 }, (_, index) => ({
-				offset: BigInt(index + 5),
-				seqNo: BigInt(index + 1),
-				data: bytes(String(index)),
-			})),
-		})
-	)
 	let messages = await collect(reader, 7, tc.signal)
-
 	let first = reader.commit(messages.slice(0, 5))
-	let firstRequest = await stream.waitForCommit()
-	expect(firstRequest.commitOffsets[0]!.offsets).toMatchObject([{ start: 5n, end: 10n }])
-
+	await expect.poll(() => commits.length).toBe(1)
+	expect(commits[0]!.commitOffsets[0]!.offsets).toMatchObject([{ start: 5n, end: 10n }])
 	let second = reader.commit(messages.slice(2))
 	expect(second).not.toBe(first)
-	await settle()
-	let requests = commitRequests(stream)
-	expect(requests).toHaveLength(2)
-	expect(requests[1]!.commitOffsets[0]!.offsets).toMatchObject([{ start: 10n, end: 12n }])
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 12n }]))
-	await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+	let completed = Promise.all([first, second])
+	await expect(completed).resolves.toEqual([undefined, undefined])
+	expect(commits).toHaveLength(2)
+	expect(commits[1]!.commitOffsets[0]!.offsets).toMatchObject([{ start: 10n, end: 12n }])
 })
 
 test('keeps a duplicate from a later microtask pending without sending it twice', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commitReceived = Promise.withResolvers<void>()
+	let probeReceived = Promise.withResolvers<void>()
+	let requestsFinished = Promise.withResolvers<void>()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using responses = new AsyncQueue<StreamReadMessage_FromServer>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		streamRead(requests) {
+			let receiving = (async () => {
+				try {
+					for await (let { clientMessage } of requests) {
+						if (clientMessage.case === 'initRequest') {
+							responses.push(initResponse())
+							responses.push(
+								startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+							)
+						}
+						if (clientMessage.case === 'startPartitionSessionResponse') {
+							if (clientMessage.value.partitionSessionId === 1n) {
+								responses.push(
+									readResponse({
+										partitionSessionId: 1n,
+										messages: [
+											{ offset: 0n, seqNo: 1n, data: bytes('message') },
+										],
+									})
+								)
+							} else probeReceived.resolve()
+						}
+						if (clientMessage.case === 'commitOffsetRequest') {
+							commits.push(clientMessage.value)
+							commitReceived.resolve()
+						}
+					}
+				} finally {
+					requestsFinished.resolve()
+				}
+			})()
+			void receiving.catch((error: unknown) => responses.fail(error))
+			return responses
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
 	let [message] = await collect(reader, 1, tc.signal)
-
 	let first = reader.commit(message!)
-	await stream.waitForCommit()
+	await commitReceived.promise
 	let duplicate = reader.commit(message!)
 	let duplicateSettled = false
 	void duplicate.then(
-		() => {
-			duplicateSettled = true
-			return undefined
-		},
-		() => undefined
+		() => (duplicateSettled = true),
+		() => false
 	)
 	await settle()
-
-	expect(commitRequests(stream)).toHaveLength(1)
+	// Reading a later frame proves the server has consumed any preceding duplicate commit.
+	responses.push(startPartitionSession({ partitionSessionId: 2n, partitionId: 11n }))
+	await probeReceived.promise
 	expect(duplicateSettled).toBe(false)
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
-	await expect(Promise.all([first, duplicate])).resolves.toEqual([undefined, undefined])
+	expect(commits).toHaveLength(1)
+	responses.push(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
+	let completed = Promise.all([first, duplicate])
+	await expect(completed).resolves.toEqual([undefined, undefined])
+	await reader.close()
+	await requestsFinished.promise
+	expect(commits).toHaveLength(1)
 })
 
-// ── stitched commit ranges ──────────────────────────────────────────────────────
-
-// Each message acknowledges only its own stitched range: with all earlier offsets
-// delivered and no server-side hole, commit(msg4) covers exactly [4, 5). Gap-fill
-// exists for retention holes, never for delivered-but-unacked messages — the server
-// commits gap-free ACKED intervals only, and a message deliberately left uncommitted
-// (e.g. a failed handler in concurrent per-message processing) must be redelivered.
 test('commits only the acked message when earlier delivered messages are unacked', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n, 1n, 2n, 3n, 4n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 5n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	// Contiguous delivery from the committed offset: every offset exists, none acked.
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 0n, seqNo: 1n, data: bytes('a') },
-				{ offset: 1n, seqNo: 2n, data: bytes('b') },
-				{ offset: 2n, seqNo: 3n, data: bytes('c') },
-				{ offset: 3n, seqNo: 4n, data: bytes('d') },
-				{ offset: 4n, seqNo: 5n, data: bytes('e') },
-			],
-		})
-	)
 	let messages = await collect(reader, 5, tc.signal)
-
 	let commit = reader.commit(messages[4]!)
-	commit.catch(() => {})
-
-	let request = await stream.waitForCommit()
+	await expect(commit).resolves.toBeUndefined()
+	let request = commits[0]!
 	expect(request.commitOffsets[0]!.offsets).toHaveLength(1)
 	expect(request.commitOffsets[0]!.offsets[0]!.start).toBe(4n)
 	expect(request.commitOffsets[0]!.offsets[0]!.end).toBe(5n)
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 5n }]))
-	await expect(commit).resolves.toBeUndefined()
 })
 
 test('commits live partitions when the same batch contains a stopped partition', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 2n, partitionId: 20n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	await settle(10)
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('stopped') }],
-		})
-	)
-	stream.respond(
-		readResponse({
-			partitionSessionId: 2n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('live') }],
-		})
-	)
+	let revoke = Promise.withResolvers<void>()
+	let stopped = Promise.withResolvers<void>()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			let started = 0
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+					yield startPartitionSession({ partitionSessionId: 2n, partitionId: 20n })
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					let partitionSessionId = clientMessage.value.partitionSessionId
+					yield readResponse({
+						partitionSessionId,
+						messages: [
+							{ offset: 0n, seqNo: 1n, data: bytes(String(partitionSessionId)) },
+						],
+					})
+					if (++started === 2) {
+						await abortable(context.signal, revoke.promise)
+						yield stopPartitionSession({
+							partitionSessionId: 1n,
+							graceful: false,
+							committedOffset: 0n,
+						})
+					}
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 2n, committedOffset: 1n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		onPartitionSessionStop: async () => {
+			stopped.resolve()
+		},
+	})
 	let messages = await collect(reader, 2, tc.signal)
-
-	stream.respond(
-		stopPartitionSession({ partitionSessionId: 1n, graceful: false, committedOffset: 0n })
-	)
-	await settle(10)
-
+	revoke.resolve()
+	await stopped.promise
 	let commit = reader.commit(messages)
-	commit.catch(() => {})
-	let request = await stream.waitForCommit()
-	expect(request.commitOffsets).toEqual([
+	await expect(commit).rejects.toThrow(/stopped or expired partition session/)
+	expect(commits).toHaveLength(1)
+	expect(commits[0]!.commitOffsets).toEqual([
 		expect.objectContaining({
 			partitionSessionId: 2n,
 			offsets: [expect.objectContaining({ start: 0n, end: 1n })],
 		}),
 	])
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 2n, committedOffset: 1n }]))
-	await expect(commit).rejects.toThrow(/stopped or expired partition session/)
-	expect(commitRequests(stream)).toHaveLength(1)
 })
 
 test('gap-fills the first commit range from the server committed offset across a retention hole', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 2n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [5n, 6n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 6n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	// Retention deleted offsets 2..4: the server reports committedOffset 2 and the
-	// first message that still exists is offset 5. The offsets in the hole were never
-	// delivered, so committing msg5 must cover [2, 6) — otherwise the consumer's
-	// committed offset could never advance past the hole.
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 2n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 5n, seqNo: 1n, data: bytes('a') },
-				{ offset: 6n, seqNo: 2n, data: bytes('b') },
-			],
-		})
-	)
 	let messages = await collect(reader, 2, tc.signal)
-
 	let commit = reader.commit(messages[0]!)
-	let request = await stream.waitForCommit()
+	await expect(commit).resolves.toBeUndefined()
+	let request = commits[0]!
 	expect(request.commitOffsets[0]!.offsets).toHaveLength(1)
 	expect(request.commitOffsets[0]!.offsets[0]!.start).toBe(2n)
 	expect(request.commitOffsets[0]!.offsets[0]!.end).toBe(6n)
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 6n }]))
-	await expect(commit).resolves.toBeUndefined()
 })
 
-// ── sparse commit in a single call ─────────────────────────────────────────────
-
-// The server treats the commit ack as a watermark: a committed range above an
-// uncommitted gap is held back until the gap is committed. A single commit() with
-// non-contiguous messages sends exactly its disjoint ranges; a later commit of the
-// gap offsets reaches the wire too, the watermark advances over the now-contiguous
-// coverage, and both promises resolve.
 test('sends the gap offsets to the wire so a sparse commit() can resolve', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 5n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [5n, 6n, 7n, 8n, 9n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([
+						{
+							partitionSessionId: 1n,
+							committedOffset: commits.length === 1 ? 6n : 10n,
+						},
+					])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 5n, seqNo: 1n, data: bytes('a') },
-				{ offset: 6n, seqNo: 2n, data: bytes('b') },
-				{ offset: 7n, seqNo: 3n, data: bytes('c') },
-				{ offset: 8n, seqNo: 4n, data: bytes('d') },
-				{ offset: 9n, seqNo: 5n, data: bytes('e') },
-			],
-		})
-	)
 	let messages = await collect(reader, 5, tc.signal)
-
 	let sparse = reader.commit([messages[0]!, messages[4]!])
-	sparse.catch(() => {})
-	let first = await stream.waitForCommit()
-	expect(first.commitOffsets[0]!.offsets.map((r) => [r.start, r.end])).toEqual([
+	await expect.poll(() => commits.length).toBe(1)
+	let ranges = commits[0]!.commitOffsets[0]!.offsets.map((range) => [range.start, range.end])
+	expect(ranges).toEqual([
 		[5n, 6n],
 		[9n, 10n],
 	])
-
-	// The watermark can only advance up to the gap.
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 6n }]))
-	await settle()
-
-	// Committing the gap offsets must produce a second CommitOffsetRequest covering
-	// 6..8 — without it the server watermark (and the sparse commit) is stuck forever.
 	let gap = reader.commit([messages[1]!, messages[2]!, messages[3]!])
-	gap.catch(() => {})
-	await settle()
-	expect(commitRequests(stream)).toHaveLength(2)
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 10n }]))
 	await expect(gap).resolves.toBeUndefined()
 	await expect(sparse).resolves.toBeUndefined()
+	expect(commits).toHaveLength(2)
 })
 
-// ── foreign-reader messages ────────────────────────────────────────────────────
-
-// commit() verifies the message's partition session belongs to THIS reader: a
-// message from a different reader (different consumer) is rejected and nothing goes
-// on the wire — committing it here would corrupt both consumers' progress.
 test('rejects a commit of a message owned by a different reader', async (tc) => {
-	let a = makeFakeTopicDriver()
-	let b = makeFakeTopicDriver()
-	using readerA = createTopicReader(a.driver, { topic: '/t', consumer: 'consumer-a' })
-	using readerB = createTopicReader(b.driver, { topic: '/t', consumer: 'consumer-b' })
-
-	let streamA = await primeStream(readerA, a.waitForNextStream)
-	streamA.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 0n, committedOffset: 0n })
-	)
-	await streamA.waitForStartResponse()
-
-	let streamB = await primeStream(readerB, b.waitForNextStream)
-	streamB.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 0n, committedOffset: 0n })
-	)
-	await streamB.waitForStartResponse()
-	streamB.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('b') }],
-		})
-	)
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	let starts = 0
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			let consumer = ''
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					consumer = clientMessage.value.consumer
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: consumer === 'consumer-a' ? 0n : 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					starts++
+					if (consumer === 'consumer-b')
+						yield readResponse({
+							partitionSessionId: 1n,
+							messages: [{ offset: 0n, seqNo: 1n, data: bytes('b') }],
+						})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') commits.push(clientMessage.value)
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using readerA = createTopicReader(driver, { topic: '/t', consumer: 'consumer-a' })
+	using readerB = createTopicReader(driver, { topic: '/t', consumer: 'consumer-b' })
 	let [foreign] = await collect(readerB, 1, tc.signal)
-
+	await expect.poll(() => starts).toBe(2)
 	let commit = readerA.commit(foreign!)
-	commit.catch(() => {})
-	await settle()
-	expect(commitRequests(streamA)).toHaveLength(0)
 	await expect(commit).rejects.toThrow(/partition session/)
+	expect(commits).toHaveLength(0)
 })
 
 test('rejects a foreign-reader commit whose partition is not granted locally', async (tc) => {
-	let a = makeFakeTopicDriver()
-	let b = makeFakeTopicDriver()
-	using readerA = createTopicReader(a.driver, { topic: '/t', consumer: 'consumer-a' })
-	using readerB = createTopicReader(b.driver, { topic: '/t', consumer: 'consumer-b' })
-
-	let streamA = await primeStream(readerA, a.waitForNextStream)
-	streamA.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 0n, committedOffset: 0n })
-	)
-	await streamA.waitForStartResponse()
-
-	// Reader B holds partition 5, which reader A was never granted.
-	let streamB = await primeStream(readerB, b.waitForNextStream)
-	streamB.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 5n, committedOffset: 0n })
-	)
-	await streamB.waitForStartResponse()
-	streamB.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('b') }],
-		})
-	)
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	let starts = 0
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			let consumer = ''
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					consumer = clientMessage.value.consumer
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: consumer === 'consumer-a' ? 0n : 5n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					starts++
+					if (consumer === 'consumer-b')
+						yield readResponse({
+							partitionSessionId: 1n,
+							messages: [{ offset: 0n, seqNo: 1n, data: bytes('b') }],
+						})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') commits.push(clientMessage.value)
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using readerA = createTopicReader(driver, { topic: '/t', consumer: 'consumer-a' })
+	using readerB = createTopicReader(driver, { topic: '/t', consumer: 'consumer-b' })
 	let [foreign] = await collect(readerB, 1, tc.signal)
-
-	// The commit must fail rather than hang or land on the wrong consumer, and the
-	// reader must not send anything for a partition it does not own.
-	await expect(readerA.commit(foreign!)).rejects.toThrow(/partition/)
-	expect(commitRequests(streamA)).toHaveLength(0)
+	await expect.poll(() => starts).toBe(2)
+	let commit = readerA.commit(foreign!)
+	await expect(commit).rejects.toThrow(/partition session/)
+	expect(commits).toHaveLength(0)
 })
-
-// ── onCommittedOffset observer ─────────────────────────────────────────────────
 
 test('reports a start-session commitOffset after server status confirms it', async () => {
 	let acks: bigint[] = []
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let startOffset: bigint | undefined
+	let confirm = Promise.withResolvers<void>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 5n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					startOffset = clientMessage.value.commitOffset
+					await abortable(context.signal, confirm.promise)
+					yield partitionStatusResponse(1n, 10n)
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
@@ -480,26 +589,60 @@ test('reports a start-session commitOffset after server status confirms it', asy
 			acks.push(committedOffset)
 		},
 	})
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 5n })
-	)
-	let response = await stream.waitForStartResponse()
-	expect(response.commitOffset).toBe(10n)
-	await settle()
+	await expect.poll(() => startOffset).toBe(10n)
 	expect(acks).toEqual([])
-	stream.respond(partitionStatusResponse(1n, 10n))
-	await settle()
-	expect(acks).toEqual([10n])
+	confirm.resolve()
+	await expect.poll(() => acks).toEqual([10n])
+	await reader.close()
 })
 
-// A live server cannot deterministically lose a particular commit ack and then
-// delay a start override's persistence; the scripted stream fixes both races.
 test('keeps a reconnected commit pending until the start override is confirmed', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let opened = 0
 	let starts = 0
+	let statusRequests = 0
 	let confirmed: bigint[] = []
+	let secondCommits: StreamReadMessage_CommitOffsetRequest[] = []
+	let restarted = Promise.withResolvers<void>()
+	let unconfirmedStatus = Promise.withResolvers<void>()
+	let confirmedStatus = Promise.withResolvers<void>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			let attempt = ++opened
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					if (attempt === 1) {
+						yield readResponse({
+							partitionSessionId: 1n,
+							messages: [{ offset: 0n, seqNo: 1n, data: bytes('x') }],
+						})
+					} else {
+						restarted.resolve()
+						await abortable(context.signal, unconfirmedStatus.promise)
+						yield partitionStatusResponse(1n, 0n)
+					}
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					if (attempt === 1) return
+					secondCommits.push(clientMessage.value)
+				}
+				if (attempt > 1 && clientMessage.case === 'partitionSessionStatusRequest') {
+					if (++statusRequests === 2) {
+						await abortable(context.signal, confirmedStatus.promise)
+						yield partitionStatusResponse(1n, 1n)
+					}
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
@@ -509,55 +652,145 @@ test('keeps a reconnected commit pending until the start override is confirmed',
 			confirmed.push(offset)
 		},
 	})
-	let first = await primeStream(reader, waitForNextStream)
-	first.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await first.waitForStartResponse()
-	first.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('x') }],
-		})
-	)
 	let [message] = await collect(reader, 1, tc.signal)
 	let pending = reader.commit(message!)
 	let resolved = false
 	void pending.then(
 		() => (resolved = true),
-		() => undefined
+		() => false
 	)
-	await first.waitForCommit()
-	first.disconnect()
-	let second = await primeStream(reader, waitForNextStream)
-	second.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await second.waitForStartResponse()
-	await settle()
+	await restarted.promise
 	expect(resolved).toBe(false)
 	expect(confirmed).toEqual([])
-	expect(second.sent.filter((m) => m.clientMessage.case === 'commitOffsetRequest')).toHaveLength(
-		0
-	)
-	second.respond(partitionStatusResponse(1n, 0n))
-	await expect
-		.poll(
-			() =>
-				second.sent.filter((m) => m.clientMessage.case === 'partitionSessionStatusRequest')
-					.length,
-			{ timeout: 3000 }
-		)
-		.toBe(2)
+	expect(secondCommits).toHaveLength(0)
+	unconfirmedStatus.resolve()
+	await expect.poll(() => statusRequests, { timeout: 3000 }).toBe(2)
+	expect(secondCommits).toHaveLength(0)
 	expect(resolved).toBe(false)
-	second.respond(partitionStatusResponse(1n, 1n))
+	confirmedStatus.resolve()
 	await expect(pending).resolves.toBeUndefined()
 	expect(confirmed).toEqual([1n])
 })
 
-// end_partition is informational: the session stays committable and the final
-// commit's ack still arrives on the stream. The observer fires for every server
-// commit acknowledgement, including the final one after end_partition — a consumer
-// tracking offsets externally needs the last ack too.
+test('recovers an applied commit whose acknowledgment was lost before reconnect', async (tc) => {
+	let streams = 0
+	let committedOffset = 0n
+	let requests: StreamReadMessage_CommitOffsetRequest[] = []
+	let reopened = Promise.withResolvers<void>()
+	let confirm = Promise.withResolvers<void>()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(input, context) {
+			let sessionId = BigInt(++streams)
+			for await (let { clientMessage: request } of input) {
+				if (request.case === 'initRequest') {
+					yield initResponse(`session-${sessionId}`)
+					if (sessionId === 2n) {
+						reopened.resolve()
+						await abortable(context.signal, confirm.promise)
+					}
+					yield startPartitionSession({
+						partitionSessionId: sessionId,
+						partitionId: 10n,
+						committedOffset,
+					})
+				}
+				if (request.case === 'startPartitionSessionResponse') {
+					let offsets = sessionId === 1n ? [0n, 1n, 2n] : [3n]
+					yield readResponse({
+						partitionSessionId: sessionId,
+						messages: offsets.map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (request.case === 'commitOffsetRequest') {
+					requests.push(request.value)
+					committedOffset = request.value.commitOffsets[0]!.offsets[0]!.end
+					if (sessionId === 1n) {
+						throw new RpcError(
+							Status.UNAVAILABLE,
+							'Connection lost before commit acknowledgment'
+						)
+					}
+					yield commitOffsetResponse([{ partitionSessionId: sessionId, committedOffset }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
+	let messages = await collect(reader, 3, tc.signal)
+	let completed = false
+	let pending = reader.commit(messages).then(() => {
+		completed = true
+		return undefined
+	})
+
+	await reopened.promise
+	expect(committedOffset).toBe(3n)
+	expect(completed).toBe(false)
+
+	confirm.resolve()
+	await pending
+	let following = await collect(reader, 1, tc.signal)
+	expect(following.map((message) => message.offset)).toEqual([3n])
+
+	await reader.commit(following)
+	let commits = requests.flatMap((request) => request.commitOffsets)
+	let ranges = commits.map((commit) => ({
+		partitionSessionId: commit.partitionSessionId,
+		offsets: commit.offsets.map(({ start, end }) => ({ start, end })),
+	}))
+	expect(ranges).toEqual([
+		{ partitionSessionId: 1n, offsets: [{ start: 0n, end: 3n }] },
+		{ partitionSessionId: 2n, offsets: [{ start: 3n, end: 4n }] },
+	])
+	expect(committedOffset).toBe(4n)
+})
+
 test('invokes onCommittedOffset for a commit acked after end_partition', async (tc) => {
 	let acks: Array<{ partitionId: bigint; committedOffset: bigint }> = []
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+					yield endPartitionSession(1n)
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
@@ -565,43 +798,54 @@ test('invokes onCommittedOffset for a commit acked after end_partition', async (
 			acks.push({ partitionId: session.partitionId, committedOffset })
 		},
 	})
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
 	let [message] = await collect(reader, 1, tc.signal)
-
-	// The partition is fully read (split/merge) — but the last message is still
-	// uncommitted, and the protocol accepts its commit until the server stops the
-	// session.
-	stream.respond(endPartitionSession(1n))
-	await settle()
-
+	await expect.poll(() => message!.partitionSession.deref()?.isEnded).toBe(true)
 	let commit = reader.commit(message!)
-	commit.catch(() => {})
-	let request = await stream.waitForCommit()
-	expect(request.commitOffsets[0]!.partitionSessionId).toBe(1n)
-
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
 	await expect(commit).resolves.toBeUndefined()
-
+	expect(commits[0]!.commitOffsets[0]!.partitionSessionId).toBe(1n)
 	expect(acks).toEqual([{ partitionId: 10n, committedOffset: 1n }])
 })
 
-// A stop request carries the server's committed watermark: the advance resolves the
-// pending commits it covers and reports through onCommittedOffset exactly like a
-// commit ack does.
 test('invokes onCommittedOffset when a partition stop carries the committed watermark', async (tc) => {
 	let acks: Array<{ partitionId: bigint; committedOffset: bigint }> = []
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield stopPartitionSession({
+						partitionSessionId: 1n,
+						graceful: false,
+						committedOffset: 1n,
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
@@ -609,37 +853,48 @@ test('invokes onCommittedOffset when a partition stop carries the committed wate
 			acks.push({ partitionId: session.partitionId, committedOffset })
 		},
 	})
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(
-		startPartitionSession({ partitionSessionId: 1n, partitionId: 10n, committedOffset: 0n })
-	)
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
 	let [message] = await collect(reader, 1, tc.signal)
-
 	let commit = reader.commit(message!)
-	commit.catch(() => {})
-	await stream.waitForCommit()
-
-	// The ack raced a rebalance: the commit was applied server-side and its result
-	// arrives as the stop's committed_offset instead of a commit_response.
-	stream.respond(
-		stopPartitionSession({ partitionSessionId: 1n, graceful: false, committedOffset: 1n })
-	)
 	await expect(commit).resolves.toBeUndefined()
-
 	expect(acks).toEqual([{ partitionId: 10n, committedOffset: 1n }])
 })
 
 test('handles a rejected async commit observer without delaying commit', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let observer = Promise.withResolvers<void>()
+	let commits: StreamReadMessage_CommitOffsetRequest[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({
+						partitionSessionId: 1n,
+						partitionId: 10n,
+						committedOffset: 0n,
+					})
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						messages: [0n].map((offset, index) => ({
+							offset,
+							seqNo: BigInt(index + 1),
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+				if (clientMessage.case === 'commitOffsetRequest') {
+					commits.push(clientMessage.value)
+					yield commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }])
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, {
 		topic: '/t',
 		consumer: 'c',
@@ -648,19 +903,8 @@ test('handles a rejected async commit observer without delaying commit', async (
 			throw new Error('Asynchronous commit observer failed')
 		},
 	})
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('message') }],
-		})
-	)
 	let messages = await collect(reader, 1, tc.signal)
 	let committed = reader.commit(messages)
-	await stream.waitForCommit()
-	stream.respond(commitOffsetResponse([{ partitionSessionId: 1n, committedOffset: 1n }]))
 	await expect(committed).resolves.toBeUndefined()
 	observer.resolve()
 	await new Promise<void>((resolve) => setImmediate(resolve))

@@ -1,97 +1,85 @@
-import { Codec } from '@ydbjs/api/topic'
+import { abortable } from '@ydbjs/abortable'
+import { Codec, TopicServiceDefinition } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
+import { Server } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
 import { createTopicReader } from './index.ts'
 import {
 	initResponse,
-	makeFakeTopicDriver,
 	readResponse,
 	settle,
 	startPartitionSession,
 	stopPartitionSession,
 } from './reader.fixtures.ts'
 
-// read()-loop semantics against a fake streamRead: limit validation, abort
-// mid-accumulation, and flow-control overdraw by an oversized response. The happy-path
-// batching/credit wiring is covered by reader.contract.test.ts.
+let bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
+let text = (payload: Uint8Array): string => new TextDecoder().decode(payload)
 
-let bytes = function bytes(text: string): Uint8Array {
-	return new TextEncoder().encode(text)
-}
-
-let text = function text(payload: Uint8Array): string {
-	return new TextDecoder().decode(payload)
-}
-
-// The reader's flow-control requests, in send order (initial credit + replenishments).
-let readRequests = function readRequests(
-	sent: Array<{ clientMessage: { case?: string; value?: unknown } }>
-): bigint[] {
-	return sent
-		.filter((m) => m.clientMessage.case === 'readRequest')
-		.map((m) => (m.clientMessage.value as { bytesSize: bigint }).bytesSize)
-}
-
-// init handshake + read-credit grant, the precondition for every test below.
-let primeStream = async function primeStream(
-	reader: ReturnType<typeof createTopicReader>,
-	waitForNextStream: ReturnType<typeof makeFakeTopicDriver>['waitForNextStream'],
-	sessionId = 'session-A'
-) {
-	let stream = await waitForNextStream()
-	await stream.waitForInit()
-	stream.respond(initResponse(sessionId))
-	await stream.waitForReadRequest()
-	return stream
-}
-
-// A non-positive limit is rejected up front, mirroring the writer's
-// maxInflightCount guard — an unvalidated limit=0 would spin the batch-split loop
-// forever instead of erroring.
 test('rejects a zero read limit', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 1n,
+						messages: [0n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	// A buffered message makes the batch non-empty, so a missing guard is observable
-	// as an immediate empty yield instead of a blocked take().
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
-	await settle()
-
-	let firstBatch = async () => {
-		let iterator = reader.read({ limit: 0, signal: tc.signal })[Symbol.asyncIterator]()
-		return await iterator.next()
-	}
-	await expect(firstBatch()).rejects.toThrow(/limit/)
+	await expect.poll(() => reader.bufferedBytes).toBe(1n)
+	let read = () => reader.read({ limit: 0, signal: tc.signal })
+	expect(read).toThrow(/limit/)
 })
 
-// Server-controlled response boundaries make a fixed message-count overflow
-// nondeterministic on a live server, even when the response fits the byte budget.
 test('delivers a large batch of tiny messages without overflowing the argument stack', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
 	let count = 150_000
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 4_000_000n,
-			messages: Array.from({ length: count }, (_, i) => ({
-				offset: BigInt(i),
-				seqNo: BigInt(i + 1),
-				data: new Uint8Array([i % 256]),
-			})),
-		})
-	)
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 4_000_000n,
+						messages: Array.from({ length: count }, (_, index) => BigInt(index)).map(
+							(offset) => ({
+								offset,
+								seqNo: offset + 1n,
+								data: new Uint8Array([Number(offset % 256n)]),
+							})
+						),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 	for await (let batch of reader.read({ signal: tc.signal })) {
 		expect(batch).toHaveLength(count)
 		expect(batch[0]!.offset).toBe(0n)
@@ -100,210 +88,260 @@ test('delivers a large batch of tiny messages without overflowing the argument s
 	}
 })
 
-// Same invariant as above: a negative limit fails validation.
 test('rejects a negative read limit', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 1n,
+						messages: [0n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
-		})
-	)
-	await settle()
-
-	let firstBatch = async () => {
-		let iterator = reader.read({ limit: -1, signal: tc.signal })[Symbol.asyncIterator]()
-		return await iterator.next()
-	}
-	await expect(firstBatch()).rejects.toThrow(/limit/)
+	await expect.poll(() => reader.bufferedBytes).toBe(1n)
+	let read = () => reader.read({ limit: -1, signal: tc.signal })
+	expect(read).toThrow(/limit/)
 })
 
-// An aborted read() consumes nothing: messages dequeued into the pending batch but
-// never yielded stay with the reader, and a fresh read() redelivers them — a
-// cancelled batch read loses no data.
 test('redelivers messages dequeued by an aborted read()', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	await using reader = createTopicReader(driver, {
-		topic: '/t',
-		consumer: 'c',
-		maxBufferBytes: 1000n,
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 300n,
+						messages: [0n, 1n, 2n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 200n,
+						messages: [3n, 4n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
 	})
-
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 0n, seqNo: 1n, data: bytes('a') },
-				{ offset: 1n, seqNo: 2n, data: bytes('b') },
-				{ offset: 2n, seqNo: 3n, data: bytes('c') },
-			],
-			bytesSize: 300n,
-		})
-	)
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			messages: [
-				{ offset: 3n, seqNo: 4n, data: bytes('d') },
-				{ offset: 4n, seqNo: 5n, data: bytes('e') },
-			],
-			bytesSize: 200n,
-		})
-	)
-	await settle()
-	expect(reader.bufferedBytes).toBe(500n)
-
-	// Long window, no limit: both chunks are dequeued into the pending batch, then
-	// read() blocks waiting for more. Abort during that wait.
-	let ac = new AbortController()
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
+	await expect.poll(() => reader.bufferedBytes).toBe(500n)
+	let controller = new AbortController()
 	let thrown: unknown
 	let consume = (async () => {
 		try {
-			for await (let batch of reader.read({ batchWindowMs: 60_000, signal: ac.signal })) {
+			for await (let batch of reader.read({
+				batchWindowMs: 60_000,
+				signal: controller.signal,
+			}))
 				void batch
-			}
 		} catch (error) {
 			thrown = error
 		}
 	})()
 	await settle()
-	ac.abort(new Error('consumer aborted'))
+	controller.abort(new Error('consumer aborted'))
 	await consume
 	expect(String(thrown)).toContain('consumer aborted')
-	expect(readRequests(stream.sent)).toEqual([1000n])
+	expect(grants).toEqual([1000n])
 	expect(reader.bufferedBytes).toBe(500n)
-
-	// Nothing was yielded, so nothing may be lost: a fresh read() delivers 0..4.
-	// Bounded by idle windows so a redelivery failure cannot hang the suite.
 	let redelivered: bigint[] = []
-	let idleWindows = 0
 	for await (let batch of reader.read({ batchWindowMs: 10, signal: tc.signal })) {
-		if (batch.length === 0) {
-			idleWindows++
-			if (idleWindows >= 5) {
-				break
-			}
-			continue
-		}
-		for (let message of batch) {
-			redelivered.push(message.offset!)
-		}
-		if (redelivered.length >= 5) {
-			break
-		}
+		for (let message of batch) redelivered.push(message.offset!)
+		if (redelivered.length >= 5) break
 	}
 	expect(redelivered).toEqual([0n, 1n, 2n, 3n, 4n])
-	// Both response boundaries completed in the yielded batch, so their exact combined
-	// server-accounted size is returned only now.
-	await settle()
-	expect(readRequests(stream.sent)).toEqual([1000n, 500n])
+	await expect.poll(() => grants).toEqual([1000n, 500n])
 	expect(reader.bufferedBytes).toBe(0n)
 })
 
-// Live server response boundaries and rebalance timing cannot deterministically
-// place a stop between two yields from the same response.
 test('preserves the remaining slices when a read is aborted between yields', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 300n,
+						messages: [0n, 1n, 2n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 300n,
-			messages: [0n, 1n, 2n].map((offset) => ({
-				offset,
-				seqNo: offset + 1n,
-				data: bytes(String(offset)),
-			})),
-		})
-	)
-	let ac = new AbortController()
+	let controller = new AbortController()
 	let reason = new Error('stop reading')
-	let iterator = reader.read({ limit: 1, signal: ac.signal })[Symbol.asyncIterator]()
-	expect((await iterator.next()).value?.map((message) => message.offset)).toEqual([0n])
-	ac.abort(reason)
-	await expect(iterator.next()).rejects.toBe(reason)
+	let iterator = reader.read({ limit: 1, signal: controller.signal })[Symbol.asyncIterator]()
+	let first = await iterator.next()
+	if (first.done) throw new Error('Expected a read batch')
+	let firstOffsets = first.value.map((message) => message.offset)
+	expect(firstOffsets).toEqual([0n])
+	controller.abort(reason)
+	let next = iterator.next()
+	await expect(next).rejects.toBe(reason)
 	expect(reader.bufferedBytes).toBe(300n)
-	expect(readRequests(stream.sent)).toEqual([1000n])
-	let cancelled = reader.read({ limit: 1, signal: ac.signal })[Symbol.asyncIterator]()
-	await expect(cancelled.next()).rejects.toBe(reason)
+	expect(grants).toEqual([1000n])
+	let cancelled = reader.read({ limit: 1, signal: controller.signal })[Symbol.asyncIterator]()
+	let cancelledNext = cancelled.next()
+	await expect(cancelledNext).rejects.toBe(reason)
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(batch.map((message) => message.offset)).toEqual([1n])
+		let offsets = batch.map((message) => message.offset)
+		expect(offsets).toEqual([1n])
 		break
 	}
 	expect(reader.bufferedBytes).toBe(300n)
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(batch.map((message) => message.offset)).toEqual([2n])
+		let offsets = batch.map((message) => message.offset)
+		expect(offsets).toEqual([2n])
 		break
 	}
-	await settle()
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(readRequests(stream.sent)).toEqual([1000n, 300n])
+	await expect.poll(() => grants).toEqual([1000n, 300n])
 })
 
 test('drops revoked slices and releases their response credit once between yields', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	stream.respond(startPartitionSession({ partitionSessionId: 2n, partitionId: 11n }))
-	await settle()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 300n,
-			messages: [0n, 1n, 2n].map((offset) => ({
-				offset,
-				seqNo: offset + 1n,
-				data: bytes(String(offset)),
-			})),
-		})
-	)
-	let iterable = reader.read({ limit: 1, batchWindowMs: 5, signal: tc.signal })
-	let iterator = iterable[Symbol.asyncIterator]()
+	let revoke = Promise.withResolvers<void>()
+	let stopped = Promise.withResolvers<void>()
+	let nextResponse = Promise.withResolvers<void>()
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			let started = 0
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+					yield startPartitionSession({ partitionSessionId: 2n, partitionId: 11n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+					if (clientMessage.value.bytesSize === 300n) {
+						await abortable(context.signal, nextResponse.promise)
+						yield readResponse({
+							partitionSessionId: 2n,
+							bytesSize: 100n,
+							messages: [0n].map((offset) => ({
+								offset,
+								seqNo: offset + 1n,
+								data: bytes('live'),
+							})),
+						})
+					}
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse' && ++started === 2) {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 300n,
+						messages: [0n, 1n, 2n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+					await abortable(context.signal, revoke.promise)
+					yield stopPartitionSession({ partitionSessionId: 1n })
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		maxBufferBytes: 1000n,
+		onPartitionSessionStop: async () => {
+			stopped.resolve()
+		},
+	})
+	await expect.poll(() => reader.bufferedBytes).toBe(300n)
+	let reading = reader.read({ limit: 1, batchWindowMs: 5, signal: tc.signal })
+	let iterator = reading[Symbol.asyncIterator]()
 	try {
-		expect((await iterator.next()).value?.map((message) => message.offset)).toEqual([0n])
-		stream.respond(stopPartitionSession({ partitionSessionId: 1n }))
-		await settle()
-		expect((await iterator.next()).value).toEqual([])
-		await settle()
+		let first = await iterator.next()
+		if (first.done) throw new Error('Expected a read batch')
+		let offsets = first.value.map((message) => message.offset)
+		expect(offsets).toEqual([0n])
+		revoke.resolve()
+		await stopped.promise
+		let empty = await iterator.next()
+		expect(empty.value).toEqual([])
 		expect(reader.bufferedBytes).toBe(0n)
-		expect(readRequests(stream.sent)).toEqual([1000n, 300n])
-		stream.respond(
-			readResponse({
-				partitionSessionId: 2n,
-				bytesSize: 100n,
-				messages: [{ offset: 0n, seqNo: 1n, data: bytes('live') }],
-			})
-		)
-		expect((await iterator.next()).value?.map((message) => text(message.payload))).toEqual([
-			'live',
-		])
+		await expect.poll(() => grants).toEqual([1000n, 300n])
+		nextResponse.resolve()
+		await expect.poll(() => reader.bufferedBytes).toBe(100n)
+		let live = await iterator.next()
+		if (live.done) throw new Error('Expected a read batch')
+		let payloads = live.value.map((message) => text(message.payload))
+		expect(payloads).toEqual(['live'])
 	} finally {
 		await iterator.return?.()
 	}
-	await settle()
+	await expect.poll(() => grants).toEqual([1000n, 300n, 100n])
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(readRequests(stream.sent)).toEqual([1000n, 300n, 100n])
 })
 
 test('retains shared response credit until its live partition finishes after a stop', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	stream.respond(startPartitionSession({ partitionSessionId: 2n, partitionId: 11n }))
-	await settle()
+	let revoke = Promise.withResolvers<void>()
+	let stopped = Promise.withResolvers<void>()
 	let response = readResponse({
 		partitionSessionId: 1n,
 		bytesSize: 400n,
@@ -313,143 +351,194 @@ test('retains shared response credit until its live partition finishes after a s
 			data: bytes('stopped'),
 		})),
 	})
-	let live = readResponse({
+	let second = readResponse({
 		partitionSessionId: 2n,
 		messages: [0n, 1n].map((offset) => ({ offset, seqNo: offset + 1n, data: bytes('live') })),
 	})
 	if (
 		response.serverMessage.case !== 'readResponse' ||
-		live.serverMessage.case !== 'readResponse'
+		second.serverMessage.case !== 'readResponse'
 	) {
 		throw new Error('Expected read response fixtures')
 	}
-	response.serverMessage.value.partitionData.push(live.serverMessage.value.partitionData[0]!)
-	stream.respond(response)
+	response.serverMessage.value.partitionData.push(second.serverMessage.value.partitionData[0]!)
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			let started = 0
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+					yield startPartitionSession({ partitionSessionId: 2n, partitionId: 11n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse' && ++started === 2) {
+					yield response
+					await abortable(context.signal, revoke.promise)
+					yield stopPartitionSession({ partitionSessionId: 1n })
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		maxBufferBytes: 1000n,
+		onPartitionSessionStop: async () => {
+			stopped.resolve()
+		},
+	})
 	let iterator = reader.read({ limit: 1, signal: tc.signal })[Symbol.asyncIterator]()
 	try {
-		expect((await iterator.next()).value?.map((message) => text(message.payload))).toEqual([
-			'stopped',
-		])
-		stream.respond(stopPartitionSession({ partitionSessionId: 1n }))
-		await settle()
-		expect((await iterator.next()).value?.map((message) => text(message.payload))).toEqual([
-			'live',
-		])
+		let first = await iterator.next()
+		if (first.done) throw new Error('Expected a read batch')
+		let firstPayloads = first.value.map((message) => text(message.payload))
+		expect(firstPayloads).toEqual(['stopped'])
+		revoke.resolve()
+		await stopped.promise
+		let live = await iterator.next()
+		if (live.done) throw new Error('Expected a read batch')
+		let livePayloads = live.value.map((message) => text(message.payload))
+		expect(livePayloads).toEqual(['live'])
 		expect(reader.bufferedBytes).toBe(400n)
-		expect(readRequests(stream.sent)).toEqual([1000n])
+		expect(grants).toEqual([1000n])
 	} finally {
 		await iterator.return?.()
 	}
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(batch.map((message) => [text(message.payload), message.offset])).toEqual([
-			['live', 1n],
-		])
+		let values = batch.map((message) => [text(message.payload), message.offset])
+		expect(values).toEqual([['live', 1n]])
 		break
 	}
-	await settle()
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(readRequests(stream.sent)).toEqual([1000n, 400n])
+	await expect.poll(() => grants).toEqual([1000n, 400n])
 })
 
 test('accepts an oversized response and replenishes the full server-reported bytes', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, {
-		topic: '/t',
-		consumer: 'c',
-		maxBufferBytes: 1024n,
+	let sendFirst = Promise.withResolvers<void>()
+	let sendSecond = Promise.withResolvers<void>()
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+					if (clientMessage.value.bytesSize === 5000n) {
+						await abortable(context.signal, sendSecond.promise)
+						yield readResponse({
+							partitionSessionId: 1n,
+							bytesSize: 600n,
+							messages: [1n].map((offset) => ({
+								offset,
+								seqNo: offset + 1n,
+								data: bytes('next'),
+							})),
+						})
+					}
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					await abortable(context.signal, sendFirst.promise)
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 5000n,
+						messages: [0n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes('oversized'),
+						})),
+					})
+				}
+			}
+		},
 	})
-
-	let stream = await primeStream(reader, waitForNextStream)
-	expect(readRequests(stream.sent)).toEqual([1024n])
-
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	// A single message may legitimately exceed the granted window; the server delivers
-	// it anyway and reports its actual bytesSize. The reader must accept the overdraw
-	// rather than fault or clamp.
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 5000n,
-			messages: [{ offset: 0n, seqNo: 1n, data: bytes('oversized') }],
-		})
-	)
-
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1024n })
+	await expect.poll(() => grants).toEqual([1024n])
+	sendFirst.resolve()
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(batch.map((m) => text(m.payload))).toEqual(['oversized'])
+		let payloads = batch.map((message) => text(message.payload))
+		expect(payloads).toEqual(['oversized'])
 		break
 	}
-	await settle()
-
-	// The replenishment uses the server-reported size, not one clamped to the budget —
-	// a clamp would leak window bytes and eventually starve the reader of credit.
-	expect(readRequests(stream.sent)).toEqual([1024n, 5000n])
-
-	// Not stalled: a subsequent response still flows and replenishes normally.
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 600n,
-			messages: [{ offset: 1n, seqNo: 2n, data: bytes('next') }],
-		})
-	)
+	await expect.poll(() => grants).toEqual([1024n, 5000n])
+	sendSecond.resolve()
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(batch.map((m) => m.offset)).toEqual([1n])
+		let offsets = batch.map((message) => message.offset)
+		expect(offsets).toEqual([1n])
 		break
 	}
-	await settle()
-	expect(readRequests(stream.sent)).toEqual([1024n, 5000n, 600n])
+	await expect.poll(() => grants).toEqual([1024n, 5000n, 600n])
 })
 
 test('returns the server response size once after all 100 message batches are delivered', async (tc) => {
-	// The fake fixes response framing and bytesSize independently of payload lengths.
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let maxBufferBytes = 8n * 1024n * 1024n
 	let responseBytes = 10n * 1024n * 1024n
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: responseBytes,
+						messages: Array.from({ length: 10_000 }, (_, index) => BigInt(index)).map(
+							(offset) => ({
+								offset,
+								seqNo: offset + 1n,
+								data: new Uint8Array([Number(offset % 256n)]),
+							})
+						),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: responseBytes,
-			messages: Array.from({ length: 10_000 }, (_, offset) => ({
-				offset: BigInt(offset),
-				seqNo: BigInt(offset + 1),
-				data: new Uint8Array([offset % 256]),
-			})),
-		})
-	)
-	await settle()
-	expect(reader.bufferedBytes).toBe(responseBytes)
-
+	await expect.poll(() => reader.bufferedBytes).toBe(responseBytes)
 	let deliveredBatches = 0
 	for await (let batch of reader.read({ limit: 100, signal: tc.signal })) {
 		expect(batch).toHaveLength(100)
-		deliveredBatches += 1
-		await settle()
+		deliveredBatches++
 		let lastBatch = deliveredBatches === 100
 		expect(reader.bufferedBytes).toBe(lastBatch ? 0n : responseBytes)
-		expect(readRequests(stream.sent)).toEqual(
-			lastBatch ? [maxBufferBytes, responseBytes] : [maxBufferBytes]
-		)
-		if (lastBatch) {
-			break
-		}
+		let expectedGrants = lastBatch ? [maxBufferBytes, responseBytes] : [maxBufferBytes]
+		await expect.poll(() => grants).toEqual(expectedGrants)
+		if (lastBatch) break
 	}
 	expect(deliveredBatches).toBe(100)
 })
 
-// A fixed multi-partition response is needed to place the batch boundary inside
-// its second group without relying on server batching decisions.
 test('resumes a split response across partition groups without repeating messages or credit', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	stream.respond(startPartitionSession({ partitionSessionId: 2n, partitionId: 11n }))
-	await settle()
+	let revoke = Promise.withResolvers<void>()
+	let stopped = Promise.withResolvers<void>()
 	let response = readResponse({
 		partitionSessionId: 1n,
 		bytesSize: 500n,
@@ -470,11 +559,46 @@ test('resumes a split response across partition groups without repeating message
 		throw new Error('Expected read response fixtures')
 	}
 	response.serverMessage.value.partitionData.push(second.serverMessage.value.partitionData[0]!)
-	stream.respond(response)
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			let started = 0
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+					yield startPartitionSession({ partitionSessionId: 2n, partitionId: 11n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse' && ++started === 2) {
+					yield response
+					await abortable(context.signal, revoke.promise)
+					yield stopPartitionSession({ partitionSessionId: 1n })
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		maxBufferBytes: 1000n,
+		onPartitionSessionStop: async () => {
+			stopped.resolve()
+		},
+	})
 	for await (let batch of reader.read({ limit: 3, signal: tc.signal })) {
-		expect(
-			batch.map((message) => [message.partitionSession.deref()?.partitionId, message.offset])
-		).toEqual([
+		let positions = batch.map((message) => [
+			message.partitionSession.deref()?.partitionId,
+			message.offset,
+		])
+		expect(positions).toEqual([
 			[10n, 0n],
 			[10n, 1n],
 			[11n, 0n],
@@ -482,26 +606,57 @@ test('resumes a split response across partition groups without repeating message
 		break
 	}
 	expect(reader.bufferedBytes).toBe(500n)
-	expect(readRequests(stream.sent)).toEqual([1000n])
-	stream.respond(stopPartitionSession({ partitionSessionId: 1n }))
-	await settle()
+	expect(grants).toEqual([1000n])
+	revoke.resolve()
+	await stopped.promise
 	for await (let batch of reader.read({ limit: 2, signal: tc.signal })) {
-		expect(
-			batch.map((message) => [message.partitionSession.deref()?.partitionId, message.offset])
-		).toEqual([
+		let positions = batch.map((message) => [
+			message.partitionSession.deref()?.partitionId,
+			message.offset,
+		])
+		expect(positions).toEqual([
 			[11n, 1n],
 			[11n, 2n],
 		])
 		break
 	}
-	await settle()
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(readRequests(stream.sent)).toEqual([1000n, 500n])
+	await expect.poll(() => grants).toEqual([1000n, 500n])
 })
 
-// A fixed multi-message response places codec reentrancy inside a partially consumed batch.
 test('rejects a batch when its codec destroys the reader during decoding', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let cancelled = Promise.withResolvers<void>()
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests, context) {
+			context.signal.addEventListener('abort', () => cancelled.resolve(), { once: true })
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse') {
+					yield readResponse({
+						partitionSessionId: 1n,
+						bytesSize: 300n,
+						messages: [0n, 1n, 2n].map((offset) => ({
+							offset,
+							seqNo: offset + 1n,
+							data: bytes(String(offset)),
+						})),
+					})
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
 	let reason = new Error('Stopped by codec')
 	using reader = createTopicReader(driver, {
 		topic: '/t',
@@ -521,45 +676,25 @@ test('rejects a batch when its codec destroys the reader during decoding', async
 			],
 		]),
 	})
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	await stream.waitForStartResponse()
-	stream.respond(
-		readResponse({
-			partitionSessionId: 1n,
-			bytesSize: 300n,
-			messages: [0n, 1n, 2n].map((offset) => ({
-				offset,
-				seqNo: offset + 1n,
-				data: bytes(String(offset)),
-			})),
-		})
-	)
 	let iterator = reader.read({ limit: 2, signal: tc.signal })[Symbol.asyncIterator]()
-	await expect(iterator.next()).rejects.toBe(reason)
-	await settle()
+	let next = iterator.next()
+	await expect(next).rejects.toBe(reason)
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(stream.wasAborted()).toBe(true)
-	expect(readRequests(stream.sent)).toEqual([1000n])
+	await expect(cancelled.promise).resolves.toBeUndefined()
+	expect(grants).toEqual([1000n])
 	let nextRead = reader.read({ signal: tc.signal })[Symbol.asyncIterator]()
-	await expect(nextRead.next()).rejects.toBe(reason)
+	let nextBatch = nextRead.next()
+	await expect(nextBatch).rejects.toBe(reason)
 })
 
-// A fixed response and forced stop place an empty group exactly after the final
-// live message; a live server cannot guarantee that response boundary.
 test('releases response credit at the batch limit before a stopped trailing partition', async (tc) => {
-	let { driver, waitForNextStream } = makeFakeTopicDriver()
-	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c', maxBufferBytes: 1000n })
-	let stream = await primeStream(reader, waitForNextStream)
-	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
-	stream.respond(startPartitionSession({ partitionSessionId: 2n, partitionId: 11n }))
-	await settle()
+	let stopped = Promise.withResolvers<void>()
 	let response = readResponse({
 		partitionSessionId: 1n,
 		bytesSize: 300n,
-		messages: [{ offset: 0n, seqNo: 1n, data: bytes('live') }],
+		messages: [0n].map((offset) => ({ offset, seqNo: offset + 1n, data: bytes('live') })),
 	})
-	let stopped = readResponse({
+	let second = readResponse({
 		partitionSessionId: 2n,
 		messages: [0n, 1n].map((offset) => ({
 			offset,
@@ -569,21 +704,53 @@ test('releases response credit at the batch limit before a stopped trailing part
 	})
 	if (
 		response.serverMessage.case !== 'readResponse' ||
-		stopped.serverMessage.case !== 'readResponse'
+		second.serverMessage.case !== 'readResponse'
 	) {
 		throw new Error('Expected read response fixtures')
 	}
-	response.serverMessage.value.partitionData.push(stopped.serverMessage.value.partitionData[0]!)
-	stream.respond(response)
-	stream.respond(stopPartitionSession({ partitionSessionId: 2n }))
-	await settle()
+	response.serverMessage.value.partitionData.push(second.serverMessage.value.partitionData[0]!)
+	let grants: bigint[] = []
+	using server = new Server()
+	server.add(TopicServiceDefinition, {
+		async *streamRead(requests) {
+			let started = 0
+			for await (let { clientMessage } of requests) {
+				if (clientMessage.case === 'initRequest') {
+					yield initResponse()
+					yield startPartitionSession({ partitionSessionId: 1n, partitionId: 10n })
+					yield startPartitionSession({ partitionSessionId: 2n, partitionId: 11n })
+				}
+				if (clientMessage.case === 'readRequest') {
+					grants.push(clientMessage.value.bytesSize)
+				}
+				if (clientMessage.case === 'startPartitionSessionResponse' && ++started === 2) {
+					yield response
+					yield stopPartitionSession({ partitionSessionId: 2n })
+				}
+			}
+		},
+	})
+	let port = await server.listen('127.0.0.1:0')
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		maxBufferBytes: 1000n,
+		onPartitionSessionStop: async () => {
+			stopped.resolve()
+		},
+	})
+	await stopped.promise
 	for await (let batch of reader.read({ limit: 1, signal: tc.signal })) {
-		expect(
-			batch.map((message) => [message.partitionSession.deref()?.partitionId, message.offset])
-		).toEqual([[10n, 0n]])
+		let positions = batch.map((message) => [
+			message.partitionSession.deref()?.partitionId,
+			message.offset,
+		])
+		expect(positions).toEqual([[10n, 0n]])
 		break
 	}
-	await settle()
 	expect(reader.bufferedBytes).toBe(0n)
-	expect(readRequests(stream.sent)).toEqual([1000n, 300n])
+	await expect.poll(() => grants).toEqual([1000n, 300n])
 })
