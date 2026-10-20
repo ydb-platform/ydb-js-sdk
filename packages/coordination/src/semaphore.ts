@@ -251,6 +251,8 @@ export class Semaphore {
 			)
 		}
 
+		this.#sessionSignal.throwIfAborted()
+
 		if (response.response.case !== 'acquireSemaphoreResult') {
 			throw new Error('Unexpected response for acquireSemaphore')
 		}
@@ -399,11 +401,15 @@ export class Semaphore {
 			return mapDescription(raw)
 		}
 
-		yield await describeAndWatch()
+		let description = await describeAndWatch()
+		combined.signal.throwIfAborted()
+		yield description
 
 		for await (let _change of subscription.queue) {
 			combined.signal.throwIfAborted()
-			yield await abortable(combined.signal, describeAndWatch())
+			description = await abortable(combined.signal, describeAndWatch())
+			combined.signal.throwIfAborted()
+			yield description
 		}
 	}
 }

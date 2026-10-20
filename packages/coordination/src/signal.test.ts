@@ -1,9 +1,12 @@
 import { getEventListeners } from 'node:events'
+import { create } from '@bufbuild/protobuf'
+import { SessionResponseSchema } from '@ydbjs/api/coordination'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { LeaseReleasedError } from './errors.ts'
 import { Semaphore } from './semaphore.ts'
 import { createRuntime } from './runtime/session-runtime.ts'
+import { SessionRequestRegistry } from './runtime/session-registry.ts'
 import {
 	makeFakeDriver,
 	sessionStartedResponse,
@@ -160,4 +163,87 @@ test('lease.signal aborts with LeaseReleasedError after release', async () => {
 
 	runtime.destroy()
 	await waitForStatus(runtime, 'closed')
+})
+
+// The mock places destruction between the RPC promise and the watch generator resuming.
+test('watch does not yield a response after its session is destroyed', async () => {
+	let { driver } = makeFakeDriver()
+	let runtime = createRuntime(driver, { path: '/test' })
+	let semaphore = new Semaphore('test-sem', runtime.transport, runtime.signal)
+	let response = create(SessionResponseSchema, {
+		response: {
+			case: 'describeSemaphoreResult',
+			value: {
+				status: 400000,
+				semaphoreDescription: { name: 'test-sem', limit: 1n },
+			},
+		},
+	})
+	using call = vi.spyOn(runtime.transport, 'call').mockResolvedValue(response)
+	let watch = semaphore.watch()[Symbol.asyncIterator]()
+	let next = watch.next()
+	let reason = new Error('session stopped before delivery')
+
+	runtime.destroy(reason)
+
+	await expect(next).rejects.toBe(reason)
+	expect(call).toHaveBeenCalledOnce()
+})
+
+// Registry settlement and consumer delivery are different microtasks.
+test.each([false, true])(
+	'destroy rejects an acknowledged acquire with pending=%s',
+	async (pending) => {
+		let { driver, waitForNextStream } = makeFakeDriver()
+		let runtime = createRuntime(driver, { path: '/test' })
+		let stream = await waitForNextStream()
+		stream.respond(sessionStartedResponse(1n))
+		await settle()
+		let semaphore = new Semaphore('sem', runtime.transport, runtime.signal)
+		let acquired = semaphore.acquire()
+		let result = acquired.catch((error: unknown) => error)
+		await settle()
+		if (pending) {
+			stream.respond(
+				create(SessionResponseSchema, {
+					response: { case: 'acquireSemaphorePending', value: { reqId: 1n } },
+				})
+			)
+			await settle()
+		}
+		let reason = new Error('Destroyed after server response')
+		let resolve = SessionRequestRegistry.prototype.resolve
+		using resolved = vi
+			.spyOn(SessionRequestRegistry.prototype, 'resolve')
+			.mockImplementation(function (this: SessionRequestRegistry, reqId, response) {
+				let accepted = resolve.call(this, reqId, response)
+				runtime.destroy(reason)
+				return accepted
+			})
+		stream.respond(
+			create(SessionResponseSchema, {
+				response: {
+					case: 'acquireSemaphoreResult',
+					value: { reqId: 1n, status: 400000, acquired: true },
+				},
+			})
+		)
+
+		expect(await result).toBe(reason)
+		expect(resolved).toHaveBeenCalledOnce()
+	}
+)
+
+test('destroy rejects readiness already resolved before delivery', async () => {
+	let { driver, waitForNextStream } = makeFakeDriver()
+	let runtime = createRuntime(driver, { path: '/test' })
+	let stream = await waitForNextStream()
+	stream.respond(sessionStartedResponse(1n))
+	await settle()
+	let ready = runtime.transport.waitReady()
+	let reason = new Error('Destroyed before readiness delivery')
+
+	runtime.destroy(reason)
+
+	await expect(ready).rejects.toBe(reason)
 })

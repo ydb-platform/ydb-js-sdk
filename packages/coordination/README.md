@@ -129,6 +129,8 @@ await doWork(lease.signal)
 // lease.release() called automatically here
 ```
 
+Once the server acknowledges an acquisition, cancelling its operation signal does not revoke ownership. The acknowledged lease is returned so it can be released or disposed. Destroying the session still rejects pending acquisitions and prevents returning new leases.
+
 ### Ephemeral semaphore (no prior create needed)
 
 ```typescript
@@ -255,7 +257,9 @@ if (leader) {
 
 ## Resource management with `await using`
 
-Every resource in this package implements `Symbol.asyncDispose`, making `await using` the safest and most concise way to manage lifetimes.
+Sessions, locks, and leases implement `Symbol.asyncDispose` for graceful cleanup with `await using`.
+
+For a session, `close()` sends `SessionStop` and waits for the server to acknowledge it or close the stream. `destroy()` immediately cancels the stream, clears timers and queued watch notifications, and rejects pending operations. A destroyed session cannot be reused. `using session` calls `destroy()`; `await using session` calls `close()`.
 
 ```typescript
 // Session, lock, and lease released in reverse declaration order —
