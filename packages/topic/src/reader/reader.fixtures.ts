@@ -1,4 +1,5 @@
-import { Codec } from '@ydbjs/api/topic'
+import { create } from '@bufbuild/protobuf'
+import { Codec, StreamReadMessage_FromServerSchema } from '@ydbjs/api/topic'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import type {
 	StreamReadMessage_CommitOffsetRequest,
@@ -11,6 +12,7 @@ import type {
 	UpdateTokenRequest,
 } from '@ydbjs/api/topic'
 import type { Driver } from '@ydbjs/core'
+import { AsyncQueue } from '@ydbjs/fsm/queue'
 
 import type { TX } from '../tx.js'
 
@@ -65,40 +67,18 @@ export let makeFakeTx = function makeFakeTx() {
 	}
 }
 
-let deferred = function deferred<T>(): PromiseWithResolvers<T> {
-	return Promise.withResolvers<T>()
-}
-
-export let makeFakeTopicDriver = function makeFakeTopicDriver(): FakeTopicDriver {
-	let pendingHandles: FakeReadStream[] = []
-	let pendingWaiters: Array<(handle: FakeReadStream) => void> = []
+// These tests control object ownership and client-side scheduling independently of the network.
+export function makeFakeTopicDriver(): FakeTopicDriver {
+	let streams = new AsyncQueue<FakeReadStream>()
 	let opened = 0
 	let txOffsetRequests: UpdateOffsetsInTransactionRequest[] = []
-
-	let waitForNextStream = function waitForNextStream(): Promise<FakeReadStream> {
-		if (pendingHandles.length > 0) {
-			return Promise.resolve(pendingHandles.shift()!)
-		}
-		let d = deferred<FakeReadStream>()
-		pendingWaiters.push(d.resolve)
-		return d.promise
-	}
-
-	let deliver = function deliver(handle: FakeReadStream): void {
-		if (pendingWaiters.length > 0) {
-			pendingWaiters.shift()!(handle)
-		} else {
-			pendingHandles.push(handle)
-		}
-	}
-
 	let driver = {
 		identity: { database: '/local', address: 'localhost', port: 2136 },
 		ready: () => Promise.resolve(),
 		get token(): Promise<string> {
 			return Promise.resolve('fake-token')
 		},
-		createClient(): unknown {
+		createClient() {
 			return {
 				updateOffsetsInTransaction(request: UpdateOffsetsInTransactionRequest) {
 					txOffsetRequests.push(request)
@@ -113,168 +93,94 @@ export let makeFakeTopicDriver = function makeFakeTopicDriver(): FakeTopicDriver
 				streamRead(
 					input: AsyncIterable<StreamReadMessage_FromClient>,
 					opts?: { signal?: AbortSignal }
-				): AsyncIterable<StreamReadMessage_FromServer> {
+				) {
 					opened++
-					let signal = opts?.signal
-					let readers: Array<
-						PromiseWithResolvers<IteratorResult<StreamReadMessage_FromServer>>
-					> = []
-					let queue: StreamReadMessage_FromServer[] = []
-					let done = false
-
+					let responses = new AsyncQueue<StreamReadMessage_FromServer>()
 					let sent: StreamReadMessage_FromClient[] = []
-					let sentWaiters: Array<() => void> = []
+					let changed = Promise.withResolvers<void>()
+					let signal = opts?.signal
+					if (signal?.aborted) responses.close()
+					else signal?.addEventListener('abort', () => responses.close(), { once: true })
 
-					let finish = function finish(): void {
-						done = true
-						for (let reader of readers.splice(0)) {
-							reader.resolve({ value: undefined as never, done: true })
-						}
-					}
-
-					let aborted = false
-					if (signal) {
-						if (signal.aborted) {
-							done = true
-							aborted = true
-						} else {
-							signal.addEventListener(
-								'abort',
-								() => {
-									aborted = true
-									finish()
-								},
-								{ once: true }
-							)
-						}
-					}
-
-					// Drain what the reader sends so tests can assert on it.
 					void (async () => {
 						try {
 							for await (let message of input) {
 								sent.push(message)
-								for (let w of sentWaiters.splice(0)) {
-									w()
-								}
+								changed.resolve()
+								changed = Promise.withResolvers<void>()
 							}
 						} catch {
-							// input closed — nothing to do
+							// Reader cancellation closes its request queue.
 						}
 					})()
 
-					let waitForClient = async function waitForClient<T>(
-						pick: (m: StreamReadMessage_FromClient) => T | undefined
+					async function waitForClient<T>(
+						pick: (message: StreamReadMessage_FromClient) => T | undefined
 					): Promise<T> {
 						for (;;) {
 							for (let message of sent) {
-								let picked = pick(message)
-								if (picked !== undefined) {
-									return picked
-								}
+								let value = pick(message)
+								if (value !== undefined) return value
 							}
-							let d = deferred<void>()
-							sentWaiters.push(d.resolve)
 							// oxlint-disable-next-line no-await-in-loop
-							await d.promise
+							await changed.promise
 						}
 					}
 
-					let handle: FakeReadStream = {
+					streams.push({
 						respond(message) {
-							if (done) {
-								return
-							}
-							if (readers.length > 0) {
-								readers.shift()!.resolve({ value: message, done: false })
-							} else {
-								queue.push(message)
-							}
+							if (!responses.isClosed) responses.push(message)
 						},
-						disconnect() {
-							finish()
-						},
-						fail(error) {
-							if (done) {
-								return
-							}
-							done = true
-							for (let reader of readers.splice(0)) {
-								reader.reject(error)
-							}
-						},
-						wasAborted() {
-							return aborted
-						},
+						disconnect: () => responses.close(),
+						fail: (error) => responses.fail(error),
+						wasAborted: () => signal?.aborted ?? false,
 						sent,
-						waitForInit() {
-							return waitForClient((m) =>
-								m.clientMessage.case === 'initRequest'
-									? m.clientMessage.value
+						waitForInit: () =>
+							waitForClient((message) =>
+								message.clientMessage.case === 'initRequest'
+									? message.clientMessage.value
 									: undefined
-							)
-						},
-						waitForReadRequest() {
-							return waitForClient((m) =>
-								m.clientMessage.case === 'readRequest'
-									? m.clientMessage.value
+							),
+						waitForReadRequest: () =>
+							waitForClient((message) =>
+								message.clientMessage.case === 'readRequest'
+									? message.clientMessage.value
 									: undefined
-							)
-						},
-						waitForCommit() {
-							return waitForClient((m) =>
-								m.clientMessage.case === 'commitOffsetRequest'
-									? m.clientMessage.value
+							),
+						waitForCommit: () =>
+							waitForClient((message) =>
+								message.clientMessage.case === 'commitOffsetRequest'
+									? message.clientMessage.value
 									: undefined
-							)
-						},
-						waitForStartResponse() {
-							return waitForClient((m) =>
-								m.clientMessage.case === 'startPartitionSessionResponse'
-									? m.clientMessage.value
+							),
+						waitForStartResponse: () =>
+							waitForClient((message) =>
+								message.clientMessage.case === 'startPartitionSessionResponse'
+									? message.clientMessage.value
 									: undefined
-							)
-						},
-						waitForUpdateToken() {
-							return waitForClient((m) =>
-								m.clientMessage.case === 'updateTokenRequest'
-									? m.clientMessage.value
+							),
+						waitForUpdateToken: () =>
+							waitForClient((message) =>
+								message.clientMessage.case === 'updateTokenRequest'
+									? message.clientMessage.value
 									: undefined
-							)
-						},
-					}
-
-					deliver(handle)
-
-					return {
-						[Symbol.asyncIterator]() {
-							return {
-								next(): Promise<IteratorResult<StreamReadMessage_FromServer>> {
-									if (queue.length > 0) {
-										return Promise.resolve({
-											value: queue.shift()!,
-											done: false,
-										})
-									}
-									if (done) {
-										return Promise.resolve({
-											value: undefined as never,
-											done: true,
-										})
-									}
-									let d = deferred<IteratorResult<StreamReadMessage_FromServer>>()
-									readers.push(d)
-									return d.promise
-								},
-							}
-						},
-					}
+							),
+					})
+					return responses
 				},
 			}
 		},
 	} as unknown as Driver
-
-	return { driver, waitForNextStream, streamCount: () => opened, txOffsetRequests }
+	return {
+		driver,
+		async waitForNextStream() {
+			let next = await streams.take()
+			if (next.done) throw new Error('No reader stream')
+			return next.value
+		},
+		streamCount: () => opened,
+		txOffsetRequests,
+	}
 }
 
 // ── server message builders ──────────────────────────────────────────────────────
@@ -282,11 +188,11 @@ export let makeFakeTopicDriver = function makeFakeTopicDriver(): FakeTopicDriver
 export let initResponse = function initResponse(
 	sessionId = 'session-1'
 ): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: { case: 'initResponse', value: { sessionId } },
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let startPartitionSession = function startPartitionSession(params: {
@@ -297,7 +203,7 @@ export let startPartitionSession = function startPartitionSession(params: {
 	start?: bigint
 	end?: bigint
 }): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
@@ -312,7 +218,7 @@ export let startPartitionSession = function startPartitionSession(params: {
 				partitionOffsets: { start: params.start ?? 0n, end: params.end ?? 0n },
 			},
 		},
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 // A one-batch ReadResponse for a single partition session. `data` defaults to the
@@ -327,7 +233,7 @@ export let readResponse = function readResponse(params: {
 }): StreamReadMessage_FromServer {
 	let bytesSize =
 		params.bytesSize ?? params.messages.reduce((acc, m) => acc + BigInt(m.data.length), 0n)
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
@@ -354,20 +260,20 @@ export let readResponse = function readResponse(params: {
 				],
 			},
 		},
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let commitOffsetResponse = function commitOffsetResponse(
 	committed: Array<{ partitionSessionId: bigint; committedOffset: bigint }>
 ): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
 			case: 'commitOffsetResponse',
 			value: { partitionsCommittedOffsets: committed },
 		},
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let stopPartitionSession = function stopPartitionSession(params: {
@@ -375,7 +281,7 @@ export let stopPartitionSession = function stopPartitionSession(params: {
 	graceful?: boolean
 	committedOffset?: bigint
 }): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
@@ -386,39 +292,39 @@ export let stopPartitionSession = function stopPartitionSession(params: {
 				committedOffset: params.committedOffset ?? 0n,
 			},
 		},
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let updateTokenResponse = function updateTokenResponse(): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: { case: 'updateTokenResponse', value: {} },
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let partitionStatusResponse = function partitionStatusResponse(
 	partitionSessionId: bigint,
 	committedOffset: bigint
 ): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status: StatusIds_StatusCode.SUCCESS,
 		issues: [],
 		serverMessage: {
 			case: 'partitionSessionStatusResponse',
 			value: { partitionSessionId, committedOffset, readOffset: committedOffset },
 		},
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 export let failureResponse = function failureResponse(
 	status: StatusIds_StatusCode
 ): StreamReadMessage_FromServer {
-	return {
+	return create(StreamReadMessage_FromServerSchema, {
 		status,
 		issues: [],
 		serverMessage: { case: undefined, value: undefined },
-	} as unknown as StreamReadMessage_FromServer
+	})
 }
 
 // ── async helpers ──────────────────────────────────────────────────────────────

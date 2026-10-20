@@ -1,5 +1,7 @@
 import { subscribe, unsubscribe } from 'node:diagnostics_channel'
 import { getEventListeners } from 'node:events'
+import type { StreamReadMessage_FromClient } from '@ydbjs/api/topic'
+import { Driver } from '@ydbjs/core'
 
 import { expect, test, vi } from 'vitest'
 
@@ -8,17 +10,14 @@ import {
 	initResponse,
 	makeFakeTopicDriver,
 	partitionStatusResponse,
+	readResponse,
 	settle,
 	startPartitionSession,
 	stopPartitionSession,
 } from './reader.fixtures.ts'
 import { ReaderTransport } from './transport.ts'
 
-// Resource-lifecycle coverage for the reader against the fake wire, mirroring the
-// writer's leak tests in writer.contract.test.ts: create/destroy churn must stay flat
-// in memory, finished readers must be GC-reclaimable, and a shared long-lived abort
-// signal must not accumulate listeners across lifecycles. The suite runs with
-// --expose-gc (see vitest.config.ts), so globalThis.gc is available.
+// The fake separates reader-owned references, timers, and microtasks from transport resources.
 
 // Synchronous callback reentry must not publish another lifecycle event after destruction.
 test.for(['committed', 'stopped'] as const)(
@@ -114,7 +113,9 @@ test('closes the stream and clears timers when a reader effect throws', async ()
 })
 
 test('preserves a zero destroy reason for reads commits and close', async () => {
-	let { driver } = makeFakeTopicDriver()
+	using driver = new Driver('grpc://127.0.0.1:1/local', {
+		'ydb.sdk.enable_discovery': false,
+	})
 	using reader = createTopicReader(driver, { topic: '/t', consumer: 'c' })
 	reader.destroy(0)
 	let iterator = reader.read()[Symbol.asyncIterator]()
@@ -291,4 +292,163 @@ test('keeps abort listeners flat on a shared signal across reader lifecycles', a
 
 	// Every settled window detached its listener — no accumulation on the shared signal.
 	expect(getEventListeners(ac.signal, 'abort')).toHaveLength(0)
+})
+
+let bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+function readRequests(sent: StreamReadMessage_FromClient[]): bigint[] {
+	let requests: bigint[] = []
+	for (let { clientMessage } of sent) {
+		if (clientMessage.case === 'readRequest') requests.push(clientMessage.value.bytesSize)
+	}
+	return requests
+}
+
+async function primeStream(
+	waitForNextStream: ReturnType<typeof makeFakeTopicDriver>['waitForNextStream'],
+	sessionId = 'session-A'
+) {
+	let stream = await waitForNextStream()
+	await stream.waitForInit()
+	stream.respond(initResponse(sessionId))
+	await stream.waitForReadRequest()
+	return stream
+}
+
+// The fake isolates a hook completion after synchronous teardown from network cancellation.
+test('ignores a hook that resolves after the reader is destroyed', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let hookGate = Promise.withResolvers<void>()
+	let unhandled: unknown[] = []
+	let onUnhandled = (reason: unknown) => {
+		unhandled.push(reason)
+	}
+	process.on('unhandledRejection', onUnhandled)
+
+	try {
+		let reader = createTopicReader(driver, {
+			topic: '/t',
+			consumer: 'c',
+			onPartitionSessionStart: async () => {
+				await hookGate.promise
+				return undefined
+			},
+		})
+
+		let stream = await waitForNextStream()
+		await stream.waitForInit()
+		stream.respond(initResponse('session-A'))
+		await stream.waitForReadRequest()
+		stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 0n }))
+		await new Promise((resolve) => setTimeout(resolve, 10))
+
+		reader.destroy()
+		hookGate.resolve()
+		await new Promise((resolve) => setTimeout(resolve, 25))
+
+		expect(
+			stream.sent.some((m) => m.clientMessage.case === 'startPartitionSessionResponse')
+		).toBe(false)
+		expect(unhandled).toEqual([])
+	} finally {
+		process.off('unhandledRejection', onUnhandled)
+	}
+})
+
+// The fake schedules the stale and current hooks independently after reusing a per-stream partition id.
+test('answers a re-granted partition exactly once when the previous stream hook finishes late', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	let calls: PromiseWithResolvers<void>[] = []
+	using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		onPartitionSessionStart: () => {
+			let d = Promise.withResolvers<void>()
+			calls.push(d)
+			return d.promise.then(() => undefined)
+		},
+	})
+	void reader
+
+	let stream1 = await primeStream(waitForNextStream, 'session-A')
+	stream1.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await settle()
+	expect(calls).toHaveLength(1) // hook 1 running (slow)
+
+	stream1.disconnect()
+
+	let stream2 = await waitForNextStream()
+	await stream2.waitForInit()
+	stream2.respond(initResponse('session-B'))
+	await stream2.waitForReadRequest()
+	// Same partition, same per-stream session id 1 — the common case (server assign
+	// ids restart at 1 per stream). Only the grant epoch tells the hooks apart; a
+	// second StartPartitionSessionResponse for one assign id is session-fatal
+	// ("double partition locking", BAD_REQUEST).
+	stream2.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await settle()
+	expect(calls).toHaveLength(2) // hook 2 running
+
+	// The STALE hook (stream 1) completes first, then the current one.
+	calls[0]!.resolve()
+	await settle()
+	calls[1]!.resolve()
+	await settle()
+
+	let responses = stream2.sent.filter(
+		(m) => m.clientMessage.case === 'startPartitionSessionResponse'
+	)
+	expect(responses).toHaveLength(1)
+})
+
+// Microtask control places cancellation after dequeue but before the batch window yields.
+test('does not release a response when the signal aborts before yield', async () => {
+	let { driver, waitForNextStream } = makeFakeTopicDriver()
+	await using reader = createTopicReader(driver, {
+		topic: '/t',
+		consumer: 'c',
+		maxBufferBytes: 1000n,
+	})
+	let stream = await primeStream(waitForNextStream)
+	stream.respond(startPartitionSession({ partitionSessionId: 1n, partitionId: 10n }))
+	await stream.waitForStartResponse()
+	stream.respond(
+		readResponse({
+			partitionSessionId: 1n,
+			messages: [{ offset: 0n, seqNo: 1n, data: bytes('a') }],
+			bytesSize: 400n,
+		})
+	)
+	await settle()
+
+	// Long window with limit unset: the response leaves the transport queue, but the
+	// iterable has not yielded it yet when the signal aborts.
+	let ac = new AbortController()
+	let thrown: unknown
+	let consume = (async () => {
+		try {
+			for await (let batch of reader.read({ batchWindowMs: 60_000, signal: ac.signal })) {
+				void batch
+			}
+		} catch (error) {
+			thrown = error
+		}
+	})()
+	// Let the loop consume the buffered chunk, then abort mid-window.
+	await settle()
+	ac.abort(new Error('consumer aborted'))
+	await consume
+	expect(String(thrown)).toContain('consumer aborted')
+	await settle()
+
+	// No iterable value was received, so no read credit is returned yet.
+	expect(readRequests(stream.sent)).toEqual([1000n])
+
+	// A later read receives the carried response and releases its credit then.
+	for await (let batch of reader.read({ limit: 1 })) {
+		expect(batch.map((message) => message.offset)).toEqual([0n])
+		break
+	}
+	await settle()
+	expect(readRequests(stream.sent)).toEqual([1000n, 400n])
 })
