@@ -1,7 +1,7 @@
 import { getEventListeners } from 'node:events'
 import { memoryUsage } from 'node:process'
-import { setImmediate } from 'node:timers/promises'
 
+import { abortable } from '@ydbjs/abortable'
 import { expect, test } from 'vitest'
 
 import { EndpointsUnavailableError } from '../errors.ts'
@@ -63,7 +63,7 @@ test('ready(signal) leaves no abort listeners on a shared signal', async (tc) =>
 	expect(getEventListeners(signal, 'abort')).toHaveLength(0)
 })
 
-test('cancelled ready calls release their reasons before discovery completes', async () => {
+test('cancelled ready calls release their reasons before discovery completes', async (tc) => {
 	if (gc === undefined) throw new Error('This test requires --expose-gc')
 	// A blocked discovery deterministically keeps readiness pending through every cancellation.
 	let discovery = makeFakeDiscovery()
@@ -71,10 +71,12 @@ test('cancelled ready calls release their reasons before discovery completes', a
 	await using h = makeEndpointPool({ discovery })
 	await discovery.waitForRound(1)
 
+	let finalized = Promise.withResolvers<void>()
 	let observation = {
 		reclaimed: new Set<number>(),
 		registry: new FinalizationRegistry<number>((id) => {
 			observation.reclaimed.add(id)
+			if (observation.reclaimed.size === 100) finalized.resolve()
 		}),
 	}
 	let cancelReady = async (id: number) => {
@@ -104,7 +106,7 @@ test('cancelled ready calls release their reasons before discovery completes', a
 			})
 		})
 	}
-	await setImmediate()
+	await abortable(tc.signal, finalized.promise)
 
 	expect(h.machine.state).toBe('discovering')
 	expect(discovery.lastSignal()!.aborted).toBe(false)
