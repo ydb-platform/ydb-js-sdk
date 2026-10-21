@@ -1,29 +1,27 @@
-import { DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { workerData } from 'node:worker_threads'
 
 import { create } from '@bufbuild/protobuf'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { DropTopicRequestSchema, TopicServiceDefinition } from '@ydbjs/api/topic'
 import { Driver } from '@ydbjs/core'
 
 import { installSafetyHandlers } from '../../lib/safety.ts'
-import type { WorkerData } from '../../lib/worker-api.ts'
+import type { TopicWorkerData } from '../../lib/worker-api.ts'
 
 installSafetyHandlers()
 
-let { params } = workerData as WorkerData
-let topic = params['topic'] ?? 'slo-topic'
-
+let { topic } = workerData as TopicWorkerData
 {
 	using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
-	await driver.ready()
+	let signal = AbortSignal.timeout(60_000)
+	await driver.ready(signal)
 	let service = driver.createClient(TopicServiceDefinition)
-
-	console.log('[topic.teardown] dropping topic %s', topic)
-	try {
-		await service.dropTopic(create(DropTopicRequestSchema, { path: topic }))
-	} catch {
-		// topic did not exist
+	let response = await service.dropTopic(create(DropTopicRequestSchema, { path: topic }), {
+		signal,
+	})
+	if (!response.operation?.ready || response.operation.status !== StatusIds_StatusCode.SUCCESS) {
+		throw new Error(`Topic cleanup failed: ${response.operation?.status}`)
 	}
-	console.log('[topic.teardown] done')
+	console.info('[topic.teardown] dropped %s', topic)
 }
-
 process.exit(0)
