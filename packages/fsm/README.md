@@ -192,6 +192,16 @@ npm run build
 npm run test
 ```
 
+From the repository root, run the isolated scaling benchmarks:
+
+```sh
+npm run bench -- --project uni packages/fsm/src
+```
+
+The benchmarks measure complete bursts, including creation and cleanup, at 128, 4000 and 64000 items.
+Vitest reports wall time for each complete burst.
+The generic CI Bench job runs the workspace benchmarks on Node 22, 24 and 26 after the Test matrix succeeds, without rebuilding sources. Vitest prints results in the job log and saves a JSON artifact.
+
 ## License
 
 Apache-2.0

@@ -7,5 +7,5 @@
 		"tsBuildInfoFile": "./dist/.tsbuildinfo"
 	},
 	"include": ["src/**/*.ts"],
-	"exclude": ["dist/**/*", "**/*.test.ts", "vitest.config.ts"]
+	"exclude": ["dist/**/*", "**/*.test.ts", "**/*.bench.ts", "vitest.config.ts"]
 }

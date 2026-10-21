@@ -21,6 +21,7 @@
 		"attw": "turbo run attw",
 		"test": "vitest --run",
 		"test:grpc": "vitest --run --config vitest.grpc.config.ts",
+		"bench": "vitest bench --run --maxWorkers=1",
 		"coverage": "vitest --run --coverage",
 		"lint": "oxlint --fix",
 		"format": "oxfmt --write",
