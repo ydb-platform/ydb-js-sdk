@@ -102,7 +102,15 @@ server.on('stream', (stream, headers) => {
 				break
 			}
 			case 'terminal-reset':
-				reply(stream, ['value'], scenario.status)
+				stream.resume()
+				stream.respond(
+					{ ':status': 200, 'content-type': 'application/grpc' },
+					{ waitForTrailers: true }
+				)
+				stream.once('wantTrailers', () =>
+					stream.sendTrailers({ 'grpc-status': String(scenario.status) })
+				)
+				stream.write(frame('first'))
 				break
 			case 'missing-status':
 				stream.resume()
@@ -234,11 +242,26 @@ async function command(name) {
 		case 'reply-small':
 			reply(small, ['concurrent response'])
 			return null
-		case 'reset-terminal':
-			attemptedResets.push(constants.NGHTTP2_INTERNAL_ERROR)
-			streams[0].close(constants.NGHTTP2_INTERNAL_ERROR)
+		case 'send-terminal-tail':
+			streams[0].end(Buffer.concat([frame('second'), frame('last')]))
+			return null
+		case 'reset-terminal': {
+			let stream = streams[0]
+			if (stream.destroyed || stream.closed || stream.readableEnded) {
+				throw new Error('Terminal reset requires an open request stream')
+			}
+			attemptedResets.push(scenario.code)
+			await new Promise((resolve) => {
+				stream.once('close', resolve)
+				stream.close(scenario.code)
+			})
+			if (stream.rstCode !== scenario.code) {
+				throw new Error(`Expected reset ${scenario.code}, received ${stream.rstCode}`)
+			}
+			event('reset-sent', stream.rstCode)
 			await ping()
 			return null
+		}
 		case 'send-tail': {
 			let tail =
 				scenario.fault === 'malformed'

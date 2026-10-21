@@ -6,7 +6,7 @@ import { abortable } from '@ydbjs/abortable'
 
 export type FaultScenario =
 	| { type: 'reset'; code: number; streaming: boolean }
-	| { type: 'terminal-reset'; status: number }
+	| { type: 'terminal-reset'; status: number; code: number }
 	| { type: 'receive-tail'; fault: 'malformed' | 'truncated' | 'gzip' }
 	| { type: 'backpressure'; initialWindowSize: 0 | 65535 }
 	| {

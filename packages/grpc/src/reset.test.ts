@@ -89,36 +89,50 @@ for (let [name, reset, status] of [
 }
 
 for (let status of [Status.OK, Status.PERMISSION_DENIED]) {
-	test(`preserves terminal gRPC status ${status} after an HTTP/2 reset`, async (tc) => {
-		let trailers = deferred()
-		let release = deferred()
-		await using peer = await nodePeer({ type: 'terminal-reset', status }, tc.signal)
-		using client = new Client(peer.authority)
-		async function* input() {
-			yield 'request'
-			await release.promise
-		}
-		let response = client.call(service.bidi, input(), {
-			signal: tc.signal,
-			onTrailer: () => trailers.resolve(),
+	for (let code of [
+		constants.NGHTTP2_NO_ERROR,
+		constants.NGHTTP2_CANCEL,
+		constants.NGHTTP2_INTERNAL_ERROR,
+	]) {
+		test(`drains buffered responses with status ${status} after HTTP/2 reset ${code}`, async (tc) => {
+			let trailers = deferred()
+			let producerWaiting = deferred()
+			let release = deferred()
+			await using peer = await nodePeer({ type: 'terminal-reset', status, code }, tc.signal)
+			using client = new Client(peer.authority)
+			async function* input() {
+				yield 'request'
+				producerWaiting.resolve()
+				await release.promise
+			}
+			let statuses: number[] = []
+			let response = client.call(service.bidi, input(), {
+				signal: tc.signal,
+				onTrailer: () => trailers.resolve(),
+				onStatus: (result) => statuses.push(result.code),
+			})
+			let responses = response[Symbol.asyncIterator]()
+			try {
+				expect((await responses.next()).value).toBe('first')
+				await producerWaiting.promise
+				await peer.command('send-terminal-tail')
+				await trailers.promise
+				await peer.command('reset-terminal')
+				expect(await peer.wait('reset-sent')).toBe(code)
+				expect((await peer.snapshot()).attemptedResets).toEqual([code])
+				expect((await responses.next()).value).toBe('second')
+				expect((await responses.next()).value).toBe('last')
+				let terminal = await responses.next().then(
+					(result) => ({ done: result.done, code: Status.OK }),
+					(error) => ({ done: true, code: error.code })
+				)
+				expect(terminal).toEqual({ done: true, code: status })
+				expect(statuses).toEqual([status])
+			} finally {
+				release.resolve()
+			}
 		})
-		let responses = response[Symbol.asyncIterator]()
-		try {
-			expect((await responses.next()).value).toBe('value')
-			await trailers.promise
-			await peer.command('reset-terminal')
-			expect((await peer.snapshot()).attemptedResets).toEqual([
-				constants.NGHTTP2_INTERNAL_ERROR,
-			])
-			let terminal = await responses.next().then(
-				(result) => ({ done: result.done, code: Status.OK }),
-				(error) => ({ done: true, code: error.code })
-			)
-			expect(terminal).toEqual({ done: true, code: status })
-		} finally {
-			release.resolve()
-		}
-	})
+	}
 }
 
 test('drains complete responses before reporting missing status after a normal HTTP/2 close', async (tc) => {

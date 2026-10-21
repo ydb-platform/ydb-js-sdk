@@ -21,7 +21,9 @@ test('expires an elapsed deadline synchronously', () => {
 
 test('expires at an absolute Date deadline', (tc) => {
 	vi.useFakeTimers()
-	tc.onTestFinished(() => vi.useRealTimers())
+	tc.onTestFinished(() => {
+		vi.useRealTimers()
+	})
 	using deadline = createDeadline(new Date(Date.now() + 100))
 
 	vi.advanceTimersByTime(99)
@@ -32,7 +34,9 @@ test('expires at an absolute Date deadline', (tc) => {
 
 test('keeps a far-future deadline pending beyond the timer limit', (tc) => {
 	vi.useFakeTimers()
-	tc.onTestFinished(() => vi.useRealTimers())
+	tc.onTestFinished(() => {
+		vi.useRealTimers()
+	})
 	using deadline = createDeadline(Date.now() + 2147483647 + 100)
 
 	vi.advanceTimersByTime(2147483647)
@@ -43,7 +47,9 @@ test('keeps a far-future deadline pending beyond the timer limit', (tc) => {
 
 test('disposing cancels expiry without aborting the signal', (tc) => {
 	vi.useFakeTimers()
-	tc.onTestFinished(() => vi.useRealTimers())
+	tc.onTestFinished(() => {
+		vi.useRealTimers()
+	})
 	using deadline = createDeadline(Date.now() + 100)
 	deadline?.[Symbol.dispose]()
 	deadline?.[Symbol.dispose]()

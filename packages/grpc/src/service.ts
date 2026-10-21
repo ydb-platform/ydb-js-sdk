@@ -22,6 +22,10 @@ export function createServiceClient<Service extends ServiceDefinition>(
 	service: Service,
 	transport: Transport
 ): ServiceClient<Service> {
+	if (Object.hasOwn(service, 'close')) {
+		throw new TypeError('Service method "close" conflicts with the client lifecycle method')
+	}
+
 	let client: Record<string, unknown> = { close: () => transport.close() }
 	for (let [name, method] of Object.entries(service)) {
 		client[name] = (request: unknown, options?: CallOptions) => {
