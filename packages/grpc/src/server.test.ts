@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 
 import { expect, test } from 'vitest'
 
-import { frame, service } from '../tests/fixtures.ts'
+import { collect, frame, rawServer, service } from '../tests/fixtures.ts'
 import { Client } from './client.ts'
 import { RpcError, Status } from './error.ts'
 import { Server } from './server.ts'
@@ -411,13 +411,14 @@ test('bounds response production while the peer gives no HTTP/2 flow credit', as
 	}
 })
 
-test('preserves DEADLINE_EXCEEDED when a response is blocked on flow control', async (tc) => {
+test('preserves a complete queued message before DEADLINE_EXCEEDED trailers', async (tc) => {
 	using server = new Server()
 	let started = Promise.withResolvers<AbortSignal>()
+	let body = 'x'.repeat(64 * 1024)
 	server.add(service, {
 		async *serverStream(_request, context) {
 			started.resolve(context.signal)
-			yield 'x'.repeat(128 * 1024)
+			yield body
 		},
 	})
 	let port = await server.listen()
@@ -433,11 +434,12 @@ test('preserves DEADLINE_EXCEEDED when a response is blocked on flow control', a
 			{ signal: tc.signal }
 		)
 		let trailers: IncomingHttpHeaders | undefined
+		let chunks: Buffer[] = []
+		stream.on('data', (chunk: Buffer) => chunks.push(chunk))
 		stream.on('trailers', (value) => {
 			trailers = value
 		})
 		let ended = once(stream, 'end', { signal: tc.signal })
-		stream.resume()
 		stream.end(frame('request'))
 		let signal = await started.promise
 		await once(signal, 'abort', { signal: tc.signal })
@@ -445,6 +447,79 @@ test('preserves DEADLINE_EXCEEDED when a response is blocked on flow control', a
 		await ended
 
 		expect(trailers?.['grpc-status']).toBe(String(Status.DEADLINE_EXCEEDED))
+		expect(Buffer.concat(chunks)).toEqual(frame(body))
+	} finally {
+		session.destroy()
+	}
+})
+
+// The proxy imposes the upstream deadline and flow window without a local client deadline.
+test('resets an incomplete response at the server deadline without corrupting the next RPC', async (tc) => {
+	using server = new Server()
+	let started = Promise.withResolvers<AbortSignal>()
+	server.add(service, {
+		async *serverStream(input, context) {
+			if (input === 'large') {
+				started.resolve(context.signal)
+				yield 'x'.repeat(128 * 1024)
+			} else {
+				yield 'response'
+			}
+		},
+	})
+	let port = await server.listen()
+	let session = connect(`http://127.0.0.1:${port}`, { settings: { initialWindowSize: 0 } })
+	try {
+		let resets: number[] = []
+		await using proxy = await rawServer((stream, headers) => {
+			let upstream = session.request({ ...headers, 'grpc-timeout': '50m' })
+			let trailers: IncomingHttpHeaders = {}
+			upstream.on('response', (responseHeaders) =>
+				stream.respond(responseHeaders, { waitForTrailers: true })
+			)
+			upstream.on('trailers', (responseTrailers) => {
+				trailers = responseTrailers
+			})
+			upstream.on('error', () => stream.close(constants.NGHTTP2_INTERNAL_ERROR))
+			upstream.on('aborted', () => {
+				resets.push(upstream.rstCode)
+				stream.close(upstream.rstCode)
+			})
+			upstream.on('end', () => {
+				if (stream.closed) return
+				if (upstream.rstCode !== constants.NGHTTP2_NO_ERROR) {
+					resets.push(upstream.rstCode)
+					stream.close(upstream.rstCode)
+					return
+				}
+				stream.once('wantTrailers', () => stream.sendTrailers(trailers))
+				stream.end()
+			})
+			stream.once('close', () => upstream.close())
+			stream.pipe(upstream)
+			upstream.pipe(stream, { end: false })
+		})
+		using transport = new Client(proxy.authority)
+		let client = createServiceClient(service, transport)
+		let statuses: number[] = []
+		let response = collect(
+			client.serverStream('large', {
+				signal: tc.signal,
+				onStatus: (status) => statuses.push(status.code),
+			})
+		).catch((error: unknown) => error)
+		let signal = await started.promise
+		await once(signal, 'abort', { signal: tc.signal })
+		session.settings({ initialWindowSize: 256 * 1024 })
+
+		expect(await response).toMatchObject({ code: Status.CANCELLED })
+		expect(statuses).toEqual([Status.CANCELLED])
+		expect(resets).toEqual([constants.NGHTTP2_CANCEL])
+		await expect(collect(client.serverStream('small', { signal: tc.signal }))).resolves.toEqual(
+			['response']
+		)
+		expect(proxy.sessions).toHaveLength(1)
+		expect(proxy.errors).toEqual([])
 	} finally {
 		session.destroy()
 	}
