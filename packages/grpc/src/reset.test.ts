@@ -1,20 +1,29 @@
-import { constants } from 'node:http2'
+import { type ServerHttp2Stream, constants, createServer } from 'node:http2'
 import { setImmediate } from 'node:timers/promises'
 
+import { abortable } from '@ydbjs/abortable'
 import { expect, test, vi } from 'vitest'
 
-import { collect, deferred, service } from '../tests/fixtures.ts'
-import { nodePeer } from '../tests/node-peer.ts'
+import { collect, deferred, frame, rawServer, reply, service } from '../tests/fixtures.ts'
 import { Client } from './client.ts'
 import { Status } from './error.ts'
 
-// The peer controls flow windows and reset ordering, which real YDB cannot reproduce deterministically.
+// A raw server controls flow windows and reset ordering independently of SDK server behavior.
 
 test('receives concurrent response headers while a large request is blocked by flow control', async (tc) => {
 	let send = deferred()
 	let serialized = deferred()
+	let largeStarted = deferred()
+	let smallStarted = deferred<ServerHttp2Stream>()
+	let server = createServer({ settings: { initialWindowSize: 0 } })
+	await using peer = await rawServer((stream, headers) => {
+		if (headers[':path'] === '/test.Transport/Large') {
+			largeStarted.resolve()
+		} else {
+			smallStarted.resolve(stream)
+		}
+	}, server)
 	let payload = new Uint8Array(16 * 1024 * 1024)
-	await using peer = await nodePeer({ type: 'flow-control' }, tc.signal)
 	using client = new Client(peer.authority)
 	let controller = new AbortController()
 	let reason = new Error('stop blocked request')
@@ -35,18 +44,19 @@ test('receives concurrent response headers while a large request is blocked by f
 		signal: AbortSignal.any([tc.signal, controller.signal]),
 	})
 	let blocked = collect(call).catch((error: unknown) => error)
-	await peer.wait('large-started')
+	await abortable(tc.signal, largeStarted.promise)
 	let response = collect(client.call(service.unary, '', { signal: tc.signal }))
-	await peer.wait('small-started')
+	let small = await abortable(tc.signal, smallStarted.promise)
+
 	send.resolve()
-	await serialized.promise
-	await peer.command('reply-small')
+	await abortable(tc.signal, serialized.promise)
+	reply(small, ['concurrent response'])
 
 	await expect(response).resolves.toEqual(['concurrent response'])
-	expect((await peer.snapshot()).sessions).toBe(1)
+	expect(peer.sessions).toHaveLength(1)
 	controller.abort(reason)
 	expect(await blocked).toBe(reason)
-	expect((await peer.snapshot()).errors).toEqual([])
+	expect(peer.errors).toEqual([])
 })
 
 for (let [name, reset, status] of [
@@ -59,32 +69,51 @@ for (let [name, reset, status] of [
 	['internal error', constants.NGHTTP2_INTERNAL_ERROR, Status.INTERNAL],
 ] as const) {
 	for (let streaming of [false, true]) {
-		test(`maps HTTP/2 ${name} after ${streaming ? 'streaming' : 'unary'} requests`, async (tc) => {
-			await using peer = await nodePeer({ type: 'reset', code: reset, streaming }, tc.signal)
-			using client = new Client(peer.authority)
-			let release = deferred()
-			async function* input() {
-				yield 'request'
-				await release.promise
-			}
-			let statuses: number[] = []
-			try {
-				let method = streaming ? service.bidi : service.unary
-				let request = streaming ? input() : 'request'
-				let call = client.call(method, request, {
-					signal: tc.signal,
-					onStatus: (result) => statuses.push(result.code),
+		// Bun sends END_STREAM instead of a server reset: https://github.com/oven-sh/bun/pull/33380
+		test.skipIf(Boolean(process.versions.bun))(
+			`maps HTTP/2 ${name} after ${streaming ? 'streaming' : 'unary'} requests`,
+			async (tc) => {
+				let attemptedResets: number[] = []
+				let resetSent = deferred<number>()
+				await using peer = await rawServer((stream) => {
+					let resetRequest = () => {
+						attemptedResets.push(reset)
+						stream.once('close', () => resetSent.resolve(stream.rstCode))
+						stream.close(reset)
+					}
+					if (streaming) {
+						stream.once('data', resetRequest)
+					} else {
+						stream.once('end', resetRequest)
+						stream.resume()
+					}
 				})
-				let responses = collect(call)
+				using client = new Client(peer.authority)
+				let release = deferred()
+				async function* input() {
+					yield 'request'
+					await release.promise
+				}
+				let statuses: number[] = []
+				try {
+					let method = streaming ? service.bidi : service.unary
+					let request = streaming ? input() : 'request'
+					let call = client.call(method, request, {
+						signal: tc.signal,
+						onStatus: (result) => statuses.push(result.code),
+					})
+					let responses = collect(call)
 
-				await expect(responses).rejects.toMatchObject({ code: status })
-				expect(statuses).toEqual([status])
-				expect(await peer.wait('reset-sent')).toBe(reset)
-				expect((await peer.snapshot()).attemptedResets).toEqual([reset])
-			} finally {
-				release.resolve()
+					await expect(responses).rejects.toMatchObject({ code: status })
+					expect(statuses).toEqual([status])
+					let sentCode = await abortable(tc.signal, resetSent.promise)
+					expect(sentCode).toBe(reset)
+					expect(attemptedResets).toEqual([reset])
+				} finally {
+					release.resolve()
+				}
 			}
-		})
+		)
 	}
 }
 
@@ -98,7 +127,19 @@ for (let status of [Status.OK, Status.PERMISSION_DENIED]) {
 			let trailers = deferred()
 			let producerWaiting = deferred()
 			let release = deferred()
-			await using peer = await nodePeer({ type: 'terminal-reset', status, code }, tc.signal)
+			let opened = deferred<ServerHttp2Stream>()
+			await using peer = await rawServer((stream) => {
+				stream.resume()
+				stream.respond(
+					{ ':status': 200, 'content-type': 'application/grpc' },
+					{ waitForTrailers: true }
+				)
+				stream.once('wantTrailers', () =>
+					stream.sendTrailers({ 'grpc-status': String(status) })
+				)
+				stream.write(frame('first'))
+				opened.resolve(stream)
+			})
 			using client = new Client(peer.authority)
 			async function* input() {
 				yield 'request'
@@ -113,15 +154,32 @@ for (let status of [Status.OK, Status.PERMISSION_DENIED]) {
 			})
 			let responses = response[Symbol.asyncIterator]()
 			try {
-				expect((await responses.next()).value).toBe('first')
-				await producerWaiting.promise
-				await peer.command('send-terminal-tail')
-				await trailers.promise
-				await peer.command('reset-terminal')
-				expect(await peer.wait('reset-sent')).toBe(code)
-				expect((await peer.snapshot()).attemptedResets).toEqual([code])
-				expect((await responses.next()).value).toBe('second')
-				expect((await responses.next()).value).toBe('last')
+				let first = await responses.next()
+				expect(first.value).toBe('first')
+				await abortable(tc.signal, producerWaiting.promise)
+				let stream = await abortable(tc.signal, opened.promise)
+				let session = stream.session!
+				stream.end(Buffer.concat([frame('second'), frame('last')]))
+				await abortable(tc.signal, trailers.promise)
+
+				expect(stream.closed).toBe(false)
+				expect(stream.destroyed).toBe(false)
+				expect(stream.readableEnded).toBe(false)
+				let closed = deferred<number>()
+				stream.once('close', () => closed.resolve(stream.rstCode))
+				stream.close(code)
+				let sentCode = await abortable(tc.signal, closed.promise)
+				expect(sentCode).toBe(code)
+
+				let pinged = deferred()
+				session.ping((error) => (error ? pinged.reject(error) : pinged.resolve()))
+				await abortable(tc.signal, pinged.promise)
+				await setImmediate(undefined, { signal: tc.signal })
+
+				let second = await responses.next()
+				let last = await responses.next()
+				expect(second.value).toBe('second')
+				expect(last.value).toBe('last')
 				let terminal = await responses.next().then(
 					(result) => ({ done: result.done, code: Status.OK }),
 					(error) => ({ done: true, code: error.code })
@@ -136,17 +194,29 @@ for (let status of [Status.OK, Status.PERMISSION_DENIED]) {
 }
 
 test('drains complete responses before reporting missing status after a normal HTTP/2 close', async (tc) => {
-	await using peer = await nodePeer({ type: 'missing-status' }, tc.signal)
+	let closed = deferred()
+	await using peer = await rawServer((stream) => {
+		stream.once('close', () => closed.resolve())
+		stream.once('end', () => {
+			stream.respond({ ':status': 200, 'content-type': 'application/grpc' })
+			stream.end(Buffer.concat([frame('first'), frame('second')]))
+		})
+		stream.resume()
+	})
 	using client = new Client(peer.authority)
 	let response = client.call(service.serverStream, '', { signal: tc.signal })
 	let iterator = response[Symbol.asyncIterator]()
 
-	expect((await iterator.next()).value).toBe('first')
-	await peer.wait('stream-closed')
-	await peer.command('ping')
+	let first = await iterator.next()
+	expect(first.value).toBe('first')
+	await abortable(tc.signal, closed.promise)
+	let pinged = deferred()
+	peer.sessions[0]!.ping((error) => (error ? pinged.reject(error) : pinged.resolve()))
+	await abortable(tc.signal, pinged.promise)
 	await setImmediate(undefined, { signal: tc.signal })
 
-	expect((await iterator.next()).value).toBe('second')
+	let second = await iterator.next()
+	expect(second.value).toBe('second')
 	await expect(iterator.next()).rejects.toMatchObject({
 		code: Status.UNKNOWN,
 		details: 'RPC ended without grpc-status',
@@ -157,11 +227,18 @@ for (let [name, expired] of [
 	['reports deadline expiry when a peer CANCEL arrives before the local timer runs', true],
 	['preserves peer cancellation while the absolute deadline is still pending', false],
 ] as const) {
-	test(`${name}`, async (tc) => {
-		await using peer = await nodePeer(
-			{ type: 'reset', code: constants.NGHTTP2_CANCEL, streaming: false },
-			tc.signal
-		)
+	// Bun sends END_STREAM instead of a server reset: https://github.com/oven-sh/bun/pull/33380
+	test.skipIf(Boolean(process.versions.bun))(`${name}`, async (tc) => {
+		let attemptedResets: number[] = []
+		let resetSent = deferred<number>()
+		await using peer = await rawServer((stream) => {
+			stream.once('end', () => {
+				attemptedResets.push(constants.NGHTTP2_CANCEL)
+				stream.once('close', () => resetSent.resolve(stream.rstCode))
+				stream.close(constants.NGHTTP2_CANCEL)
+			})
+			stream.resume()
+		})
 		using client = new Client(peer.authority)
 		using clock = vi.spyOn(Date, 'now')
 		let deadline = Date.now() + 60_000
@@ -184,7 +261,8 @@ for (let [name, expired] of [
 
 		await expect(response).rejects.toMatchObject({ code: expected })
 		expect(statuses).toEqual([expected])
-		expect(await peer.wait('reset-sent')).toBe(constants.NGHTTP2_CANCEL)
-		expect((await peer.snapshot()).attemptedResets).toEqual([constants.NGHTTP2_CANCEL])
+		let sentCode = await abortable(tc.signal, resetSent.promise)
+		expect(sentCode).toBe(constants.NGHTTP2_CANCEL)
+		expect(attemptedResets).toEqual([constants.NGHTTP2_CANCEL])
 	})
 }
