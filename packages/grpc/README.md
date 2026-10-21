@@ -54,6 +54,10 @@ Unary and client-streaming handlers return a value or Promise. Server-streaming 
 
 The context contains request `metadata`, an `AbortSignal`, the absolute `deadline` when supplied, and the remote `peer` address. Use `context.sendHeader(metadata)` once before the first response and `context.setTrailer(metadata)` to add trailing metadata. Throw `new RpcError(Status.PERMISSION_DENIED, 'details', metadata)` to finish with a gRPC error. Cancellation and deadlines abort the context signal; handlers waiting on external work must pass that signal to the operation they await.
 
+Response metadata must not contain HTTP/2 connection-specific headers. Invalid response metadata fails only its RPC.
+
+If a deadline interrupts an incomplete response message, the server resets the HTTP/2 stream with [`CANCEL`](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md#errors) instead of appending trailers to a truncated message. Clients can observe `Status.CANCELLED` when their own deadline has not expired; a local client deadline still reports `Status.DEADLINE_EXCEEDED`. Complete response messages can be followed by ordinary gRPC error trailers.
+
 `listen()` defaults to `127.0.0.1:0` and returns the bound TCP port. IPv6 bind addresses use brackets, such as `[::1]:0`. A `unix:///path/to/socket` address listens on a Unix socket and returns `0`.
 
 `using server = new Server()` disposes the server through `destroy()`: active RPCs are cancelled and connections are destroyed without waiting for streams to finish.

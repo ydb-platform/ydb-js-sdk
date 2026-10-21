@@ -32,6 +32,15 @@ interface Method {
 	handle(request: any, context: ServerContext): any
 }
 
+let connectionHeaders = new Set([
+	'connection',
+	'keep-alive',
+	'proxy-connection',
+	'transfer-encoding',
+	'upgrade',
+	'http2-settings',
+])
+
 function requestDeadline(value: string | string[] | undefined): number | undefined {
 	if (value === undefined) return undefined
 	let match = typeof value === 'string' && /^(\d{1,8})([HMSmun])$/.exec(value)
@@ -50,6 +59,9 @@ function requestDeadline(value: string | string[] | undefined): number | undefin
 function applicationHeaders(metadata: Metadata): OutgoingHttpHeaders {
 	let headers = requestHeaders(metadata)
 	for (let key of Object.keys(headers)) {
+		if (connectionHeaders.has(key)) {
+			throw new TypeError(`Invalid HTTP/2 response metadata key: ${key}`)
+		}
 		if (key.startsWith('grpc-') && key !== 'grpc-status-details-bin') delete headers[key]
 	}
 	delete headers['content-type']
@@ -135,14 +147,28 @@ async function writeResponse(
 	header[0] = 0
 	header.writeUInt32BE(bytes.length, 1)
 	let body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-	if (!stream.write(header)) await once(stream, 'drain', { signal })
-	// Bound queued bytes so one large response does not exhaust the shared session budget.
-	for (let offset = 0; offset < body.length; offset += 64 * 1024) {
-		signal.throwIfAborted()
-		if (!stream.write(body.subarray(offset, offset + 64 * 1024))) {
-			// oxlint-disable-next-line no-await-in-loop
-			await once(stream, 'drain', { signal })
+	let offset = 0
+	try {
+		if (!stream.write(header)) await once(stream, 'drain', { signal })
+		// Bound queued bytes so one large response does not exhaust the shared session budget.
+		while (offset < body.length) {
+			signal.throwIfAborted()
+			let chunk = body.subarray(offset, offset + 64 * 1024)
+			let canWrite = stream.write(chunk)
+			offset += chunk.length
+			if (!canWrite) {
+				// oxlint-disable-next-line no-await-in-loop
+				await once(stream, 'drain', { signal })
+			}
 		}
+	} catch (error) {
+		// Trailers cannot terminate a partially queued length-prefixed message.
+		if (offset < body.length) {
+			stream.close(
+				signal.aborted ? constants.NGHTTP2_CANCEL : constants.NGHTTP2_INTERNAL_ERROR
+			)
+		}
+		throw error
 	}
 }
 
@@ -201,7 +227,11 @@ async function serve(
 			)
 		} else {
 			stream.once('wantTrailers', () => {
-				if (!stream.destroyed) stream.sendTrailers(trailers)
+				try {
+					if (!stream.destroyed) stream.sendTrailers(trailers)
+				} catch {
+					stream.close(constants.NGHTTP2_INTERNAL_ERROR)
+				}
 			})
 			stream.end()
 		}
