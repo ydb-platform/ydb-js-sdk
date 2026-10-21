@@ -13,7 +13,10 @@ export function method<RequestStream extends boolean, ResponseStream extends boo
 	name: string,
 	requestStream: RequestStream,
 	responseStream: ResponseStream
-) {
+): MethodDefinition<string, string> & {
+	requestStream: RequestStream
+	responseStream: ResponseStream
+} {
 	return {
 		path: `/test.Transport/${name}`,
 		requestStream,
@@ -22,7 +25,7 @@ export function method<RequestStream extends boolean, ResponseStream extends boo
 		requestDeserialize: (bytes: Uint8Array) => Buffer.from(bytes).toString(),
 		responseSerialize: (value: string) => Buffer.from(value),
 		responseDeserialize: (bytes: Uint8Array) => Buffer.from(bytes).toString(),
-	} satisfies MethodDefinition<string, string>
+	}
 }
 
 export let service = {

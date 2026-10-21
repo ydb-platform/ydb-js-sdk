@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib'
 
 import { expect, test } from 'vitest'
 
-import { collect, frame, rawServer, service } from '../tests/fixtures.ts'
+import { frame, service } from '../tests/fixtures.ts'
 import { Client } from './client.ts'
 import { RpcError, Status } from './error.ts'
 import { Server } from './server.ts'
@@ -453,15 +453,15 @@ test('preserves a complete queued message before DEADLINE_EXCEEDED trailers', as
 	}
 })
 
-// The proxy imposes the upstream deadline and flow window without a local client deadline.
 test('resets an incomplete response at the server deadline without corrupting the next RPC', async (tc) => {
 	using server = new Server()
 	let started = Promise.withResolvers<AbortSignal>()
+	let largeBody = 'x'.repeat(128 * 1024)
 	server.add(service, {
 		async *serverStream(input, context) {
 			if (input === 'large') {
 				started.resolve(context.signal)
-				yield 'x'.repeat(128 * 1024)
+				yield largeBody
 			} else {
 				yield 'response'
 			}
@@ -469,57 +469,49 @@ test('resets an incomplete response at the server deadline without corrupting th
 	})
 	let port = await server.listen()
 	let session = connect(`http://127.0.0.1:${port}`, { settings: { initialWindowSize: 0 } })
+	let errors: unknown[] = []
+	session.on('error', (error) => errors.push(error))
 	try {
-		let resets: number[] = []
-		await using proxy = await rawServer((stream, headers) => {
-			let upstream = session.request({ ...headers, 'grpc-timeout': '50m' })
-			let trailers: IncomingHttpHeaders = {}
-			upstream.on('response', (responseHeaders) =>
-				stream.respond(responseHeaders, { waitForTrailers: true })
-			)
-			upstream.on('trailers', (responseTrailers) => {
-				trailers = responseTrailers
-			})
-			upstream.on('error', () => stream.close(constants.NGHTTP2_INTERNAL_ERROR))
-			upstream.on('aborted', () => {
-				resets.push(upstream.rstCode)
-				stream.close(upstream.rstCode)
-			})
-			upstream.on('end', () => {
-				if (stream.closed) return
-				if (upstream.rstCode !== constants.NGHTTP2_NO_ERROR) {
-					resets.push(upstream.rstCode)
-					stream.close(upstream.rstCode)
-					return
-				}
-				stream.once('wantTrailers', () => stream.sendTrailers(trailers))
-				stream.end()
-			})
-			stream.once('close', () => upstream.close())
-			stream.pipe(upstream)
-			upstream.pipe(stream, { end: false })
+		let headers = {
+			':method': 'POST',
+			':path': service.serverStream.path,
+			'content-type': 'application/grpc',
+			'grpc-timeout': '50m',
+		}
+		let first = session.request(headers, { signal: tc.signal })
+		let receivedBytes = 0
+		first.on('data', (chunk: Buffer) => {
+			receivedBytes += chunk.length
 		})
-		using transport = new Client(proxy.authority)
-		let client = createServiceClient(service, transport)
-		let statuses: number[] = []
-		let response = collect(
-			client.serverStream('large', {
-				signal: tc.signal,
-				onStatus: (status) => statuses.push(status.code),
-			})
-		).catch((error: unknown) => error)
+		first.on('error', (error) => errors.push(error))
+		let closed = once(first, 'close', { signal: tc.signal })
+		first.end(frame('large'))
+
 		let signal = await started.promise
 		await once(signal, 'abort', { signal: tc.signal })
 		session.settings({ initialWindowSize: 256 * 1024 })
+		await closed
 
-		expect(await response).toMatchObject({ code: Status.CANCELLED })
-		expect(statuses).toEqual([Status.CANCELLED])
-		expect(resets).toEqual([constants.NGHTTP2_CANCEL])
-		await expect(collect(client.serverStream('small', { signal: tc.signal }))).resolves.toEqual(
-			['response']
-		)
-		expect(proxy.sessions).toHaveLength(1)
-		expect(proxy.errors).toEqual([])
+		expect(first.rstCode).toBe(constants.NGHTTP2_CANCEL)
+		expect(receivedBytes).toBeLessThan(largeBody.length + 5)
+		expect(session.destroyed).toBe(false)
+
+		let second = session.request(headers, { signal: tc.signal })
+		let chunks: Buffer[] = []
+		let trailers: IncomingHttpHeaders | undefined
+		second.on('data', (chunk: Buffer) => chunks.push(chunk))
+		second.on('trailers', (value) => {
+			trailers = value
+		})
+		second.on('error', (error) => errors.push(error))
+		let ended = once(second, 'end', { signal: tc.signal })
+		second.end(frame('small'))
+		await ended
+
+		let response = Buffer.concat(chunks)
+		expect(response).toEqual(frame('response'))
+		expect(trailers?.['grpc-status']).toBe(String(Status.OK))
+		expect(errors).toEqual([])
 	} finally {
 		session.destroy()
 	}
