@@ -396,6 +396,49 @@ test('preserves repeated binary metadata independently in headers and trailers',
 	])
 })
 
+for (let code of [Status.OK, Status.PERMISSION_DENIED]) {
+	test(`preserves repeated text metadata with terminal status ${code}`, async (tc) => {
+		let values = ['one, two', 'three']
+		await using peer = await rawServer((stream) =>
+			reply(
+				stream,
+				['response'],
+				{ 'x-items': values },
+				{ 'grpc-status': String(code), 'x-items': values }
+			)
+		)
+		using client = new Client(peer.authority)
+		let headers: Metadata | undefined
+		let trailers: Metadata | undefined
+		let statuses: RpcStatus[] = []
+		let response = collect(
+			client.call(service.unary, '', {
+				signal: tc.signal,
+				onHeader: (metadata) => {
+					headers = metadata
+				},
+				onTrailer: (metadata) => {
+					trailers = metadata
+				},
+				onStatus: (status) => statuses.push(status),
+			})
+		)
+		let result = await response.then(
+			(messages) => ({ code: Status.OK, messages }),
+			(error: RpcError) => ({ code: error.code, metadata: error.metadata })
+		)
+		expect(result).toMatchObject(
+			code === Status.OK
+				? { code, messages: ['response'] }
+				: { code, metadata: { 'x-items': values } }
+		)
+		expect(headers?.['x-items']).toEqual(values)
+		expect(trailers?.['x-items']).toEqual(values)
+		expect(statuses).toHaveLength(1)
+		expect(statuses[0]?.metadata['x-items']).toEqual(values)
+	})
+}
+
 test('sends a remaining deadline as gRPC timeout metadata', async (tc) => {
 	let timeout = ''
 	await using peer = await rawServer((stream, headers) => {

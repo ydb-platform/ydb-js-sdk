@@ -4,7 +4,7 @@ A gRPC client over `node:http2`, with Promise unary calls and AsyncIterable stre
 
 ## Calling a service directly
 
-For direct gRPC access, create a `Client` for the server authority and pass it to `createServiceClient(serviceDefinition, transport)`. The service definition supplies each method's path, streaming flags, request serializer, and response deserializer. The transport itself has no database or credentials configuration and does not depend on protobuf or YDB.
+For direct gRPC access, create a `Client` for the server authority and pass it to `createServiceClient(serviceDefinition, transport)`. The service definition supplies each method's path, streaming flags, request serializer, and response deserializer. The method name `close` is reserved for transport cleanup; a definition containing it is rejected. The transport itself has no database or credentials configuration and does not depend on protobuf or YDB.
 
 `Client` connects lazily to one authority. `connect(signal?)` explicitly waits for a connection. `close()` or disposal cancels outstanding calls and closes its sessions; closing a service client also closes its transport. Share a Client only between services with the same lifetime.
 
@@ -37,6 +37,8 @@ Call options accept `onHeader`, `onTrailer`, and `onStatus` callbacks. A header 
 | `connectionWindowBytes` | Node default  | HTTP/2 connection receive window                                           |
 | `streamWindowBytes`     | Node default  | HTTP/2 stream receive window                                               |
 | `userAgent`             | `ydbjs-grpc`  | HTTP user-agent value                                                      |
+
+Timer options (`connectTimeoutMs`, `keepaliveIntervalMs`, and `keepaliveTimeoutMs`) accept integer milliseconds from 0 through 2,147,483,647. Larger values are rejected to prevent Node timer overflow. Absolute RPC deadlines can extend beyond this limit.
 
 Authorities support `http:`, `https:`, `grpc:`, `grpcs:`, and `unix:`. Responses support identity, gzip, and deflate; requests use identity encoding. GOAWAY retires the connection for new calls while accepted streams finish. Subsequent calls open a new connection. A `too_many_pings` GOAWAY doubles the keepalive interval for subsequent connections without replaying requests.
 

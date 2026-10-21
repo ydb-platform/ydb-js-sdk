@@ -241,6 +241,16 @@ export class Client implements Transport, Disposable {
 				throw new RangeError(`${key} must be a non-negative integer`)
 			}
 		}
+		for (let key of [
+			'connectTimeoutMs',
+			'keepaliveIntervalMs',
+			'keepaliveTimeoutMs',
+		] as const) {
+			let value = this.#options[key]
+			if (value !== undefined && value > 2147483647) {
+				throw new RangeError(`${key} must not exceed 2147483647 milliseconds`)
+			}
+		}
 		for (let key of ['connectionWindowBytes', 'streamWindowBytes'] as const) {
 			let value = options[key]
 			if (
@@ -581,10 +591,10 @@ export class Client implements Transport, Disposable {
 					fail(error)
 				}
 			})
-			stream.on('trailers', (headers) => {
+			stream.on('trailers', (headers, _flags, rawHeaders?: string[]) => {
 				if (!responseSettled) {
 					try {
-						acceptServerStatus(headers)
+						acceptServerStatus(headers, rawHeaders)
 					} catch (error) {
 						fail(error)
 					}
@@ -617,9 +627,20 @@ export class Client implements Transport, Disposable {
 			frames = createFrameStream(this.#options.maxReceiveBytes!)
 			frames.on('error', fail)
 			stopWatchingStream = streamFinished(stream, { writable: false }, (error) => {
-				if (error) {
-					frames!.destroy(error)
+				if (!error || frames!.destroyed) {
+					return
 				}
+				if (!serverStatus) {
+					frames!.destroy(error)
+					return
+				}
+				// Trailers complete the response even if the peer resets the unfinished request.
+				stream!.unpipe(frames!)
+				let chunk: Buffer | null
+				while ((chunk = stream!.read()) !== null) {
+					frames!.write(chunk)
+				}
+				frames!.end()
 			})
 			stream.pipe(frames)
 			void writeRequests(
@@ -635,7 +656,7 @@ export class Client implements Transport, Disposable {
 			})
 			for await (let batch of frames.iterator({ destroyOnReturn: false })) {
 				responseController.signal.throwIfAborted()
-				for (let frame of batch as Frame[]) {
+				for (let frame of batch as Iterable<Frame>) {
 					responseController.signal.throwIfAborted()
 					let bytes = frame.data
 					if (frame.compressed) {

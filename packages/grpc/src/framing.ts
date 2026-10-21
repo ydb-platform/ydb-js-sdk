@@ -23,8 +23,7 @@ export class FrameDecoder {
 		this.#direction = direction
 	}
 
-	push(chunk: Buffer): Frame[] {
-		let frames: Frame[] = []
+	push(chunk: Buffer, frames: Frame[] = []): Frame[] {
 		let offset = 0
 		while (offset < chunk.length) {
 			if (this.#headerBytes < 5) {
@@ -100,11 +99,26 @@ export function createFrameStream(
 		// Do not parse the next chunk while the consumer retains the current frame batch.
 		readableHighWaterMark: 0,
 		transform(chunk: Buffer, _encoding, callback) {
+			let frames: Frame[] = []
 			try {
-				let frames = decoder.push(chunk)
+				decoder.push(chunk, frames)
 				callback(null, frames.length ? frames : undefined)
 			} catch (error) {
-				callback(error as Error)
+				if (frames.length === 0) {
+					callback(error as Error)
+					return
+				}
+				// Keep completed frames readable before failing, and hold subsequent
+				// input until the consumer finishes or abandons this batch.
+				this.push(
+					(function* () {
+						try {
+							yield* frames
+						} finally {
+							callback(error as Error)
+						}
+					})()
+				)
 			}
 		},
 		flush(callback) {
