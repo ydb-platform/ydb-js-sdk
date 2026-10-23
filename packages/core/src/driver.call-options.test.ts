@@ -3,6 +3,8 @@ import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { type Metadata, Server, Status } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
 
+import pkg from '../package.json' with { type: 'json' }
+
 import { Driver } from './driver.js'
 import { addMetadataHook } from './metadata-hooks.js'
 
@@ -27,6 +29,8 @@ test('keeps mandatory headers and auth after caller metadata and metadata hooks'
 		metadata['x-hook'] = 'present'
 		metadata['X-YDB-DATABASE'] = '/hook-database'
 		metadata['X-YDB-AUTH-TICKET'] = 'hook-token'
+		metadata['X-YDB-SDK-BUILD-INFO'] = 'hook-build'
+		metadata['X-YDB-APPLICATION-NAME'] = 'hook-application'
 	})
 	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
 		'ydb.sdk.enable_discovery': false,
@@ -35,7 +39,13 @@ test('keeps mandatory headers and auth after caller metadata and metadata hooks'
 	let metadata = Object.freeze({
 		'x-caller': 'present',
 		'x-ydb-database': '/caller',
+		'X-YDB-DATABASE': '/caller-uppercase',
 		'x-ydb-auth-ticket': 'caller-token',
+		'X-YDB-AUTH-TICKET': 'caller-uppercase-token',
+		'x-ydb-sdk-build-info': 'caller-build',
+		'X-YDB-SDK-BUILD-INFO': 'caller-uppercase-build',
+		'x-ydb-application-name': 'caller-application',
+		'X-YDB-APPLICATION-NAME': 'caller-uppercase-application',
 	})
 	let options = Object.freeze({ signal: tc.signal, metadata })
 	let client = driver.createClient(DiscoveryServiceDefinition)
@@ -46,9 +56,87 @@ test('keeps mandatory headers and auth after caller metadata and metadata hooks'
 	expect(received?.['x-caller']).toBe('present')
 	expect(received?.['x-ydb-auth-ticket']).toBe('test-token')
 	expect(received?.['x-ydb-database']).toBe('/local')
-	expect(received?.['x-ydb-sdk-build-info']).toEqual(expect.any(String))
+	expect(received?.['x-ydb-sdk-build-info']).toBe(`ydb-js-sdk/${pkg.version}`)
 	expect(received?.['x-ydb-application-name']).toBe(driver.application)
 	expect(options.metadata).toBe(metadata)
+})
+
+test('preserves repeated caller metadata with differently cased keys', async (tc) => {
+	let received: Metadata | undefined
+	using server = new Server()
+	server.add(DiscoveryServiceDefinition, {
+		async whoAmI(_request, context) {
+			received = context.metadata
+			return {}
+		},
+	})
+	let port = await server.listen()
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let first = Buffer.from('first')
+	let second = Buffer.from('second')
+	let third = Buffer.from('third')
+	let binaryValues = Object.freeze([second, third])
+	let textValues = Object.freeze(['first', 'second'])
+	let metadata = Object.freeze({
+		'X-Review-Bin': first,
+		'x-review-bin': binaryValues,
+		'X-Review-Text': textValues,
+		'x-review-text': 'third',
+	})
+	let client = driver.createClient(DiscoveryServiceDefinition)
+
+	await client.whoAmI({}, { metadata, signal: tc.signal })
+
+	expect(received?.['x-review-bin']).toEqual([first, second, third])
+	expect(received?.['x-review-text']).toEqual(['first', 'second', 'third'])
+	expect(metadata['X-Review-Bin']).toBe(first)
+	expect(metadata['x-review-bin']).toBe(binaryValues)
+	expect(metadata['X-Review-Text']).toBe(textValues)
+	expect(binaryValues).toEqual([second, third])
+	expect(textValues).toEqual(['first', 'second'])
+})
+
+test('preserves repeated metadata added by hooks with differently cased keys', async (tc) => {
+	let received: Metadata | undefined
+	let beforeHook: Metadata | undefined
+	using server = new Server()
+	server.add(DiscoveryServiceDefinition, {
+		async whoAmI(_request, context) {
+			received = context.metadata
+			return {}
+		},
+	})
+	let port = await server.listen()
+	let first = Buffer.from('first')
+	let second = Buffer.from('second')
+	let third = Buffer.from('third')
+	let binaryValues = Object.freeze([first, second])
+	let textValues = Object.freeze(['second', 'third'])
+	using _ = addMetadataHook((metadata) => {
+		beforeHook = { ...metadata }
+		metadata['X-Review-Bin'] = third
+		metadata['X-Review-Text'] = textValues
+	})
+	using driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
+		'ydb.sdk.enable_discovery': false,
+	})
+	let metadata = Object.freeze({
+		'X-Review-Bin': binaryValues,
+		'X-Review-Text': 'first',
+	})
+	let client = driver.createClient(DiscoveryServiceDefinition)
+
+	await client.whoAmI({}, { metadata, signal: tc.signal })
+
+	expect(beforeHook?.['x-review-bin']).toBe(binaryValues)
+	expect(beforeHook?.['x-review-text']).toBe('first')
+	expect(received?.['x-review-bin']).toEqual([first, second, third])
+	expect(received?.['x-review-text']).toEqual(['first', 'second', 'third'])
+	expect(metadata['X-Review-Bin']).toBe(binaryValues)
+	expect(binaryValues).toEqual([first, second])
+	expect(textValues).toEqual(['second', 'third'])
 })
 
 test('keeps registered metadata hooks in an existing driver after registration disposal', async (tc) => {

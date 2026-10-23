@@ -133,6 +133,16 @@ let databaseFromUrl = function databaseFromUrl(url: URL): string {
 	return ''
 }
 
+function normalizeMetadata(input: Metadata = {}): Record<string, Metadata[string]> {
+	let metadata: Record<string, Metadata[string]> = Object.create(null)
+	for (let [name, value] of Object.entries(input)) {
+		let key = name.toLowerCase()
+		let previous = metadata[key]
+		metadata[key] = previous === undefined ? value : [previous, value].flat()
+	}
+	return metadata
+}
+
 export const kRegisterLibrary: unique symbol = Symbol('ydbjs.core.registerLibrary')
 
 let defaultOptions: DriverOptions = {
@@ -471,16 +481,12 @@ export class Driver implements Disposable, AsyncDisposable {
 		input: Metadata | undefined,
 		signal: AbortSignal
 	): Promise<Metadata> => {
-		let metadata = Object.fromEntries(
-			Object.entries(input ?? {}).map(([key, value]) => [key.toLowerCase(), value])
-		)
+		let metadata = normalizeMetadata(input)
 		for (let hook of this.#metadataHooks) {
 			safeHook('metadata', hook, metadata)
 		}
 		if (this.#metadataHooks.length) {
-			metadata = Object.fromEntries(
-				Object.entries(metadata).map(([key, value]) => [key.toLowerCase(), value])
-			)
+			metadata = normalizeMetadata(metadata)
 		}
 
 		let tokenController = new AbortController()

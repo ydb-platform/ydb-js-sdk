@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import * as http2 from 'node:http2'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,10 +9,12 @@ import { create } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
 import { AuthServiceDefinition, LoginResponseSchema, LoginResultSchema } from '@ydbjs/api/auth'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { Server, type ServerOptions } from '@ydbjs/grpc'
-import { expect, test } from 'vitest'
+import { RpcError, Server, type ServerOptions, Status } from '@ydbjs/grpc'
+import { expect, test, vi } from 'vitest'
 
 import { StaticCredentialsProvider } from './static.ts'
+
+vi.mock('node:http2', { spy: true })
 
 function loginServer(options?: ServerOptions) {
 	let requests: Array<{ user: string; password: string }> = []
@@ -67,7 +70,7 @@ test('authenticates through the configured Unix socket', async (tc) => {
 	expect(requests).toHaveLength(1)
 })
 
-test.for(['grpcs', 'grpc'])(
+test.for(['grpcs', 'grpc', 'GRPC', 'gRpC', ' grpc'])(
 	'authenticates over TLS at a %s endpoint with explicit secure options',
 	async (protocol, tc) => {
 		await using files = {
@@ -114,3 +117,25 @@ test.for(['grpcs', 'grpc'])(
 		expect(requests).toHaveLength(1)
 	}
 )
+
+// Capture the transport authority without binding a well-known port.
+test('preserves explicit port 80 when enabling TLS for a grpc endpoint', async (tc) => {
+	let failure = new RpcError(Status.INVALID_ARGUMENT, 'Connection intercepted')
+	using connect = vi.spyOn(http2, 'connect').mockImplementation(() => {
+		throw failure
+	})
+	connect.mockClear()
+	let provider = new StaticCredentialsProvider(
+		{ username: 'test-user', password: 'test-password' },
+		'grpc://localhost:80',
+		{ minVersion: 'TLSv1.2' }
+	)
+
+	let token = provider.getToken(true, tc.signal)
+
+	await expect(token).rejects.toBe(failure)
+	expect(connect).toHaveBeenCalledOnce()
+	let [authority, options] = connect.mock.calls[0]!
+	expect(String(authority)).toBe('https://localhost:80/')
+	expect(options).toMatchObject({ minVersion: 'TLSv1.2' })
+})
