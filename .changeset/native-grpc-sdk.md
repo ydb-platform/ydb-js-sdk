@@ -19,3 +19,5 @@ Call options accept plain metadata records, signals, absolute deadlines, and hea
 High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
 
 Preserve explicit TLS server names when discovery provides no override, and avoid logging raw driver options.
+
+Preserve explicit gRPC endpoint ports when selecting TLS, including mixed-case URL schemes. Merge repeated case-insensitive call metadata values while keeping required driver headers authoritative over caller metadata and hooks.

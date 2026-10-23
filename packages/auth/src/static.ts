@@ -73,15 +73,19 @@ export class StaticCredentialsProvider extends CredentialsProvider {
 			endpoint
 		)
 
-		let cs = new URL(endpoint.replace(/^grpc:/, 'http:').replace(/^grpcs:/, 'https:'))
+		let cs = new URL(endpoint)
 		if (['unix:', 'http:', 'https:', 'grpc:', 'grpcs:'].includes(cs.protocol) === false) {
 			throw new Error(
 				'Invalid connection string protocol. Must be one of unix, grpc, grpcs, http, https'
 			)
 		}
 
-		if (secureOptions && cs.protocol === 'http:') {
-			cs.protocol = 'https:'
+		if (secureOptions) {
+			if (cs.protocol === 'grpc:') {
+				cs.protocol = 'grpcs:'
+			} else if (cs.protocol === 'http:') {
+				cs.protocol = 'https:'
+			}
 		}
 
 		let client = new Client(cs, {
