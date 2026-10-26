@@ -1,16 +1,28 @@
 import { tracingChannel } from 'node:diagnostics_channel'
 import { afterEach, expect, test } from 'vitest'
 
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
+import { context, propagation, trace } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
+import {
+	CompositePropagator,
+	W3CBaggagePropagator,
+	W3CTraceContextPropagator,
+} from '@opentelemetry/core'
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
 
 import { YdbInstrumentation } from '../src/index.ts'
 
 let exporter = new InMemorySpanExporter()
-let provider = new NodeTracerProvider({
-	spanProcessors: [new SimpleSpanProcessor(exporter)],
+let provider = new TracerProvider({
+	spanProcessors: [new SimpleSpanProcessor({ exporter })],
 })
-provider.register()
+trace.setGlobalTracerProvider(provider)
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
+propagation.setGlobalPropagator(
+	new CompositePropagator({
+		propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+	})
+)
 
 let active: YdbInstrumentation | undefined
 afterEach(() => {

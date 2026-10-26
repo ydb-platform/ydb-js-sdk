@@ -1,4 +1,4 @@
-import type { Attributes } from '@opentelemetry/api'
+import type { MetricAttributes } from '@opentelemetry/api'
 import {
 	ATTR_DB_NAMESPACE,
 	ATTR_DB_RESPONSE_STATUS_CODE,
@@ -16,7 +16,7 @@ import { isServiceError } from '@ydbjs/error'
 // Keys used by BOTH pipelines live here. Span-only identifiers go in
 // `spans.ts`; metric-only tag enums go in `metrics.ts`.
 
-export type BaseAttributes = Attributes & { [ATTR_DB_SYSTEM_NAME]: 'ydb' }
+export type BaseAttributes = MetricAttributes & { [ATTR_DB_SYSTEM_NAME]: 'ydb' }
 
 export let BASE_ATTRIBUTES: BaseAttributes = { [ATTR_DB_SYSTEM_NAME]: 'ydb' }
 
@@ -33,9 +33,9 @@ export let ATTR_YDB_NODE_PILE = 'ydb.node.pile'
  * callers can spread the result unconditionally. Used by both the traces
  * and the metrics pipeline.
  */
-export function identityAttrs(driver: DriverIdentity | undefined): Attributes {
+export function identityAttrs(driver: DriverIdentity | undefined): MetricAttributes {
 	if (!driver) return {}
-	let attrs: Attributes = {
+	let attrs: MetricAttributes = {
 		[ATTR_DB_NAMESPACE]: driver.database,
 		[ATTR_SERVER_ADDRESS]: driver.address,
 	}

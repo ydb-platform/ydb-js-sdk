@@ -24,8 +24,14 @@ import {
 	resourceFromAttributes,
 } from '@opentelemetry/resources'
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
-import { metrics, trace } from '@opentelemetry/api'
+import { BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
+import { context, metrics, propagation, trace } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
+import {
+	CompositePropagator,
+	W3CBaggagePropagator,
+	W3CTraceContextPropagator,
+} from '@opentelemetry/core'
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { register } from '@ydbjs/telemetry'
@@ -36,11 +42,17 @@ let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:21
 let resource = defaultResource()
 	.merge(detectResources({ detectors: [envDetector, processDetector, hostDetector] }))
 	.merge(resourceFromAttributes({ 'service.name': 'ydb-telemetry-example' }))
-let tracerProvider = new NodeTracerProvider({
+let tracerProvider = new TracerProvider({
 	resource,
-	spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+	spanProcessors: [new BatchSpanProcessor({ exporter: new OTLPTraceExporter() })],
 })
-tracerProvider.register()
+trace.setGlobalTracerProvider(tracerProvider)
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
+propagation.setGlobalPropagator(
+	new CompositePropagator({
+		propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+	})
+)
 let meterProvider = new MeterProvider({
 	resource,
 	readers: [
