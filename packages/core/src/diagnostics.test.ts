@@ -28,11 +28,12 @@ import { Driver } from './driver.js'
 function collect(name: string): { payloads: unknown[] } & Disposable {
 	let payloads: unknown[] = []
 	let fn = (msg: unknown) => payloads.push(structuredClone(msg))
-	dc(name).subscribe(fn)
+	let channel = dc(name)
+	channel.subscribe(fn)
 	return {
 		payloads,
 		[Symbol.dispose]() {
-			dc(name).unsubscribe(fn)
+			channel.unsubscribe(fn)
 		},
 	}
 }

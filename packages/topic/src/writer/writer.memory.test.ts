@@ -51,13 +51,16 @@ let verifyReleasedCapture = async function verifyReleasedCapture(
 	owner: 'onAck' | 'codec',
 	tc: TestContext
 ): Promise<{ collected: boolean; acks: bigint[]; writer: TopicWriter }> {
-	let collected = false
-	let registry = new FinalizationRegistry<void>(() => {
-		collected = true
-	})
+	// The observer must retain the registry until GC has delivered its callbacks.
+	let observed = {
+		collected: false,
+		registry: new FinalizationRegistry<void>(() => {
+			observed.collected = true
+		}),
+	}
 	let { driver, waitForNextStream } = makeFakeTopicDriver()
 	let acks: bigint[] = []
-	using writer = capturingWriter(driver, owner, registry, acks)
+	using writer = capturingWriter(driver, owner, observed.registry, acks)
 	let stream = await waitForNextStream()
 	stream.respond(initResponse(0n))
 	writer.write(new Uint8Array([1]))
@@ -68,13 +71,13 @@ let verifyReleasedCapture = async function verifyReleasedCapture(
 
 	// The registry callback updates this condition between GC rounds.
 	// oxlint-disable-next-line no-unmodified-loop-condition
-	for (let attempt = 0; attempt < 40 && !collected; attempt++) {
+	for (let attempt = 0; attempt < 40 && !observed.collected; attempt++) {
 		globalThis.gc!()
 		// oxlint-disable-next-line no-await-in-loop
 		await sleep(10, undefined, { signal: tc.signal })
 	}
 	await writer.close(tc.signal)
-	return { collected, acks, writer }
+	return { ...observed, acks, writer }
 }
 
 test('releases onAck captures while a closed writer remains reachable', async (tc) => {
