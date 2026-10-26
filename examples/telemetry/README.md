@@ -2,7 +2,7 @@
 
 Connects `@ydbjs/telemetry` to OpenTelemetry trace and metric providers and exports both **traces** and **metrics** over OTLP/HTTP. Demonstrates:
 
-- Registering `NodeTracerProvider` and `MeterProvider` before YDB code runs. `NodeTracerProvider.register()` also installs the context manager and W3C propagators.
+- Registering `TracerProvider`, `MeterProvider`, the async context manager, and W3C trace-context and baggage propagators before YDB code runs.
 - Calling `register({ ... })` to enable the instrumentation.
 - Wrapping the workload in a user-created span — the telemetry metadata
   hook reads `context.active()` on every outgoing gRPC call and
@@ -46,6 +46,8 @@ In Prometheus / your metrics backend:
 - `ydb_query_session_count` / `ydb_query_session_create_duration` / etc.
 
 ## Tweaks
+
+Configure sampling and span batching through the provider and processor options. These SDK 3 components do not read `OTEL_TRACES_SAMPLER` or `OTEL_BSP_*`; use `NodeSDK` for environment-based SDK configuration.
 
 | Knob                     | Where                                           | Default                                |
 | ------------------------ | ----------------------------------------------- | -------------------------------------- |

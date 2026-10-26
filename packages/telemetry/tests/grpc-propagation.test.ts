@@ -6,12 +6,12 @@ import {
 } from '@ydbjs/api/discovery'
 import { context, propagation, trace } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
-import { W3CTraceContextPropagator } from '@opentelemetry/core'
 import {
-	BasicTracerProvider,
-	InMemorySpanExporter,
-	SimpleSpanProcessor,
-} from '@opentelemetry/sdk-trace-base'
+	CompositePropagator,
+	W3CBaggagePropagator,
+	W3CTraceContextPropagator,
+} from '@opentelemetry/core'
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace'
 import { Driver, addMetadataHook } from '@ydbjs/core'
 import { type Metadata, Server } from '@ydbjs/grpc'
 import { afterEach, beforeAll, expect, test } from 'vitest'
@@ -21,11 +21,15 @@ import { propagator } from '../src/propagation.ts'
 let exporter = new InMemorySpanExporter()
 
 beforeAll(() => {
-	let provider = new BasicTracerProvider({
-		spanProcessors: [new SimpleSpanProcessor(exporter)],
+	let provider = new TracerProvider({
+		spanProcessors: [new SimpleSpanProcessor({ exporter })],
 	})
 	trace.setGlobalTracerProvider(provider)
-	propagation.setGlobalPropagator(new W3CTraceContextPropagator())
+	propagation.setGlobalPropagator(
+		new CompositePropagator({
+			propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+		})
+	)
 	context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
 })
 
@@ -75,6 +79,21 @@ test('injects traceparent into metadata when a span is active', async (tc) => {
 
 	expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/)
 	expect(traceparent).toContain(span.spanContext().traceId)
+})
+
+test('propagates trace context and baggage together', async (tc) => {
+	let span = trace.getTracer('test').startSpan('outer')
+	let baggage = propagation.createBaggage({ tenant: { value: 'example' } })
+	let parent = propagation.setBaggage(trace.setSpan(context.active(), span), baggage)
+
+	try {
+		let received = await context.with(parent, () => driveThroughRealDriver(tc.signal))
+
+		expect(received['traceparent']).toContain(span.spanContext().traceId)
+		expect(received['baggage']).toBe('tenant=example')
+	} finally {
+		span.end()
+	}
 })
 
 test('skips traceparent when no span is active', async (tc) => {

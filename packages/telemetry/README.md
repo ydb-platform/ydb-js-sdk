@@ -30,8 +30,10 @@ OpenTelemetry instrumentation for the YDB JavaScript SDK. Subscribes to
 ## Installation
 
 ```sh
-npm install @ydbjs/telemetry
+npm install @ydbjs/telemetry @opentelemetry/sdk-node@^0.300
 ```
+
+This version requires OpenTelemetry API 1.10 and SDK 3.x (experimental packages 0.300.x). Update your providers, processors, and exporters together; SDK 2.x providers do not support API 1.10.
 
 ## Usage
 
@@ -41,9 +43,7 @@ npm install @ydbjs/telemetry
 import { NodeSDK } from '@opentelemetry/sdk-node'
 import { register } from '@ydbjs/telemetry'
 
-let sdk = new NodeSDK({
-  /* exporter, resource, ... */
-})
+let sdk = new NodeSDK({/* exporter, resource, ... */})
 sdk.start()
 
 let instrumentation = register({
@@ -58,14 +58,23 @@ await sdk.shutdown()
 
 ### Auto-registration
 
+Start the OTel SDK in your application's `instrumentation.js` before loading the YDB instrumentation:
+
+```js
+import { NodeSDK } from '@opentelemetry/sdk-node'
+
+export let sdk = new NodeSDK()
+sdk.start()
+```
+
 ```sh
-node --import @opentelemetry/sdk-node/register \
+node --import ./instrumentation.js \
      --import @ydbjs/telemetry/register \
      your-app.js
 ```
 
 The OTel SDK must be initialised before `@ydbjs/telemetry/register` runs, so
-the global tracer provider is already in place when subscribers attach.
+the global tracer provider is already in place when subscribers attach. Call `sdk.shutdown()` from your application shutdown handler to flush telemetry.
 
 ## Configuration
 
@@ -101,12 +110,7 @@ debugging but noise on a high-RPS service. A small custom sampler
 combined with `ParentBasedSampler` keeps the rest of the tree intact:
 
 ```ts
-import {
-  ParentBasedSampler,
-  type Sampler,
-  SamplingDecision,
-  TraceIdRatioBasedSampler,
-} from '@opentelemetry/sdk-trace-base'
+import { ParentBasedSampler, type Sampler, SamplingDecision } from '@opentelemetry/sdk-trace'
 
 let DROPPED = new Set(['ydb.Try', 'ydb.Transaction'])
 
@@ -128,16 +132,21 @@ new NodeSDK({
 ### Customise histogram buckets via View
 
 ```ts
-import { ExplicitBucketHistogramAggregation, View } from '@opentelemetry/sdk-metrics'
+import { AggregationType, createAllowListAttributesProcessor } from '@opentelemetry/sdk-metrics'
 
 new NodeSDK({
   views: [
-    new View({
+    {
       instrumentName: 'ydb.retry.duration',
-      aggregation: new ExplicitBucketHistogramAggregation([0.01, 0.05, 0.1, 0.5, 1, 5, 30]),
-    }),
-    // Drop the `ydb.idempotent` tag from retry counters if you don't need it
-    new View({ instrumentName: 'ydb.retry.attempts', attributeKeys: ['ydb.retry.outcome'] }),
+      aggregation: {
+        type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
+        options: { boundaries: [0.01, 0.05, 0.1, 0.5, 1, 5, 30] },
+      },
+    },
+    {
+      instrumentName: 'ydb.retry.attempts',
+      attributesProcessors: [createAllowListAttributesProcessor(['ydb.retry.outcome'])],
+    },
   ],
 })
 ```
@@ -174,10 +183,12 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 
 new NodeSDK({
   traceExporter: new OTLPTraceExporter({ url: 'http://collector:4318/v1/traces' }),
-  metricReader: new PeriodicExportingMetricReader({
-    exporter: new OTLPMetricExporter({ url: 'http://collector:4318/v1/metrics' }),
-    exportIntervalMillis: 10_000,
-  }),
+  metricReaders: [
+    new PeriodicExportingMetricReader({
+      exporter: new OTLPMetricExporter({ url: 'http://collector:4318/v1/metrics' }),
+      exportIntervalMillis: 10_000,
+    }),
+  ],
 })
 ```
 
@@ -314,15 +325,19 @@ sub-second YDB ops into the first slot, which is why we override.
 | `ydb.auth.token.fetch.duration`      | `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30`                                                                    | IAM/JWT round-trip; 30s tail matches typical request timeouts.                                                                                                                                                             |
 | `ydb.retry.duration`                 | `0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300`                                                                      | End-to-end loop including backoffs — overload-induced retry sequences can stretch to minutes.                                                                                                                              |
 
-Override per-histogram in your OTel SDK config with a `View`:
+Override per-histogram in your OTel SDK configuration with a view:
 
 ```ts
-new View({
+import { AggregationType, type ViewOptions } from '@opentelemetry/sdk-metrics'
+
+let view: ViewOptions = {
   instrumentName: 'db.client.operation.duration',
-  aggregation: new ExplicitBucketHistogramAggregation([
-    /* your boundaries */
-  ]),
-})
+  aggregation: {
+    type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
+    options: { boundaries: [0.001, 0.01, 0.1, 1, 10] },
+  },
+}
+new NodeSDK({ views: [view] })
 ```
 
 ### Cardinality budget

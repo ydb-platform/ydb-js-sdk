@@ -2,7 +2,7 @@
  * Auto-instrumentation entry point. Use with node --import to subscribe to
  * all @ydbjs diagnostics channels without code changes:
  *
- *   node --import @opentelemetry/sdk-node/register \
+ *   node --import ./instrumentation.js \
  *        --import @ydbjs/telemetry/register \
  *        your-app.js
  *
