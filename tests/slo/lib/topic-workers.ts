@@ -55,6 +55,7 @@ export async function runTopicWorkers(
 	let timedOut = Promise.withResolvers<never>()
 	let timer: ReturnType<typeof setTimeout> | undefined
 	let stop = () => {
+		read.postMessage({ type: 'stop' })
 		for (let writer of writers) {
 			writer.postMessage({ type: 'stop' })
 		}

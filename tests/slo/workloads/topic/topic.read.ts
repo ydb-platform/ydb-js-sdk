@@ -13,7 +13,7 @@ import { createTopicMemory } from '../../lib/topic-memory.ts'
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import { meterProvider, registerLatencyGauges } from '../../lib/telemetry.ts'
 import { type TopicObservation, TopicOracle } from '../../lib/topic-oracle.ts'
-import { type TopicWorkerControl, type TopicWorkerData, abortOnStop } from '../../lib/worker-api.ts'
+import type { TopicWorkerControl, TopicWorkerData } from '../../lib/worker-api.ts'
 
 let options = workerData as TopicWorkerData
 let { name, topic, consumer, partitions, stallTimeoutMs } = options
@@ -25,7 +25,6 @@ let { memory, stability, runtime } = await createTopicMemory(
 let stabilityResult: ReturnType<NonNullable<typeof stability>['finish']> | undefined
 let oracle = new TopicOracle(options)
 let producing = new AbortController()
-using _ = abortOnStop(producing)
 let reading = new AbortController()
 let io = new AbortController()
 let failure: Error | undefined
@@ -69,6 +68,10 @@ let observeLatency = (start: number) => {
 }
 
 parentPort!.on('message', (message: TopicWorkerControl) => {
+	if (message.type === 'stop') {
+		producing.abort()
+		return
+	}
 	if (message.type !== 'checkpoint') {
 		return
 	}
@@ -130,7 +133,6 @@ try {
 		}
 	}
 	reconnect.subscribe(onReconnect)
-	// oxlint-disable-next-line no-shadow
 	using _ = {
 		[Symbol.dispose]() {
 			reconnect.unsubscribe(onReconnect)

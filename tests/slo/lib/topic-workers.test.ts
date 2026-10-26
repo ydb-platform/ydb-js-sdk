@@ -30,7 +30,7 @@ let summary = {
 let writerResult = { type: 'result', success: true, checkpoint, reconnects: 0 }
 let readerResult = { type: 'result', success: true, summary, reconnects: 0 }
 
-test('stops the writer before forwarding its final checkpoint to the reader', async () => {
+test('notifies both workers of producer stop and continues final reconciliation', async () => {
 	let read = new TestWorker()
 	let write = new TestWorker()
 	let stop = new AbortController()
@@ -42,29 +42,35 @@ test('stops the writer before forwarding its final checkpoint to the reader', as
 
 	stop.abort()
 	expect(write.messages).toEqual([{ type: 'stop' }])
-	expect(read.messages).toHaveLength(1)
+	let readerStop = read.messages.at(-1)
+	let committed = { type: 'committed', counts: [10] }
+	read.emit('message', committed)
+	expect(write.messages).toEqual([{ type: 'stop' }, committed])
+	expect(read.terminations).toBe(0)
 
 	write.emit('message', writerResult)
-	expect(read.messages).toEqual([
-		{ type: 'checkpoint', checkpoint, final: false },
-		{ type: 'checkpoint', checkpoint, final: true },
-	])
 
 	write.emit('exit', 0)
 	read.emit('message', readerResult)
 	read.emit('exit', 0)
 
 	let result = await completion
+	expect(readerStop).toEqual({ type: 'stop' })
+	expect(read.messages).toEqual([
+		{ type: 'checkpoint', checkpoint, final: false },
+		{ type: 'stop' },
+		{ type: 'checkpoint', checkpoint, final: true },
+	])
 	expect(result).toEqual({ read: readerResult, write: [writerResult] })
 })
 
-test('starts the writer drain when stop was requested before supervision', async () => {
+test('notifies both workers when stop was requested before supervision', async () => {
 	let read = new TestWorker()
 	let write = new TestWorker()
 	let completion = runTopicWorkers({ read, write: [write] }, options, AbortSignal.abort())
 
 	expect(write.messages).toEqual([{ type: 'stop' }])
-	expect(read.messages).toEqual([])
+	let readerStop = read.messages.at(-1)
 
 	write.emit('message', writerResult)
 	write.emit('exit', 0)
@@ -72,6 +78,7 @@ test('starts the writer drain when stop was requested before supervision', async
 	read.emit('exit', 0)
 
 	let result = await completion
+	expect(readerStop).toEqual({ type: 'stop' })
 	expect(result.read.summary).toEqual(summary)
 	expect(result.write[0]!.checkpoint).toEqual(checkpoint)
 })
@@ -203,7 +210,7 @@ test('rejects a final checkpoint without acknowledgments', async () => {
 	write.emit('message', { ...writerResult, checkpoint: incomplete })
 
 	await expect(completion).rejects.toThrow('Writer did not acknowledge every accepted message')
-	expect(read.messages).toEqual([])
+	expect(read.messages).toEqual([{ type: 'stop' }])
 })
 
 test('rejects a final checkpoint with an idle producer', async () => {
