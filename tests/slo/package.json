@@ -9,15 +9,17 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.16.0",
-		"hdr-histogram-js": "3.0.1",
 		"@opentelemetry/exporter-metrics-otlp-http": "^0.218.0",
 		"@opentelemetry/sdk-metrics": "^2.7.1",
+		"@ydbjs/abortable": "*",
 		"@ydbjs/api": "*",
+		"@ydbjs/auth": "*",
 		"@ydbjs/core": "*",
 		"@ydbjs/grpc": "*",
 		"@ydbjs/query": "*",
 		"@ydbjs/topic": "*",
-		"@ydbjs/value": "*"
+		"@ydbjs/value": "*",
+		"hdr-histogram-js": "3.0.1"
 	},
 	"publishConfig": {
 		"access": "restricted"

@@ -59,6 +59,12 @@ export type TopicWorkerData = {
 	partitions: number
 	messageBytes: number
 	rps: number
+	maxPendingMessages: number
+	writerCount: number
+	writeSpeedBytesPerSecond: number
+	retentionSeconds: number
+	retentionStorageMb: number
+	writerIndex: number
 	codec: string
 	drainTimeoutMs: number
 	stallTimeoutMs: number
@@ -68,4 +74,5 @@ export type TopicWorkerData = {
 export type TopicWriteCheckpoint = { accepted: number[]; acknowledged: number[] }
 export type TopicWorkerControl =
 	| { type: 'stop' }
+	| { type: 'committed'; counts: number[] }
 	| { type: 'checkpoint'; checkpoint: TopicWriteCheckpoint; final: boolean }
