@@ -12,8 +12,8 @@
 		"third-parties/*"
 	],
 	"engines": {
-		"node": "^22.15.0 || >=23.8.0",
-		"npm": ">=10"
+		"node": "^22.15.0 || ^24.0.0 || >=26.0.0",
+		"npm": ">=10.9.0"
 	},
 	"engineStrict": true,
 	"scripts": {
@@ -25,12 +25,14 @@
 		"coverage": "vitest --run --coverage",
 		"lint": "oxlint --fix",
 		"format": "oxfmt --write",
-		"version": "npx changeset version && npm install",
-		"publish": "npx changeset publish",
+		"version": "changeset version && npm install",
+		"publish": "changeset publish",
 		"prepare": "git config core.hooksPath scripts/hooks"
 	},
 	"devDependencies": {
 		"@arethetypeswrong/cli": "0.18.5",
+		"@changesets/changelog-github": "^1.0.1",
+		"@changesets/cli": "^3.0.3",
 		"@types/node": "^26.6.5",
 		"@vitest/coverage-v8": "^5.0.5",
 		"@vitest/ui": "^5.0.5",
@@ -41,5 +43,5 @@
 		"vitest": "^5.0.5",
 		"zx": "^8.8.5"
 	},
-	"packageManager": "npm@11.5.1"
+	"packageManager": "npm@11.21.1"
 }

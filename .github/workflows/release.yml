@@ -27,11 +27,12 @@ jobs:
         run: npm run attw
 
       - name: Create Release Pull Request or Publish
-        uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          version: npm run version
-          publish: npm run publish
+          version-script: npm run version
+          publish-script: npm run publish
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          push-with-git-cli: true
         env:
           SKIP_HOOKS: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ''
