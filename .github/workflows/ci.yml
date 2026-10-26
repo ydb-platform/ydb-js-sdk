@@ -84,7 +84,7 @@ jobs:
           bun-version: '1.4.3'
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.5'
+          go-version: '1.27.3'
           cache-dependency-path: packages/grpc/tests/interop-go/go.sum
       - name: Build Go interoperability peer
         working-directory: packages/grpc/tests/interop-go

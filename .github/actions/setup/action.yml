@@ -17,7 +17,7 @@ runs:
   using: composite
   steps:
     - name: Setup Node.js
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@v7
       with:
         cache: 'npm'
         node-version: ${{ inputs.node-version }}
@@ -37,10 +37,6 @@ runs:
         key: ${{ runner.os }}-turbo-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-turbo-
-
-    - name: Install global dependencies
-      shell: bash
-      run: npm i -g turbo @changesets/cli @changesets/changelog-github
 
     - name: Install dependencies
       shell: bash
