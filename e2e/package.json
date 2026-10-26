@@ -11,18 +11,14 @@
 		"test:debug": "FORCE_COLOR=3 DEBUG_COLORS=1 DEBUG=ydbjs:* vitest --project e2e --inspect --no-file-parallelism"
 	},
 	"dependencies": {
-		"@bufbuild/protobuf": "^2.10.0",
+		"@bufbuild/protobuf": "^2.16.0",
 		"@ydbjs/abortable": "*",
 		"@ydbjs/api": "*",
-		"@ydbjs/auth": "*",
 		"@ydbjs/core": "*",
-		"@ydbjs/debug": "*",
 		"@ydbjs/error": "*",
 		"@ydbjs/query": "*",
-		"@ydbjs/retry": "*",
 		"@ydbjs/coordination": "*",
-		"@ydbjs/topic": "*",
-		"@ydbjs/value": "*"
+		"@ydbjs/topic": "*"
 	},
 	"engines": {
 		"node": ">=20.19.0",

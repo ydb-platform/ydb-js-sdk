@@ -58,8 +58,7 @@
 		"@opentelemetry/semantic-conventions": "^1.41.1",
 		"@ydbjs/api": "^6.0.0",
 		"@ydbjs/core": "^6.2.0",
-		"@ydbjs/error": "^6.0.0",
-		"@ydbjs/grpc": "^0.1.0"
+		"@ydbjs/error": "^6.0.0"
 	},
 	"devDependencies": {
 		"@opentelemetry/context-async-hooks": "^2.7.1",
@@ -67,7 +66,8 @@
 		"@opentelemetry/sdk-metrics": "^2.7.1",
 		"@opentelemetry/sdk-trace-base": "^2.7.1",
 		"@opentelemetry/sdk-trace-node": "^2.7.1",
-		"@types/debug": "^4.1.12"
+		"@ydbjs/grpc": "^0.1.0",
+		"@bufbuild/protobuf": "2.16.0"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",

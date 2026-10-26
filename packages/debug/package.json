@@ -49,11 +49,10 @@
 		"attw": "attw --pack --profile esm-only"
 	},
 	"dependencies": {
-		"debug": "^4.4.0",
-		"supports-color": "^10.2.2"
+		"debug": "^4.4.3"
 	},
 	"devDependencies": {
-		"@types/debug": "^4.1.12"
+		"@types/debug": "^4.1.13"
 	},
 	"engines": {
 		"node": ">=20.19.0",

@@ -11,11 +11,12 @@
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {
-		"@langchain/openai": "^1.0.0",
-		"@ydbjs/langchain": "*"
+		"@langchain/openai": "^1.7.0",
+		"@ydbjs/langchain": "*",
+		"@langchain/core": "^1.3.0"
 	},
 	"engines": {
-		"node": ">=20.19.0",
+		"node": "^22.15.0 || >=23.8.0",
 		"npm": ">=10"
 	},
 	"engineStrict": true

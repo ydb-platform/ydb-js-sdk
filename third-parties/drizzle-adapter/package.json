@@ -70,7 +70,7 @@
 		"drizzle-orm": "^0.45.2"
 	},
 	"devDependencies": {
-		"drizzle-orm": "^0.45.2"
+		"drizzle-orm": "^0.45.4"
 	},
 	"engines": {
 		"node": ">=20.19.0",

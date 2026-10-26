@@ -16,7 +16,9 @@
 		"@ydbjs/core": "*",
 		"@ydbjs/query": "*",
 		"@ydbjs/topic": "*",
-		"@ydbjs/value": "*"
+		"@ydbjs/value": "*",
+		"@opentelemetry/api": "^1.9.1",
+		"@ydbjs/error": "*"
 	},
 	"publishConfig": {
 		"access": "restricted"

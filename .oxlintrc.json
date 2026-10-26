@@ -20,6 +20,18 @@
 				"maxArgs": 3,
 				"minArgs": 1
 			}
+		],
+		"vitest/expect-expect": [
+			"error",
+			{
+				"assertFunctionNames": [
+					"expect",
+					"expectTypeOf",
+					"assert",
+					"assertType",
+					"*.expect"
+				]
+			}
 		]
 	},
 	"plugins": ["node", "import", "vitest", "promise", "typescript", "oxc"],
