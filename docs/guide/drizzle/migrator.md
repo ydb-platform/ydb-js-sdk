@@ -88,7 +88,7 @@ Recommended release checks:
 
 ```bash
 npm run build -- --filter=@ydbjs/drizzle-adapter
-npm run attw -- --filter=@ydbjs/drizzle-adapter
+npx --yes -w @ydbjs/drizzle-adapter @arethetypeswrong/cli@0.18.5 --pack --profile esm-only
 npm run test --workspace=@ydbjs/drizzle-adapter -- --project uni
 npm run test:live --workspace=@ydbjs/drizzle-adapter
 ```

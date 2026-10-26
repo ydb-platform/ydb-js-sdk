@@ -14,10 +14,6 @@
 			"inputs": ["./src/**"],
 			"outputs": ["./dist/**", "./.vitepress/dist/**"]
 		},
-		"attw": {
-			"dependsOn": ["^attw", "build"],
-			"inputs": ["./dist/**", "package.json"]
-		},
 		"test": {
 			"dependsOn": ["^test", "build"],
 			"outputs": []

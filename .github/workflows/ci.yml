@@ -104,7 +104,7 @@ jobs:
 
       - name: Test with coverage
         if: matrix.runtime == 'node' && matrix.node-version == 26
-        run: npm run coverage -- --reporter=default --reporter=html --reporter=github-actions
+        run: npm run coverage -- --reporter=default --reporter=github-actions
 
       - name: Upload coverage to Codecov
         if: matrix.runtime == 'node' && matrix.node-version == 26
@@ -132,11 +132,9 @@ jobs:
           fi
 
           aws --endpoint-url "$endpoint" s3 sync ./coverage "s3://$bucket/${path}coverage/" --delete
-          aws --endpoint-url "$endpoint" s3 sync ./html "s3://$bucket/${path}tests/" --delete
 
           {
             echo "### :bar_chart: [Coverage report](https://$bucket.website.yandexcloud.net/${path}coverage/)"
-            echo "### :test_tube: [Test report](https://$bucket.website.yandexcloud.net/${path}tests/)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   bench:
