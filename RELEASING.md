@@ -36,14 +36,14 @@ npm run attw
 3. Bump versions and generate changelogs (Changesets)
 
 ```bash
-npx changeset version
+npm run version
 ```
 
 4. Publish to npm (stable)
 
 ```bash
 # Ensure you are authenticated: npm whoami
-NPM_CONFIG_PROVENANCE=true npx changeset publish
+NPM_CONFIG_PROVENANCE=true npm run publish
 ```
 
 5. Create GitHub Release

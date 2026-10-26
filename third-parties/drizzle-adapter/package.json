@@ -57,7 +57,6 @@
 		"test": "vitest --run",
 		"test:unit": "vitest --run --project uni",
 		"test:int": "vitest --run --project int",
-		"attw": "attw --pack --profile esm-only",
 		"check:surface": "node scripts/check-package-surface.mjs"
 	},
 	"dependencies": {

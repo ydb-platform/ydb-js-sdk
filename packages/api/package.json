@@ -110,8 +110,7 @@
 	"scripts": {
 		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
 		"clean": "rm -rf dist",
-		"build": "tsc",
-		"attw": "attw --pack --profile esm-only"
+		"build": "tsc"
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.16.0"

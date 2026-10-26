@@ -48,8 +48,7 @@
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
-		"test": "vitest --run",
-		"attw": "attw --pack --profile esm-only"
+		"test": "vitest --run"
 	},
 	"dependencies": {
 		"@ydbjs/abortable": "^6.1.0",

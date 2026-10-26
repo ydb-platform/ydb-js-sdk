@@ -44,8 +44,7 @@
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc && tsc -p type-tests",
-		"test": "vitest --run",
-		"attw": "attw --pack --profile esm-only"
+		"test": "vitest --run"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",

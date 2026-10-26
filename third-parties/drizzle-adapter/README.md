@@ -122,19 +122,8 @@ await db.insert(articles).values({
 ```ts
 await db.transaction(
   async (tx) => {
-    await tx
-      .insert(users)
-      .values({
-        /* ... */
-      })
-      .execute()
-    await tx
-      .update(users)
-      .set({
-        /* ... */
-      })
-      .where(/* ... */)
-      .execute()
+    await tx.insert(users).values({/* ... */}).execute()
+    await tx.update(users).set({/* ... */}).where(/* ... */).execute()
   },
   { isolationLevel: 'serializableReadWrite' }
 )
@@ -150,12 +139,7 @@ Transactions are not nestable through the adapter — open one boundary at the t
 // Safe — only YDB mutations inside the callback
 await db.transaction(
   async (tx) => {
-    await tx
-      .insert(events)
-      .values({
-        /* ... */
-      })
-      .execute()
+    await tx.insert(events).values({/* ... */}).execute()
   },
   { isolationLevel: 'serializableReadWrite', idempotent: true }
 )
@@ -165,15 +149,8 @@ await db.transaction(
 // UNSAFE — the Stripe charge will fire twice on retry
 await db.transaction(
   async (tx) => {
-    await stripe.charges.create({
-      /* ... */
-    }) // external side effect!
-    await tx
-      .insert(payments)
-      .values({
-        /* ... */
-      })
-      .execute()
+    await stripe.charges.create({/* ... */}) // external side effect!
+    await tx.insert(payments).values({/* ... */}).execute()
   },
   { idempotent: true } // ← don't do this
 )
@@ -282,7 +259,7 @@ Mapped errors carry non-enumerable `kind`, `retryable`, `statusCode`, and the or
 npm run build --workspace=@ydbjs/drizzle-adapter
 npm run test:unit --workspace=@ydbjs/drizzle-adapter
 npm run test:int --workspace=@ydbjs/drizzle-adapter   # requires Docker for ydbplatform/local-ydb
-npm run attw --workspace=@ydbjs/drizzle-adapter
+npx --yes -w @ydbjs/drizzle-adapter @arethetypeswrong/cli@0.18.5 --pack --profile esm-only
 npm run check:surface --workspace=@ydbjs/drizzle-adapter
 ```
 

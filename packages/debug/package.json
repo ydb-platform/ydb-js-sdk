@@ -45,8 +45,7 @@
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsc",
-		"test": "vitest --run",
-		"attw": "attw --pack --profile esm-only"
+		"test": "vitest --run"
 	},
 	"dependencies": {
 		"debug": "^4.4.3"
