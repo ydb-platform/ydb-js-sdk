@@ -1,8 +1,13 @@
 import { existsSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
 import { ValueType } from '@opentelemetry/api'
+
+import { topicOptions } from './lib/topic-options.ts'
+import { runTopicWorkers } from './lib/topic-workers.ts'
 
 import { installSafetyHandlers } from './lib/safety.ts'
 import { meterProvider } from './lib/telemetry.ts'
@@ -33,10 +38,6 @@ meter
 		r.observe(u.heapTotal, { worker: 'main', type: 'heapTotal' })
 		r.observe(u.arrayBuffers, { worker: 'main', type: 'arrayBuffers' })
 	})
-
-installSafetyHandlers('log', (kind, _err) => {
-	sdk_process_errors_total.add(1, { worker: 'main', kind })
-})
 
 // ---- CLI parsing ----------------------------------------------------------
 type Parsed = {
@@ -121,15 +122,42 @@ function resolveWorker(name: string): URL {
 
 // ---- Global state ---------------------------------------------------------
 let cli = parseArgv(process.argv.slice(2))
-let DURATION = parseInt(process.env['WORKLOAD_DURATION'] || '60', 10)
+let DURATION = Number(process.env['WORKLOAD_DURATION'] || '60')
+if (!Number.isFinite(DURATION) || DURATION < 0) {
+	throw new RangeError('WORKLOAD_DURATION must be a non-negative number of seconds')
+}
+let topicProfile = cli.workers.some((name) => name.startsWith('topic.'))
+if (
+	topicProfile &&
+	(cli.setup !== 'topic.setup' ||
+		cli.teardown !== 'topic.teardown' ||
+		cli.workers.length !== 2 ||
+		!cli.workers.includes('topic.read') ||
+		!cli.workers.includes('topic.write'))
+) {
+	throw new Error('Topic requires topic.setup, topic.read, topic.write and topic.teardown')
+}
+let topic = topicProfile
+	? topicOptions({
+			...cli.params.get('topic.setup'),
+			...cli.params.get('topic.read'),
+			...cli.params.get('topic.write'),
+		})
+	: undefined
+let runFailed = false
+let failure: string | undefined
+let results: Awaited<ReturnType<typeof runTopicWorkers>> | undefined
+let startedAt = 0
 
 let ctrl = new AbortController()
 process.on('SIGINT', () => {
 	console.error('[index] SIGINT, aborting')
+	if (topic) runFailed = true
 	ctrl.abort()
 })
 process.on('SIGTERM', () => {
 	console.error('[index] SIGTERM, aborting')
+	if (topic) runFailed = true
 	ctrl.abort()
 })
 
@@ -138,37 +166,50 @@ let stopBroadcast = false
 function broadcastStop() {
 	if (stopBroadcast) return
 	stopBroadcast = true
+	if (topic) return
 	let msg: ControlMessage = { type: 'stop' }
 	controlChannel.postMessage(msg)
 }
 ctrl.signal.addEventListener('abort', broadcastStop, { once: true })
 
+installSafetyHandlers('log', (kind, error) => {
+	sdk_process_errors_total.add(1, { worker: 'main', kind })
+	if (topic) {
+		runFailed = true
+		failure ??= String(error)
+		ctrl.abort()
+	}
+})
+
 // ---- Phase helpers --------------------------------------------------------
 function runOnce(name: string): Promise<number> {
 	let url = resolveWorker(name)
-	let data: WorkerData = { name, params: cli.params.get(name) ?? {} }
+	let data: WorkerData = topic ? { ...topic, name } : { name, params: cli.params.get(name) ?? {} }
 	let worker = new Worker(url, { workerData: data })
 
-	return new Promise<number>((resolve) => {
-		let settled = false
-		let settle = (code: number) => {
-			if (settled) return
-			settled = true
-			resolve(code)
-		}
-		worker.on('error', (err) => {
-			console.error(`[index] worker ${name} error:`, err)
-			settle(1)
-		})
-		worker.on('exit', (code) => settle(code ?? 1))
+	let exited = Promise.withResolvers<number>()
+	let failed = false
+	let timeout = topic
+		? setTimeout(() => {
+				failed = true
+				console.error('[index] phase %s timed out', name)
+				void worker.terminate()
+			}, 60_000)
+		: undefined
+	worker.once('error', (error) => {
+		failed = true
+		console.error('[index] worker %s failed:', name, error)
 	})
+	worker.once('exit', (code) => {
+		clearTimeout(timeout)
+		exited.resolve(failed ? 1 : code)
+	})
+	return exited.promise
 }
 
-const RESTART_CAP = 3
-const RESTART_WINDOW_MS = 60_000
-const BACKOFF_MS = [250, 500, 1000]
-
-let runFailed = false
+let RESTART_CAP = 3
+let RESTART_WINDOW_MS = 60_000
+let BACKOFF_MS = [250, 500, 1000]
 
 async function runForever(name: string): Promise<void> {
 	let url = resolveWorker(name)
@@ -244,25 +285,76 @@ if (cli.setup) {
 }
 
 // Phase: run
-if (!runFailed && cli.workers.length > 0) {
+if (!runFailed && !ctrl.signal.aborted && cli.workers.length > 0) {
+	startedAt = Date.now()
 	console.log(`[index] run: duration=${DURATION}s, workers=${cli.workers.join(',')}`)
-	let durationTimer = setTimeout(() => {
-		console.log('[index] duration elapsed, stopping workers')
-		ctrl.abort()
-	}, DURATION * 1000)
-	durationTimer.unref()
+	let durationTimer =
+		DURATION > 0
+			? setTimeout(() => {
+					console.log('[index] duration elapsed, stopping writers')
+					ctrl.abort()
+				}, DURATION * 1000)
+			: undefined
+	durationTimer?.unref()
 
-	await Promise.all(cli.workers.map((name) => runForever(name)))
-	clearTimeout(durationTimer)
+	try {
+		if (topic) {
+			let read = new Worker(resolveWorker('topic.read'), {
+				workerData: { ...topic, name: 'topic.read' },
+			})
+			let write = new Worker(resolveWorker('topic.write'), {
+				workerData: { ...topic, name: 'topic.write' },
+			})
+			results = await runTopicWorkers({ read, write }, topic, ctrl.signal)
+		} else {
+			await Promise.all(cli.workers.map((name) => runForever(name)))
+		}
+	} catch (error) {
+		runFailed = true
+		failure = String(error)
+		console.error('[index] workload failed:', error)
+	} finally {
+		clearTimeout(durationTimer)
+	}
 }
 
-// Phase: teardown (best-effort даже если run провалился)
-if (cli.teardown) {
+// Failed Topic runs retain their data for diagnosis; KV keeps best-effort teardown.
+if (cli.teardown && (!topic || !runFailed)) {
 	console.log(`[index] teardown: ${cli.teardown}`)
 	let code = await runOnce(cli.teardown)
 	if (code !== 0) {
 		console.error(`[index] teardown failed with code ${code}`)
 		runFailed = true
+	}
+}
+
+if (topic) {
+	let summary = {
+		...results?.read.summary,
+		success: !runFailed && results !== undefined,
+		errors: failure ? [failure] : (results?.read.summary?.errors ?? []),
+		topic: topic.topic,
+		codec: topic.codec,
+		rps: topic.rps,
+		phase: runFailed ? 'failed' : 'complete',
+		startedAt: startedAt ? new Date(startedAt).toISOString() : undefined,
+		elapsedMs: startedAt ? Date.now() - startedAt : 0,
+		reconnects: {
+			writer: results?.write.reconnects ?? 0,
+			reader: results?.read.reconnects ?? 0,
+		},
+	}
+	console.info('[topic.result] %s', JSON.stringify(summary))
+	let resultPath = process.env['TOPIC_RESULT_FILE']
+	if (resultPath) {
+		try {
+			await mkdir(dirname(resultPath), { recursive: true })
+			await writeFile(`${resultPath}.tmp`, JSON.stringify(summary, null, 2) + '\n')
+			await rename(`${resultPath}.tmp`, resultPath)
+		} catch (error) {
+			runFailed = true
+			console.error('[index] cannot save result:', error)
+		}
 	}
 }
 

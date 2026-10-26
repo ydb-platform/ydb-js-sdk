@@ -1,8 +1,8 @@
 # Full SLO/chaos stack (multi-node YDB cluster + chaos monkey + telemetry),
-# pulled straight from ydb-slo-action so a local run is identical to CI.
+# shared with the pinned ydb-slo-action revision used by CI.
 # The workload image itself is built by compose.override.yaml.
 #
 # See SLO.md for the one-command runs. For a lightweight single-node stack
 # (quick local dev, no chaos) use compose.dev.yaml instead.
 include:
-  - path: https://github.com/ydb-platform/ydb-slo-action.git#v2:deploy/compose.yml
+  - path: https://github.com/ydb-platform/ydb-slo-action.git#6b8e6cd4b96d70e747fbba2f2cfa196a6e2b2717:deploy/compose.yml
