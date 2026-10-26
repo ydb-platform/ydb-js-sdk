@@ -234,17 +234,10 @@ test('traces tracing:ydb:query.session.delete with reason=pool_close on pool.clo
 
 	await p.close()
 
-	// pool.close() does not await the per-session DeleteSession RPC — its
-	// promise resolves on a later microtask. Wait until the asyncEnd hook
-	// fires so the test exercises the full tracingChannel lifecycle, not
-	// just the start hook.
-	for (let i = 0; i < 50 && trace.asyncEnd.length === 0; i++) {
-		// oxlint-disable-next-line no-await-in-loop -- polling, sequential by design
-		await new Promise((r) => setImmediate(r))
-	}
+	let completedDeletes = () => trace.asyncEnd.length
+	await expect.poll(completedDeletes).toBe(1)
 
 	expect(trace.start.length).toBe(1)
-	expect(trace.asyncEnd.length).toBe(1)
 	expect(trace.start[0]).toMatchObject({
 		driver: { database: '/local' },
 		sessionId,
