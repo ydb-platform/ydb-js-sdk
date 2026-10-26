@@ -58,11 +58,7 @@
 		"@ydbjs/error": "^6.0.6",
 		"@ydbjs/retry": "^6.3.0",
 		"@ydbjs/value": "^6.0.8",
-		"debug": "^4.4.0",
 		"@ydbjs/grpc": "^0.1.0"
-	},
-	"devDependencies": {
-		"@types/debug": "^4.1.12"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",

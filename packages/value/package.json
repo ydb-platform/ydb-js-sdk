@@ -87,10 +87,9 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.16.0",
-		"@date-fns/tz": "^1.4.1",
+		"@date-fns/tz": "^1.5.0",
 		"@ydbjs/api": "^6.0.7",
-		"date-fns": "^4.1.0",
-		"proposal-decimal": "^20250613.0.0"
+		"date-fns": "^4.4.0"
 	},
 	"engines": {
 		"node": ">=20.19.0",

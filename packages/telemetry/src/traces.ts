@@ -65,7 +65,7 @@ export class YdbTracesPipeline {
 	#subscribeTracing(entry: TracingChannelEntry): Disposable {
 		// StoreType=Span | undefined matches spanStorage; ContextType=object is
 		// the payload shape (each row's lambda narrows it).
-		let ch = tracingChannel<Span | undefined, object>(entry.channel)
+		let ch = tracingChannel<object, Span | undefined>(entry.channel)
 
 		// Skip `end` (it fires on callback return — too early for async fns,
 		// which would close the span before the awaited work runs) and

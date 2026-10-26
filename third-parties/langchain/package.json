@@ -1,7 +1,7 @@
 {
 	"name": "@ydbjs/langchain",
 	"version": "0.1.0",
-	"description": "YDB integration for LangChain.js — VectorStore backed by YDB.",
+	"description": "YDB integration for LangChain.js \u2014 VectorStore backed by YDB.",
 	"keywords": [
 		"database",
 		"langchain",
@@ -56,7 +56,7 @@
 		"@langchain/core": ">=1.0.0 <2.0.0"
 	},
 	"devDependencies": {
-		"@langchain/core": "^1.1.0"
+		"@langchain/core": "^1.3.0"
 	},
 	"engines": {
 		"node": ">=20.19.0",
