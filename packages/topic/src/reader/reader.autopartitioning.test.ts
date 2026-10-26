@@ -289,11 +289,13 @@ test('delivers a granted child after an ended parent is forcibly stopped', async
 		consumer: 'c',
 		autoPartitioningSupport: true,
 		maxBufferBytes: 100n,
-		onPartitionSessionStop: async () => {
-			parentStopped.resolve()
+		onPartitionSessionStop: async (session) => {
+			if (session.partitionSessionId === 1n && session.isStopped) {
+				parentStopped.resolve()
+			}
 		},
 	})
-	await parentStopped.promise
+	await abortable(tc.signal, parentStopped.promise)
 	let messages = await collect(reader, 1, tc.signal)
 	let payloads = messages.map((message) => text(message.payload))
 	expect(payloads).toEqual(['child'])
