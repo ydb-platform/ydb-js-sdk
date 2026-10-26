@@ -68,7 +68,6 @@ jobs:
 
     env:
       TEST_RUNTIME: ${{ matrix.runtime }}
-      GRPC_TEST_GO_SERVER: ${{ runner.temp }}/grpc-interop-go
       YDB_STATIC_CREDENTIALS_USER: root
       YDB_STATIC_CREDENTIALS_PASSWORD: 1234
       YDB_STATIC_CREDENTIALS_ENDPOINT: grpc://localhost:2136
@@ -91,7 +90,9 @@ jobs:
         working-directory: packages/grpc/tests/interop-go
         env:
           GOTOOLCHAIN: local
-        run: go build -mod=readonly -o "$GRPC_TEST_GO_SERVER" .
+        run: |
+          go build -mod=readonly -o "$RUNNER_TEMP/grpc-interop-go" .
+          echo "GRPC_TEST_GO_SERVER=$RUNNER_TEMP/grpc-interop-go" >> "$GITHUB_ENV"
 
       - name: Test
         if: matrix.runtime == 'node' && matrix.node-version != 26
