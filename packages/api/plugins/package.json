@@ -1,0 +1,13 @@
+{
+	"name": "@ydbjs/api-codegen",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"generate": "cd .. && buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml"
+	},
+	"devDependencies": {
+		"@bufbuild/buf": "^1.75.0",
+		"@bufbuild/protoc-gen-es": "^2.16.0",
+		"@bufbuild/protoplugin": "^2.16.0"
+	}
+}

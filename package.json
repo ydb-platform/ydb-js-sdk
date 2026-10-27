@@ -4,10 +4,8 @@
 	"private": true,
 	"type": "module",
 	"workspaces": [
-		"docs",
 		"e2e/*",
 		"tests/*",
-		"examples/*",
 		"packages/*",
 		"third-parties/*"
 	],

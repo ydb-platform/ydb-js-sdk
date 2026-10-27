@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This monorepo contains multiple `@ydbj
 
 ## Prerequisites
 
-- Node >= 20.19, npm >= 10
+- Node 22 (>=22.15), 24, or 26+, npm >= 10
 - Docker (for integration/e2e tests using local YDB)
 
 ## Setup
@@ -15,12 +15,28 @@ cd ydb-js-sdk
 npm ci
 ```
 
+The root installation covers SDK development and tests. Documentation, examples, and protobuf generation have separate dependencies.
+
+```bash
+# Documentation
+npm ci --prefix docs
+npm run dev --prefix docs
+npm run build --prefix docs
+
+# One example, using published SDK packages
+npm ci --prefix examples/query
+npm start --prefix examples/query
+
+# Installs the generator dependencies before regenerating the API
+npm run generate --workspace=@ydbjs/api
+```
+
 ## Development
 
 - Build all packages: `npm run build`
-- Run unit tests: `npm run test:uni`
-- Run integration tests (requires Docker): `npm run test:int`
-- Run all tests: `npm run test:all`
+- Run unit tests: `npm test -- --project uni`
+- Run integration tests (requires Docker): `npm test -- --project int`
+- Run all tests: `npm test`
 - Lint: `npm run lint`
 
 ## Commit & PR Guidelines

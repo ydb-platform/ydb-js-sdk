@@ -54,6 +54,8 @@ Unary and client-streaming methods return `Promise<Response>`. Server-streaming 
 
 ### Generating gRPC and Protocol Buffer Files
 
+From this package directory, run the command below. It installs the tools locked in `plugins/package-lock.json` before generation. The root SDK installation and build do not install or run the generators.
+
 ```sh
 npm run generate
 ```
