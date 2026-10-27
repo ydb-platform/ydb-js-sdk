@@ -12,7 +12,7 @@
 		"build": {
 			"dependsOn": ["^build", "clean", "codegen"],
 			"inputs": ["./src/**"],
-			"outputs": ["./dist/**", "./.vitepress/dist/**"]
+			"outputs": ["./dist/**"]
 		},
 		"test": {
 			"dependsOn": ["^test", "build"],

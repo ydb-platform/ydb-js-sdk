@@ -108,7 +108,7 @@
 		"registry": "https://registry.npmjs.org/"
 	},
 	"scripts": {
-		"generate": "buf generate --template buf.gen.yaml && buf generate --template buf.gen.grpc.yaml",
+		"generate": "npm ci --prefix plugins && npm run generate --prefix plugins",
 		"clean": "rm -rf dist",
 		"build": "tsc"
 	},
@@ -116,11 +116,8 @@
 		"@bufbuild/protobuf": "2.16.0"
 	},
 	"devDependencies": {
-		"@bufbuild/buf": "^1.75.0",
-		"@bufbuild/protoc-gen-es": "^2.16.0",
 		"typescript": "^7.0.2",
-		"@ydbjs/grpc": "^0.1.0",
-		"@bufbuild/protoplugin": "^2.16.0"
+		"@ydbjs/grpc": "^0.1.0"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",

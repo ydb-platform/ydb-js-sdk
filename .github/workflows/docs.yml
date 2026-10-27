@@ -7,16 +7,17 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'
-      - 'package.json'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
-  pages: write
   contents: read
-  id-token: write
 
 concurrency:
-  group: 'pages'
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -31,15 +32,16 @@ jobs:
         with:
           node-version: 'lts/*'
           cache: 'npm'
+          cache-dependency-path: docs/package-lock.json
 
-      - name: Install deps (root)
-        run: npm ci
+      - name: Install docs dependencies
+        run: npm ci --prefix docs
 
       - name: Build docs
         env:
           DOCS_BASE: /
           SITE_HOSTNAME: https://ydb.js.org
-        run: npx vitepress build docs
+        run: npm run build --prefix docs
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
@@ -47,6 +49,10 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
+    permissions:
+      pages: write
+      id-token: write
     needs: build
     runs-on: ubuntu-latest
     environment:
