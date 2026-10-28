@@ -6,6 +6,7 @@
 	"workspaces": [
 		"e2e/*",
 		"tests/*",
+		"examples/*",
 		"packages/*",
 		"third-parties/*"
 	],
