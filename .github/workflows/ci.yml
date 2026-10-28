@@ -180,7 +180,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
       - name: Bench
-        run: npm run bench -- --outputJson "$RUNNER_TEMP/benchmark.json"
+        run: npm run bench -- --reporter=default --reporter=json --outputFile "$RUNNER_TEMP/benchmark.json"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

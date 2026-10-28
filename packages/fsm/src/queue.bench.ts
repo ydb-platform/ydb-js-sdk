@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { bench } from 'vitest'
+import { test } from 'vitest'
 
 import { AsyncQueue } from './queue.js'
 
@@ -9,9 +9,8 @@ import { AsyncQueue } from './queue.js'
 let timing = { time: 200, iterations: 3, warmupTime: 50, warmupIterations: 2 }
 
 for (let size of [128, 4000, 64000]) {
-	bench(
-		`queue buffered take / ${size} items per burst`,
-		async () => {
+	test(`queue buffered take / ${size} items per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			using queue = new AsyncQueue<number>()
 			for (let index = 0; index < size; index++) {
 				queue.push(1)
@@ -26,13 +25,11 @@ for (let size of [128, 4000, 64000]) {
 			}
 			assert.equal(delivered, size)
 			assert.equal(queue.size, 0)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
-	bench(
-		`queue one parked take / ${size} items per burst`,
-		async () => {
+	test(`queue one parked take / ${size} items per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			using queue = new AsyncQueue<number>()
 			let delivered = 0
 			for (let index = 0; index < size; index++) {
@@ -46,13 +43,11 @@ for (let size of [128, 4000, 64000]) {
 			}
 			assert.equal(delivered, size)
 			assert.equal(queue.size, 0)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
-	bench(
-		`queue mass parked takes / ${size} waiters per burst`,
-		async () => {
+	test(`queue mass parked takes / ${size} waiters per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			using queue = new AsyncQueue<number>()
 			let pending: Array<Promise<IteratorResult<number>>> = []
 			for (let index = 0; index < size; index++) {
@@ -70,7 +65,6 @@ for (let size of [128, 4000, 64000]) {
 			}
 			assert.equal(delivered, size)
 			assert.equal(queue.size, 0)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 }

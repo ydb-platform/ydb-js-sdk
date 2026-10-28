@@ -3,7 +3,7 @@ import {
 	DropTopicRequestSchema,
 	TopicServiceDefinition,
 } from '@ydbjs/api/topic'
-import { afterAll, beforeAll, bench, inject } from 'vitest'
+import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 
 import { create } from '@bufbuild/protobuf'
 import { Driver } from '@ydbjs/core'
@@ -11,6 +11,7 @@ import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { type TopicWriter, createTopicWriter } from '../src/writer/index.ts'
 
 let TOTAL_TRAFFIC_BYTES = 128 * 1024 * 1024
+let timing = { time: 500, iterations: 10, warmupTime: 100, warmupIterations: 0 }
 
 let driver: Driver
 let writer: TopicWriter
@@ -31,8 +32,7 @@ afterAll(async () => {
 	}
 })
 
-async function setup() {
-	// Tinybench does not await asynchronous teardown between warmup and measurement.
+async function setup(signal: AbortSignal) {
 	await teardown()
 	let topicName = `test-topic-bench-${Date.now()}`
 	let consumerName = `test-consumer-${Date.now()}`
@@ -50,7 +50,7 @@ async function setup() {
 				},
 			],
 		}),
-		{ signal: AbortSignal.timeout(30_000) }
+		{ signal }
 	)
 	if (!response.operation?.ready || response.operation.status !== StatusIds_StatusCode.SUCCESS) {
 		throw new Error(`Topic creation failed: ${response.operation?.status}`)
@@ -78,9 +78,9 @@ async function teardown() {
 	testTopicName = undefined
 }
 
-bench(
-	'16KiB',
-	async () => {
+test('16KiB', async ({ bench, signal }) => {
+	let acknowledged = 0n
+	await bench('write 128MiB', async () => {
 		let MESSAGE_SIZE = 16 * 1024
 		let payload = new Uint8Array(MESSAGE_SIZE)
 
@@ -88,14 +88,15 @@ bench(
 			writer.write(payload)
 		}
 
-		await writer.flush(AbortSignal.timeout(60_000))
-	},
-	{ warmupIterations: 0, setup }
-)
+		acknowledged = await writer.flush(signal)
+	}).run({ ...timing, setup: () => setup(signal) })
 
-bench(
-	'64KiB',
-	async () => {
+	expect(acknowledged).toBeGreaterThan(0n)
+})
+
+test('64KiB', async ({ bench, signal }) => {
+	let acknowledged = 0n
+	await bench('write 128MiB', async () => {
 		let MESSAGE_SIZE = 64 * 1024
 		let payload = new Uint8Array(MESSAGE_SIZE)
 
@@ -103,14 +104,15 @@ bench(
 			writer.write(payload)
 		}
 
-		await writer.flush(AbortSignal.timeout(60_000))
-	},
-	{ warmupIterations: 0, setup }
-)
+		acknowledged = await writer.flush(signal)
+	}).run({ ...timing, setup: () => setup(signal) })
 
-bench(
-	'256KiB',
-	async () => {
+	expect(acknowledged).toBeGreaterThan(0n)
+})
+
+test('256KiB', async ({ bench, signal }) => {
+	let acknowledged = 0n
+	await bench('write 128MiB', async () => {
 		let MESSAGE_SIZE = 256 * 1024
 		let payload = new Uint8Array(MESSAGE_SIZE)
 
@@ -118,14 +120,15 @@ bench(
 			writer.write(payload)
 		}
 
-		await writer.flush(AbortSignal.timeout(60_000))
-	},
-	{ warmupIterations: 0, setup }
-)
+		acknowledged = await writer.flush(signal)
+	}).run({ ...timing, setup: () => setup(signal) })
 
-bench(
-	'1MiB',
-	async () => {
+	expect(acknowledged).toBeGreaterThan(0n)
+})
+
+test('1MiB', async ({ bench, signal }) => {
+	let acknowledged = 0n
+	await bench('write 128MiB', async () => {
 		let MESSAGE_SIZE = 1 * 1024 * 1024
 		let payload = new Uint8Array(MESSAGE_SIZE)
 
@@ -133,7 +136,8 @@ bench(
 			writer.write(payload)
 		}
 
-		await writer.flush(AbortSignal.timeout(60_000))
-	},
-	{ warmupIterations: 0, setup }
-)
+		acknowledged = await writer.flush(signal)
+	}).run({ ...timing, setup: () => setup(signal) })
+
+	expect(acknowledged).toBeGreaterThan(0n)
+})

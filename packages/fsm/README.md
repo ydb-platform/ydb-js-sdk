@@ -195,7 +195,7 @@ npm run test
 From the repository root, run the isolated scaling benchmarks:
 
 ```sh
-npm run bench -- --project uni packages/fsm/src
+npm run bench -- packages/fsm/src
 ```
 
 The benchmarks measure complete bursts, including creation and cleanup, at 128, 4000 and 64000 items.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { bench } from 'vitest'
+import { test } from 'vitest'
 
 import { createMachineRuntime } from './runtime.js'
 
@@ -22,21 +22,18 @@ let transition = (ctx: Context): void => {
 }
 
 for (let size of [128, 4000, 64000]) {
-	bench(
-		`raw transition / ${size} events per burst`,
-		() => {
+	test(`raw transition / ${size} events per burst`, async ({ bench }) => {
+		await bench('burst', () => {
 			let ctx = { processed: 0, recorded: 0 }
 			for (let index = 0; index < size; index++) {
 				transition(ctx)
 			}
 			assert.equal(ctx.processed, size)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
-	bench(
-		`idle dispatch / ${size} events per burst`,
-		async () => {
+	test(`idle dispatch / ${size} events per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			await using machine = createMachineRuntime<'ready', Context, {}, Event, never, never>({
 				initialState: 'ready',
 				ctx: { processed: 0, recorded: 0 },
@@ -49,13 +46,11 @@ for (let size of [128, 4000, 64000]) {
 			}
 			await machine.close()
 			assert.equal(machine.ctx.processed, size)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
-	bench(
-		`blocked burst drain / ${size} events per burst`,
-		async () => {
+	test(`blocked burst drain / ${size} events per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			let gate = Promise.withResolvers<void>()
 			await using machine = createMachineRuntime<
 				'ready',
@@ -73,6 +68,7 @@ for (let size of [128, 4000, 64000]) {
 						return waiting
 					}
 					ctx.processed += 1
+					return undefined
 				},
 				effects: { wait: () => gate.promise },
 			})
@@ -86,14 +82,14 @@ for (let size of [128, 4000, 64000]) {
 			}
 			await machine.close()
 			assert.equal(machine.ctx.processed, size)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
 	for (let asynchronous of [false, true]) {
-		bench(
-			`${asynchronous ? 'resolved Promise' : 'sync'} effect / ${size} events per burst`,
-			async () => {
+		test(`${asynchronous ? 'resolved Promise' : 'sync'} effect / ${size} events per burst`, async ({
+			bench,
+		}) => {
+			await bench('burst', async () => {
 				let record = (ctx: Context) => {
 					ctx.recorded += 1
 				}
@@ -127,14 +123,12 @@ for (let size of [128, 4000, 64000]) {
 				await machine.close()
 				assert.equal(machine.ctx.processed, size)
 				assert.equal(machine.ctx.recorded, size)
-			},
-			timing
-		)
+			}).run(timing)
+		})
 	}
 
-	bench(
-		`emit and consume / ${size} events per burst`,
-		async () => {
+	test(`emit and consume / ${size} events per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			await using machine = createMachineRuntime<'ready', Context, {}, Event, never, number>({
 				initialState: 'ready',
 				ctx: { processed: 0, recorded: 0 },
@@ -158,13 +152,11 @@ for (let size of [128, 4000, 64000]) {
 			await machine.close()
 			assert.equal(await consuming, size)
 			assert.equal(machine.ctx.processed, size)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 
-	bench(
-		`ingest and map / ${size} events per burst`,
-		async () => {
+	test(`ingest and map / ${size} events per burst`, async ({ bench }) => {
+		await bench('burst', async () => {
 			let ended = Promise.withResolvers<void>()
 			async function* source(): AsyncGenerator<Event> {
 				try {
@@ -187,7 +179,6 @@ for (let size of [128, 4000, 64000]) {
 			await ingestion[Symbol.asyncDispose]()
 			await machine.close()
 			assert.equal(machine.ctx.processed, size)
-		},
-		timing
-	)
+		}).run(timing)
+	})
 }
