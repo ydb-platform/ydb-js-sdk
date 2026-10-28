@@ -15,7 +15,7 @@ cd ydb-js-sdk
 npm ci
 ```
 
-The root installation covers SDK development and tests. Documentation, examples, and protobuf generation have separate dependencies.
+The root installation covers SDK development, tests, and examples. Examples stay in the workspace graph so Changesets updates their SDK dependency ranges. Documentation and protobuf generation have separate dependencies.
 
 ```bash
 # Documentation
@@ -23,9 +23,8 @@ npm ci --prefix docs
 npm run dev --prefix docs
 npm run build --prefix docs
 
-# One example, using published SDK packages
-npm ci --prefix examples/query
-npm start --prefix examples/query
+# Run an example from the workspace
+npm start --workspace=@ydbjs/examples-query
 
 # Installs the generator dependencies before regenerating the API
 npm run generate --workspace=@ydbjs/api

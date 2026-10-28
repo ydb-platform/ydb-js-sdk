@@ -8,9 +8,9 @@ This folder contains runnable examples for YDB JavaScript SDK. Each example is a
 >
 > **💡 Ищете больше примеров?** Посмотрите репозиторий [ydb-js-examples](https://github.com/ydb-platform/ydb-js-examples) с полным набором примеров реальных сценариев использования.
 
-EN: Examples install independently of the root SDK workspace. Run `npm ci` in the chosen example directory before starting it.
+EN: Examples belong to the root npm workspace so Changesets updates their SDK dependency ranges. Install with `npm ci` from the repository root, then run the chosen example.
 
-RU: Примеры устанавливаются отдельно от SDK. Перед запуском выполните `npm ci` в каталоге нужного примера.
+RU: Примеры входят в корневой npm workspace, чтобы Changesets обновлял версии SDK в их зависимостях. Выполните `npm ci` из корня репозитория, затем запускайте нужный пример.
 
 ## 📦 Examples / Примеры
 
