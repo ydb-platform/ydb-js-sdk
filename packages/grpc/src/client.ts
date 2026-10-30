@@ -80,9 +80,9 @@ function httpError(code: number): RpcError {
 	return new RpcError(mapping[code] ?? Status.UNKNOWN, `Unexpected HTTP status ${code}`)
 }
 
-function streamError(code: number, sessionClosed: boolean): RpcError {
-	// Node also uses CANCEL when the underlying connection disappears.
-	if (code === constants.NGHTTP2_CANCEL && sessionClosed) {
+function streamError(code: number, session: ClientHttp2Session): RpcError {
+	// Socket loss can cancel streams before session.destroyed changes; graceful close is not loss.
+	if (code === constants.NGHTTP2_CANCEL && (session.destroyed || session.socket?.destroyed)) {
 		return new RpcError(Status.UNAVAILABLE, 'HTTP/2 session closed')
 	}
 
@@ -606,12 +606,7 @@ export class Client implements Transport, Disposable {
 			stream.on('end', () => requestController.abort())
 			stream.on('error', (error: NodeJS.ErrnoException) => {
 				if (error.code === 'ERR_HTTP2_STREAM_ERROR') {
-					failBeforeServerStatus(
-						streamError(
-							stream!.rstCode,
-							session!.http2.closed || session!.http2.destroyed
-						)
-					)
+					failBeforeServerStatus(streamError(stream!.rstCode, session!.http2))
 					return
 				}
 				failBeforeServerStatus(
@@ -619,9 +614,7 @@ export class Client implements Transport, Disposable {
 				)
 			})
 			stream.on('aborted', () =>
-				failBeforeServerStatus(
-					streamError(stream!.rstCode, session!.http2.closed || session!.http2.destroyed)
-				)
+				failBeforeServerStatus(streamError(stream!.rstCode, session!.http2))
 			)
 			stream.on('close', () => {
 				requestController.abort()
@@ -631,12 +624,7 @@ export class Client implements Transport, Disposable {
 					!serverStatus &&
 					(stream!.rstCode !== constants.NGHTTP2_NO_ERROR || !stream!.readableEnded)
 				) {
-					failBeforeServerStatus(
-						streamError(
-							stream!.rstCode,
-							session!.http2.closed || session!.http2.destroyed
-						)
-					)
+					failBeforeServerStatus(streamError(stream!.rstCode, session!.http2))
 				}
 			})
 			frames = createFrameStream(this.#options.maxReceiveBytes!)
