@@ -86,7 +86,7 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 			return new Dict(...dict)
 		}
 		case 'structType': {
-			let struct: { [key: string]: Value } = {}
+			let struct: { [key: string]: Value } = Object.create(null)
 			for (let i = 0; i < value.items.length; i++) {
 				let member = (type.type.value as unknown as Ydb.StructType).members[i]!
 				struct[member.name] = fromYdb(value.items[i]!, member.type!)
@@ -101,7 +101,12 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
 				return new Null()
 			}
 
-			return new Optional(fromYdb(value, type.type.value.item!))
+			let itemType = type.type.value.item!
+			let itemValue =
+				itemType.type.case === 'optionalType' && value.value.case === 'nestedValue'
+					? value.value.value
+					: value
+			return new Optional(fromYdb(itemValue, itemType))
 	}
 
 	throw new Error('Unsupported value.')
@@ -211,8 +216,8 @@ export function fromJs(native: JSValue): Value {
 						let element = native[i] as { [key: string]: JSValue }
 
 						let struct: [string, Value][] = []
-						for (let key in element) {
-							let value = fromJs(element[key]!)
+						for (let [key, item] of Object.entries(element)) {
+							let value = fromJs(item)
 							struct.push([key, value])
 						}
 
@@ -230,7 +235,7 @@ export function fromJs(native: JSValue): Value {
 					let structValues: { [key: string]: Value }[] = []
 
 					for (let struct of structs) {
-						let record: { [key: string]: Value } = {}
+						let record: { [key: string]: Value } = Object.create(null)
 
 						for (let [key, value] of struct) {
 							value = new Optional(value)
@@ -257,7 +262,7 @@ export function fromJs(native: JSValue): Value {
 				return new List(...values)
 			}
 
-			let struct: { [key: string]: Value } = {}
+			let struct: { [key: string]: Value } = Object.create(null)
 			for (let [k, v] of Object.entries(native)) {
 				struct[k] = fromJs(v)
 			}
@@ -330,7 +335,12 @@ export function toJs(value: Value): JSValue {
 			let struct: { [key: string]: JSValue } = {}
 
 			for (let i = 0; i < (value as Struct).type.names.length; i++) {
-				struct[(value as Struct).type.names[i]!] = toJs((value as Struct).items[i]!)
+				Object.defineProperty(struct, (value as Struct).type.names[i]!, {
+					value: toJs((value as Struct).items[i]!),
+					writable: true,
+					enumerable: true,
+					configurable: true,
+				})
 			}
 
 			return struct

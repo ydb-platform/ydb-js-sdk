@@ -1,6 +1,52 @@
 import { test } from 'vitest'
-import { fromJs, toJs } from './index.ts'
+import { fromJs, fromYdb, toJs } from './index.ts'
+import { Optional, OptionalType } from './optional.ts'
+import { Int32, Int32Type } from './primitive.ts'
+import { Null } from './null.ts'
 import { typeToString } from './print.ts'
+
+test('struct field names remain own data properties through value conversion', (t) => {
+	let input = JSON.parse('{"__proto__":{"role":"reader"},"constructor":7}')
+	for (let native of [input, [input]]) {
+		let value = fromJs(native)
+		let direct = toJs(value)
+		let decoded = toJs(fromYdb(value.encode(), value.type.encode()))
+		t.expect(direct).toStrictEqual(native)
+		t.expect(decoded).toStrictEqual(native)
+		let row = Array.isArray(decoded) ? decoded[0] : decoded
+		t.expect(Object.getPrototypeOf(row)).toBe(Object.prototype)
+		t.expect(Object.hasOwn(row as object, '__proto__')).toBe(true)
+	}
+	let inherited = Object.assign(Object.create({ inherited: 1 }), { own: 2 })
+	t.expect(toJs(fromJs([inherited]))).toEqual([{ own: 2 }])
+})
+
+test('nested optional values preserve presence on the wire and decode to native values', (t) => {
+	let scalarType = new Int32Type()
+	let innerNull = new Optional(null, scalarType)
+	let outerNull = new Optional(null, new OptionalType(scalarType))
+	let presentNull = new Optional(innerNull)
+	let presentScalar = new Optional(new Optional(new Int32(42)))
+	t.expect(outerNull.encode().value).toEqual(new Null().encode().value)
+	t.expect(presentNull.encode().value).toMatchObject({
+		case: 'nestedValue',
+		value: { value: { case: 'nullFlagValue' } },
+	})
+	t.expect(presentScalar.encode().value).toEqual(new Int32(42).encode().value)
+	for (let [value, expected] of [
+		[outerNull, null],
+		[presentNull, null],
+		[presentScalar, 42],
+	] as const) {
+		t.expect(toJs(fromYdb(value.encode(), value.type.encode()))).toBe(expected)
+	}
+	let thirdLevel = new Optional(presentNull)
+	t.expect(thirdLevel.encode().value).toMatchObject({
+		case: 'nestedValue',
+		value: { value: { case: 'nestedValue', value: { value: { case: 'nullFlagValue' } } } },
+	})
+	t.expect(toJs(fromYdb(thirdLevel.encode(), thirdLevel.type.encode()))).toBeNull()
+})
 
 test('transforms fromJs with primitives', async (t) => {
 	let boolVal = fromJs(true)

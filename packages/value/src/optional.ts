@@ -49,9 +49,15 @@ export class Optional<T extends Type> implements Value<OptionalType> {
 
 	encode(): Ydb.Value {
 		if (!this.#valueInstance) {
+			let encoded = this.item?.encode() ?? new Null().encode()
+			// Present optional layers around an empty optional require nested_value wrappers.
+			let terminal: Value | null = this.item
+			while (terminal instanceof Optional) terminal = terminal.item
 			this.#valueInstance = create(
 				Ydb.ValueSchema,
-				this.item === null ? new Null().encode() : this.item.encode()
+				this.item !== null && terminal === null
+					? { value: { case: 'nestedValue', value: encoded } }
+					: encoded
 			)
 		}
 
