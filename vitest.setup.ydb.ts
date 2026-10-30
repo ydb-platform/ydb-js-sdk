@@ -1,8 +1,16 @@
 // eslint-disable no-await-in-loop
 import { createServer } from 'node:net'
+import { execFile } from 'node:child_process'
+import { setTimeout } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import type { AddressInfo } from 'node:net'
 import type { TestProject } from 'vitest/node'
-import { $ } from 'zx'
+
+let executeFile = promisify(execFile)
+async function docker(...args: string[]): Promise<string> {
+	let { stdout } = await executeFile('docker', args, { timeout: 30_000, maxBuffer: 1024 * 1024 })
+	return stdout.trim()
+}
 
 declare module 'vitest' {
 	export interface ProvidedContext {
@@ -57,9 +65,32 @@ export async function setup(project: TestProject) {
 	let monPort = await findFreePort()
 	let grpcPort = await findFreePort()
 
-	// prettier-ignore
-	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish ${monPort}:${monPort} --publish ${grpcPort}:${grpcPort} --env MON_PORT=${monPort} --env GRPC_PORT=${grpcPort} ydbplatform/local-ydb:25.3`.text()
-	containerID = container.trim()
+	let limits: string[] = []
+	let memory = process.env['YDB_TEST_DOCKER_MEMORY']
+	let cpus = process.env['YDB_TEST_DOCKER_CPUS']
+	if (memory) limits.push('--memory', memory, '--memory-swap', memory)
+	if (cpus) limits.push('--cpus', cpus)
+	if (process.env['YDB_TEST_RUN_ID'])
+		limits.push('--label', `ydbjs.verification=${process.env['YDB_TEST_RUN_ID']}`)
+	containerID = await docker(
+		'run',
+		'--rm',
+		'--detach',
+		'--hostname',
+		'localhost',
+		'--platform',
+		'linux/amd64',
+		'--publish',
+		`127.0.0.1:${monPort}:${monPort}`,
+		'--publish',
+		`127.0.0.1:${grpcPort}:${grpcPort}`,
+		'--env',
+		`MON_PORT=${monPort}`,
+		'--env',
+		`GRPC_PORT=${grpcPort}`,
+		...limits,
+		'ydbplatform/local-ydb:25.3'
+	)
 
 	// Ensure the container is removed when the process is interrupted (Ctrl-C)
 	// or terminated, not just when vitest calls teardown() normally.
@@ -70,13 +101,17 @@ export async function setup(project: TestProject) {
 		})
 	}
 
-	let signal = AbortSignal.timeout(30 * 1000)
-	while (
-		(await $`docker inspect -f {{.State.Health.Status}} ${containerID}`.text()).trim() !==
-		'healthy'
-	) {
-		signal.throwIfAborted()
-		await $`sleep 1`
+	try {
+		let signal = AbortSignal.timeout(30 * 1000)
+		while (
+			(await docker('inspect', '-f', '{{.State.Health.Status}}', containerID)) !== 'healthy'
+		) {
+			signal.throwIfAborted()
+			await setTimeout(1000, undefined, { signal })
+		}
+	} catch (error) {
+		await teardown()
+		throw error
 	}
 
 	project.provide('connectionString', `grpc://localhost:${grpcPort}/local`)
@@ -90,5 +125,7 @@ export async function teardown() {
 		return
 	}
 
-	await $`docker rm -f ${containerID}`
+	let id = containerID
+	containerID = null
+	await docker('rm', '-f', id)
 }

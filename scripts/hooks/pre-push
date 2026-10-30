@@ -5,6 +5,10 @@ if [[ "${SKIP_HOOKS:-}" == "true" ]]; then
 	exit 0
 fi
 
+if [[ "${YDB_VERIFY_BOUNDED:-}" == "1" ]]; then
+	exec python3 scripts/pre-push-checks.py
+fi
+
 npm run build -- --filter=...[origin/main]
 
 npx vitest --run --project uni
