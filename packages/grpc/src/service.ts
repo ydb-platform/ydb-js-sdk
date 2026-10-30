@@ -1,4 +1,4 @@
-import { RpcError, Status } from './error.js'
+import { ProtocolError, Status } from './error.js'
 import type { CallOptions, ServiceClient, ServiceDefinition, Transport } from './types.js'
 
 async function unary<Response>(responses: AsyncIterable<Response>): Promise<Response> {
@@ -6,13 +6,13 @@ async function unary<Response>(responses: AsyncIterable<Response>): Promise<Resp
 	let result: Response | undefined
 	for await (let response of responses) {
 		if (received) {
-			throw new RpcError(Status.INTERNAL, 'Received multiple responses for a unary call')
+			throw new ProtocolError(Status.INTERNAL, 'Received multiple responses for a unary call')
 		}
 		received = true
 		result = response
 	}
 	if (!received) {
-		throw new RpcError(Status.INTERNAL, 'Missing unary response')
+		throw new ProtocolError(Status.INTERNAL, 'Missing unary response')
 	}
 
 	return result as Response

@@ -5,7 +5,7 @@ import { abortable, linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
 import { CommitError, YDBError, isServiceError } from '@ydbjs/error'
-import { Status } from '@ydbjs/grpc'
+import { ProtocolError, Status, TransportError } from '@ydbjs/grpc'
 
 import type { RetryConfig } from './config.js'
 import type { RetryContext } from './context.js'
@@ -99,11 +99,12 @@ async function runLoop<R>(
 			})
 			runCtx.outcome = 'success'
 			return result
-		} catch (error) {
+		} catch (caught) {
+			let error = signal.aborted ? signal.reason : caught
 			ctx.error = error
 			ctx.attempt += 1
 
-			if (error instanceof Error && error.name === 'AbortError') {
+			if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
 				dbg.log('attempt %d: abort error, not retryable', ctx.attempt)
 				dc('ydb:retry.attempt.completed').publish({
 					attempt: attemptNumber,
@@ -159,15 +160,19 @@ async function runLoop<R>(
 
 			let remaining = Math.max(delay - (Date.now() - start), 0)
 			pendingBackoffMs = remaining
-			if (!remaining) {
-				dbg.log('attempt %d: no delay before next retry', ctx.attempt)
-				continue
+			if (remaining) {
+				dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
+				try {
+					// oxlint-disable no-await-in-loop
+					await setTimeout(remaining, void 0, { signal })
+				} catch (waitError) {
+					runCtx.outcome = 'non_retryable'
+					signal.throwIfAborted()
+					throw waitError
+				}
 			}
 
-			dbg.log('attempt %d: waiting %d ms before next retry', ctx.attempt, remaining)
-			// oxlint-disable no-await-in-loop
-			await setTimeout(remaining, void 0, { signal })
-
+			signal.throwIfAborted()
 			if (config.onRetry) {
 				config.onRetry(ctx)
 			}
@@ -188,12 +193,17 @@ async function runLoop<R>(
 }
 
 export function isRetryableError(error: unknown, idempotent = false): boolean {
+	if (error instanceof ProtocolError) return false
+	if (error instanceof TransportError && error.code === Status.RESOURCE_EXHAUSTED) {
+		// HTTP/2 overload resets can arrive after the server applied the request.
+		return idempotent
+	}
+
 	if (isServiceError(error)) {
 		return (
 			error.code === Status.ABORTED ||
-			error.code === Status.INTERNAL ||
 			error.code === Status.RESOURCE_EXHAUSTED ||
-			(error.code === Status.UNAVAILABLE && idempotent)
+			((error.code === Status.INTERNAL || error.code === Status.UNAVAILABLE) && idempotent)
 		)
 	}
 

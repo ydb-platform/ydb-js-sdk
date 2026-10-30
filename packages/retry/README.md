@@ -80,6 +80,10 @@ const options: RetryConfig = {
 - `onRetry` ((ctx) => void): Hook called before each retry attempt.
 - `signal` (AbortSignal): Optional signal to support cancellation.
 
+The default policy does not retry `ProtocolError`, including `MessageSizeError`, because replay does not repair an invalid message or its size limit. Server gRPC `ABORTED` and `RESOURCE_EXHAUSTED` statuses remain retryable. gRPC `INTERNAL`, `UNAVAILABLE`, and HTTP/2 overload resets require `idempotent: true`: these failures do not establish whether the server applied the request.
+
+Aborting `signal` always stops the retry loop without consulting the retry predicate, even when its reason looks retryable. The rejection preserves `signal.reason`, including cancellation during backoff. `onRetry` runs before every subsequent attempt, including attempts with zero backoff.
+
 ## Advanced Usage
 
 ### Custom Retry Strategy
@@ -215,7 +219,7 @@ type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
 
 `ydb:retry.attempt.completed` is the metrics-friendly companion: it fires exactly once per attempt regardless of success or failure, with an `outcome` tag suited for a `Counter`. Use it instead of subscribing to both `attempt.asyncEnd` and `attempt.error` when all you want is a count.
 
-`ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the loop exits via `AbortError` or `TimeoutError`: those are rethrown immediately as caller-driven cancellations. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
+`ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the caller's signal aborts or an attempt throws `AbortError` or `TimeoutError`: these terminate the loop immediately. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
 
 For end-to-end retry duration with outcome dimensions, read `outcome` off the `retry.run` ctx on `asyncEnd` / `error`:
 
