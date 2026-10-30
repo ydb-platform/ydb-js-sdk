@@ -14,7 +14,7 @@ import { connect as connectTls } from 'node:tls'
 import { abortable } from '@ydbjs/abortable'
 
 import { type Deadline, createDeadline } from './deadline.js'
-import { MessageSizeError, RpcError, Status } from './error.js'
+import { MessageSizeError, ProtocolError, RpcError, Status, TransportError } from './error.js'
 import { type Frame, createFrameStream, decompress } from './framing.js'
 import { requestHeaders, responseMetadata } from './metadata.js'
 import type { CallOptions, ClientOptions, MethodDefinition, RpcStatus, Transport } from './types.js'
@@ -52,7 +52,7 @@ function statusFromHeaders(
 		!/^[0-9]+$/.test(value) ||
 		Number(value) > Status.UNAUTHENTICATED
 	) {
-		throw new RpcError(Status.INTERNAL, 'Malformed grpc-status')
+		throw new ProtocolError(Status.INTERNAL, 'Malformed grpc-status')
 	}
 	let details = headers['grpc-message']
 	if (typeof details !== 'string') {
@@ -77,13 +77,13 @@ function httpError(code: number): RpcError {
 		503: Status.UNAVAILABLE,
 		504: Status.UNAVAILABLE,
 	}
-	return new RpcError(mapping[code] ?? Status.UNKNOWN, `Unexpected HTTP status ${code}`)
+	return new TransportError(mapping[code] ?? Status.UNKNOWN, `Unexpected HTTP status ${code}`)
 }
 
 function streamError(code: number, session: ClientHttp2Session): RpcError {
 	// Socket loss can cancel streams before session.destroyed changes; graceful close is not loss.
 	if (code === constants.NGHTTP2_CANCEL && (session.destroyed || session.socket?.destroyed)) {
-		return new RpcError(Status.UNAVAILABLE, 'HTTP/2 session closed')
+		return new TransportError(Status.UNAVAILABLE, 'HTTP/2 session closed')
 	}
 
 	let mapping: Record<number, Status> = {
@@ -92,7 +92,10 @@ function streamError(code: number, session: ClientHttp2Session): RpcError {
 		[constants.NGHTTP2_ENHANCE_YOUR_CALM]: Status.RESOURCE_EXHAUSTED,
 		[constants.NGHTTP2_INADEQUATE_SECURITY]: Status.PERMISSION_DENIED,
 	}
-	return new RpcError(mapping[code] ?? Status.INTERNAL, `HTTP/2 stream reset with code ${code}`)
+	return new TransportError(
+		mapping[code] ?? Status.INTERNAL,
+		`HTTP/2 stream reset with code ${code}`
+	)
 }
 
 function timeoutHeader(deadline: number): string {
@@ -155,7 +158,7 @@ async function writeRequests<Request, Response>(
 			try {
 				bytes = method.requestSerialize(next.value)
 			} catch (error) {
-				throw new RpcError(
+				throw new ProtocolError(
 					Status.INTERNAL,
 					'Request serialization failed',
 					{},
@@ -291,7 +294,10 @@ export class Client implements Transport, Disposable {
 			await abortable(signal, session.ready)
 			signal?.throwIfAborted()
 			if (session.retired || session.http2.destroyed || session.http2.closed) {
-				throw new RpcError(Status.UNAVAILABLE, 'Connection closed before starting the RPC')
+				throw new TransportError(
+					Status.UNAVAILABLE,
+					'Connection closed before starting the RPC'
+				)
 			}
 			return session
 		} finally {
@@ -319,7 +325,7 @@ export class Client implements Transport, Disposable {
 				return
 			}
 			session.pingTimer = setTimeout(() => {
-				http2.destroy(new RpcError(Status.UNAVAILABLE, 'Keepalive ping timed out'))
+				http2.destroy(new TransportError(Status.UNAVAILABLE, 'Keepalive ping timed out'))
 			}, options.keepaliveTimeoutMs ?? 10000).unref()
 			http2.ping((error) => {
 				clearTimeout(session.pingTimer)
@@ -390,7 +396,7 @@ export class Client implements Transport, Disposable {
 			}
 		})
 		http2.on('error', (error) => {
-			let failure = new RpcError(
+			let failure = new TransportError(
 				Status.UNAVAILABLE,
 				'HTTP/2 session failed',
 				{},
@@ -424,7 +430,7 @@ export class Client implements Transport, Disposable {
 			if (this.#current === session) {
 				this.#current = undefined
 			}
-			let error = new RpcError(Status.UNAVAILABLE, 'HTTP/2 session closed')
+			let error = new TransportError(Status.UNAVAILABLE, 'HTTP/2 session closed')
 			ready.reject(error)
 			for (let fail of session.pendingCalls) {
 				fail(error)
@@ -432,7 +438,7 @@ export class Client implements Transport, Disposable {
 		})
 		if (options.connectTimeoutMs) {
 			session.connectTimer = setTimeout(() => {
-				http2.destroy(new RpcError(Status.UNAVAILABLE, 'Connection timed out'))
+				http2.destroy(new TransportError(Status.UNAVAILABLE, 'Connection timed out'))
 			}, options.connectTimeoutMs).unref()
 		}
 		return session
@@ -554,7 +560,7 @@ export class Client implements Transport, Disposable {
 			try {
 				stream = session.http2.request(outgoingHeaders)
 			} catch (error) {
-				throw new RpcError(
+				throw new TransportError(
 					Status.UNAVAILABLE,
 					'Failed to create HTTP/2 stream',
 					{},
@@ -584,7 +590,7 @@ export class Client implements Transport, Disposable {
 						typeof contentType !== 'string' ||
 						!/^application\/grpc(?:\+[^;\s]+)?(?:;|$)/i.test(contentType)
 					) {
-						throw new RpcError(Status.UNKNOWN, 'Invalid gRPC content-type')
+						throw new ProtocolError(Status.UNKNOWN, 'Invalid gRPC content-type')
 					}
 					let responseEncoding = headers['grpc-encoding']
 					if (typeof responseEncoding === 'string') {
@@ -610,7 +616,12 @@ export class Client implements Transport, Disposable {
 					return
 				}
 				failBeforeServerStatus(
-					new RpcError(Status.UNAVAILABLE, 'HTTP/2 stream failed', {}, { cause: error })
+					new TransportError(
+						Status.UNAVAILABLE,
+						'HTTP/2 stream failed',
+						{},
+						{ cause: error }
+					)
 				)
 			})
 			stream.on('aborted', () =>
@@ -673,7 +684,7 @@ export class Client implements Transport, Disposable {
 					try {
 						response = method.responseDeserialize(bytes)
 					} catch (error) {
-						throw new RpcError(
+						throw new ProtocolError(
 							Status.INTERNAL,
 							'Response deserialization failed',
 							{},
@@ -682,7 +693,7 @@ export class Client implements Transport, Disposable {
 					}
 					receivedMessages += 1
 					if (!method.responseStream && receivedMessages > 1) {
-						throw new RpcError(
+						throw new ProtocolError(
 							Status.INTERNAL,
 							'Received multiple responses for a unary RPC'
 						)
@@ -695,13 +706,13 @@ export class Client implements Transport, Disposable {
 			}
 			responseController.signal.throwIfAborted()
 			if (!serverStatus) {
-				throw new RpcError(Status.UNKNOWN, 'RPC ended without grpc-status')
+				throw new ProtocolError(Status.UNKNOWN, 'RPC ended without grpc-status')
 			}
 			if (serverStatus.code !== Status.OK) {
 				throw new RpcError(serverStatus.code, serverStatus.details, serverStatus.metadata)
 			}
 			if (!method.responseStream && receivedMessages !== 1) {
-				throw new RpcError(Status.INTERNAL, 'Received no response for a unary RPC')
+				throw new ProtocolError(Status.INTERNAL, 'Received no response for a unary RPC')
 			}
 			responseSettled = true
 			notifyStatus(serverStatus)

@@ -1,6 +1,6 @@
 export { Client } from './client.js'
 export { createDeadline, type Deadline } from './deadline.js'
-export { MessageSizeError, RpcError, Status } from './error.js'
+export { MessageSizeError, ProtocolError, RpcError, Status, TransportError } from './error.js'
 export type {
 	CallOptions,
 	ClientOptions,

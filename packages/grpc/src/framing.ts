@@ -1,7 +1,7 @@
 import { Transform } from 'node:stream'
 import { gunzip, inflate } from 'node:zlib'
 
-import { MessageSizeError, RpcError, Status } from './error.js'
+import { MessageSizeError, ProtocolError, Status } from './error.js'
 
 export interface Frame {
 	data: Buffer
@@ -43,7 +43,7 @@ export class FrameDecoder {
 					header = this.#header
 				}
 				if (header[0] !== 0 && header[0] !== 1) {
-					throw new RpcError(Status.INTERNAL, 'Invalid gRPC compression flag')
+					throw new ProtocolError(Status.INTERNAL, 'Invalid gRPC compression flag')
 				}
 				this.#compressed = header[0] === 1
 				this.#length = header.readUInt32BE(1)
@@ -84,7 +84,7 @@ export class FrameDecoder {
 
 	finish(): void {
 		if (this.#headerBytes !== 0 || this.#bodyBytes !== 0) {
-			throw new RpcError(Status.INTERNAL, 'Truncated gRPC message')
+			throw new ProtocolError(Status.INTERNAL, 'Truncated gRPC message')
 		}
 	}
 }
@@ -143,7 +143,7 @@ export async function decompress(
 	}
 	let decode = encoding === 'gzip' ? gunzip : encoding === 'deflate' ? inflate : undefined
 	if (!decode) {
-		throw new RpcError(
+		throw new ProtocolError(
 			encoding === 'identity' ? Status.INTERNAL : Status.UNIMPLEMENTED,
 			`Unsupported compressed message encoding: ${encoding}`
 		)
@@ -156,7 +156,7 @@ export async function decompress(
 					return
 				}
 				reject(
-					new RpcError(
+					new ProtocolError(
 						Status.INTERNAL,
 						'Failed to decompress gRPC message',
 						{},

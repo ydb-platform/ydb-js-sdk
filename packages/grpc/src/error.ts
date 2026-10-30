@@ -34,7 +34,17 @@ export class RpcError extends Error implements RpcStatus {
 	}
 }
 
-export class MessageSizeError extends RpcError {
+/** A local codec, framing, or protocol validation failure. */
+export class ProtocolError extends RpcError {
+	override name = 'ProtocolError'
+}
+
+/** An HTTP or HTTP/2 failure without a terminal gRPC service status. */
+export class TransportError extends RpcError {
+	override name = 'TransportError'
+}
+
+export class MessageSizeError extends ProtocolError {
 	readonly direction: 'request' | 'response'
 	readonly limit: number
 

@@ -16,13 +16,14 @@ test('ServiceError with ABORTED is retryable', () => {
 	expect(isRetryableError(error)).toBe(true)
 })
 
-test('ServiceError with INTERNAL is retryable', () => {
+test('ServiceError with INTERNAL is retryable only for idempotent operations', () => {
 	let error = Object.assign(new Error('test details'), {
 		code: Status.INTERNAL,
 		details: 'test details',
 		metadata: {},
 	})
-	expect(isRetryableError(error)).toBe(true)
+	expect(isRetryableError(error, false)).toBe(false)
+	expect(isRetryableError(error, true)).toBe(true)
 })
 
 test('ServiceError with RESOURCE_EXHAUSTED is retryable', () => {

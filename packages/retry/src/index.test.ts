@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { retry } from './index.ts'
 
@@ -99,23 +99,80 @@ test('aborts an in-flight attempt', async () => {
 test('aborts during the backoff wait', async () => {
 	let attempts = 0
 	let controller = new AbortController()
+	let backoff = Promise.withResolvers<void>()
+	let reason = new Error('caller stopped during backoff')
 
 	let result = retry(
-		{ retry: isError, signal: controller.signal, budget: 5, strategy: 1000 },
+		{
+			retry: isError,
+			signal: controller.signal,
+			budget: 5,
+			strategy: () => {
+				backoff.resolve()
+				return 1000
+			},
+		},
 		async () => {
 			attempts++
 			throw new Error('test error')
 		}
 	)
 
-	// Abort once the failing attempt has scheduled its backoff timer, so the
-	// setTimeout(remaining, void 0, { signal }) wait rejects instead of the
-	// pre-loop throwIfAborted() guard. node:timers/promises rejects with its
-	// own AbortError message, distinct from signal.throwIfAborted()'s.
-	setTimeout(() => controller.abort(), 10)
+	await backoff.promise
+	controller.abort(reason)
 
-	await expect(result).rejects.toThrow('The operation was aborted')
+	await expect(result).rejects.toBe(reason)
 	expect(attempts).eq(1)
+})
+
+test('does not consult the retry policy for an already-aborted caller with a custom reason', async () => {
+	let reason = new Error('caller cancelled')
+	let policy = vi.fn(() => true)
+	let operation = vi.fn()
+
+	await expect(
+		retry(
+			{ retry: policy, signal: AbortSignal.abort(reason), budget: 3, strategy: 0 },
+			operation
+		)
+	).rejects.toBe(reason)
+	expect(operation).not.toHaveBeenCalled()
+	expect(policy).not.toHaveBeenCalled()
+})
+
+test('does not retry caller cancellation during an attempt even when the policy accepts its reason', async () => {
+	let controller = new AbortController()
+	let reason = new Error('caller cancelled')
+	let entered = Promise.withResolvers<void>()
+	let policy = vi.fn(() => true)
+	let attempts = 0
+	let result = retry(
+		{ retry: policy, signal: controller.signal, budget: 3, strategy: 0 },
+		async () => {
+			attempts++
+			entered.resolve()
+			return new Promise<never>(() => {})
+		}
+	)
+
+	await entered.promise
+	controller.abort(reason)
+	await expect(result).rejects.toBe(reason)
+	expect(attempts).toBe(1)
+	expect(policy).not.toHaveBeenCalled()
+})
+
+test('notifies the caller before each immediate retry', async () => {
+	let attempts = 0
+	let onRetry = vi.fn()
+
+	await retry({ retry: true, budget: 3, strategy: 0, onRetry }, () => {
+		attempts++
+		if (attempts < 3) throw new Error('retry')
+	})
+
+	expect(attempts).toBe(3)
+	expect(onRetry).toHaveBeenCalledTimes(2)
 })
 
 test('expects AbortError is not retryable', async () => {

@@ -120,6 +120,8 @@ Authorities support `http:`, `https:`, `grpc:`, `grpcs:`, and `unix:`. Responses
 
 The transport does not replay RPCs, balance nodes, or refresh credentials. YDB Driver and its clients own those decisions. It does not implement HTTP proxy tunneling, service-config resolution, xDS, or hedging.
 
+Errors preserve their gRPC `code`, `details`, `metadata`, and available `cause`. A received non-OK gRPC status produces `RpcError`. `TransportError` extends `RpcError` for HTTP and HTTP/2 failures without a terminal gRPC status; its code does not prove that the server rejected the request before executing it. `ProtocolError` extends `RpcError` for local codec, framing, or protocol validation failures. `MessageSizeError` extends `ProtocolError` and also exposes `direction` and `limit`. Retry policies can distinguish these failures without matching error messages.
+
 ## Development
 
 From the repository root, build the independent Go peer once and run the transport tests from TypeScript:
