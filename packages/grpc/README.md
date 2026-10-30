@@ -1,6 +1,6 @@
 # @ydbjs/grpc
 
-A gRPC client and server over `node:http2`, with Promise unary calls and AsyncIterable streams. Runs on Node.js `^22.15.0 || >=23.8.0` or Bun `>=1.4.0`. Cancellation waits use `@ydbjs/abortable`.
+A gRPC client and server over `node:http2`, with Promise unary calls and AsyncIterable streams. Runs on Node.js `^22.15.0 || >=23.8.0` or Bun `>=1.4.3`. Cancellation waits use `@ydbjs/abortable`.
 
 ## Calling YDB services
 
@@ -136,3 +136,5 @@ GRPC_TEST_GO_SERVER=/tmp/ydb-grpc-interop TEST_RUNTIME=bun bun --bun node_module
 ```
 
 CI runs the complete test suite on Node 22, 24, 26 and Bun 1.4, including the Go interoperability cases. Local `npm test` and integration-test runs also need `GRPC_TEST_GO_SERVER` pointing to the built peer.
+
+Bun 1.4.3 is the validated CI runtime. Bun 1.4.0 has known HTTP/2 cancellation failures in the lifecycle tests; use 1.4.3 or later for streaming and shutdown. The transport does not work around those older runtime failures.
