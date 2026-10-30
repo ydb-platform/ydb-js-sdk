@@ -119,6 +119,15 @@ export class CommitError extends Error {
 	}
 }
 
+export class TransactionCompletionError extends Error {
+	readonly committed = true
+
+	constructor(cause: unknown) {
+		super('Transaction committed, but its completion hook failed.', { cause })
+		this.name = 'TransactionCompletionError'
+	}
+}
+
 export function isServiceError(error: unknown): error is RpcError {
 	return (
 		error instanceof Error &&
