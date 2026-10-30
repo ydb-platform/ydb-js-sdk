@@ -1,5 +1,8 @@
+import { channel } from 'node:diagnostics_channel'
+
 import { expect, inject, test } from 'vitest'
 
+import { abortable } from '@ydbjs/abortable'
 import { Driver } from '@ydbjs/core'
 
 import { Session, SessionBusyError } from '../src/session.ts'
@@ -45,17 +48,26 @@ test('reuses the most recently released session first (LIFO)', async (tc) => {
 test('rejects new waiters once the wait queue hits the cap', async (tc) => {
 	await using pool = new SessionPool(driver, { maxSize: 1, waitQueueFactor: 2 })
 
-	await pool.acquire(tc.signal) // hold the only session
-
-	let w1 = pool.acquire(tc.signal)
-	let w2 = pool.acquire(tc.signal)
-	expect(pool.stats.waiting).toBe(2)
-
-	await expect(pool.acquire(tc.signal)).rejects.toBeInstanceOf(SessionPoolFullError)
-
-	// Orphan the waiters — pool disposal at scope end rejects them.
-	w1.catch(() => {})
-	w2.catch(() => {})
+	let held = await pool.acquire(tc.signal)
+	let queued = channel('ydb:query.session.waiter.enqueued')
+	let full = Promise.withResolvers<void>()
+	let count = 0
+	let onQueued = (event: unknown) => {
+		if ((event as { driver: unknown }).driver === driver.identity && ++count === 2)
+			full.resolve()
+	}
+	queued.subscribe(onQueued)
+	let waiters = Promise.allSettled([pool.acquire(tc.signal), pool.acquire(tc.signal)])
+	try {
+		await abortable(tc.signal, full.promise)
+		expect(pool.stats.waiting).toBe(2)
+		await expect(pool.acquire(tc.signal)).rejects.toBeInstanceOf(SessionPoolFullError)
+	} finally {
+		queued.unsubscribe(onQueued)
+		await pool.close()
+		held[Symbol.dispose]()
+		await waiters
+	}
 })
 
 test('exposes id and nodeId on a lease', async (tc) => {
