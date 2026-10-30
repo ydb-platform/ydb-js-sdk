@@ -80,9 +80,9 @@ function httpError(code: number): RpcError {
 	return new RpcError(mapping[code] ?? Status.UNKNOWN, `Unexpected HTTP status ${code}`)
 }
 
-function streamError(code: number, sessionDestroyed: boolean): RpcError {
+function streamError(code: number, sessionClosed: boolean): RpcError {
 	// Node also uses CANCEL when the underlying connection disappears.
-	if (code === constants.NGHTTP2_CANCEL && sessionDestroyed) {
+	if (code === constants.NGHTTP2_CANCEL && sessionClosed) {
 		return new RpcError(Status.UNAVAILABLE, 'HTTP/2 session closed')
 	}
 
@@ -606,7 +606,12 @@ export class Client implements Transport, Disposable {
 			stream.on('end', () => requestController.abort())
 			stream.on('error', (error: NodeJS.ErrnoException) => {
 				if (error.code === 'ERR_HTTP2_STREAM_ERROR') {
-					failBeforeServerStatus(streamError(stream!.rstCode, session!.http2.destroyed))
+					failBeforeServerStatus(
+						streamError(
+							stream!.rstCode,
+							session!.http2.closed || session!.http2.destroyed
+						)
+					)
 					return
 				}
 				failBeforeServerStatus(
@@ -614,7 +619,9 @@ export class Client implements Transport, Disposable {
 				)
 			})
 			stream.on('aborted', () =>
-				failBeforeServerStatus(streamError(stream!.rstCode, session!.http2.destroyed))
+				failBeforeServerStatus(
+					streamError(stream!.rstCode, session!.http2.closed || session!.http2.destroyed)
+				)
 			)
 			stream.on('close', () => {
 				requestController.abort()
@@ -624,7 +631,12 @@ export class Client implements Transport, Disposable {
 					!serverStatus &&
 					(stream!.rstCode !== constants.NGHTTP2_NO_ERROR || !stream!.readableEnded)
 				) {
-					failBeforeServerStatus(streamError(stream!.rstCode, session!.http2.destroyed))
+					failBeforeServerStatus(
+						streamError(
+							stream!.rstCode,
+							session!.http2.closed || session!.http2.destroyed
+						)
+					)
 				}
 			})
 			frames = createFrameStream(this.#options.maxReceiveBytes!)

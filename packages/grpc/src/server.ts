@@ -466,7 +466,7 @@ export class Server implements Disposable {
 
 	destroy(): void {
 		void this.close().catch(() => {})
-		for (let session of this.#sessions) session.destroy()
+		// The owned sockets also terminate their HTTP/2 sessions and outstanding RPCs.
 		for (let socket of this.#sockets) socket.destroy()
 		this.#methods.clear()
 	}
