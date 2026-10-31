@@ -2,200 +2,204 @@
 
 [![codecov](https://codecov.io/gh/ydb-platform/ydb-js-sdk/graph/badge.svg?component=value)](https://ydb-appteam-sdk-reports.website.yandexcloud.net/ydb-js-sdk/coverage/packages/value/)
 
-The `@ydbjs/value` package provides utilities for working with YDB values and types in JavaScript/TypeScript. It includes classes and functions for encoding, decoding, and converting YDB values to and from native JavaScript types.
-
-## Features
-
-- Support for all YDB primitive types (e.g., BOOL, INT32, STRING, etc.)
-- Support for complex types like List, Tuple, Struct, Dict, and Optional
-- Conversion between YDB values and native JavaScript types
-- Type-safe handling of YDB values with TypeScript
+Create typed YDB parameters and read YDB results in JavaScript and TypeScript.
+`Type` describes the schema; `Value` holds data with that schema.
+Treat these objects and the protobuf returned by `encode()` as read-only: editing their fields, arrays, or encoded messages is unsupported.
 
 ## Installation
-
-Install the package using npm:
 
 ```sh
 npm install @ydbjs/value
 ```
 
-## Usage
+## Create parameters
 
-### Encoding JavaScript Values to YDB Values
+Use `fromJs` when the type can be inferred from the input:
 
 ```ts
 import { fromJs } from '@ydbjs/value'
-const ydbValue = fromJs({ key: 'value' })
+
+let parameter = fromJs({ id: 42, name: 'Alice' })
+let wireType = parameter.type.encode()
+let wireValue = parameter.encode()
 ```
 
-### Decoding YDB Values to JavaScript
+The two encoded objects form the parameter's schema and value; send them together.
+Use explicit constructors when the query requires a particular schema:
 
 ```ts
-import { toJs } from '@ydbjs/value'
-const jsValue = toJs(ydbValue)
+import { Int64, Int32Type } from '@ydbjs/value/primitive'
+import { Optional } from '@ydbjs/value/optional'
+
+let id = new Int64(42n)
+let absentCount = new Optional(null, new Int32Type())
 ```
 
-### Working with YDB Types
+Value and type classes are exported from their subpaths, such as `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, and `/null`.
+The package root exports the conversion functions and the `Type` and `Value` interfaces.
+
+### Explicit container types
+
+Lists require one element schema; dictionaries require one key schema and one value schema.
+Constructors reject incompatible types, including differences in nested types and Struct member names or positions.
+Pass a type explicitly to preserve the schema of an empty container:
 
 ```ts
-import { Int32Type } from '@ydbjs/value/primitive'
-const intType = new Int32Type()
+import { Dict, DictType } from '@ydbjs/value/dict'
+import { List, ListType } from '@ydbjs/value/list'
+import { Int32, Int32Type, TextType } from '@ydbjs/value/primitive'
+
+let numbers = new List(new Int32(1), new Int32(2))
+let emptyNumbers = new List([], new ListType(new Int32Type()))
+let emptyLookup = new Dict([], new DictType(new TextType(), new Int32Type()))
 ```
 
-## Conversion Stages
+Without an explicit type, `new List()` uses `List<Null>` and `new Dict()` uses `Dict<Null,Null>`.
+For structs, `new Struct(fields, structType)` uses the supplied field schema and fills missing Optional fields with absent values.
 
-Conversion from JavaScript values to YDB server values occurs in three stages:
+## Infer types from JavaScript
 
-1. **JavaScript value → Value (from @ydbjs/value)**
-   Use the `fromJs` function to convert a native JavaScript value into a `Value` instance from the `@ydbjs/value` package. This step infers the YDB type and wraps the value in a type-safe class.
+| JavaScript input                   | Inferred YDB type              | Notes                                                         |
+| ---------------------------------- | ------------------------------ | ------------------------------------------------------------- |
+| `boolean`                          | Bool                           |                                                               |
+| Integer `number`                   | Int32                          | Use an explicit integer type when the required schema differs |
+| Non-integer `number`               | Double                         |                                                               |
+| `bigint`                           | Int64                          |                                                               |
+| `string`                           | Utf8                           |                                                               |
+| `Date`                             | Datetime                       | Second precision; use `Timestamp` explicitly for milliseconds |
+| `TZDate`                           | TzDatetime                     | From `@date-fns/tz`                                           |
+| `Uint8Array`                       | String                         | Binary data                                                   |
+| `Float32Array` / `Float64Array`    | `List<Float>` / `List<Double>` |                                                               |
+| `BigInt64Array` / `BigUint64Array` | `List<Int64>` / `List<Uint64>` |                                                               |
+| `null`                             | Null                           | Does not infer an Optional item type                          |
+| `Array`                            | List                           | Elements must have compatible types                           |
+| `Set`                              | Tuple                          | Elements may have different types                             |
+| `Map`                              | Dict                           | Keys and values are converted recursively                     |
+| Plain object                       | Struct                         | Own enumerable fields are converted recursively               |
 
-2. **Value → Ydb.Value (protobuf)**
-   Call the `.encode()` method on the `Value` instance to produce a protobuf-compatible `Ydb.Value` object. This object can be sent to the YDB server via gRPC or other supported protocols.
+```ts
+import { fromJs, toJs } from '@ydbjs/value'
 
-3. **Ydb.Value → YDB server**
-   The encoded `Ydb.Value` is transmitted to the YDB server as part of your request payload.
+let list = fromJs([1, 2, 3])
+let tuple = fromJs(new Set([42, 'foo']))
+let dict = fromJs(
+  new Map([
+    ['a', 1],
+    ['b', 2],
+  ])
+)
+let struct = fromJs({ id: 123, name: 'Alice' })
 
-This multi-stage process ensures type safety, correct serialization, and compatibility with the YDB protocol.
+toJs(list) // [1, 2, 3]
+toJs(tuple) // [42, 'foo']
+toJs(dict) // Map { 'a' => 1, 'b' => 2 }
+toJs(struct) // { id: 123, name: 'Alice' }
+```
 
-# Type Conversion Details
+### Arrays of records
 
-The conversion between JavaScript and YDB types in `@ydbjs/value` is automatic and based on the structure and type of the input value. Below is a summary of how different JavaScript values are converted:
+For an array of plain objects, `fromJs` builds a shared Struct schema from the union of fields and wraps every field in Optional.
+Missing fields become absent Optionals:
 
-| JavaScript Value   | YDB Type/Class | Notes                                                                             |
-| ------------------ | -------------- | --------------------------------------------------------------------------------- |
-| `boolean`          | Bool           |                                                                                   |
-| `number` (integer) | Int32          | Uses Int32 for integers                                                           |
-| `number` (float)   | Double         | Uses Double for non-integers                                                      |
-| `bigint`           | Int64          |                                                                                   |
-| `string`           | Text           |                                                                                   |
-| `Date`             | Datetime       |                                                                                   |
-| `Uint8Array`       | Bytes          |                                                                                   |
-| `null`             | Null           |                                                                                   |
-| `Array`            | List           | Elements converted recursively. Special handling for arrays of objects, see below |
-| `Set`              | Tuple          | Elements converted recursively                                                    |
-| `Map`              | Dict           | Keys and values converted recursively                                             |
-| Plain object       | Struct         | Each property converted recursively                                               |
+```ts
+import { fromJs, toJs } from '@ydbjs/value'
 
-### Special Handling for Arrays of Objects
-
-If you pass an array of objects, the converter creates a unified Struct type containing the union of fields from all objects and wraps **every** field in `Optional`. Missing fields become `null`. This allows heterogeneous arrays of objects to be represented as a single List of Structs in YDB.
-
-#### Example
-
-```js
-fromJs([
+let rows = fromJs([
   { id: 1, name: 'Alice' },
   { id: 2, age: 30 },
 ])
+
+toJs(rows)
+// [{ age: null, id: 1, name: 'Alice' }, { age: 30, id: 2, name: null }]
 ```
 
-This will produce a YDB List where each element is a Struct with fields: `id`, `name`, and `age`. Fields not present in an object will be set to null (Optional).
-
-#### `NOT NULL` columns
-
-Because `fromJs` always wraps struct fields in `Optional`, the resulting type does not match `NOT NULL` columns on the server side — the query will fail with `Can't set NULL or optional value to not null column`. `fromJs` cannot know the target schema, so if you need pinned non-nullable types, construct values explicitly:
+Fields with the same name must have compatible types, including their nested schemas.
+`fromJs([{ x: { a: 1 } }, { x: { b: 2 } }])` throws instead of reinterpreting `b` as `a`.
+Explicit `null` has type Null, so `fromJs([{ x: null }, { x: 1 }])` also throws; use typed Optionals to express nullable integers:
 
 ```ts
 import { List } from '@ydbjs/value/list'
+import { Optional } from '@ydbjs/value/optional'
+import { Int32, Int32Type } from '@ydbjs/value/primitive'
 import { Struct } from '@ydbjs/value/struct'
-import { Text, Uint8, Bytes } from '@ydbjs/value/primitive'
 
-const rows = new List(
-  new Struct({ key: new Text('a'), partNumber: new Uint8(0), data: new Bytes(buf) })
+let rows = new List(
+  new Struct({ x: new Optional(null, new Int32Type()) }),
+  new Struct({ x: new Optional(new Int32(1)) })
 )
 ```
 
-Or build a `StructType` once and pass it to `new Struct(obj, type)` to pin field types across rows.
-
-### Utility Exports
-
-- All type and value classes (e.g., `Struct`, `List`, `Dict`, `Tuple`, `Null`, `Optional`, `Primitive`) are exported for advanced use.
-- Conversion is two-way: use `fromJs` for JS → YDB and `toJs` for YDB → JS.
-
----
-
-## Additional Utility Functions
-
-- `printYdbValue(value: YdbValue): string` — Returns a human-readable string representation of a YDB value.
-
----
-
-## More Examples
-
-### Primitives
+Because inferred record arrays use Optional fields, their schema does not match `NOT NULL` columns.
+Construct non-nullable rows explicitly, or reuse a `StructType` with `new Struct(fields, type)`:
 
 ```ts
-import { fromJs, toJs } from '@ydbjs/value'
+import { List } from '@ydbjs/value/list'
+import { Bytes, Text, Uint8 } from '@ydbjs/value/primitive'
+import { Struct } from '@ydbjs/value/struct'
 
-const intValue = fromJs(42)
-const boolValue = fromJs(true)
-const stringValue = fromJs('hello')
-
-console.log(toJs(intValue)) // 42
-console.log(toJs(boolValue)) // true
-console.log(toJs(stringValue)) // 'hello'
+let rows = new List(
+  new Struct({
+    key: new Text('a'),
+    partNumber: new Uint8(0),
+    data: new Bytes(new Uint8Array([1, 2])),
+  })
+)
 ```
 
-### Container Types (List, Dict, Tuple, Optional)
+## Read results
+
+`fromYdb(wireValue, wireType)` reconstructs a typed Value from a protobuf value and its schema.
+For supported types, it preserves the schema and value semantics, including empty containers, absent Optionals, and nested Optional presence.
+It uses the supplied schema rather than inferring one from the contents; re-encoding the result produces a semantically equivalent type/value pair.
 
 ```ts
-import { fromJs, toJs } from '@ydbjs/value'
+import { fromYdb, toJs } from '@ydbjs/value'
+import { Optional } from '@ydbjs/value/optional'
+import { Int32Type } from '@ydbjs/value/primitive'
+import { typeToString } from '@ydbjs/value/print'
 
-// List of integers
-const ydbList = fromJs([1, 2, 3])
-console.log(toJs(ydbList)) // [1, 2, 3]
+let input = new Optional(new Optional(null, new Int32Type()))
+let result = fromYdb(input.encode(), input.type.encode())
 
-// Dictionary (map) from string to int
-const ydbDict = fromJs({ a: 1, b: 2 })
-console.log(toJs(ydbDict)) // { a: 1, b: 2 }
-
-// Optional value
-const ydbOptional = fromJs(null)
-console.log(toJs(ydbOptional)) // null
+typeToString(result.type) // 'Optional<Optional<Int32>>'
+toJs(result) // null
 ```
 
-### Complex Values (Struct, Tuple)
+`toJs(value)` projects a typed Value into JavaScript data.
+This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and timestamps lose sub-millisecond precision.
+Use the typed Value when that distinction matters.
 
-```ts
-import { fromJs, toJs } from '@ydbjs/value'
+| YDB type                                                   | JavaScript result                                           |
+| ---------------------------------------------------------- | ----------------------------------------------------------- |
+| Bool                                                       | `boolean`                                                   |
+| Int8/16/32, Uint8/16/32, Float, Double                     | `number`                                                    |
+| Int64, Uint64                                              | `bigint`                                                    |
+| Utf8, Uuid, DyNumber, Decimal                              | `string`                                                    |
+| String, Yson                                               | `Uint8Array`                                                |
+| Json, JsonDocument                                         | Parsed JavaScript value                                     |
+| Date, Date32, Datetime, Datetime64, Timestamp, Timestamp64 | `Date` with millisecond precision                           |
+| TzDate, TzDatetime, TzTimestamp                            | `TZDate` with millisecond precision in the encoded timezone |
+| Interval                                                   | `number` of microseconds                                    |
+| Interval64                                                 | `bigint` of microseconds                                    |
+| Optional                                                   | Inner projection, or `null` when absent                     |
+| List, Tuple, EmptyList                                     | Array                                                       |
+| Dict, EmptyDict                                            | `Map`                                                       |
+| Struct                                                     | Object with own data properties                             |
+| Null                                                       | `null`                                                      |
 
-// Struct
-const ydbStruct = fromJs({ id: 123, name: 'Alice' })
-console.log(toJs(ydbStruct)) // { id: 123, name: 'Alice' }
-
-// Tuple (represented as array)
-const ydbTuple = fromJs([42, 'foo'])
-console.log(toJs(ydbTuple)) // [42, 'foo']
-```
-
----
-
-## Conversion Mechanism
-
-The conversion between JavaScript and YDB values is handled by the `fromJs` and `toJs` functions:
-
-- `fromJs(jsValue)` encodes a native JavaScript value into a YDB value. The type is inferred automatically from the value structure.
-- `toJs(ydbValue)` decodes a YDB value back to a native JavaScript value, preserving structure and types.
-
-YDB types are represented internally and are inferred automatically based on the structure of the provided value. For complex or nested structures, conversion is also performed automatically.
+Decimal and DyNumber results remain strings to preserve numeric precision.
+`Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
 
 ## Development
 
-### Building the Package
-
 ```sh
 npm run build
-```
-
-### Running Tests
-
-```sh
 npm test
 ```
 
 ## License
 
-This project is licensed under the [Apache 2.0 License](../../LICENSE).
+[Apache 2.0](../../LICENSE)
 
 ## Links
 

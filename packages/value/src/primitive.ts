@@ -38,18 +38,85 @@ export class PrimitiveType implements Type {
 	}
 }
 
+let primitiveFields: Partial<Record<Ydb.Type_PrimitiveTypeId, Ydb.Value['value']['case']>> = {
+	[Ydb.Type_PrimitiveTypeId.BOOL]: 'boolValue',
+	[Ydb.Type_PrimitiveTypeId.INT8]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.INT16]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.INT32]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT8]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT16]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT32]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.INT64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.UINT64]: 'uint64Value',
+	[Ydb.Type_PrimitiveTypeId.FLOAT]: 'floatValue',
+	[Ydb.Type_PrimitiveTypeId.DOUBLE]: 'doubleValue',
+	[Ydb.Type_PrimitiveTypeId.DATE]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.DATETIME]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP]: 'uint64Value',
+	[Ydb.Type_PrimitiveTypeId.INTERVAL]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.TZ_DATE]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.TZ_DATETIME]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.DATE32]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.DATETIME64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.INTERVAL64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.STRING]: 'bytesValue',
+	[Ydb.Type_PrimitiveTypeId.UTF8]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.YSON]: 'bytesValue',
+	[Ydb.Type_PrimitiveTypeId.JSON]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.UUID]: 'low128',
+	[Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.DYNUMBER]: 'textValue',
+}
+
+let integerRanges: Partial<Record<Ydb.Type_PrimitiveTypeId, [number, number] | [bigint, bigint]>> =
+	{
+		[Ydb.Type_PrimitiveTypeId.INT8]: [-128, 127],
+		[Ydb.Type_PrimitiveTypeId.UINT8]: [0, 255],
+		[Ydb.Type_PrimitiveTypeId.INT16]: [-32768, 32767],
+		[Ydb.Type_PrimitiveTypeId.UINT16]: [0, 65535],
+		[Ydb.Type_PrimitiveTypeId.INT32]: [-2147483648, 2147483647],
+		[Ydb.Type_PrimitiveTypeId.UINT32]: [0, 4294967295],
+		[Ydb.Type_PrimitiveTypeId.INT64]: [-(2n ** 63n), 2n ** 63n - 1n],
+		[Ydb.Type_PrimitiveTypeId.UINT64]: [0n, 2n ** 64n - 1n],
+	}
+
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
 	value: unknown
+	declare high128?: bigint
 
 	// oxlint-disable no-unused-private-class-members
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
 	#valueInstance?: Ydb.Value
 
 	constructor(value: MessageInitShape<GenMessage<Ydb.Value>>, type: PrimitiveType) {
+		let field = primitiveFields[type.id]
+		if (!field || value.value?.case !== field) {
+			throw new TypeError(
+				`Primitive type ${Ydb.Type_PrimitiveTypeId[type.id] ?? type.id} requires ${field ?? 'a supported wire field'}`
+			)
+		}
+		let range = integerRanges[type.id]
+		let scalar = value.value?.value
+		if (
+			range &&
+			(typeof scalar !== typeof range[0] ||
+				(typeof scalar === 'number' && !Number.isInteger(scalar)) ||
+				(scalar as number | bigint) < range[0] ||
+				(scalar as number | bigint) > range[1])
+		) {
+			throw new RangeError(
+				`Value is outside the ${Ydb.Type_PrimitiveTypeId[type.id]} integer range`
+			)
+		}
 		this.type = type
-		this.value = value?.value?.value
+		this.value = scalar
 		this.#value = value
+		if (value.value?.case === 'low128') {
+			this.high128 = value.high128 ?? 0n
+		}
 	}
 
 	encode(): Ydb.Value {
@@ -281,7 +348,7 @@ export class UuidType extends PrimitiveType {
 
 export class Uuid extends Primitive implements Value<UuidType> {
 	low128: bigint = 0n
-	high128: bigint = 0n
+	override high128: bigint = 0n
 
 	constructor(value: string) {
 		let { low128, high128 } = bigIntsFromUuid(value)
@@ -381,6 +448,7 @@ export class Interval extends Primitive implements Value<IntervalType> {
 		if (!Number.isSafeInteger(value)) {
 			throw new RangeError('Interval must be a safe integer number of microseconds')
 		}
+
 		super({ value: { case: 'int64Value', value: BigInt(value) } }, new IntervalType())
 		this.value = value
 	}

@@ -4,6 +4,7 @@ import * as Ydb from '@ydbjs/api/value'
 import { type Type, TypeKind } from './type.js'
 import type { Value } from './value.js'
 import { NullType } from './null.js'
+import { assertType } from './type-check.js'
 
 export class ListType implements Type {
 	readonly item: Type
@@ -33,15 +34,18 @@ export class List<T extends Value = Value> implements Value<ListType> {
 	readonly items: T[] = []
 	#valueInstance?: Ydb.Value
 
-	constructor(...items: T[]) {
-		let type: Type = new NullType()
-
-		for (let item of items) {
-			type = item.type
+	constructor(...items: T[])
+	constructor(items: T[], type: ListType)
+	constructor(...args: T[] | [T[], ListType]) {
+		let explicit = Array.isArray(args[0])
+		let items = (explicit ? args[0] : args) as T[]
+		this.type = explicit
+			? (args[1] as ListType)
+			: new ListType(items[0]?.type ?? new NullType())
+		for (let [index, item] of items.entries()) {
+			assertType(item.type, this.type.item, `List item ${index}`)
 			this.items.push(item)
 		}
-
-		this.type = new ListType(type)
 	}
 
 	encode(): Ydb.Value {
