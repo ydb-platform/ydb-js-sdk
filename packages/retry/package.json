@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/retry",
-	"version": "6.3.0",
+	"version": "7.0.0",
 	"description": "Flexible, configurable retry logic for YDB operations. Supports custom strategies, budgets, and integration with async workflows.",
 	"keywords": [
 		"database",
@@ -56,11 +56,11 @@
 		"test": "vitest --run"
 	},
 	"dependencies": {
-		"@ydbjs/abortable": "^6.1.0",
-		"@ydbjs/api": "^6.0.0",
-		"@ydbjs/debug": "^6.0.0",
-		"@ydbjs/error": "^6.0.0",
-		"@ydbjs/grpc": "^0.1.0"
+		"@ydbjs/abortable": "^6.2.0",
+		"@ydbjs/api": "^7.0.0",
+		"@ydbjs/debug": "^6.0.6",
+		"@ydbjs/error": "^6.1.0",
+		"@ydbjs/grpc": "^0.2.0"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",

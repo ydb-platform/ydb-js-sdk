@@ -1,5 +1,68 @@
 # @ydbjs/core
 
+## 7.0.0
+
+### Major Changes
+
+- [#669](https://github.com/ydb-platform/ydb-js-sdk/pull/669) [`64df3b5`](https://github.com/ydb-platform/ydb-js-sdk/commit/64df3b50005490e7c5a1628a6a9f31cb19e07d3d) Thanks [@polRk](https://github.com/polRk)! - Make Driver a synchronous Disposable resource. Closing or leaving a using scope cancels active work and closes connections immediately; remove the ten-second drain and async disposal. Topic readers and writers retain their own graceful completion and are disposed before Driver.
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338) Thanks [@polRk](https://github.com/polRk)! - Rebuild `Driver`'s connection layer on a new, internal endpoints engine (a pure `@ydbjs/fsm` state machine for discovery/routing/health plus an `EndpointPool` facade with a synchronous, allocation-light `acquire()` that reads an atomically-swapped immutable `RoutingSnapshot`), replacing the legacy `ConnectionPool`. The engine is an implementation detail — consumers only ever hold a `Driver` — so it is **not** exported from the package root.
+
+  `Driver`'s public shape is preserved (`ready`, `close`, `token`, `database`, `identity`, `Disposable`/`AsyncDisposable`, `kRegisterLibrary`), and `createClient` gains direct-IO routing:
+
+  - `createClient(service)` — balanced across all healthy nodes.
+  - `createClient(service, nodeId)` — soft affinity to a node (node-bound query sessions).
+  - `createClient(service, { nodeId, endpoint?, hard? })` — direct-IO for topic direct read/write: `hard: true` routes every RPC to `nodeId` or fails (never substitutes); `endpoint` pins a server-named node (reachable before the next discovery round, e.g. a topic `PartitionLocation`). The returned client is `Disposable` and unpins on dispose.
+
+  Behavioural changes vs the old pool:
+
+  - **Balancing** is uniform-random within a locality tier (opt-in via `'ydb.sdk.locality_enabled'`, default off) instead of modulo round-robin, with O(1) node affinity.
+  - **Pessimization** has no fixed timer: a node is pessimized on `UNAVAILABLE`/`DEADLINE_EXCEEDED` and recovers on the next successful RPC or discovery round. The `ydb:driver.connection.pessimized` payload no longer carries `until`. `'ydb.sdk.connection_pessimization_timeout_ms'` is now ignored.
+  - **Rediscovery** adds degradation-triggered forced rounds and single-flight/backoff; each round is bounded by `'ydb.sdk.discovery_timeout_ms'` (a timed-out round is retryable, so a hung `listEndpoints` no longer wedges rediscovery). A retryable initial failure keeps retrying (only a non-retryable error is terminal and emits `ydb:driver.failed`); a round returning zero endpoints is rejected as a retryable failure in every state — never applied to routing, so a one-round LB glitch cannot wipe the endpoint set.
+  - **Connections** are dialed lazily and a node dropped from discovery is drained rather than torn down (a brief flap no longer forces a reconnect). `'ydb.sdk.connection_idle_timeout_ms'` now bounds the grace a retired channel is kept before reaping (no separate idle-active teardown). A graceful shutdown (`await using driver` / `[Symbol.asyncDispose]`) drains in-flight streams and returns as soon as they finish, capped by an internal close deadline; the synchronous `close()` tears everything down immediately.
+  - **Bridge (2DC) piles:** on a bridge cluster, routing is restricted to endpoints whose pile is `PRIMARY`, `PROMOTED`, or `SYNCHRONIZED` (other pile states are kept out of the balancing tiers, used only as a last resort when every pile is unusable). Opt-in `'ydb.sdk.prefer_primary_pile'` (default `false`) additionally keeps traffic on the `PRIMARY`/`PROMOTED` pile, falling back to `SYNCHRONIZED` only when the primary has no available node. It is soft (fallback preserved), a no-op on a non-bridge cluster, and takes precedence over `'ydb.sdk.locality_enabled'` in bridge mode (a pile already maps to a datacenter, so the two are not combined).
+  - **Bridge/pool observability:** every `ydb:driver.connection.*` event now carries the endpoint's `pile` (`''` on a non-bridge cluster), and `DriverHooks`' `EndpointInfo` gains a `pile` field. `ydb:driver.discovery.completed` additionally carries `selfLocation`, the pile roster (`piles: { name, status }[]`), and `primaryPile`. New channels: `ydb:driver.connection.pool.opened` (one-shot config snapshot), `ydb:driver.connection.pool.stats` (aggregate tier/pile counts on every routable-set change), `ydb:driver.pile.changed` (pile roster/primary change, inside the discovery span), and `ydb:driver.pile.fallback` (edge-triggered when `preferPrimaryPile` serves from the SYNCHRONIZED tier).
+  - **New options:** `'ydb.sdk.locality_enabled'` (default `false`), `'ydb.sdk.prefer_primary_pile'` (default `false`), and `'ydb.sdk.discovery_degraded_threshold'` (0..1, default `0.5`, validated).
+
+  The `ConnectionPool` class and the `POOL_*_FOR_TESTING` symbols are removed. All `diagnostics_channel` channel names and identity-stamped payloads are preserved (minus the `until` field on `connection.pessimized`); the round-derived events are published inside the `tracing:ydb:driver.discovery` span so `@ydbjs/telemetry` attaches them to traces. `EndpointsUnavailableError` and the `Driver*` option/connection-string error classes are re-exported from the package root.
+
+- [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096) Thanks [@polRk](https://github.com/polRk)! - Connect SDK services to `@ydbjs/grpc` and remove nice-grpc and grpc-js from the workspace. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and backpressure. Requires Node.js 22.15 or later supported by the SDK.
+
+  Use `createServiceClient(service, transport)` for standalone calls. `Driver.createClient` retains discovery and node selection; `createPinnedClient` explicitly awaits endpoint pin acquisition. Configure TLS, message limits, and HTTP/2 windows through `transportOptions`. The transport does not replay RPCs or duplicate YDB balancing and retry policies.
+
+  Call options accept plain metadata records, signals, absolute deadlines, and header/trailer/status observers. `RpcError` carries code, details, and trailing metadata; `MessageSizeError` identifies permanent local size-limit failures. Query metadata events expose the same record format. Register `addMetadataHook` before constructing Driver to add tracing headers. Credential providers supply `getToken`; Driver handles authentication and mandatory headers without middleware or interceptor adapters.
+
+  High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
+
+  Preserve explicit TLS server names when discovery provides no override, and avoid logging raw driver options.
+
+  Preserve explicit gRPC endpoint ports when selecting TLS, including mixed-case URL schemes. Merge repeated case-insensitive call metadata values while keeping required driver headers authoritative over caller metadata and hooks.
+
+### Patch Changes
+
+- [#660](https://github.com/ydb-platform/ydb-js-sdk/pull/660) [`cdff086`](https://github.com/ydb-platform/ydb-js-sdk/commit/cdff0864d850ba1bd1c7cf7c7041dd9742f04ef6) Thanks [@polRk](https://github.com/polRk)! - Wait for explicit endpoint pins to reach the routing snapshot before issuing RPCs. Keep shared pins until their last client is disposed, make disposal idempotent, and release the original node even if the caller mutates the target object. Cancelled RPCs leave the client's pin available for subsequent calls.
+
+- [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a) Thanks [@polRk](https://github.com/polRk)! - Cancel active calls and pending token waits when a service client closes, and discard its buffered responses. Preserve sibling clients and the driver-owned shared connections.
+
+- [#635](https://github.com/ydb-platform/ydb-js-sdk/pull/635) [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8) Thanks [@polRk](https://github.com/polRk)! - Fix process crash when a background rediscovery round fails. The periodic discovery loop scheduled its rounds as floating promises, so a terminally failed round (e.g. the discovery endpoint dropping mid-round until the per-round timeout aborted the retries) escalated to an `unhandledRejection` and killed the process. Failed background rounds are now caught and logged; the connection pool keeps serving last-known endpoints and the next interval tick retries.
+
+- [#683](https://github.com/ydb-platform/ydb-js-sdk/pull/683) [`e6960f6`](https://github.com/ydb-platform/ydb-js-sdk/commit/e6960f6b4170c7d399739b364c45ed5ca8374eb4) Thanks [@polRk](https://github.com/polRk)! - Keep active discovered channels alive across repeated retirement and revival. Keep explicitly pinned connections separate from discovered connections with the same node ID so invalidating one does not close the other.
+
+- [`549da21`](https://github.com/ydb-platform/ydb-js-sdk/commit/549da21a2f16312e5c774cb34ab4de87f40f3005) Thanks [@polRk](https://github.com/polRk)! - Release cancelled readiness waiters before discovery completes, without cancelling other callers. Reject readiness after driver shutdown and preserve the original cause of terminal discovery failures.
+
+- [#666](https://github.com/ydb-platform/ydb-js-sdk/pull/666) [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28) Thanks [@polRk](https://github.com/polRk)! - Upgrade protobuf to 2.16.0 to reduce temporary allocations during serialization and parsing.
+
+- [#676](https://github.com/ydb-platform/ydb-js-sdk/pull/676) [`6ad8ff0`](https://github.com/ydb-platform/ydb-js-sdk/commit/6ad8ff016a40d9036add4d7db8dc5d0e6b8365de) Thanks [@polRk](https://github.com/polRk)! - Apply `ydb.sdk.token_timeout_ms` to each caller's wait for credentials before RPCs and through the `token` getter. Preserve the original RPC deadline and caller abort reason without forwarding RPC cancellation to shared provider work. Closing the Driver cancels its token waits. Already-fulfilled token promises do not allocate a token-wait timer. Measure the token-wait duration with a monotonic clock so system-clock changes cannot extend or shorten the configured budget.
+- Updated dependencies [[`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6), [`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`af97a85`](https://github.com/ydb-platform/ydb-js-sdk/commit/af97a858daea4a5a0a0df647abe19cf0f1e6bdb7), [`27bdd45`](https://github.com/ydb-platform/ydb-js-sdk/commit/27bdd45166b1e6b12bd7f83a559128cbb0f43ec1), [`0ca6e3a`](https://github.com/ydb-platform/ydb-js-sdk/commit/0ca6e3a44991d9aceedca3d777d86d1c8c3f9aae), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`031e586`](https://github.com/ydb-platform/ydb-js-sdk/commit/031e586337262eca797d5bbd013dc9c0fedc9f1b), [`dc41967`](https://github.com/ydb-platform/ydb-js-sdk/commit/dc419672abd79679b8f5d819067c374d9ff59208), [`986e841`](https://github.com/ydb-platform/ydb-js-sdk/commit/986e841781aebe4adb7d05a3deeeb105536fac93), [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096), [`b9342a1`](https://github.com/ydb-platform/ydb-js-sdk/commit/b9342a1648be7805047af2c15c43306998ee1726), [`7380673`](https://github.com/ydb-platform/ydb-js-sdk/commit/7380673c1f41fff1329521202dc8759419ee9b1f), [`9e16c2c`](https://github.com/ydb-platform/ydb-js-sdk/commit/9e16c2c2524658a1f56fdd465a317f4a2ae64846), [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28), [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1)]:
+  - @ydbjs/abortable@6.2.0
+  - @ydbjs/api@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/grpc@0.2.0
+  - @ydbjs/auth@7.0.0
+  - @ydbjs/retry@7.0.0
+  - @ydbjs/error@6.1.0
+  - @ydbjs/debug@6.0.6
+
 ## 6.3.1
 
 ### Patch Changes

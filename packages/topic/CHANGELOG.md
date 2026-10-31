@@ -1,5 +1,110 @@
 # @ydbjs/topic
 
+## 7.0.0
+
+### Major Changes
+
+- [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096) Thanks [@polRk](https://github.com/polRk)! - Connect SDK services to `@ydbjs/grpc` and remove nice-grpc and grpc-js from the workspace. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and backpressure. Requires Node.js 22.15 or later supported by the SDK.
+
+  Use `createServiceClient(service, transport)` for standalone calls. `Driver.createClient` retains discovery and node selection; `createPinnedClient` explicitly awaits endpoint pin acquisition. Configure TLS, message limits, and HTTP/2 windows through `transportOptions`. The transport does not replay RPCs or duplicate YDB balancing and retry policies.
+
+  Call options accept plain metadata records, signals, absolute deadlines, and header/trailer/status observers. `RpcError` carries code, details, and trailing metadata; `MessageSizeError` identifies permanent local size-limit failures. Query metadata events expose the same record format. Register `addMetadataHook` before constructing Driver to add tracing headers. Credential providers supply `getToken`; Driver handles authentication and mandatory headers without middleware or interceptor adapters.
+
+  High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
+
+  Preserve explicit TLS server names when discovery provides no override, and avoid logging raw driver options.
+
+  Preserve explicit gRPC endpoint ports when selecting TLS, including mixed-case URL schemes. Merge repeated case-insensitive call metadata values while keeping required driver headers authoritative over caller metadata and hooks.
+
+- [#637](https://github.com/ydb-platform/ydb-js-sdk/pull/637) [`51d3c1b`](https://github.com/ydb-platform/ydb-js-sdk/commit/51d3c1b98396f9e2c131a488d85cfdc0138bd1e9) Thanks [@YandalfRed](https://github.com/YandalfRed)! - Rebuild the topic reader on a deterministic `@ydbjs/fsm` state machine (transport FSM + reader FSM), mirroring the writer. The public `TopicReader` / `TopicTxReader` API (read / commit / close / destroy + callbacks) is unchanged; the behaviour is more reliable:
+
+  - `commit()` no longer rejects on a transparent reconnect. Pending commits are held per partition and re-sent on the new partition session (verified against a live server — YDB accepts a re-sent commit for offsets not read on that session), so a `read()` + `commit()` loop survives reconnects instead of crashing.
+  - Transactional read offsets are keyed by the stable partition id and survive a reconnect (previously lost, so the transaction could miss offsets).
+  - Byte flow-control is charged once per `ReadResponse` — a response spanning several partitions no longer over-releases credit.
+  - Retention gap-fill (committing past retention-deleted offsets) is preserved.
+  - `read()` accumulates a batch up to `limit`. With `batchWindowMs` set it yields at least every window (an empty batch on an idle topic, so a polling consumer never hangs); without it, it blocks until the next delivered chunk. The option was renamed from `waitMs`, which remains as a deprecated alias.
+  - On an unrecoverable terminal error `read()` now throws (instead of ending like a clean end-of-stream); the reader is already torn down, so it is not reusable and every further `read()` / `commit()` throws too.
+  - Transparent reconnect is now unbounded by default (waits for the server/topic to come back); the new `recoveryWindowMs` option re-imposes a finite terminal deadline. The new `retryOnSchemeError` option (off by default) retries `SCHEME_ERROR` so a reader started before its topic exists waits until it is created. A running reader whose topic is dropped idles until the server closes the stale read stream (~1 min), then transparently reconnects and resumes automatically if the topic exists again (`retryOnSchemeError` extends this to a topic recreated later).
+  - The new `gracefulShutdownTimeoutMs` option makes the graceful `close()` deadline configurable (default 30 s): past it, pending commits are dropped and the reader force-closes.
+  - Structured lifecycle events on `node:diagnostics_channel` under `ydb:topic.reader.*`, plus a `tracing:ydb:topic.reader.commit` span.
+  - `TopicTxReader` is now `AsyncDisposable` / `Disposable`. A manual `commit()` on a tx reader now throws — the `TopicTxReader` type never exposed it, but the runtime object did, and a plain-JS call would commit offsets outside the transaction (they would survive its rollback).
+  - `TopicPartitionSession.nextCommitStartOffset` is removed from the public class. It was commit-machinery state that leaked into the public surface in 6.1.x: user-visible (and mutable), while a corrupted anchor produces malformed commit ranges — which are session-fatal server-side. The gap-fill anchor now lives inside the reader state machine, keyed by the stable partition id, so it also survives reconnects (the session object does not).
+  - The default `maxBufferBytes` (server read credit / client-side buffer cap) is now 8 MiB, up from 4 MiB.
+
+- [#643](https://github.com/ydb-platform/ydb-js-sdk/pull/643) [`abc8955`](https://github.com/ydb-platform/ydb-js-sdk/commit/abc8955bfc494c220490b04414dff77e572d4c86) Thanks [@polRk](https://github.com/polRk)! - Harden the topic reader's commit semantics and multi-topic support, extend the reader/writer contracts:
+
+  - Multi-topic readers key all partition state by (topic, partition id): topics sharing partition ids no longer collide (previously messages of one topic could be silently dropped and its commits attributed to the other topic's partition).
+  - `commit()` acknowledges exactly the messages it was given: each message covers its own offset range plus the server-side hole immediately preceding it (retention gaps, `readFrom` skips). Delivered-but-uncommitted messages are never covered by another message's commit; sparse commits resolve once the server watermark reaches them; overlapping commits never resolve before that watermark. Synchronous calls are combined into one microtask batch and return the same promise, so per-message concurrent processing produces one commit request instead of one request and promise per message. A commit racing a partition stop rejects immediately instead of hanging until the reassign GC.
+  - `commit()` rejects messages that belong to another reader's partition session.
+  - `onCommittedOffset` fires on every server-confirmed advance — commit acks, stop-request watermarks and partition status responses — including ended and stopped partitions. Start-hook `commitOffset` overrides are confirmed through partition status before resolving pending commits or notifying observers; graceful close waits for that confirmation.
+  - Soft partition stop honors the documented contract: `onPartitionSessionStop` is awaited before the stop response is sent and the partition keeps accepting reads and commits meanwhile — a real "last chance to commit".
+  - Transactional readers bind offsets at `read()` delivery (never covering buffered messages the consumer did not see), cover head gaps from the committed offset, keep tracked offsets when closed before the transaction commits, and route `UpdateOffsetsInTransaction` to the transaction session's node.
+  - `read()` validates `limit` and `batchWindowMs`; a read aborted mid-accumulation redelivers the accumulated messages on the next `read()` instead of dropping them.
+  - Large batches of small messages are delivered without exceeding the JavaScript function argument limit.
+  - Read flow-control credit is returned only after every message from a server response has passed through the async iterable. `reader.bufferedBytes` and `ydb:topic.reader.buffer.changed` expose the server-accounted bytes still retained by the reader.
+  - New reader option `autoPartitioningSupport` declares autopartitioning support to the server; ended partition sessions expose `childPartitionIds` / `adjacentPartitionIds`.
+  - The writer validates its configured codec against the server's `supportedCodecs` at init — fail-fast with an actionable error instead of a terminal server error after buffering — and rejects an empty `producer` id (silent no-dedup mode).
+  - `readFrom: 0` (the epoch) and `maxLag: 0` reach the InitRequest instead of being silently dropped.
+  - Drop Node.js 20 support. Require Node.js 22.15+ on the 22.x release line or Node.js 23.8+, with built-in RAW, GZIP and ZSTD codecs available on every supported runtime.
+
+- [#637](https://github.com/ydb-platform/ydb-js-sdk/pull/637) [`8eefff2`](https://github.com/ydb-platform/ydb-js-sdk/commit/8eefff245e328f8aa79acef69d663906f1e02c04) Thanks [@YandalfRed](https://github.com/YandalfRed)! - Consolidate the topic writer onto a single deterministic `@ydbjs/fsm` state machine.
+
+  Breaking changes:
+
+  - `write()` now returns `void` instead of a sequence number. Obtain the last acknowledged `seqNo` via `flush()` (returns `bigint`) or the `onAck` callback.
+  - `flush()` now returns `bigint` (was `bigint | undefined`).
+  - Removed the experimental `@ydbjs/topic/writer2` subpath export.
+  - Removed the `retryConfig` writer option. The writer now reconnects transparently (exponential backoff + jitter) and, by default, indefinitely — waiting for the server/topic to come back; the new `recoveryWindowMs` option re‑imposes a terminal deadline. In‑flight messages are resent and pending writes are not failed by a transparent reconnect.
+  - `flushIntervalMs` default changed from 10ms to 1000ms.
+  - `close()` now rejects when the graceful drain fails (non‑retryable error, or timeout with undelivered messages) instead of resolving silently — this makes transactional commit hooks fail rather than commit with lost writes.
+
+  Fixes and additions:
+
+  - Non‑RAW codecs (GZIP/ZSTD) are compressed once at `write()` and the compressed bytes are what the buffer accounts and the wire carries.
+  - `maxBufferBytes` is now enforced as a fail‑fast cap: `write()` throws synchronously when a message would push the un‑acknowledged buffer past the limit (default 256 MB), bounding writer memory.
+  - New options: `recoveryWindowMs` (finite reconnect deadline; unbounded by default), `retryOnSchemeError` (retry SCHEME_ERROR to wait for a not‑yet‑created topic; off by default), `gracefulShutdownTimeoutMs`, `partitionId` / `messageGroupId` (mutually exclusive), and `producer` is auto‑generated when omitted.
+  - Structured lifecycle events on `node:diagnostics_channel` under `ydb:topic.writer.*`.
+
+### Patch Changes
+
+- [#689](https://github.com/ydb-platform/ydb-js-sdk/pull/689) [`79011d9`](https://github.com/ydb-platform/ydb-js-sdk/commit/79011d9a4003a812ba8d20c610149043f0eff98a) Thanks [@polRk](https://github.com/polRk)! - Keep reader payloads encoded until selected for delivery, preserve unread messages after clean close, and release them on destruction or terminal failure. Preserve transactional offset cancellation, snapshot settings and callbacks, and honor cancellation between slices of a response. maxBufferBytes accounts for wire response credit rather than decompressed payloads or RSS.
+
+  Stop the reader immediately on destruction, including synchronous callback reentry, and release pending payloads and commit waiters without requiring a subsequent close.
+
+- [#688](https://github.com/ydb-platform/ydb-js-sdk/pull/688) [`71443ca`](https://github.com/ydb-platform/ydb-js-sdk/commit/71443ca6e475ebfc470cff9d6b3dd08953a5c50d) Thanks [@polRk](https://github.com/polRk)! - Preserve complete-response read credit across reconnects and account for releases during backoff. Track partition-session identities and pending commits through replacement and retirement, expire unreassigned partitions, and treat oversized read responses as terminal errors. Split sparse commit replay into bounded requests so reconnect cannot combine valid individual commits into an oversized frame.
+
+- [#686](https://github.com/ydb-platform/ydb-js-sdk/pull/686) [`fdb2757`](https://github.com/ydb-platform/ydb-js-sdk/commit/fdb2757a8f668405dd495e5ce02dca5ed4f30d51) Thanks [@polRk](https://github.com/polRk)! - Keep Topic requests and token refreshes attached to the current stream. Ignore obsolete completions, prevent opening streams after cancellation, and continue reader token renewal when unchanged credentials are not acknowledged.
+
+- [#656](https://github.com/ydb-platform/ydb-js-sdk/pull/656) [`8609b8b`](https://github.com/ydb-platform/ydb-js-sdk/commit/8609b8b8a93c2f580141df63c47004d0e9a54629) Thanks [@polRk](https://github.com/polRk)! - Keep independent flush boundaries across acknowledgments and reconnect deduplication. Drain writer close through the normal connection lifecycle, preserve timed batching without repeated partial-batch scans, and release buffered messages, callbacks and codecs on shutdown. Restore the TopicTxWriter type export and contain rejected acknowledgment observers.
+
+- [#687](https://github.com/ydb-platform/ydb-js-sdk/pull/687) [`4c214d0`](https://github.com/ydb-platform/ydb-js-sdk/commit/4c214d05663f837bd5aab252b89826d367bbe486) Thanks [@polRk](https://github.com/polRk)! - Snapshot Topic writer dates and metadata at admission, copy bounded or growable payload views, and reject invalid dates or sequence numbers before accepting a message. Generate default producer identities with randomUUID().
+
+  Include metadata key/value bytes in the retained write budget and release that reservation after acknowledgments or reconnect recovery. Reject metadata above the 4096-byte per-message limit before copying it or changing writer state.
+
+  Remove the unused acknowledged payload-byte diagnostic and calculate acknowledgment status counts only when the channel has subscribers.
+
+- [#666](https://github.com/ydb-platform/ydb-js-sdk/pull/666) [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28) Thanks [@polRk](https://github.com/polRk)! - Upgrade protobuf to 2.16.0 to reduce temporary allocations during serialization and parsing.
+
+- [#673](https://github.com/ydb-platform/ydb-js-sdk/pull/673) [`f6e78ec`](https://github.com/ydb-platform/ydb-js-sdk/commit/f6e78ec3f6332add45b32caabafce101020b6187) Thanks [@polRk](https://github.com/polRk)! - Reduce topic reader allocations by consuming partition groups directly and releasing delivered message references while retaining unread messages.
+
+- [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1) Thanks [@polRk](https://github.com/polRk)! - Refresh compatible dependency versions and remove unused runtime packages. Include the `ms` types required by the Topic reader's published declarations.
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be) Thanks [@polRk](https://github.com/polRk)! - Widen the reader's internal `PartitionReadData` timestamp fields (`writtenAt`, `createdAt`) to `Timestamp | undefined` to match the stricter optional-field typing from the regenerated `@ydbjs/api`. No behavioural change.
+
+- [#702](https://github.com/ydb-platform/ydb-js-sdk/pull/702) [`bc5bc26`](https://github.com/ydb-platform/ydb-js-sdk/commit/bc5bc2678124a732b9e8e3331ae23c93f3acc4f8) Thanks [@polRk](https://github.com/polRk)! - Stop TopicWriter synchronously on destroy, release pending writes and callback references, and reject outstanding flush and close operations. Stop acknowledgment delivery when a callback or diagnostics subscriber destroys the writer. Preserve the first destruction or runtime failure reason when synchronous transport completion hooks reenter destroy. Graceful close continues to drain accepted writes and can still be interrupted by destroy.
+
+  Cancel reader and writer credential waits when their stream is destroyed or replaced, while leaving shared provider refreshes running.
+
+- Updated dependencies [[`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6), [`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`cdff086`](https://github.com/ydb-platform/ydb-js-sdk/commit/cdff0864d850ba1bd1c7cf7c7041dd9742f04ef6), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`64df3b5`](https://github.com/ydb-platform/ydb-js-sdk/commit/64df3b50005490e7c5a1628a6a9f31cb19e07d3d), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8), [`e6960f6`](https://github.com/ydb-platform/ydb-js-sdk/commit/e6960f6b4170c7d399739b364c45ed5ca8374eb4), [`549da21`](https://github.com/ydb-platform/ydb-js-sdk/commit/549da21a2f16312e5c774cb34ab4de87f40f3005), [`af97a85`](https://github.com/ydb-platform/ydb-js-sdk/commit/af97a858daea4a5a0a0df647abe19cf0f1e6bdb7), [`27bdd45`](https://github.com/ydb-platform/ydb-js-sdk/commit/27bdd45166b1e6b12bd7f83a559128cbb0f43ec1), [`0ca6e3a`](https://github.com/ydb-platform/ydb-js-sdk/commit/0ca6e3a44991d9aceedca3d777d86d1c8c3f9aae), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`031e586`](https://github.com/ydb-platform/ydb-js-sdk/commit/031e586337262eca797d5bbd013dc9c0fedc9f1b), [`dc41967`](https://github.com/ydb-platform/ydb-js-sdk/commit/dc419672abd79679b8f5d819067c374d9ff59208), [`986e841`](https://github.com/ydb-platform/ydb-js-sdk/commit/986e841781aebe4adb7d05a3deeeb105536fac93), [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096), [`b9342a1`](https://github.com/ydb-platform/ydb-js-sdk/commit/b9342a1648be7805047af2c15c43306998ee1726), [`9e16c2c`](https://github.com/ydb-platform/ydb-js-sdk/commit/9e16c2c2524658a1f56fdd465a317f4a2ae64846), [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28), [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1), [`6ad8ff0`](https://github.com/ydb-platform/ydb-js-sdk/commit/6ad8ff016a40d9036add4d7db8dc5d0e6b8365de)]:
+  - @ydbjs/abortable@6.2.0
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/grpc@0.2.0
+  - @ydbjs/retry@7.0.0
+  - @ydbjs/error@6.1.0
+  - @ydbjs/debug@6.0.6
+
 ## 6.1.4
 
 ### Patch Changes

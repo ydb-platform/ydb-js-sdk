@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/core",
-	"version": "6.3.1",
+	"version": "7.0.0",
 	"description": "Core driver for YDB: manages connections, endpoint discovery, authentication, and service client creation. Foundation for all YDB client operations.",
 	"keywords": [
 		"core",
@@ -50,14 +50,14 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "2.16.0",
-		"@ydbjs/abortable": "^6.1.0",
-		"@ydbjs/api": "^6.0.7",
-		"@ydbjs/auth": "^6.3.1",
-		"@ydbjs/debug": "^6.0.0",
-		"@ydbjs/error": "^6.0.6",
-		"@ydbjs/fsm": "^6.1.1",
-		"@ydbjs/retry": "^6.3.0",
-		"@ydbjs/grpc": "^0.1.0"
+		"@ydbjs/abortable": "^6.2.0",
+		"@ydbjs/api": "^7.0.0",
+		"@ydbjs/auth": "^7.0.0",
+		"@ydbjs/debug": "^6.0.6",
+		"@ydbjs/error": "^6.1.0",
+		"@ydbjs/fsm": "^7.0.0",
+		"@ydbjs/retry": "^7.0.0",
+		"@ydbjs/grpc": "^0.2.0"
 	},
 	"engines": {
 		"node": "^22.15.0 || >=23.8.0",
