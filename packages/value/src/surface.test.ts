@@ -1,4 +1,4 @@
-import { fromBinary, toBinary } from '@bufbuild/protobuf'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import * as Ydb from '@ydbjs/api/value'
 import { expect, test } from 'vitest'
 
@@ -111,6 +111,9 @@ test('rejects a server representation with two possible Optional Variant branche
 	let outer = new VariantType(new TupleType([inner, scalar]))
 	let value = new Optional(new Variant(new Optional(null, new P.Int32Type()), 1, outer))
 	expect(() => fromYdb(value.encode(), value.type.encode())).toThrow(/ambiguous.*raw/i)
+	expect(() => fromYdb(new Optional(value).encode(), new Optional(value).type.encode())).toThrow(
+		/ambiguous.*raw/i
+	)
 	let container = new List(value)
 	expect(() => fromYdb(container.encode(), container.type.encode())).toThrow(/ambiguous.*raw/i)
 })
@@ -134,4 +137,33 @@ test('normalizes native PostgreSQL names whose names already start with pg_', ()
 	expect(new PgType('pg_lsn').typeName).toBe('pgpg_lsn')
 	expect(new PgType('_pg_lsn').typeName).toBe('_pgpg_lsn')
 	expect(new PgType('pgpg_lsn').typeName).toBe('pgpg_lsn')
+})
+
+test('rejects malformed wire values instead of discarding incompatible payloads', () => {
+	let scalar = new P.Int32(42).encode()
+	for (let value of [
+		new List(),
+		new Dict(),
+		new Tuple(),
+		new Struct({}),
+		new Void(),
+		new EmptyList(),
+		new Null(),
+	]) {
+		expect(() => fromYdb(scalar, value.type.encode())).toThrow(/scalar|null|Empty/)
+	}
+	let type = new VariantType(new TupleType([new P.Int32Type()]))
+	expect(() => fromYdb(scalar, type.encode())).toThrow(/nested value/)
+	expect(() =>
+		fromYdb(
+			create(Ydb.ValueSchema, {
+				variantIndex: 1,
+				value: { case: 'nestedValue', value: scalar },
+			}),
+			type.encode()
+		)
+	).toThrow(/index/)
+	expect(() => fromYdb(create(Ydb.ValueSchema), new OptionalType(type).encode())).toThrow(
+		/nested value/
+	)
 })

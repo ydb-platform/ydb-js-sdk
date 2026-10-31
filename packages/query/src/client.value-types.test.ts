@@ -2,12 +2,12 @@
 import { expect, test } from 'vitest'
 import { Int32, Int32Type, Text } from '@ydbjs/value/primitive'
 import { Optional, OptionalType } from '@ydbjs/value/optional'
-import { Tagged, TaggedType } from '@ydbjs/value/tagged'
+import { Tagged } from '@ydbjs/value/tagged'
 import { Variant, VariantType } from '@ydbjs/value/variant'
 import { List, ListType } from '@ydbjs/value/list'
 import { Tuple, TupleType } from '@ydbjs/value/tuple'
 import { Dict } from '@ydbjs/value/dict'
-import { Struct } from '@ydbjs/value/struct'
+import { Struct, StructType } from '@ydbjs/value/struct'
 import { QueryClient } from './client.js'
 import { query } from './index.js'
 import { startClientServer } from './client.fixtures.js'
@@ -15,10 +15,28 @@ import { startClientServer } from './client.fixtures.js'
 for (let [name, makeValues, message] of [
 	[
 		'Tagged',
-		() => [
-			new Tagged(new Int32(1), 'id'),
-			new List([], new ListType(new TaggedType('id', new Int32Type()))),
-		],
+		() => {
+			let tagged = new Tagged(new Int32(1), 'id')
+			return [
+				tagged,
+				new Optional(null, tagged.type),
+				new List([], new ListType(tagged.type)),
+				new Tuple(tagged),
+				new Struct({ value: tagged }),
+				new Dict([new Text('key'), tagged]),
+				new Dict([tagged, new Int32(1)]),
+				new Variant(
+					new Int32(1),
+					0,
+					new VariantType(new TupleType([new Int32Type(), tagged.type]))
+				),
+				new Variant(
+					new Int32(1),
+					'a',
+					new VariantType(new StructType(['a', 'b'], [new Int32Type(), tagged.type]))
+				),
+			]
+		},
 		/Tagged query parameters/,
 	],
 	[
