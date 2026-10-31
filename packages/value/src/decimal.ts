@@ -62,7 +62,12 @@ export class Decimal implements Value<DecimalType> {
 			.padStart(this.type.scale + 1, '0')
 		if (this.type.scale) {
 			let point = digits.length - this.type.scale
-			digits = `${digits.slice(0, point)}.${digits.slice(point)}`.replace(/\.?0+$/, '')
+			let end = digits.length
+			while (end > point && digits[end - 1] === '0') end--
+			digits =
+				end === point
+					? digits.slice(0, point)
+					: `${digits.slice(0, point)}.${digits.slice(point, end)}`
 		}
 		return this.value < 0n ? `-${digits}` : digits
 	}
