@@ -345,7 +345,7 @@ new NodeSDK({ views: [view] })
 All tag values are bounded and safe to ingest at high request rates:
 
 - `db.operation.name` — 10 fixed strings (Query.\*, Discovery.ListEndpoints, Auth.TokenFetch)
-- `ydb.session.close.reason` — 4 strings (`pool_close`, `attach_failed`, `stream_closed`, `stream_error`)
+- `ydb.session.close.reason` — `pool_close`, `stream_closed`, `stream_error`, or `invalidated`; `attach_failed` belongs to the initial session deletion trace before a working session exists.
 - `ydb.retry.outcome` — 4 strings
 - `ydb.connection.state` — 2 strings
 - `ydb.auth.provider` — bounded by the credential providers configured in the process

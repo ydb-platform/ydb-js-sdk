@@ -203,6 +203,8 @@ await result
 
 Neither method closes the supplied `Driver`; other clients sharing it remain usable. To discard an individual query's retained parameters, results and listeners, call `statement.destroy()` or `await statement.dispose()`. Its `cancel()` method only cancels execution and emits the existing `cancel` event.
 
+The session pool owns a single state machine for admission, session creation, leases, waiting callers and shutdown. `poolOptions.maxSize` caps live and creating sessions. `waitQueueFactor` defaults to 8; at most `maxSize + ceil(maxSize * waitQueueFactor)` root operations can be admitted at once, including operations waiting for driver readiness or retry backoff. Additional calls reject with `SessionPoolFullError` instead of retaining an unbounded backlog.
+
 ## Observability via `node:diagnostics_channel`
 
 `@ydbjs/query` publishes events on [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) so external subscribers (`@ydbjs/telemetry`, OpenTelemetry, custom loggers) can build traces, metrics, and logs without coupling the SDK to a specific telemetry stack.
@@ -240,7 +242,7 @@ Every payload starts with a `driver: DriverIdentity` field (defined in `@ydbjs/c
 
 `reason` (`SessionCloseReason`) is one of: `'pool_close'` (pool tear-down), `'attach_failed'` (initial AttachStream rejected — session never lived), `'stream_closed'` (attach stream ended cleanly, e.g. server-side TTL), `'stream_error'` (attach stream errored mid-flight). Sessions are pool-owned; there is no user-driven close. Carried both on the plain `session.closed` event and inside the `session.delete` tracing ctx.
 
-`pool.opened.minSize` is reported even though the JS pool does not eagerly warm sessions today — the option exists for parity with other YDB SDKs and for future warm-up logic.
+`pool.opened.minSize` reports the best-effort warm-up target. A failed background creation does not start an unbounded retry loop; queued operations continue to drive session creation within the pool limit.
 
 ### Retry hierarchy
 

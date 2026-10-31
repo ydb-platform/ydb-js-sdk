@@ -357,7 +357,7 @@ export class Query<T extends any[] = unknown[]>
 					return results
 				}, executeCtx)
 			} finally {
-				this.#sessionPool.endOperation()
+				this.#sessionPool.endOperation(true)
 			}
 		}
 
@@ -393,7 +393,7 @@ export class Query<T extends any[] = unknown[]>
 
 				linkedSignal[Symbol.dispose]()
 				this.#sessionPool.signal.removeEventListener('abort', onDestroy)
-				this.#sessionPool.endOperation()
+				this.#sessionPool.endOperation(Boolean(transactionOwned))
 			})
 
 		return this.#promise
