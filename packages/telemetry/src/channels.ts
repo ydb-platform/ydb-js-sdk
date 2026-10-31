@@ -10,11 +10,17 @@ import {
 	ATTR_YDB_AUTH_PROVIDER,
 	ATTR_YDB_DISCOVERY_ADDED_COUNT,
 	ATTR_YDB_DISCOVERY_DURATION,
+	ATTR_YDB_DISCOVERY_PRIMARY_PILE,
 	ATTR_YDB_DISCOVERY_REMOVED_COUNT,
+	ATTR_YDB_DISCOVERY_SELF_LOCATION,
 	ATTR_YDB_DISCOVERY_TOTAL_COUNT,
 	ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION,
 	ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON,
 	ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON,
+	ATTR_YDB_DRIVER_PILE_AFTER,
+	ATTR_YDB_DRIVER_PILE_BEFORE,
+	ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER,
+	ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE,
 	ATTR_YDB_IDEMPOTENT,
 	ATTR_YDB_ISOLATION,
 	ATTR_YDB_NODE_DC,
@@ -33,6 +39,7 @@ import {
 	EVENT_YDB_DRIVER_CONNECTION_REMOVED,
 	EVENT_YDB_DRIVER_CONNECTION_RETIRED,
 	EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED,
+	EVENT_YDB_DRIVER_PILE_CHANGED,
 } from './semconv/index.js'
 
 // `ctx: never` makes every row's stricter `(ctx: T) => Attributes` assignable
@@ -179,6 +186,25 @@ export function buildTracingChannels(opts: ChannelTableOptions): TracingChannelE
 	return table
 }
 
+// `span.setAttributes` drops undefined values, but `span.addEvent` does NOT —
+// `sanitizeAttributes` keeps the key and the OTLP transformer then ships it as
+// a valueless `AnyValue`. Every optional event attribute here therefore has to
+// be stripped explicitly, or a non-bridge cluster gets an empty `ydb.node.pile`
+// on every connection event.
+function defined(attrs: Attributes): Attributes {
+	let out: Attributes = {}
+	for (let key of Object.keys(attrs)) {
+		if (attrs[key] !== undefined) out[key] = attrs[key]
+	}
+	return out
+}
+
+// Flatten a pile roster to `name:STATUS` strings. An empty roster yields
+// undefined so `defined` strips the attribute rather than emitting `[]`.
+function roster(piles: { name: string; status: string }[]): string[] | undefined {
+	return piles.length > 0 ? piles.map((p) => `${p.name}:${p.status}`) : undefined
+}
+
 // Rows that attach data to whichever span is currently active. "Summary"
 // payloads set attributes (discovery / retry totals); "point-in-time"
 // payloads become `span.addEvent`. Events fired with no active span are
@@ -193,6 +219,8 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 				removedCount: number
 				totalCount: number
 				duration: number
+				selfLocation: string
+				primaryPile?: string
 			},
 			span
 		) => {
@@ -201,7 +229,36 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 				[ATTR_YDB_DISCOVERY_REMOVED_COUNT]: msg.removedCount,
 				[ATTR_YDB_DISCOVERY_TOTAL_COUNT]: msg.totalCount,
 				[ATTR_YDB_DISCOVERY_DURATION]: msg.duration / 1000,
+				// `setAttributes` (unlike `addEvent`) drops undefined, so both are
+				// simply absent when the server reports no self location / no
+				// PRIMARY pile.
+				[ATTR_YDB_DISCOVERY_SELF_LOCATION]: msg.selfLocation || undefined,
+				[ATTR_YDB_DISCOVERY_PRIMARY_PILE]: msg.primaryPile,
 			})
+		},
+	},
+	{
+		// Fires inside publishRoundDiagnostics — within the discovery span — so it
+		// attaches.
+		channel: 'ydb:driver.pile.changed',
+		apply: (
+			msg: {
+				before: { name: string; status: string }[]
+				after: { name: string; status: string }[]
+				primaryBefore?: string
+				primaryAfter?: string
+			},
+			span
+		) => {
+			span.addEvent(
+				EVENT_YDB_DRIVER_PILE_CHANGED,
+				defined({
+					[ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE]: msg.primaryBefore,
+					[ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER]: msg.primaryAfter,
+					[ATTR_YDB_DRIVER_PILE_BEFORE]: roster(msg.before),
+					[ATTR_YDB_DRIVER_PILE_AFTER]: roster(msg.after),
+				})
+			)
 		},
 	},
 	{
@@ -216,12 +273,15 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 	{
 		channel: 'ydb:driver.connection.added',
 		apply: (msg: { nodeId: bigint; address: string; location: string; pile: string }, span) => {
-			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_ADDED, {
-				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
-				[ATTR_YDB_NODE_DC]: msg.location,
-				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
-				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-			})
+			span.addEvent(
+				EVENT_YDB_DRIVER_CONNECTION_ADDED,
+				defined({
+					[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
+					[ATTR_YDB_NODE_DC]: msg.location,
+					[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
+					[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
+				})
+			)
 		},
 	},
 	{
@@ -229,12 +289,15 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 		// The endpoints engine has no fixed pessimization timer, so the payload no
 		// longer carries `until` (recovery is optimistic un-ban / discovery reset).
 		apply: (msg: { nodeId: bigint; address: string; location: string; pile: string }, span) => {
-			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_PESSIMIZED, {
-				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
-				[ATTR_YDB_NODE_DC]: msg.location,
-				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
-				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-			})
+			span.addEvent(
+				EVENT_YDB_DRIVER_CONNECTION_PESSIMIZED,
+				defined({
+					[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
+					[ATTR_YDB_NODE_DC]: msg.location,
+					[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
+					[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
+				})
+			)
 		},
 	},
 	{
@@ -249,13 +312,16 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 			},
 			span
 		) => {
-			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED, {
-				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
-				[ATTR_YDB_NODE_DC]: msg.location,
-				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
-				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-				[ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION]: msg.duration / 1000,
-			})
+			span.addEvent(
+				EVENT_YDB_DRIVER_CONNECTION_UNPESSIMIZED,
+				defined({
+					[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
+					[ATTR_YDB_NODE_DC]: msg.location,
+					[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
+					[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
+					[ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION]: msg.duration / 1000,
+				})
+			)
 		},
 	},
 	{
@@ -270,13 +336,16 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 			},
 			span
 		) => {
-			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_RETIRED, {
-				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
-				[ATTR_YDB_NODE_DC]: msg.location,
-				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
-				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-				[ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON]: msg.reason,
-			})
+			span.addEvent(
+				EVENT_YDB_DRIVER_CONNECTION_RETIRED,
+				defined({
+					[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
+					[ATTR_YDB_NODE_DC]: msg.location,
+					[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
+					[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
+					[ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON]: msg.reason,
+				})
+			)
 		},
 	},
 	{
@@ -291,13 +360,16 @@ export let EVENT_CHANNELS: EventChannelEntry[] = [
 			},
 			span
 		) => {
-			span.addEvent(EVENT_YDB_DRIVER_CONNECTION_REMOVED, {
-				[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
-				[ATTR_YDB_NODE_DC]: msg.location,
-				[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
-				[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
-				[ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON]: msg.reason,
-			})
+			span.addEvent(
+				EVENT_YDB_DRIVER_CONNECTION_REMOVED,
+				defined({
+					[ATTR_YDB_NODE_ID]: Number(msg.nodeId),
+					[ATTR_YDB_NODE_DC]: msg.location,
+					[ATTR_YDB_NODE_PILE]: msg.pile || undefined,
+					[ATTR_NETWORK_PEER_ADDRESS]: msg.address,
+					[ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON]: msg.reason,
+				})
+			)
 		},
 	},
 ]
