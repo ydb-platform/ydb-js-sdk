@@ -378,7 +378,11 @@ export class IntervalType extends PrimitiveType {
 
 export class Interval extends Primitive implements Value<IntervalType> {
 	constructor(value: number) {
-		super({ value: { case: 'int32Value', value: value } }, new IntervalType())
+		if (!Number.isSafeInteger(value)) {
+			throw new RangeError('Interval must be a safe integer number of microseconds')
+		}
+		super({ value: { case: 'int64Value', value: BigInt(value) } }, new IntervalType())
+		this.value = value
 	}
 }
 
@@ -406,7 +410,7 @@ export class TzTimestamp extends Primitive implements Value<TzTimestampType> {
 	constructor(value: TZDate) {
 		let date = formatISO9075(value, { representation: 'date' })
 		let time = formatISO9075(value, { representation: 'time' })
-		let micro = value.getMilliseconds() * 1000
+		let micro = String(value.getMilliseconds() * 1000).padStart(6, '0')
 
 		super(
 			{
