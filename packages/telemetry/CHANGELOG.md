@@ -1,5 +1,36 @@
 # @ydbjs/telemetry
 
+## 7.0.0
+
+### Major Changes
+
+- [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096) Thanks [@polRk](https://github.com/polRk)! - Connect SDK services to `@ydbjs/grpc` and remove nice-grpc and grpc-js from the workspace. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and backpressure. Requires Node.js 22.15 or later supported by the SDK.
+
+  Use `createServiceClient(service, transport)` for standalone calls. `Driver.createClient` retains discovery and node selection; `createPinnedClient` explicitly awaits endpoint pin acquisition. Configure TLS, message limits, and HTTP/2 windows through `transportOptions`. The transport does not replay RPCs or duplicate YDB balancing and retry policies.
+
+  Call options accept plain metadata records, signals, absolute deadlines, and header/trailer/status observers. `RpcError` carries code, details, and trailing metadata; `MessageSizeError` identifies permanent local size-limit failures. Query metadata events expose the same record format. Register `addMetadataHook` before constructing Driver to add tracing headers. Credential providers supply `getToken`; Driver handles authentication and mandatory headers without middleware or interceptor adapters.
+
+  High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
+
+  Preserve explicit TLS server names when discovery provides no override, and avoid logging raw driver options.
+
+  Preserve explicit gRPC endpoint ports when selecting TLS, including mixed-case URL schemes. Merge repeated case-insensitive call metadata values while keeping required driver headers authoritative over caller metadata and hooks.
+
+- [#709](https://github.com/ydb-platform/ydb-js-sdk/pull/709) [`85601f5`](https://github.com/ydb-platform/ydb-js-sdk/commit/85601f5e42c9e7efcc9d44eb367e3bae12821b5c) Thanks [@polRk](https://github.com/polRk)! - Require OpenTelemetry API 1.10 and SDK 3.x (experimental packages 0.300.x). Update application providers, processors, and exporters together; SDK 2.x providers are not compatible with API 1.10. Trace context and baggage propagation remain supported.
+
+### Patch Changes
+
+- [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1) Thanks [@polRk](https://github.com/polRk)! - Refresh compatible dependency versions and remove unused runtime packages. Include the `ms` types required by the Topic reader's published declarations.
+
+- [#638](https://github.com/ydb-platform/ydb-js-sdk/pull/638) [`d5cdb51`](https://github.com/ydb-platform/ydb-js-sdk/commit/d5cdb515e7f5522d4008ec55d90dc00263f4df25) Thanks [@polRk](https://github.com/polRk)! - Drop the `pessimization.until` span-event attribute from the `ydb:driver.connection.pessimized` subscriber. The endpoints engine in `@ydbjs/core` no longer emits `until` (pessimization has no fixed timer), so the subscriber was writing `NaN` (`undefined / 1000`) as the attribute value under an active span. The `ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_UNTIL` semconv constant is kept but deprecated.
+
+  Add the `ydb.node.pile` (`ATTR_YDB_NODE_PILE`) span-event attribute to every `ydb:driver.connection.*` mapping, so bridge (2DC) traces show which pile each node belongs to alongside `ydb.node.dc`. The attribute is omitted on a non-bridge cluster (empty pile name).
+
+- Updated dependencies [[`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`cdff086`](https://github.com/ydb-platform/ydb-js-sdk/commit/cdff0864d850ba1bd1c7cf7c7041dd9742f04ef6), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`64df3b5`](https://github.com/ydb-platform/ydb-js-sdk/commit/64df3b50005490e7c5a1628a6a9f31cb19e07d3d), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8), [`e6960f6`](https://github.com/ydb-platform/ydb-js-sdk/commit/e6960f6b4170c7d399739b364c45ed5ca8374eb4), [`549da21`](https://github.com/ydb-platform/ydb-js-sdk/commit/549da21a2f16312e5c774cb34ab4de87f40f3005), [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096), [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28), [`6ad8ff0`](https://github.com/ydb-platform/ydb-js-sdk/commit/6ad8ff016a40d9036add4d7db8dc5d0e6b8365de)]:
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/error@6.1.0
+
 ## 6.0.1
 
 ### Patch Changes
@@ -78,7 +109,7 @@
   - `ydb.query.session.acquire.duration` (Histogram)
   - `ydb.query.session.closed` (Counter, tagged with
     `ydb.session.close.reason` ∈ `{pool_close, attach_failed,
-stream_closed, stream_error}`)
+    stream_closed, stream_error}`)
   - `ydb.query.session.acquire.failures` (Counter, tagged with
     `error.type`)
   - `ydb.auth.token.fetch.duration` (Histogram)

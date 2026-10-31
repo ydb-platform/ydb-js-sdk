@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/langchain",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "YDB integration for LangChain.js \u2014 VectorStore backed by YDB.",
 	"keywords": [
 		"database",
@@ -47,9 +47,9 @@
 		"test:int": "vitest --run --project int"
 	},
 	"dependencies": {
-		"@ydbjs/core": "^6.3.1",
-		"@ydbjs/query": "^6.3.0",
-		"@ydbjs/value": "^6.0.8"
+		"@ydbjs/core": "^7.0.0",
+		"@ydbjs/query": "^7.0.0",
+		"@ydbjs/value": "^6.0.9"
 	},
 	"peerDependencies": {
 		"@langchain/core": ">=1.0.0 <2.0.0"
