@@ -4,6 +4,7 @@ import * as Ydb from '@ydbjs/api/value'
 import { type Type, TypeKind } from './type.js'
 import type { Value } from './value.js'
 import { NullType } from './null.js'
+import { assertType } from './type-check.js'
 
 export class DictType implements Type {
 	readonly key: Type
@@ -41,18 +42,22 @@ export class Dict<K extends Value = Value, V extends Value = Value> implements V
 	readonly pairs: [K, V][] = []
 	#valueInstance?: Ydb.Value
 
-	constructor(...items: [K, V][]) {
-		let keyType: Type = new NullType()
-		let valueType: Type = new NullType()
-
-		for (let [k, v] of items) {
-			keyType = k.type
-			valueType = v.type
-
-			this.pairs.push([k, v])
+	constructor(...items: [K, V][])
+	constructor(items: [K, V][], type: DictType)
+	constructor(...args: [K, V][] | [[K, V][], DictType]) {
+		let explicit = args[1] instanceof DictType
+		let items = (explicit ? args[0] : args) as [K, V][]
+		this.type = explicit
+			? (args[1] as DictType)
+			: new DictType(
+					items[0]?.[0].type ?? new NullType(),
+					items[0]?.[1].type ?? new NullType()
+				)
+		for (let [index, [key, value]] of items.entries()) {
+			assertType(key.type, this.type.key, `Dict key ${index}`)
+			assertType(value.type, this.type.value, `Dict value ${index}`)
+			this.pairs.push([key, value])
 		}
-
-		this.type = new DictType(keyType, valueType)
 	}
 
 	encode(): Ydb.Value {

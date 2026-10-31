@@ -12,6 +12,8 @@ export enum TypeKind {
 	VOID = 9,
 	NULL = 10,
 	PG_TYPE = 11,
+	EMPTY_LIST = 12,
+	EMPTY_DICT = 13,
 }
 
 export interface Type {

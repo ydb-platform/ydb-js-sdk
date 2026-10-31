@@ -1,5 +1,6 @@
 import * as Ydb from '@ydbjs/api/value'
 
+import type { DecimalType } from './decimal.js'
 import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
@@ -58,6 +59,14 @@ function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
 			return 'Timestamp'
 		case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
 			return 'TzTimestamp'
+		case Ydb.Type_PrimitiveTypeId.DATE32:
+			return 'Date32'
+		case Ydb.Type_PrimitiveTypeId.DATETIME64:
+			return 'Datetime64'
+		case Ydb.Type_PrimitiveTypeId.TIMESTAMP64:
+			return 'Timestamp64'
+		case Ydb.Type_PrimitiveTypeId.INTERVAL64:
+			return 'Interval64'
 		case Ydb.Type_PrimitiveTypeId.DYNUMBER:
 			return 'DyNumber'
 		default:
@@ -70,7 +79,7 @@ export function typeToString(type: Type): string {
 		case TypeKind.PRIMITIVE:
 			return primitiveTypeToString((type as PrimitiveType).id)
 		case TypeKind.DECIMAL:
-			return 'Decimal'
+			return `Decimal(${(type as DecimalType).precision},${(type as DecimalType).scale})`
 		case TypeKind.LIST:
 			return `List<${typeToString((type as ListType).item)}>`
 		case TypeKind.DICT:
@@ -81,6 +90,10 @@ export function typeToString(type: Type): string {
 			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
+		case TypeKind.EMPTY_LIST:
+			return 'EmptyList'
+		case TypeKind.EMPTY_DICT:
+			return 'EmptyDict'
 		case TypeKind.NULL:
 			return 'Null'
 	}

@@ -5,6 +5,7 @@ import { Optional, OptionalType } from './optional.js'
 import { typeToString } from './print.js'
 import { type Type, TypeKind } from './type.js'
 import type { Value } from './value.js'
+import { assertType } from './type-check.js'
 
 export class StructType implements Type {
 	readonly names: string[] = []
@@ -12,6 +13,9 @@ export class StructType implements Type {
 	#typeInstance?: Ydb.Type
 
 	constructor(names: string[], types: Type[], sorted = false) {
+		if (names.length !== types.length || new Set(names).size !== names.length) {
+			throw new TypeError('Struct type requires one type per unique field name')
+		}
 		if (sorted) {
 			this.names = names
 			this.types = types
@@ -19,7 +23,7 @@ export class StructType implements Type {
 			return
 		}
 
-		const indices = names.map((_, i) => i)
+		let indices = names.map((_, i) => i)
 		indices.sort((a, b) => names[a]!.localeCompare(names[b]!))
 
 		for (let i of indices) {
@@ -69,13 +73,9 @@ export class Struct<
 			this.type = def
 
 			for (let [name, type] of def) {
-				let objValue = obj[name] ?? null
+				let objValue = Object.hasOwn(obj, name) ? (obj[name] ?? null) : null
 
-				if (objValue && objValue.type.kind !== type.kind) {
-					throw new Error(
-						`Invalid type for ${name}: expected ${typeToString(type)}, got ${typeToString(objValue.type)}`
-					)
-				}
+				if (objValue !== null) assertType(objValue.type, type, `Struct field ${name}`)
 
 				if (objValue === null && type.kind !== TypeKind.OPTIONAL) {
 					throw new Error(
@@ -98,7 +98,7 @@ export class Struct<
 		let types: Type[] = []
 
 		// Sort both arrays based on names
-		const indices = keys.map((_, i) => i)
+		let indices = keys.map((_, i) => i)
 		indices.sort((a, b) => keys[a]!.localeCompare(keys[b]!))
 
 		for (let i of indices) {
