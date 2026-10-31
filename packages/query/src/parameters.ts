@@ -1,6 +1,19 @@
 import { clone, create } from '@bufbuild/protobuf'
-import { type TypedValue, TypedValueSchema, type Value as WireValue } from '@ydbjs/api/value'
+import {
+	type TypedValue,
+	TypedValueSchema,
+	type Type as WireType,
+	type Value as WireValue,
+} from '@ydbjs/api/value'
 import { type JSValue, type Type, type TypeKind, type Value, fromJs } from '@ydbjs/value'
+
+import { Optional, OptionalType } from '@ydbjs/value/optional'
+import { Variant, VariantType } from '@ydbjs/value/variant'
+import { Tagged } from '@ydbjs/value/tagged'
+import { List } from '@ydbjs/value/list'
+import { Tuple } from '@ydbjs/value/tuple'
+import { Struct } from '@ydbjs/value/struct'
+import { Dict } from '@ydbjs/value/dict'
 
 export type QueryParameters = Readonly<Record<string, Value | JSValue>>
 
@@ -40,6 +53,7 @@ export function encodeParameters(parameters: QueryParameters): Record<string, Ty
 			typeof input.encode === 'function'
 				? (input as Value)
 				: fromJs(input as JSValue)
+		assertParameterValue(value)
 		let snapshot = clone(
 			TypedValueSchema,
 			create(TypedValueSchema, {
@@ -47,6 +61,7 @@ export function encodeParameters(parameters: QueryParameters): Record<string, Ty
 				value: value.encode(),
 			})
 		)
+		assertParameterType(snapshot.type!)
 		copyBuffers(snapshot.value!)
 		encoded[name] = snapshot
 	}
@@ -72,4 +87,57 @@ function copyBuffers(value: WireValue): void {
 		if (pair.key) copyBuffers(pair.key)
 		if (pair.payload) copyBuffers(pair.payload)
 	}
+}
+
+function assertParameterType(type: WireType): void {
+	switch (type.type.case) {
+		case 'taggedType':
+			throw new TypeError(
+				'YDB does not accept Tagged query parameters; unwrap the value and apply AsTagged in the query'
+			)
+		case 'optionalType':
+		case 'listType':
+			assertParameterType(type.type.value.item!)
+			break
+		case 'dictType':
+			assertParameterType(type.type.value.key!)
+			assertParameterType(type.type.value.payload!)
+			break
+		case 'tupleType':
+			for (let item of type.type.value.elements) assertParameterType(item)
+			break
+		case 'structType':
+			for (let item of type.type.value.members) assertParameterType(item.type!)
+			break
+		case 'variantType': {
+			let items = type.type.value.type
+			if (items.case === 'tupleItems')
+				for (let item of items.value.elements) assertParameterType(item)
+			if (items.case === 'structItems')
+				for (let item of items.value.members) assertParameterType(item.type!)
+		}
+	}
+}
+
+function assertParameterValue(value: Value): void {
+	if (value instanceof Optional && value.item === null) {
+		let type = value.type.itemType
+		while (type instanceof OptionalType) type = type.itemType
+		if (type instanceof VariantType)
+			throw new TypeError(
+				'YDB cannot import an absent Optional<Variant> parameter; construct the absence in the query'
+			)
+	}
+	if (
+		(value instanceof Optional || value instanceof Variant || value instanceof Tagged) &&
+		value.item
+	)
+		assertParameterValue(value.item)
+	if (value instanceof List || value instanceof Tuple || value instanceof Struct)
+		for (let item of value.items) assertParameterValue(item)
+	if (value instanceof Dict)
+		for (let [key, item] of value.pairs) {
+			assertParameterValue(key)
+			assertParameterValue(item)
+		}
 }

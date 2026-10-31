@@ -38,6 +38,8 @@ export class List<T extends Value = Value> implements Value<ListType> {
 	constructor(items: T[], type: ListType)
 	constructor(...args: T[] | [T[], ListType]) {
 		let explicit = Array.isArray(args[0])
+		if (explicit && !(args[1] instanceof ListType))
+			throw new TypeError('List array construction requires a ListType')
 		let items = (explicit ? args[0] : args) as T[]
 		this.type = explicit
 			? (args[1] as ListType)

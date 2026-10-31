@@ -5,6 +5,9 @@ import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
 import { ExtendedPrimitiveTypeId, type PrimitiveTypeId } from './primitive.js'
+import type { PgType } from './pg.js'
+import type { TaggedType } from './tagged.js'
+import type { VariantType } from './variant.js'
 import type { PrimitiveType } from './primitive.js'
 import type { StructType } from './struct.js'
 import type { TupleType } from './tuple.js'
@@ -81,6 +84,12 @@ function primitiveTypeToString(pTypeId: PrimitiveTypeId) {
 	}
 }
 
+function memberName(name: string): string {
+	return /^[A-Za-z_][A-Za-z_0-9]*$/.test(name)
+		? name
+		: '`' + name.replaceAll('\\', '\\\\').replaceAll('`', '``') + '`'
+}
+
 export function typeToString(type: Type): string {
 	switch (type.kind) {
 		case TypeKind.PRIMITIVE:
@@ -94,7 +103,24 @@ export function typeToString(type: Type): string {
 		case TypeKind.TUPLE:
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(',')}>`
 		case TypeKind.STRUCT:
-			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
+			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
+		case TypeKind.VARIANT: {
+			let items = (type as VariantType).items
+			let body = typeToString(items)
+			return `Variant<${body.slice(body.indexOf('<') + 1, -1)}>`
+		}
+		case TypeKind.TAGGED:
+			return `Tagged<${typeToString((type as TaggedType).itemType)},${JSON.stringify((type as TaggedType).tag)}>`
+		case TypeKind.VOID:
+			return 'Void'
+		case TypeKind.PG_TYPE: {
+			let name = (type as PgType).typeName
+			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name))
+				throw new TypeError(
+					'A canonical Pg typeName is required for SQL declarations; use QueryClient with an explicit DECLARE for OID-only types'
+				)
+			return name
+		}
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
 		case TypeKind.EMPTY_LIST:
@@ -103,7 +129,7 @@ export function typeToString(type: Type): string {
 			return 'EmptyDict'
 		case TypeKind.NULL:
 			return 'Null'
+		default:
+			throw new Error(`Unsupported type: ${type}`)
 	}
-
-	throw new Error(`Unsupported type: ${type}`)
 }

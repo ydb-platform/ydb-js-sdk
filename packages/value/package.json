@@ -81,6 +81,22 @@
 		"./empty": {
 			"development": "./src/empty.ts",
 			"default": "./dist/empty.js"
+		},
+		"./variant": {
+			"development": "./src/variant.ts",
+			"default": "./dist/variant.js"
+		},
+		"./tagged": {
+			"development": "./src/tagged.ts",
+			"default": "./dist/tagged.js"
+		},
+		"./void": {
+			"development": "./src/void.ts",
+			"default": "./dist/void.js"
+		},
+		"./pg": {
+			"development": "./src/pg.ts",
+			"default": "./dist/pg.js"
 		}
 	},
 	"publishConfig": {
