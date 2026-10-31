@@ -30,17 +30,61 @@ export class DecimalType implements Type {
 	}
 }
 
+let infinity = 10n ** 35n
+
+function parseDecimal(text: string, scale: number, limit: bigint): bigint {
+	let index = text[0] === '-' || text[0] === '+' ? 1 : 0
+	let negative = text[0] === '-'
+	if (text.length - index === 3) {
+		let special = text.slice(index).toLowerCase()
+		if (special === 'inf') return negative ? -infinity : infinity
+		if (special === 'nan') return infinity + 1n
+	}
+	let magnitude = 0n
+	let fractional = false
+	let fractionDigits = 0
+	let hasDigit = false
+	for (; index < text.length; index++) {
+		let char = text.charCodeAt(index)
+		if (char === 46 && !fractional) {
+			fractional = true
+			continue
+		}
+		if (char < 48 || char > 57)
+			throw new TypeError('Decimal requires decimal text without an exponent')
+		hasDigit = true
+		if (fractional && fractionDigits === scale) {
+			if (char !== 48)
+				throw new RangeError('Decimal value would require rounding to its scale')
+			continue
+		}
+		magnitude = magnitude * 10n + BigInt(char - 48)
+		if (magnitude >= limit) throw new RangeError('Decimal value exceeds its precision')
+		if (fractional) fractionDigits++
+	}
+	if (!hasDigit) throw new TypeError('Decimal requires at least one digit')
+	magnitude *= 10n ** BigInt(scale - fractionDigits)
+	if (magnitude >= limit) throw new RangeError('Decimal value exceeds its precision')
+	return negative ? -magnitude : magnitude
+}
+
 export class Decimal implements Value<DecimalType> {
+	readonly value: bigint
+
 	constructor(
-		readonly value: bigint,
+		value: bigint | string,
 		readonly type: DecimalType
 	) {
-		let magnitude = value < 0n ? -value : value
+		if (typeof value !== 'string' && typeof value !== 'bigint')
+			throw new TypeError('Decimal requires exact decimal text or a scaled bigint')
+		let limit = 10n ** BigInt(type.precision)
+		this.value = typeof value === 'string' ? parseDecimal(value, type.scale, limit) : value
+		let magnitude = this.value < 0n ? -this.value : this.value
 		if (
-			magnitude >= 10n ** BigInt(type.precision) &&
-			value !== 10n ** 35n &&
-			value !== -(10n ** 35n) &&
-			value !== 10n ** 35n + 1n
+			magnitude >= limit &&
+			this.value !== infinity &&
+			this.value !== -infinity &&
+			this.value !== infinity + 1n
 		) {
 			throw new RangeError('Decimal value exceeds its precision')
 		}
@@ -54,9 +98,9 @@ export class Decimal implements Value<DecimalType> {
 	}
 
 	toString(): string {
-		if (this.value === 10n ** 35n) return 'inf'
-		if (this.value === -(10n ** 35n)) return '-inf'
-		if (this.value === 10n ** 35n + 1n) return 'nan'
+		if (this.value === infinity) return 'inf'
+		if (this.value === -infinity) return '-inf'
+		if (this.value === infinity + 1n) return 'nan'
 		let digits = (this.value < 0n ? -this.value : this.value)
 			.toString()
 			.padStart(this.type.scale + 1, '0')

@@ -190,6 +190,23 @@ Use the typed Value when that distinction matters.
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
 
+## Exact scalar construction
+
+Import `Decimal`/`DecimalType` from `@ydbjs/value/decimal`, and `EmptyList`/`EmptyDict` from `@ydbjs/value/empty`.
+`new Decimal('1.23', new DecimalType(22, 9))` parses exact decimal text without rounding; bigint input is the scaled coefficient.
+Special values are `inf`, `-inf` and `nan`.
+
+The primitive subpath exports named Date32, Datetime64, Timestamp64, Interval64 and DyNumber constructors.
+Date32 accepts a Date or an integer day count; Datetime64 and Timestamp64 accept a Date or exact bigint seconds/microseconds.
+Interval64 accepts bigint or safe integer microseconds; DyNumber accepts decimal text.
+Date, Datetime and Timestamp also accept exact day/second/microsecond units.
+
+TzDate32, TzDatetime64 and TzTimestamp64 use the server IDs 68–70, which are absent from the public protobuf enum.
+All timezone constructors accept a TZDate or an exact YDB string such as `-1-02-29T12:34:56.123456,UTC`.
+YDB has no year zero; JS astronomical year zero corresponds to YDB year -1.
+Typed values preserve microseconds; native Date/TZDate projection keeps millisecond precision.
+The timezone text does not contain a DST fold marker, so it cannot distinguish both instants of an overlapping wall-clock time.
+
 ## Development
 
 ```sh
