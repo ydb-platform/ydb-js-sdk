@@ -1,55 +1,19 @@
-import type { Abortable } from 'node:events'
-import { tracingChannel } from 'node:diagnostics_channel'
+import type { Driver } from '@ydbjs/core'
+import { isRetryableError } from '@ydbjs/retry'
 
-import { abortable, linkSignals } from '@ydbjs/abortable'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { QueryServiceDefinition } from '@ydbjs/api/query'
-import type { Driver, DriverIdentity } from '@ydbjs/core'
-import { CommitError, YDBError } from '@ydbjs/error'
 import {
-	type RetryConfig,
-	type RetryContext,
-	defaultRetryConfig,
-	isRetryableError,
-	retry,
-} from '@ydbjs/retry'
-import { loggers } from '@ydbjs/debug'
-
+	type OperationOptions,
+	QueryClient,
+	type QueryClientOptions,
+	type QueryExecutor,
+	type Transaction,
+	type TransactionOptions,
+} from './client.js'
 import { Query } from './query.js'
 import { ctx } from './ctx.js'
 import { Fragment, UnsafeString, fragment, identifier, join, unsafe, yql } from './yql.js'
-import { SessionPool, type SessionPoolOptions, sessionAcquireCh } from './session-pool.js'
 
-type TransactionContext = {
-	driver: DriverIdentity
-	isolation: string
-	idempotent: boolean
-}
-
-type TxControlContext = {
-	driver: DriverIdentity
-	sessionId: string
-	nodeId: bigint
-	txId: string
-}
-
-type TxBeginContext = {
-	driver: DriverIdentity
-	nodeId: bigint
-	sessionId: string
-	isolation: string
-}
-
-let txBeginCh = tracingChannel<TxBeginContext>('tracing:ydb:query.begin')
-let txCommitCh = tracingChannel<TxControlContext>('tracing:ydb:query.commit')
-let txRollbackCh = tracingChannel<TxControlContext>('tracing:ydb:query.rollback')
-let transactionCh = tracingChannel<TransactionContext>('tracing:ydb:query.transaction')
-
-let dbg = loggers.query
-
-export type QueryOptions = {
-	poolOptions?: SessionPoolOptions
-}
+export type QueryOptions = QueryClientOptions
 
 export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
@@ -71,16 +35,13 @@ interface SessionContextCallback<T> {
 	(signal: AbortSignal): Promise<T>
 }
 
-interface TransactionExecuteOptions extends Abortable {
-	isolation?: 'serializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite'
-	idempotent?: boolean
-}
+type TransactionExecuteOptions = TransactionOptions
 
 interface TransactionContextCallback<T> {
 	(tx: TX, signal: AbortSignal): Promise<T>
 }
 
-export interface QueryClient extends SQL, AsyncDisposable, Disposable {
+export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 	close(): Promise<void>
 	destroy(): void
 
@@ -90,7 +51,7 @@ export interface QueryClient extends SQL, AsyncDisposable, Disposable {
 	// ): Query<T>
 
 	do<T = unknown>(fn: SessionContextCallback<T>): Promise<T>
-	do<T = unknown>(options: any, fn: SessionContextCallback<T>): Promise<T>
+	do<T = unknown>(options: OperationOptions, fn: SessionContextCallback<T>): Promise<T>
 
 	begin<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
 	begin<T = unknown>(
@@ -120,7 +81,7 @@ export interface QueryClient extends SQL, AsyncDisposable, Disposable {
 
 	/**
 	 * Create a composable {@link Fragment} from a tagged template. A fragment is
-	 * not executable — splice it into another query or {@link QueryClient.join}
+	 * not executable — splice it into another query or {@link SQLClient.join}
 	 * to build dynamic SQL while keeping values bound as parameters.
 	 *
 	 * @example ```ts
@@ -151,380 +112,126 @@ export interface QueryClient extends SQL, AsyncDisposable, Disposable {
 	join(fragments: readonly Fragment[], separator?: Fragment | string): Fragment
 }
 
-let doImpl = function <T = unknown>(): Promise<T> {
-	throw new Error('Not implemented')
-}
+export function query(driver: Driver, options?: QueryOptions): SQLClient
+export function query(client: QueryClient): SQLClient
+export function query(source: Driver | QueryClient, clientOptions?: QueryOptions): SQLClient {
+	let client = source instanceof QueryClient ? source : new QueryClient(source, clientOptions)
 
-/**
- * Creates a query client for executing YQL queries and managing transactions.
- *
- * @param driver - The YDB driver instance used to communicate with the database.
- * @returns A `QueryClient` object that provides methods for executing queries and managing transactions.
- *
- * @remarks
- * The returned client provides a tagged template function for YQL queries, as well as transactional helpers.
- *
- * @example
- * ```typescript
- * const client = query(driver);
- * const result = await client`SELECT 1;`;
- * ```
- *
- * @example
- * ```typescript
- * await client.transaction(async (yql, signal) => {
- *   const res = await yql`SELECT * FROM users WHERE id = ${userId}`;
- *   // ...
- * });
- * ```
- *
- * @see {@link QueryClient}
- */
-export function query(driver: Driver, options?: QueryOptions): QueryClient {
-	let sessionPool = new SessionPool(driver, options?.poolOptions)
-
-	function yqlQuery<P extends any[] = unknown[], T extends any[] = unknown[]>(
-		strings: string | TemplateStringsArray,
-		...values: P
-	): Query<T> {
-		let { text, params } = yql(strings, ...values)
-		dbg.log('creating query instance for text: %s', text)
-		return ctx.run(ctx.getStore() ?? {}, () => new Query<T>(driver, text, params, sessionPool))
-	}
-
-	function txIml<T = unknown>(fn: TransactionContextCallback<T>): Promise<T>
-	function txIml<T = unknown>(
-		options: TransactionExecuteOptions,
-		fn: TransactionContextCallback<T>
-	): Promise<T>
-	/**
-	 * Executes a transactional operation with automatic session and transaction management,
-	 * including retries on retryable errors.
-	 *
-	 * This function handles the lifecycle of a YDB session and transaction, including session creation,
-	 * transaction begin, commit, and rollback. It also manages retries for retryable errors and ensures
-	 * proper cleanup of resources. The transaction isolation level and idempotency can be configured.
-	 *
-	 * @template T The return type of the transactional operation.
-	 * @param optOrFn - Either the transaction execution options or the transactional callback function.
-	 *   If a function is provided as the first argument, it is used as the transactional callback and
-	 *   default options are applied.
-	 * @param fn - The transactional callback function, if options are provided as the first argument.
-	 *   The callback receives a YQL query executor and an AbortSignal.
-	 * @returns A promise that resolves with the result of the transactional operation.
-	 * @throws {YDBError} If session creation, transaction begin, or commit fails.
-	 * @throws {CommitError} If the transaction commit fails.
-	 * @throws {Error} If a non-retryable error occurs during the transaction.
-	 *
-	 * @remarks
-	 * - The function automatically retries the transaction on retryable errors if the operation is idempotent.
-	 * - The session and transaction are automatically cleaned up after execution.
-	 * - The transaction isolation level defaults to "serializableReadWrite" if not specified.
-	 * - The function uses the driver's QueryServiceDefinition to interact with YDB.
-	 */
-	async function txIml<T = unknown>(
-		optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>,
-		fn?: TransactionContextCallback<T>
-	): Promise<T> {
-		sessionPool.beginOperation()
-		try {
-			return await executeTransaction(optOrFn, fn)
-		} finally {
-			sessionPool.endOperation()
+	function executorSQL(executor?: QueryExecutor): SQL {
+		return function <T extends any[] = unknown[], P extends any[] = unknown[]>(
+			strings: string | TemplateStringsArray,
+			...values: P
+		): Query<T> {
+			let { text, params } = yql(strings, ...values)
+			return new Query<T>(client, text, params, executor)
 		}
 	}
 
-	async function executeTransaction<T>(
-		optOrFn: TransactionExecuteOptions | TransactionContextCallback<T>,
-		fn?: TransactionContextCallback<T>
-	): Promise<T> {
-		dbg.log('starting transaction')
-		let caller = typeof optOrFn === 'function' ? optOrFn : fn
-		let options = typeof optOrFn === 'function' ? ({} as TransactionExecuteOptions) : optOrFn
-		using lifetime = linkSignals(options.signal, sessionPool.signal)
-		await driver.ready(lifetime.signal)
-		// Snapshot the parent context once — we'll build a fresh attempt-scoped
-		// store inside each retry so failed attempts don't leave stale
-		// sessionId/transactionId in the shared store for the next one.
-		let parentStore = ctx.getStore() || {}
-
-		options.isolation ??= 'serializableReadWrite'
-		let idempotent = options.idempotent ?? false
-
-		let sessionDiedLastAttempt = false
-
-		let acquireSession = (signal: AbortSignal) =>
-			sessionAcquireCh.tracePromise(() => sessionPool.acquire(signal), {
-				driver: driver.identity,
-			})
-
-		let runAttempt = async (retrySignal: AbortSignal) => {
-			// Cancellation may settle the retry wrapper before this attempt finishes cleanup.
-			sessionPool.beginOperation(true)
-			try {
-				dbg.log('acquiring session from pool for transaction')
-				using sessionLease = await acquireSession(retrySignal)
-				// `sessionLease` exists only for lifecycle (auto-release on scope
-				// exit). All RPC-level work — begin/commit/rollback, ctx wiring,
-				// nested queries inside the body — talks to the underlying Session
-				// directly. One source of truth, no parallel id/nodeId fields.
-				let session = sessionLease.session
-				dbg.log('session %s acquired for transaction', session.id)
-
-				// linkSignals is disposed on scope exit — no listener buildup
-				// on the long-lived session signal across tx retries.
-				using linked = linkSignals(retrySignal, sessionLease.signal)
-				let signal = linked.signal
-
-				let attemptStore: typeof parentStore = {
-					...parentStore,
-					signal,
-					session,
-					sessionPool,
-				}
-
-				let client = driver.createClient(QueryServiceDefinition, session.nodeId)
-
-				let beginTransactionResult = await txBeginCh.tracePromise(
-					() =>
-						client.beginTransaction(
-							{
-								sessionId: session.id,
-								txSettings: {
-									txMode: { case: options.isolation!, value: {} },
-								},
-							},
-							{ signal }
-						),
-					{
-						driver: driver.identity,
-						nodeId: session.nodeId,
-						sessionId: session.id,
-						isolation: options.isolation!,
-					}
-				)
-				if (beginTransactionResult.status !== StatusIds_StatusCode.SUCCESS) {
-					dbg.log(
-						'failed to begin transaction, status: %d',
-						beginTransactionResult.status
-					)
-					throw new YDBError(beginTransactionResult.status, beginTransactionResult.issues)
-				}
-
-				attemptStore.transactionId = beginTransactionResult.txMeta!.id
-
-				let commitHooks: Array<(signal?: AbortSignal) => Promise<void> | void> = []
-				let rollbackHooks: Array<
-					(error: unknown, signal?: AbortSignal) => Promise<void> | void
-				> = []
-				let closeHooks: Array<
-					(committed: boolean, signal?: AbortSignal) => Promise<void> | void
-				> = []
-
-				let clearHooks = () => {
-					commitHooks.length = 0
-					rollbackHooks.length = 0
-					closeHooks.length = 0
-				}
-				sessionPool.signal.addEventListener('abort', clearHooks, { once: true })
-
-				let committed = false
-				try {
-					signal.throwIfAborted()
-					let tx = Object.assign(yqlQuery, {
-						nodeId: session.nodeId,
-						sessionId: session.id,
-						transactionId: attemptStore.transactionId,
-						onRollback: (fn: () => Promise<void> | void) => {
-							signal.throwIfAborted()
-							rollbackHooks.push(fn)
-						},
-						onCommit: (fn: () => Promise<void> | void) => {
-							signal.throwIfAborted()
-							commitHooks.push(fn)
-						},
-						onClose: (fn: () => Promise<void> | void) => {
-							signal.throwIfAborted()
-							closeHooks.push(fn)
-						},
-					}) as TX
-
-					dbg.log('executing transaction body')
-					let result = await abortable(
-						sessionPool.signal,
-						ctx.run(attemptStore, () => caller!(tx, signal))
-					)
-					signal.throwIfAborted()
-
-					dbg.log('executing %d commit hooks', commitHooks.length)
-					await Promise.all(
-						commitHooks.map(async (hook, i) => {
-							if (sessionPool.signal.aborted) return
-							dbg.log('executing commit hook #%d', i + 1)
-							await abortable(sessionPool.signal, Promise.resolve(hook(signal)))
-							dbg.log('commit hook #%d completed', i + 1)
-						})
-					)
-
-					dbg.log('committing transaction')
-					let txId = attemptStore.transactionId!
-					let commitResult = await txCommitCh.tracePromise(
-						() =>
-							client.commitTransaction(
-								{
-									sessionId: session.id,
-									txId,
-								},
-								{ signal }
-							),
-						{
-							driver: driver.identity,
-							sessionId: session.id,
-							nodeId: session.nodeId,
-							txId,
-						}
-					)
-					if (commitResult.status !== StatusIds_StatusCode.SUCCESS) {
-						dbg.log('failed to commit transaction, status: %d', commitResult.status)
-						throw new CommitError(
-							'Transaction commit failed.',
-							new YDBError(commitResult.status, commitResult.issues)
-						)
-					}
-
-					signal.throwIfAborted()
-					committed = true
-					dbg.log('transaction committed successfully')
-					return result
-				} catch (error) {
-					dbg.log('transaction error: %O', error)
-
-					// Signal up to the retry callback that this attempt tore down
-					// because the session died — lets it retry with a fresh one
-					// if the caller opted into idempotent retries.
-					if (session.signal.aborted) {
-						sessionDiedLastAttempt = true
-					}
-
-					dbg.log('executing %d rollback hooks', rollbackHooks.length)
-					await Promise.all(
-						rollbackHooks.map(async (hook, i) => {
-							if (sessionPool.signal.aborted) return
-							dbg.log('executing rollback hook #%d', i + 1)
-							await abortable(
-								sessionPool.signal,
-								Promise.resolve(hook(error, signal))
-							)
-							dbg.log('rollback hook #%d completed', i + 1)
-						})
-					)
-
-					let rollbackTxId = attemptStore.transactionId!
-					if (!sessionPool.signal.aborted) {
-						await txRollbackCh
-							.tracePromise(
-								() =>
-									client.rollbackTransaction(
-										{
-											sessionId: session.id,
-											txId: rollbackTxId,
-										},
-										{ signal: sessionPool.signal }
-									),
-								{
-									driver: driver.identity,
-									sessionId: session.id,
-									nodeId: session.nodeId,
-									txId: rollbackTxId,
-								}
-							)
-							.catch(() => {})
-					}
-
-					if (!isRetryableError(error, idempotent)) {
-						dbg.log('transaction not retryable, aborting')
-						throw new Error('Transaction failed.', { cause: error })
-					}
-
-					throw error
-				} finally {
-					try {
-						dbg.log('executing %d close hooks', closeHooks.length)
-						await Promise.all(
-							closeHooks.map(async (hook, i) => {
-								if (sessionPool.signal.aborted) return
-								dbg.log('executing close hook #%d', i + 1)
-								await abortable(
-									sessionPool.signal,
-									Promise.resolve(hook(committed, signal))
-								)
-								dbg.log('close hook #%d completed', i + 1)
-							})
-						)
-					} finally {
-						sessionPool.signal.removeEventListener('abort', clearHooks)
-						clearHooks()
-					}
-				}
-			} finally {
-				sessionPool.endOperation(true)
-			}
-		}
-
-		let retryConfig: RetryConfig = {
-			...defaultRetryConfig,
-			signal: lifetime.signal,
-			// Caller's flag flows through the retry layer unchanged and
-			// lands back in the callback as the second arg — single source
-			// of truth for whether the body is safe to replay.
-			idempotent,
-			retry: (error: unknown, idempotent: boolean) => {
-				let sessionDied = sessionDiedLastAttempt
-				sessionDiedLastAttempt = false
-				// A session abort mid-tx means we don't know whether the
-				// server applied any side effects — only re-open if the
-				// caller opted into idempotent retries.
-				return isRetryableError(error, idempotent) || (sessionDied && idempotent)
-			},
-			onRetry: (retryCtx: RetryContext) => {
-				dbg.log(
-					'retrying transaction, attempt %d, error: %O',
-					retryCtx.attempt,
-					retryCtx.error
-				)
-			},
-		}
-
-		return await transactionCh.tracePromise(() => retry(retryConfig, runAttempt), {
-			driver: driver.identity,
-			isolation: options.isolation!,
-			idempotent,
+	function transactionSQL(transaction: Transaction): TX {
+		return Object.assign(executorSQL(transaction), {
+			nodeId: transaction.nodeId,
+			sessionId: transaction.sessionId,
+			transactionId: transaction.transactionId,
+			onCommit: transaction.beforeCommit.bind(transaction),
+			onRollback: transaction.onRollback.bind(transaction),
+			onClose: transaction.onClose.bind(transaction),
 		})
 	}
 
-	return Object.assign(yqlQuery, {
-		close(): Promise<void> {
-			return sessionPool.close()
-		},
-		destroy(): void {
-			sessionPool.destroy()
-		},
-		[Symbol.dispose](): void {
-			sessionPool.destroy()
-		},
-		do: doImpl,
-		begin: txIml,
-		transaction: txIml,
-		identifier: identifier,
-		unsafe: unsafe,
-		fragment: fragment,
-		join: join,
-		async [Symbol.asyncDispose]() {
-			await sessionPool.close()
-		},
+	function transact<T>(callback: TransactionContextCallback<T>): Promise<T>
+	function transact<T>(
+		options: TransactionExecuteOptions,
+		callback: TransactionContextCallback<T>
+	): Promise<T>
+	async function transact<T>(
+		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
+		callback?: TransactionContextCallback<T>
+	): Promise<T> {
+		if (typeof optionsOrCallback === 'function' && callback !== undefined)
+			throw new TypeError('Use transaction(options, callback) when passing options.')
+		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
+		let caller = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback
+		if (typeof caller !== 'function')
+			throw new TypeError('transaction() requires an async callback.')
+		let callbackFailed = false
+		let callbackError: unknown
+		return client
+			.retryTransaction(options, (transaction, signal) =>
+				ctx.run({ client, executor: transaction, signal }, async () => {
+					callbackFailed = false
+					try {
+						return await caller(transactionSQL(transaction), signal)
+					} catch (error) {
+						callbackFailed = true
+						callbackError = error
+						throw error
+					}
+				})
+			)
+			.catch((error) => {
+				if (
+					callbackFailed &&
+					error === callbackError &&
+					!isRetryableError(error, options.idempotent)
+				)
+					throw new Error('Transaction failed.', { cause: error })
+				throw error
+			})
+	}
+
+	function run<T>(callback: SessionContextCallback<T>): Promise<T>
+	function run<T>(options: OperationOptions, callback: SessionContextCallback<T>): Promise<T>
+	async function run<T>(
+		optionsOrCallback: OperationOptions | SessionContextCallback<T>,
+		callback?: SessionContextCallback<T>
+	): Promise<T> {
+		if (typeof optionsOrCallback === 'function' && callback !== undefined)
+			throw new TypeError('Use do(options, callback) when passing options.')
+		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
+		let caller = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback
+		if (typeof caller !== 'function') throw new TypeError('do() requires an async callback.')
+		return client.retrySession(options, (executor, signal) =>
+			ctx.run({ client, executor, signal }, () => caller(signal))
+		)
+	}
+
+	return Object.assign(executorSQL(), {
+		close: () => client.close(),
+		destroy: () => client.destroy(),
+		[Symbol.dispose]: () => client.destroy(),
+		[Symbol.asyncDispose]: () => client.close(),
+		do: run,
+		begin: transact,
+		transaction: transact,
+		identifier,
+		unsafe,
+		fragment,
+		join,
 	})
 }
 
-export { type Query } from './query.ts'
+export { type Query } from './query.js'
 export { identifier, unsafe, UnsafeString, fragment, join, Fragment } from './yql.js'
-export { type SessionPoolOptions } from './session-pool.js'
+export {
+	type SessionPoolOptions,
+	SessionPoolFullError,
+	SessionPoolClosedError,
+} from './session-pool.js'
+
+export { QueryClient } from './client.js'
+export { TransactionCompletionError } from '@ydbjs/error'
+export type {
+	QueryClientOptions,
+	QueryParameters,
+	QueryExecutor,
+	QueryResult,
+	QueryPart,
+	QuerySummary,
+	QueryStream,
+	StatementOptions,
+	TransactionStatementOptions,
+	OperationOptions,
+	TransactionOptions,
+	Transaction,
+	Isolation,
+} from './client.js'

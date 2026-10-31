@@ -1,0 +1,21 @@
+{
+	"name": "@ydbjs/examples-query-clients",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc && tsc -p type-tests",
+		"demo": "node dist/demo.js",
+		"memory": "node --expose-gc --max-old-space-size=128 dist/memory.js"
+	},
+	"dependencies": {
+		"@ydbjs/query": "^6.3.0",
+		"@ydbjs/core": "^6.3.1",
+		"@ydbjs/value": "^6.0.8"
+	},
+	"engines": {
+		"node": "^22.15.0 || >=23.8.0",
+		"npm": ">=10"
+	},
+	"engineStrict": true
+}

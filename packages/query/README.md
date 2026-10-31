@@ -4,11 +4,12 @@
 
 Read this in Russian: [README.ru.md](README.ru.md)
 
-The `@ydbjs/query` package provides a high-level, type-safe client for executing YQL queries and managing transactions in YDB. It features a tagged template API, automatic parameter binding, transaction helpers, and deep integration with the YDB type system.
+The `@ydbjs/query` package provides a tagged template API and a raw SQL client for executing YQL queries and managing transactions in YDB. Both share parameter conversion, session pooling, and retry handling.
 
 ## Features
 
 - Tagged template syntax for YQL queries
+- Plain SQL execution and streaming inside explicit retry callbacks
 - Type-safe, automatic parameter binding (including complex/nested types)
 - Transaction helpers with isolation and idempotency options
 - Multiple result sets and streaming support
@@ -23,7 +24,8 @@ npm install @ydbjs/core @ydbjs/query
 
 ## How It Works
 
-- **Query Client**: Create a query client with `query(driver)`. This provides a tagged template function for YQL queries and helpers for transactions.
+- **Tagged Queries**: `query(driver)` returns a tagged template function with automatic parameter binding and transaction helpers.
+- **Raw SQL Client**: `new QueryClient(driver)` exposes `retrySession(options, callback)` and `retryTransaction(options, callback)`. Options may be omitted; the callback is always last. It receives a session or transaction executor and the current attempt's cancellation signal. `query(client)` adds the tagged interface to that client's pool and lifecycle.
 - **Session Pool**: Sessions are automatically pooled and reused between queries and transactions (default pool size: 50). Configure with `query(driver, { poolOptions: { maxSize: 100 } })`.
 - **Sessions & Transactions**: Sessions and transactions are managed automatically. You can run single queries or group multiple queries in a transaction with `begin`/`transaction`.
 - **Parameter Binding**: Parameters are bound by interpolation (`${}`) in the template string. Native JS types, YDB value classes, and arrays/objects are all supported. Use `.parameter()`/`.param()` for named parameters.
@@ -32,6 +34,93 @@ npm install @ydbjs/core @ydbjs/query
 - **Query Statistics**: Use `.withStats()` or `.stats()` to access execution statistics.
 
 ## Usage
+
+### Plain SQL and streaming
+
+V7 exports the raw `QueryClient` class from `@ydbjs/query`. Its execution entry points are `retrySession(options, callback)` and `retryTransaction(options, callback)`, or `retrySession(callback)` and `retryTransaction(callback)` with default options. The callback is always the last argument. The client also owns `close()`, `destroy()` and structured disposal. Each callback receives `(session, signal)` for one attempt. The executor accepts SQL text unchanged, a named parameter object, and statement options. Use explicit YQL `DECLARE` statements when the database does not enable implicit parameter types.
+
+The previous callable `QueryClient` type is named `SQLClient`. `query(driver)` and `query(client)` provide the convenient tagged API, including `sql.do()`, `sql.begin()` and `sql.transaction()`. `query(client)` shares the raw client's pool and lifecycle.
+
+Each scoped statement snapshots its parameters when `execute()` or `stream()` is called. A retried callback may deliberately construct different parameters on its next attempt. A standalone tagged query instead fixes its text, settings and parameter values before its first attempt and reuses those bindings on retries.
+
+```ts
+import { QueryClient, query } from '@ydbjs/query'
+import { Uint64 } from '@ydbjs/value/primitive'
+
+await using client = new QueryClient(driver)
+let text = 'DECLARE $id AS Uint64; SELECT $id AS id;'
+let parameters = { id: new Uint64(42n) }
+let signal = AbortSignal.timeout(30_000)
+let result = await client.retrySession({ signal, idempotent: true }, (session) =>
+  session.execute(text, parameters, { timeout: 5000 })
+)
+
+let sql = query(client)
+let rows = await sql`SELECT ${new Uint64(42n)} AS id`
+```
+
+`session.execute()` returns `{ resultSets, stats, metadata }` after collecting the response. `session.stream()` returns response parts and is available only inside a retry callback. The root `QueryClient` has no `execute()`, `stream()`, `do()` or `transaction()` methods. A scoped stream retains only the current response parts, transport buffers and result schemas. Its memory use depends on part size, row size and concurrent operations, rather than the total result size. `responsePartLimitBytes` is a server-side packing target, not a strict JavaScript heap limit. `summary` becomes available only after successful full consumption.
+
+The SDK owns the retry loop for every streaming operation. A stream does not independently replay rows; its failure reaches the surrounding retrier, which repeats the complete callback when allowed. Statement options reject `retry`, `idempotent` and `onRetry`: these belong to the callback. A failed attempt closes its streams before releasing its session. Unconsumed streams reject the callback, and executors or streams retained outside the callback cannot start further work. An early `break` cancels the RPC; a callback scope requires full consumption to succeed. `return()`, `cancel()` and async disposal also stop a pending `next()`.
+
+```ts
+let total = await client.retrySession(
+  { signal, idempotent: true, retry: { budget: 3 } },
+  async (session) => {
+    let total = 0n
+    for await (let part of session.stream<{ id: bigint }>(text, parameters)) {
+      for (let row of part.rows) total += row.id
+    }
+    return total
+  }
+)
+```
+
+The accumulator belongs to an attempt. External effects performed by the callback also repeat; a read-only SQL statement does not make those effects idempotent. `idempotent: false` does not disable retries for definite-abort statuses: the entire callback must be safe to restart. `retrySession()` reuses a session for the attempt but does not make its statements atomic. Use `retryTransaction()` when a group of database writes must roll back together. The SDK does not resume an arbitrary `ExecuteQuery` at the last delivered row. Caller cancellation ends the retry budget and does not establish whether a write committed.
+
+Callback options own `signal`, `timeout`, `retry`, `idempotent` and `onRetry`. The second callback argument is the current attempt's signal; pass it to application work that needs to stop when the attempt is cancelled. Statements may add a `signal` or `timeout` cap within the callback's remaining budget, but cannot replace its retry policy. Transaction isolation belongs to `retryTransaction()` options; statement isolation is available only in `retrySession()`.
+
+```ts
+let result = await client.retryTransaction(
+  { signal, isolation: 'snapshotReadOnly', idempotent: true },
+  (tx) => tx.execute(text, parameters)
+)
+```
+
+`retryTransaction()` retries the complete transaction callback when the failure policy permits it. `beforeCommit()` runs before the commit RPC, including transactional Topic preparation; the historical `onCommit()` spelling remains as a compatibility alias. `onClose()` runs during completion cleanup, and a failure there never replays a confirmed commit. Its `committed: false` argument means that commit was not confirmed; it does not prove rollback when the outcome is unknown. The original uncertain commit error is preserved even when rollback returns `NOT_FOUND`.
+
+Commit hooks must be registered before preparation starts. A hook may execute statements, but registering another commit hook from it throws instead of silently skipping that work.
+
+A failed completion hook after confirmed commit rejects with `TransactionCompletionError` (`committed: true`), exported by `@ydbjs/query` and `@ydbjs/error`. Its `cause` preserves the original hook error. SDK retriers treat this error as terminal even if that cause is a retryable YDB error; this also prevents an enclosing retry scope from repeating a committed write. V7 callers that previously compared a close-hook error by identity should inspect `cause`.
+
+Caller cancellation stops waiting for application hooks even when they ignore their signal; rollback RPC cleanup uses a separate bounded budget. Cancellation after an observed successful commit also returns `TransactionCompletionError`. Other cancellation reasons retain their identity unless the reason itself is a retryable database or session error: those are wrapped in an `AbortError` with the original reason as `cause`, so an enclosing retry callback cannot mistake cancellation for a database failure.
+
+### Ownership and retry boundaries
+
+The raw client makes callback replay explicit for both buffered and streaming queries. The tagged API supplies convenient query handles over the same execution engine; the raw executor returns a Promise or a scoped stream directly. The [executable example](../../examples/query-clients/src/demo.ts) demonstrates both interfaces sharing one client.
+
+The callback boundary follows YDB [Go Do/DoTx](https://github.com/ydb-platform/ydb-go-sdk/blob/229af32f876ca3e96ab962436cd670cb2e174872/QUERY.md#L8-L22): collect buffered results and consume streams inside the attempt. The executor's `execute()` always materializes results and `stream()` always returns parts, including inside a transaction.
+
+MongoDB also uses callback-bound ownership: [withSession](https://github.com/mongodb/node-mongodb-native/blob/main/src/mongo_client.ts) owns cleanup, while [withTransaction](https://github.com/mongodb/node-mongodb-native/blob/main/src/sessions.ts) can repeat its callback. The names `retrySession` and `retryTransaction` expose that replay contract directly. YDB's commit semantics differ, so MongoDB's commit retry algorithm is not copied.
+
+node-postgres separates [Promise results and streaming cursors](https://node-postgres.com/apis/cursor), but its [manual transaction pattern](https://node-postgres.com/features/transactions) leaves connection release and rollback to the application. This SDK keeps those responsibilities inside its retry callbacks. [Postgres.js's lazy Query and cursor](https://github.com/porsager/postgres/blob/411429e7bd7a3d61155ca9a70a97c111823702ea/src/query.js#L74-L163) illustrates a convenient query handle; this package keeps that convenience in the tagged API. It does not combine an EventEmitter, Promise and row stream into one raw return value; node-postgres documents the [ambiguities of that combination](https://github.com/brianc/node-postgres/blob/master/docs/pages/guides/upgrading.md). YDB response parts are not PostgreSQL portal fetches, so a cursor row-count setting would imply a guarantee the protocol does not provide.
+
+### Examples
+
+After building the workspace, use a disposable local YDB and run the [raw-client and tagged-query example](../../examples/query-clients/src/demo.ts) directly:
+
+```sh
+export YDB_CONNECTION_STRING='grpc://localhost:2136/local'
+node examples/query-clients/dist/demo.js
+```
+
+The [memory example](../../examples/query-clients/src/memory.ts) consumes a stream inside `retrySession()` and validates row count, payload length and an ID checksum without collecting rows. It reports completed payload bytes, sampled peak memory and retained memory after a final GC; there is no forced GC during consumption. Use 16 rows for 1 MiB, 16384 for 1 GiB or 65536 for 4 GiB. The optional final argument is the consumer pause per part in milliseconds (default: 1).
+
+```sh
+node --expose-gc --max-old-space-size=128 examples/query-clients/dist/memory.js 16384 1
+```
+
+Server invariants were checked in YDB 25.3.1.25 (`8187ce049bed9e63a5ec04769da2d83dd237c08a`): [Attach loss closes its session](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/core/grpc_services/query/rpc_attach_session.cpp#L55-L94), [commit removes the transaction](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/core/kqp/session_actor/kqp_session_actor.cpp#L2285-L2296), and [the RPC contract requires transaction-wide retry after an interrupted stream](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/public/api/grpc/ydb_query_v1.proto#L26-L32). Error-injection tests use a controlled gRPC peer to schedule failures that a live database cannot reproduce deterministically; integration tests exercise public entry points against real YDB.
 
 ### Quick Start
 
@@ -96,7 +185,7 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
 // Multiple result sets
-type Result = [[{ id: number }], [{ count: number }]]
+type Result = [{ id: number }, { count: number }]
 const [rows, [{ count }]] =
   await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
 
@@ -133,7 +222,7 @@ await sql`SELECT * FROM users`
   .withStats(StatsMode.FULL)
 ```
 
-Note: isolation(), idempotent(), timeout(), and withStats() apply to single execute calls only; they are ignored inside transactions (sql.begin/sql.transaction).
+Inside a legacy `sql.begin()` / `sql.transaction()` callback, `isolation()` and `idempotent()` do not override the transaction options. A statement's `timeout()` still applies within the remaining outer budget, and `withStats()` still requests query statistics.
 
 ### Value Conversion and Type Safety
 
@@ -203,7 +292,9 @@ await result
 
 Neither method closes the supplied `Driver`; other clients sharing it remain usable. To discard an individual query's retained parameters, results and listeners, call `statement.destroy()` or `await statement.dispose()`. Its `cancel()` method only cancels execution and emits the existing `cancel` event.
 
-The session pool owns a single state machine for admission, session creation, leases, waiting callers and shutdown. `poolOptions.maxSize` caps live and creating sessions. `waitQueueFactor` defaults to 8; at most `maxSize + ceil(maxSize * waitQueueFactor)` root operations can be admitted at once, including operations waiting for driver readiness or retry backoff. Additional calls reject with `SessionPoolFullError` instead of retaining an unbounded backlog.
+The session pool owns a single state machine for admission, session creation, leases, waiting callers and shutdown. Request handles have no state machine and do not allocate cancellation controllers until execution or explicit cancellation. Transaction outcomes and callback retry boundaries belong to the executor rather than the pool.
+
+`poolOptions.maxSize` caps live and creating sessions. `waitQueueFactor` defaults to 8; at most `maxSize + ceil(maxSize * waitQueueFactor)` root operations can be admitted at once, including operations waiting for driver readiness or retry backoff. Additional calls reject with `SessionPoolFullError` instead of retaining an unbounded backlog.
 
 ## Observability via `node:diagnostics_channel`
 
@@ -240,13 +331,13 @@ Every payload starts with a `driver: DriverIdentity` field (defined in `@ydbjs/c
 | `ydb:query.session.waiter.enqueued` | publish | _(none)_ — a caller started waiting because the pool is saturated           |
 | `ydb:query.session.waiter.dequeued` | publish | _(none)_ — waiter resolved, rejected, or was aborted                        |
 
-`reason` (`SessionCloseReason`) is one of: `'pool_close'` (pool tear-down), `'attach_failed'` (initial AttachStream rejected — session never lived), `'stream_closed'` (attach stream ended cleanly, e.g. server-side TTL), `'stream_error'` (attach stream errored mid-flight). Sessions are pool-owned; there is no user-driven close. Carried both on the plain `session.closed` event and inside the `session.delete` tracing ctx.
+`reason` (`SessionCloseReason`) is one of: `'pool_close'` (pool tear-down), `'attach_failed'` (initial AttachStream rejected — session never lived), `'stream_closed'` (attach stream ended cleanly, e.g. server-side TTL), `'stream_error'` (attach stream errored mid-flight), or `'invalidated'` (the SDK retired a session after a fatal status or interrupted query). Invalidating a session closes Attach rather than issuing DeleteSession, so it emits `session.closed` without a `session.delete` RPC trace.
 
 `pool.opened.minSize` reports the best-effort warm-up target. A failed background creation does not start an unbounded retry loop; queued operations continue to drive session creation within the pool limit.
 
 ### Retry hierarchy
 
-Retry-loop spans (`tracing:ydb:retry.run`, `tracing:ydb:retry.attempt`, `ydb:retry.exhausted`) come from `@ydbjs/retry` and nest correctly under `query.transaction` / `query.execute` via `AsyncLocalStorage` propagation in `tracePromise`. Subscribers see a tree like:
+Retry-loop spans (`tracing:ydb:retry.run`, `tracing:ydb:retry.attempt`, `ydb:retry.exhausted`) come from `@ydbjs/retry`. Session acquisition and statement execution belong to an attempt; `retryTransaction()` adds the outer `query.transaction` span. `AsyncLocalStorage` propagation preserves this ownership through streaming consumption:
 
 ```
 ydb.query.transaction
@@ -260,7 +351,7 @@ ydb.query.transaction
       ...
 ```
 
-`query.begin` / `query.commit` / `query.rollback` each wrap exactly one server RPC. Use them for "begin/commit/rollback latency" and "rollback rate" metrics; `query.execute` is reserved for `ExecuteQuery` only. Rollback is fire-and-forget — its `start` always fires, but `asyncEnd` may land after the surrounding `query.transaction.error`. The same fire-and-forget pattern applies to `query.session.delete` (sent in the background when a session leaves the pool).
+`query.begin` / `query.commit` / `query.rollback` each wrap exactly one server RPC. Use them for "begin/commit/rollback latency" and "rollback rate" metrics; `query.execute` is reserved for `ExecuteQuery` only. Rollback has a separate bounded cleanup budget. Caller cancellation can settle the public operation before cleanup finishes; graceful `close()` still waits for the accepted attempt's cleanup. Session deletion is awaited during graceful pool shutdown; cleanup after a failed initial Attach is best-effort background work. `destroy()` starts no cleanup RPCs.
 
 ### Subscribing
 

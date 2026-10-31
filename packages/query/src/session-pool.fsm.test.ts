@@ -1,11 +1,47 @@
 import { channel, tracingChannel } from 'node:diagnostics_channel'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
+import { abortable } from '@ydbjs/abortable'
 import { Driver } from '@ydbjs/core'
 import { expect, test } from 'vitest'
 
 import { startClientServer } from './client.fixtures.ts'
+import { QueryClient } from './client.ts'
 import { SessionPool, SessionPoolClosedError, SessionPoolFullError } from './session-pool.ts'
+
+test('query admission is bounded while driver readiness is blocked', async (tc) => {
+	using server = await startClientServer()
+	using client = new QueryClient(server.driver, {
+		poolOptions: { maxSize: 1, waitQueueFactor: 1 },
+	})
+	let ready = server.driver.ready.bind(server.driver)
+	let gate = Promise.withResolvers<void>()
+	server.driver.ready = async (signal) => {
+		await abortable(signal, gate.promise)
+		await ready(signal)
+	}
+	let accepted = Promise.allSettled([
+		client.retrySession({ signal: tc.signal }, (session) => session.execute('SELECT 1')),
+		client.retrySession({ signal: tc.signal }, (session) => session.execute('SELECT 2')),
+	])
+	try {
+		await expect(
+			client.retrySession(
+				{
+					signal: tc.signal,
+				},
+				(session) => session.execute('SELECT overflow')
+			)
+		).rejects.toBeInstanceOf(SessionPoolFullError)
+		expect(server.executions).toHaveLength(0)
+	} finally {
+		gate.resolve()
+		await accepted
+	}
+	expect((await accepted).map((result) => result.status)).toEqual(['fulfilled', 'fulfilled'])
+	expect(server.executions).toHaveLength(2)
+	await client.close()
+})
 
 test('queued session creation traces retain each acquiring caller context', async (tc) => {
 	let storage = new AsyncLocalStorage<string>()
