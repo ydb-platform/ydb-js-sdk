@@ -21,22 +21,22 @@ function getRowObjectValue(
 	let pathKey = path[path.length - 1]
 
 	if (is(field, Column)) {
-		if (field.name in row) {
+		if (Object.hasOwn(row, field.name)) {
 			return row[field.name]
 		}
 
-		if (pathKey && pathKey in row) {
+		if (pathKey && Object.hasOwn(row, pathKey)) {
 			return row[pathKey]
 		}
 	} else if (is(field, SQL.Aliased)) {
-		if (field.fieldAlias in row) {
+		if (Object.hasOwn(row, field.fieldAlias)) {
 			return row[field.fieldAlias]
 		}
 
-		if (pathKey && pathKey in row) {
+		if (pathKey && Object.hasOwn(row, pathKey)) {
 			return row[pathKey]
 		}
-	} else if (pathKey && pathKey in row) {
+	} else if (pathKey && Object.hasOwn(row, pathKey)) {
 		return row[pathKey]
 	}
 
@@ -80,7 +80,7 @@ export function mapResultRow<TResult>(
 	row: unknown[] | Record<string, unknown>,
 	joinsNotNullableMap?: Record<string, boolean>
 ): TResult {
-	let nullifyMap: Record<string, string | false> = {}
+	let nullifyMap: Record<string, string | false> = Object.create(null)
 	let rowValues = rowToArray(columns, row)
 
 	let result = columns.reduce<Record<string, any>>((current, { path, field }, columnIndex) => {
@@ -99,14 +99,24 @@ export function mapResultRow<TResult>(
 		let node = current
 		for (let [pathChunkIndex, pathChunk] of path.entries()) {
 			if (pathChunkIndex < path.length - 1) {
-				if (!(pathChunk in node)) {
-					node[pathChunk] = {}
+				if (!Object.hasOwn(node, pathChunk)) {
+					Object.defineProperty(node, pathChunk, {
+						value: {},
+						writable: true,
+						enumerable: true,
+						configurable: true,
+					})
 				}
 				node = node[pathChunk]
 			} else {
 				let rawValue = rowValues[columnIndex]
 				let value = rawValue === null ? null : decoder.mapFromDriverValue(rawValue)
-				node[pathChunk] = value
+				Object.defineProperty(node, pathChunk, {
+					value,
+					writable: true,
+					enumerable: true,
+					configurable: true,
+				})
 
 				if (joinsNotNullableMap && is(field, Column) && path.length === 2) {
 					let objectName = path[0]!
@@ -127,7 +137,10 @@ export function mapResultRow<TResult>(
 
 	if (joinsNotNullableMap && Object.keys(nullifyMap).length > 0) {
 		for (let [objectName, tableName] of Object.entries(nullifyMap)) {
-			if (typeof tableName === 'string' && !joinsNotNullableMap[tableName]) {
+			if (
+				typeof tableName === 'string' &&
+				(!Object.hasOwn(joinsNotNullableMap, tableName) || !joinsNotNullableMap[tableName])
+			) {
 				result[objectName] = null
 			}
 		}
