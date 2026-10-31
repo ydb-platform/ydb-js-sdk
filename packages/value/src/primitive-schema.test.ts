@@ -31,3 +31,45 @@ test('rejects primitive payloads that contradict their explicit type', (t) => {
 			)
 	).toThrow('requires int64Value')
 })
+
+test('rejects out-of-range integer values before they can be encoded under a narrower type', (t) => {
+	let cases = [
+		[Ydb.Type_PrimitiveTypeId.INT8, 'int32Value', -128, 127],
+		[Ydb.Type_PrimitiveTypeId.UINT8, 'uint32Value', 0, 255],
+		[Ydb.Type_PrimitiveTypeId.INT16, 'int32Value', -32768, 32767],
+		[Ydb.Type_PrimitiveTypeId.UINT16, 'uint32Value', 0, 65535],
+		[Ydb.Type_PrimitiveTypeId.INT32, 'int32Value', -2147483648, 2147483647],
+		[Ydb.Type_PrimitiveTypeId.UINT32, 'uint32Value', 0, 4294967295],
+	] as const
+	for (let [id, field, min, max] of cases) {
+		let type = new PrimitiveType(id)
+		for (let input of [min, max]) {
+			let value = new Primitive({ value: { case: field, value: input } }, type)
+			t.expect(
+				fromBinary(Ydb.ValueSchema, toBinary(Ydb.ValueSchema, value.encode())).value.value
+			).toBe(input)
+		}
+		for (let input of [min - 1, max + 1, 0.5, NaN, Infinity]) {
+			t.expect(() => new Primitive({ value: { case: field, value: input } }, type)).toThrow(
+				/integer range/
+			)
+		}
+	}
+	for (let [id, field, min, max] of [
+		[Ydb.Type_PrimitiveTypeId.INT64, 'int64Value', -(2n ** 63n), 2n ** 63n - 1n],
+		[Ydb.Type_PrimitiveTypeId.UINT64, 'uint64Value', 0n, 2n ** 64n - 1n],
+	] as const) {
+		let type = new PrimitiveType(id)
+		for (let input of [min, max]) {
+			let value = new Primitive({ value: { case: field, value: input } }, type)
+			t.expect(
+				fromBinary(Ydb.ValueSchema, toBinary(Ydb.ValueSchema, value.encode())).value.value
+			).toBe(input)
+		}
+		for (let input of [min - 1n, max + 1n]) {
+			t.expect(() => new Primitive({ value: { case: field, value: input } }, type)).toThrow(
+				/integer range/
+			)
+		}
+	}
+})

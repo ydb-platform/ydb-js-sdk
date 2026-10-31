@@ -70,6 +70,18 @@ let primitiveFields: Partial<Record<Ydb.Type_PrimitiveTypeId, Ydb.Value['value']
 	[Ydb.Type_PrimitiveTypeId.DYNUMBER]: 'textValue',
 }
 
+let integerRanges: Partial<Record<Ydb.Type_PrimitiveTypeId, [number, number] | [bigint, bigint]>> =
+	{
+		[Ydb.Type_PrimitiveTypeId.INT8]: [-128, 127],
+		[Ydb.Type_PrimitiveTypeId.UINT8]: [0, 255],
+		[Ydb.Type_PrimitiveTypeId.INT16]: [-32768, 32767],
+		[Ydb.Type_PrimitiveTypeId.UINT16]: [0, 65535],
+		[Ydb.Type_PrimitiveTypeId.INT32]: [-2147483648, 2147483647],
+		[Ydb.Type_PrimitiveTypeId.UINT32]: [0, 4294967295],
+		[Ydb.Type_PrimitiveTypeId.INT64]: [-(2n ** 63n), 2n ** 63n - 1n],
+		[Ydb.Type_PrimitiveTypeId.UINT64]: [0n, 2n ** 64n - 1n],
+	}
+
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
 	value: unknown
@@ -86,8 +98,21 @@ export class Primitive implements Value<PrimitiveType> {
 				`Primitive type ${Ydb.Type_PrimitiveTypeId[type.id] ?? type.id} requires ${field ?? 'a supported wire field'}`
 			)
 		}
+		let range = integerRanges[type.id]
+		let scalar = value.value?.value
+		if (
+			range &&
+			(typeof scalar !== typeof range[0] ||
+				(typeof scalar === 'number' && !Number.isInteger(scalar)) ||
+				(scalar as number | bigint) < range[0] ||
+				(scalar as number | bigint) > range[1])
+		) {
+			throw new RangeError(
+				`Value is outside the ${Ydb.Type_PrimitiveTypeId[type.id]} integer range`
+			)
+		}
 		this.type = type
-		this.value = value?.value?.value
+		this.value = scalar
 		this.#value = value
 		if (value.value?.case === 'low128') {
 			this.high128 = value.high128 ?? 0n
