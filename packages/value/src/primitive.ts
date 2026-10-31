@@ -2,20 +2,30 @@ import { type MessageInitShape, create } from '@bufbuild/protobuf'
 import type { GenMessage } from '@bufbuild/protobuf/codegenv1'
 import type { TZDate } from '@date-fns/tz'
 import * as Ydb from '@ydbjs/api/value'
-import { type GenericDateConstructor, formatISO9075 } from 'date-fns'
+import type { GenericDateConstructor } from 'date-fns'
 
+import { timezoneText } from './temporal.js'
 import { type Type, TypeKind } from './type.js'
 import { bigIntsFromUuid, uuidFromBigInts } from './uuid.js'
 import { type Value } from './value.js'
 
+// ydbd exports these IDs even though the public protobuf enum does not name them.
+export enum ExtendedPrimitiveTypeId {
+	TZ_DATE32 = 68,
+	TZ_DATETIME64 = 69,
+	TZ_TIMESTAMP64 = 70,
+}
+
+export type PrimitiveTypeId = Ydb.Type_PrimitiveTypeId | ExtendedPrimitiveTypeId
+
 export class PrimitiveType implements Type {
-	declare id: Ydb.Type_PrimitiveTypeId
+	declare id: PrimitiveTypeId
 
 	#type: MessageInitShape<GenMessage<Ydb.Type>>
 	#typeInstance?: Ydb.Type
 
-	constructor(typeId: Ydb.Type_PrimitiveTypeId) {
-		this.#type = { type: { case: 'typeId', value: typeId } }
+	constructor(typeId: PrimitiveTypeId) {
+		this.#type = { type: { case: 'typeId', value: typeId as Ydb.Type_PrimitiveTypeId } }
 
 		Object.defineProperty(this, 'id', {
 			value: typeId,
@@ -38,7 +48,7 @@ export class PrimitiveType implements Type {
 	}
 }
 
-let primitiveFields: Partial<Record<Ydb.Type_PrimitiveTypeId, Ydb.Value['value']['case']>> = {
+let primitiveFields: Partial<Record<PrimitiveTypeId, Ydb.Value['value']['case']>> = {
 	[Ydb.Type_PrimitiveTypeId.BOOL]: 'boolValue',
 	[Ydb.Type_PrimitiveTypeId.INT8]: 'int32Value',
 	[Ydb.Type_PrimitiveTypeId.INT16]: 'int32Value',
@@ -68,19 +78,35 @@ let primitiveFields: Partial<Record<Ydb.Type_PrimitiveTypeId, Ydb.Value['value']
 	[Ydb.Type_PrimitiveTypeId.UUID]: 'low128',
 	[Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT]: 'textValue',
 	[Ydb.Type_PrimitiveTypeId.DYNUMBER]: 'textValue',
+	[ExtendedPrimitiveTypeId.TZ_DATE32]: 'textValue',
+	[ExtendedPrimitiveTypeId.TZ_DATETIME64]: 'textValue',
+	[ExtendedPrimitiveTypeId.TZ_TIMESTAMP64]: 'textValue',
 }
 
-let integerRanges: Partial<Record<Ydb.Type_PrimitiveTypeId, [number, number] | [bigint, bigint]>> =
-	{
-		[Ydb.Type_PrimitiveTypeId.INT8]: [-128, 127],
-		[Ydb.Type_PrimitiveTypeId.UINT8]: [0, 255],
-		[Ydb.Type_PrimitiveTypeId.INT16]: [-32768, 32767],
-		[Ydb.Type_PrimitiveTypeId.UINT16]: [0, 65535],
-		[Ydb.Type_PrimitiveTypeId.INT32]: [-2147483648, 2147483647],
-		[Ydb.Type_PrimitiveTypeId.UINT32]: [0, 4294967295],
-		[Ydb.Type_PrimitiveTypeId.INT64]: [-(2n ** 63n), 2n ** 63n - 1n],
-		[Ydb.Type_PrimitiveTypeId.UINT64]: [0n, 2n ** 64n - 1n],
-	}
+let integerRanges: Partial<Record<PrimitiveTypeId, [number, number] | [bigint, bigint]>> = {
+	[Ydb.Type_PrimitiveTypeId.INT8]: [-128, 127],
+	[Ydb.Type_PrimitiveTypeId.UINT8]: [0, 255],
+	[Ydb.Type_PrimitiveTypeId.INT16]: [-32768, 32767],
+	[Ydb.Type_PrimitiveTypeId.UINT16]: [0, 65535],
+	[Ydb.Type_PrimitiveTypeId.INT32]: [-2147483648, 2147483647],
+	[Ydb.Type_PrimitiveTypeId.UINT32]: [0, 4294967295],
+	[Ydb.Type_PrimitiveTypeId.INT64]: [-(2n ** 63n), 2n ** 63n - 1n],
+	[Ydb.Type_PrimitiveTypeId.UINT64]: [0n, 2n ** 64n - 1n],
+	[Ydb.Type_PrimitiveTypeId.DATE]: [0, 49672],
+	[Ydb.Type_PrimitiveTypeId.DATETIME]: [0, 4_291_747_199],
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP]: [0n, 4_291_747_199_999_999n],
+	[Ydb.Type_PrimitiveTypeId.INTERVAL]: [-4_291_747_199_999_999n, 4_291_747_199_999_999n],
+	[Ydb.Type_PrimitiveTypeId.DATE32]: [-53_375_809, 53_375_807],
+	[Ydb.Type_PrimitiveTypeId.DATETIME64]: [-4_611_669_897_600n, 4_611_669_811_199n],
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP64]: [
+		-4_611_669_897_600_000_000n,
+		4_611_669_811_199_999_999n,
+	],
+	[Ydb.Type_PrimitiveTypeId.INTERVAL64]: [
+		-9_223_339_708_799_999_999n,
+		9_223_339_708_799_999_999n,
+	],
+}
 
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
@@ -371,8 +397,9 @@ export class DateType extends PrimitiveType {
 }
 
 export class Date extends Primitive implements Value<DateType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let datesFromEpoch = Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
+	constructor(value: InstanceType<GenericDateConstructor> | number) {
+		let datesFromEpoch =
+			typeof value === 'number' ? value : Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
 
 		super({ value: { case: 'uint32Value', value: datesFromEpoch } }, new DateType())
 	}
@@ -385,16 +412,9 @@ export class TzDateType extends PrimitiveType {
 }
 
 export class TzDate extends Primitive implements Value<TzDateType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-
+	constructor(value: TZDate | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'date', false) } },
 			new TzDateType()
 		)
 	}
@@ -407,8 +427,9 @@ export class DatetimeType extends PrimitiveType {
 }
 
 export class Datetime extends Primitive implements Value<DatetimeType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let secondsFromEpoch = Math.floor(value.getTime() / 1000)
+	constructor(value: InstanceType<GenericDateConstructor> | number) {
+		let secondsFromEpoch =
+			typeof value === 'number' ? value : Math.floor(value.getTime() / 1000)
 
 		super({ value: { case: 'uint32Value', value: secondsFromEpoch } }, new DatetimeType())
 	}
@@ -421,17 +442,9 @@ export class TzDatetimeType extends PrimitiveType {
 }
 
 export class TzDatetime extends Primitive implements Value<TzDatetimeType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-		let time = formatISO9075(value, { representation: 'time' })
-
+	constructor(value: TZDate | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date}T${time},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'datetime', false) } },
 			new TzDatetimeType()
 		)
 	}
@@ -461,8 +474,9 @@ export class TimestampType extends PrimitiveType {
 }
 
 export class Timestamp extends Primitive implements Value<TimestampType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let microSecondsFromEpoch = BigInt(value.getTime()) * 1000n
+	constructor(value: InstanceType<GenericDateConstructor> | bigint) {
+		let microSecondsFromEpoch =
+			typeof value === 'bigint' ? value : BigInt(value.getTime()) * 1000n
 
 		super({ value: { case: 'uint64Value', value: microSecondsFromEpoch } }, new TimestampType())
 	}
@@ -475,18 +489,9 @@ export class TzTimestampType extends PrimitiveType {
 }
 
 export class TzTimestamp extends Primitive implements Value<TzTimestampType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-		let time = formatISO9075(value, { representation: 'time' })
-		let micro = String(value.getMilliseconds() * 1000).padStart(6, '0')
-
+	constructor(value: TZDate | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date}T${time}.${micro},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'timestamp', false) } },
 			new TzTimestampType()
 		)
 	}
@@ -501,5 +506,119 @@ export class JsonDocumentType extends PrimitiveType {
 export class JsonDocument extends Primitive implements Value<JsonDocumentType> {
 	constructor(value: string) {
 		super({ value: { case: 'textValue', value: value } }, new JsonDocumentType())
+	}
+}
+
+export class Date32Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DATE32)
+	}
+}
+
+export class Date32 extends Primitive implements Value<Date32Type> {
+	constructor(value: InstanceType<GenericDateConstructor> | number) {
+		let days = typeof value === 'number' ? value : Math.floor(value.getTime() / 86400000)
+		super({ value: { case: 'int32Value', value: days } }, new Date32Type())
+	}
+}
+
+export class Datetime64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DATETIME64)
+	}
+}
+
+export class Datetime64 extends Primitive implements Value<Datetime64Type> {
+	constructor(value: InstanceType<GenericDateConstructor> | bigint) {
+		let seconds = typeof value === 'bigint' ? value : BigInt(Math.floor(value.getTime() / 1000))
+		super({ value: { case: 'int64Value', value: seconds } }, new Datetime64Type())
+	}
+}
+
+export class Timestamp64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.TIMESTAMP64)
+	}
+}
+
+export class Timestamp64 extends Primitive implements Value<Timestamp64Type> {
+	constructor(value: InstanceType<GenericDateConstructor> | bigint) {
+		let microseconds = typeof value === 'bigint' ? value : BigInt(value.getTime()) * 1000n
+		super({ value: { case: 'int64Value', value: microseconds } }, new Timestamp64Type())
+	}
+}
+
+export class Interval64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.INTERVAL64)
+	}
+}
+
+export class Interval64 extends Primitive implements Value<Interval64Type> {
+	constructor(value: bigint | number) {
+		if (
+			typeof value !== 'bigint' &&
+			(typeof value !== 'number' || !Number.isSafeInteger(value))
+		)
+			throw new RangeError('Interval64 requires bigint or a number in the safe integer range')
+		super({ value: { case: 'int64Value', value: BigInt(value) } }, new Interval64Type())
+	}
+}
+
+export class DyNumberType extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DYNUMBER)
+	}
+}
+
+export class DyNumber extends Primitive implements Value<DyNumberType> {
+	constructor(value: string) {
+		if (typeof value !== 'string') throw new TypeError('DyNumber requires decimal text')
+		super({ value: { case: 'textValue', value } }, new DyNumberType())
+	}
+}
+
+export class TzDate32Type extends PrimitiveType {
+	constructor() {
+		super(ExtendedPrimitiveTypeId.TZ_DATE32)
+	}
+}
+
+export class TzDate32 extends Primitive implements Value<TzDate32Type> {
+	constructor(value: TZDate | string) {
+		super(
+			{ value: { case: 'textValue', value: timezoneText(value, 'date', true) } },
+			new TzDate32Type()
+		)
+	}
+}
+
+export class TzDatetime64Type extends PrimitiveType {
+	constructor() {
+		super(ExtendedPrimitiveTypeId.TZ_DATETIME64)
+	}
+}
+
+export class TzDatetime64 extends Primitive implements Value<TzDatetime64Type> {
+	constructor(value: TZDate | string) {
+		super(
+			{ value: { case: 'textValue', value: timezoneText(value, 'datetime', true) } },
+			new TzDatetime64Type()
+		)
+	}
+}
+
+export class TzTimestamp64Type extends PrimitiveType {
+	constructor() {
+		super(ExtendedPrimitiveTypeId.TZ_TIMESTAMP64)
+	}
+}
+
+export class TzTimestamp64 extends Primitive implements Value<TzTimestamp64Type> {
+	constructor(value: TZDate | string) {
+		super(
+			{ value: { case: 'textValue', value: timezoneText(value, 'timestamp', true) } },
+			new TzTimestamp64Type()
+		)
 	}
 }

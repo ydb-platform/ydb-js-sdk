@@ -23,6 +23,7 @@ import {
 	Datetime,
 	Double,
 	DoubleType,
+	ExtendedPrimitiveTypeId,
 	Float,
 	FloatType,
 	Int32,
@@ -37,6 +38,7 @@ import {
 	Uuid,
 } from './primitive.js'
 import { Struct, StructType } from './struct.js'
+import { parseTimezoneDate } from './temporal.js'
 import { Tuple } from './tuple.js'
 import { type Type, TypeKind } from './type.js'
 import { uuidFromBigInts } from './uuid.js'
@@ -249,27 +251,11 @@ export function toJs(value: Value): JSValue {
 				}
 				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
-				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP: {
-					let [dateStr, tz] = ((value as Primitive).value as string).split(',')
-
-					let parts = dateStr!.match(
-						/^(\d+)-(\d+)-(\d+)(?:T(\d+):(\d+):(\d+)(?:\.(\d+))?)?$/
-					)
-					if (!parts || !tz) throw new TypeError('Invalid YDB timezone date')
-					let [, year, month, day, hour, minute, second, fraction] = parts
-					let date = TZDate.tz(
-						tz,
-						Number(year),
-						Number(month) - 1,
-						Number(day),
-						Number(hour ?? 0),
-						Number(minute ?? 0),
-						Number(second ?? 0),
-						Number((fraction ?? '').padEnd(3, '0').slice(0, 3))
-					)
-					// Date's component constructor interprets years 0..99 relative to 1900.
-					if (Number(year) < 100) date.setFullYear(Number(year))
-					return date
+				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
+				case ExtendedPrimitiveTypeId.TZ_DATE32:
+				case ExtendedPrimitiveTypeId.TZ_DATETIME64:
+				case ExtendedPrimitiveTypeId.TZ_TIMESTAMP64: {
+					return parseTimezoneDate((value as Primitive).value as string)
 				}
 			}
 			break

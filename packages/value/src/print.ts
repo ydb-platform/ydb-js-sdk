@@ -4,12 +4,13 @@ import type { DecimalType } from './decimal.js'
 import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
+import { ExtendedPrimitiveTypeId, type PrimitiveTypeId } from './primitive.js'
 import type { PrimitiveType } from './primitive.js'
 import type { StructType } from './struct.js'
 import type { TupleType } from './tuple.js'
 import { type Type, TypeKind } from './type.js'
 
-function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
+function primitiveTypeToString(pTypeId: PrimitiveTypeId) {
 	switch (pTypeId) {
 		case Ydb.Type_PrimitiveTypeId.BOOL:
 			return 'Bool'
@@ -69,6 +70,12 @@ function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
 			return 'Interval64'
 		case Ydb.Type_PrimitiveTypeId.DYNUMBER:
 			return 'DyNumber'
+		case ExtendedPrimitiveTypeId.TZ_DATE32:
+			return 'TzDate32'
+		case ExtendedPrimitiveTypeId.TZ_DATETIME64:
+			return 'TzDatetime64'
+		case ExtendedPrimitiveTypeId.TZ_TIMESTAMP64:
+			return 'TzTimestamp64'
 		default:
 			throw new Error(`Unknown primitive type id: ${pTypeId}`)
 	}
