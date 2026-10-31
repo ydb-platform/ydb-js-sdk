@@ -45,7 +45,9 @@ export class Dict<K extends Value = Value, V extends Value = Value> implements V
 	constructor(...items: [K, V][])
 	constructor(items: [K, V][], type: DictType)
 	constructor(...args: [K, V][] | [[K, V][], DictType]) {
-		let explicit = args[1] instanceof DictType
+		let explicit = args.length === 2 && !Array.isArray(args[1])
+		if (explicit && !(args[1] instanceof DictType))
+			throw new TypeError('Dict array construction requires a DictType')
 		let items = (explicit ? args[0] : args) as [K, V][]
 		this.type = explicit
 			? (args[1] as DictType)

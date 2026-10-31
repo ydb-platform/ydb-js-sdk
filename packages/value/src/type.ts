@@ -14,6 +14,7 @@ export enum TypeKind {
 	PG_TYPE = 11,
 	EMPTY_LIST = 12,
 	EMPTY_DICT = 13,
+	TAGGED = 14,
 }
 
 export interface Type {

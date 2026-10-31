@@ -45,6 +45,7 @@ import { uuidFromBigInts } from './uuid.js'
 import type { Value } from './value.js'
 
 export type JSValue =
+	| Value
 	| null
 	| boolean
 	| number
@@ -299,7 +300,7 @@ export function toJs(value: Value): JSValue {
 			return null
 	}
 
-	throw new Error('Unsupported value.')
+	return value
 }
 export * from './type.js'
 export * from './value.js'

@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths, such as `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, and `/null`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, `/variant`, `/tagged`, `/void`, and `/pg`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -56,6 +56,99 @@ let emptyLookup = new Dict([], new DictType(new TextType(), new Int32Type()))
 
 Without an explicit type, `new List()` uses `List<Null>` and `new Dict()` uses `Dict<Null,Null>`.
 For structs, `new Struct(fields, structType)` uses the supplied field schema and fills missing Optional fields with absent values.
+
+### Decimal
+
+Use a string for an exact decimal number and a `DecimalType` for its precision and scale:
+
+```ts
+import { Decimal, DecimalType } from '@ydbjs/value/decimal'
+
+let type = new DecimalType(22, 9)
+let amount = new Decimal('123.456000001', type)
+let sameAmount = new Decimal(123456000001n, type)
+```
+
+A bigint is the already scaled integer: `123n` with scale 2 means `1.23`.
+String input accepts plain decimal notation and `inf`, `-inf`, `nan`; it rejects exponents, overflow and values that would require rounding.
+Trailing fractional zeros beyond the declared scale are accepted because they do not change the value.
+JavaScript numbers are rejected to avoid precision loss before construction.
+
+### Empty values and variants
+
+```ts
+import { EmptyList, EmptyDict } from '@ydbjs/value/empty'
+import { Int32, Int32Type, TextType } from '@ydbjs/value/primitive'
+import { StructType } from '@ydbjs/value/struct'
+import { Variant, VariantType } from '@ydbjs/value/variant'
+import { Void } from '@ydbjs/value/void'
+
+let emptyList = new EmptyList()
+let emptyDict = new EmptyDict()
+let nothing = new Void()
+let alternatives = new VariantType(
+  new StructType(['count', 'text'], [new Int32Type(), new TextType()])
+)
+let choice = new Variant(new Int32(42), 'count', alternatives)
+```
+
+EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict constructors retain their element schemas instead.
+A Variant over `TupleType` selects an alternative by its numeric index; a Variant over `StructType` selects by field name.
+The selected value must match that alternative's complete schema.
+The server does not accept absent `Optional<Variant<...>>` parameters; Query rejects these values before sending ExecuteQuery, including inside containers.
+Construct the absence in YQL instead of binding it as a parameter.
+Read the selected value through `.item`, its selector through `.tag`, and its wire index through `.index`.
+
+### Temporal values
+
+The package supports all 32 primitive types exported by ydbd, including TzDate32, TzDatetime64 and TzTimestamp64.
+The three extended timezone IDs (68, 69 and 70) are named by `ExtendedPrimitiveTypeId` in the primitive subpath because the public protobuf enum does not name them; [ydbd exports them as numeric IDs](https://github.com/ydb-platform/ydb/blob/c8849250fc4a4d453b0188f89560f298587ef5cf/ydb/library/mkql_proto/mkql_proto.cpp#L854).
+Date32, Datetime64, Timestamp64, Interval64 and DyNumber also have named constructors and corresponding Type classes.
+
+| Constructors                                                    | Accepted input                                                 |
+| --------------------------------------------------------------- | -------------------------------------------------------------- |
+| Date, Date32                                                    | JavaScript `Date`, or integer days since the Unix epoch        |
+| Datetime                                                        | JavaScript `Date`, or integer seconds since the Unix epoch     |
+| Datetime64                                                      | JavaScript `Date`, or bigint seconds since the Unix epoch      |
+| Timestamp, Timestamp64                                          | JavaScript `Date`, or bigint microseconds since the Unix epoch |
+| Interval                                                        | Safe integer number of microseconds                            |
+| Interval64                                                      | Bigint microseconds, or a safe integer number                  |
+| TzDate, TzDatetime, TzTimestamp and their extended counterparts | `TZDate`, or exact YDB date/time text followed by a timezone   |
+| DyNumber                                                        | Decimal text as a string                                       |
+
+```ts
+import { Timestamp64, TzTimestamp64 } from '@ydbjs/value/primitive'
+
+let timestamp = new Timestamp64(-1n)
+let zoned = new TzTimestamp64('-1-02-29T12:34:56.123456,UTC')
+```
+
+Exact units and timezone strings preserve precision that JavaScript Date cannot represent.
+Constructors check numeric temporal ranges and timezone calendar fields; timestamps are not rounded to fit the declared type.
+YDB historical years have no year zero: `-1` maps to JavaScript astronomical year `0`.
+Timezone text carries no DST fold indicator, and the server resolves ambiguous local times using its earlier occurrence; the protocol cannot distinguish both occurrences of a repeated wall-clock time.
+
+### PostgreSQL values
+
+```ts
+import { Pg, PgType } from '@ydbjs/value/pg'
+
+let integer = new Pg('42', new PgType('int4'))
+let absentInteger = new Pg(null, new PgType('int4'))
+let byOid = new Pg('42', new PgType({ oid: 23 }))
+```
+
+Pg keeps text, binary bytes or null in `.value` and preserves its type name, OID and modifiers in `.type`.
+It does not guess a JavaScript representation from PostgreSQL text or binary data.
+The string PgType constructor normalizes names such as `int4` and `_int4` to YQL names `pgint4` and `_pgint4`.
+OID-only descriptors can be bound with QueryClient and an explicit SQL declaration such as `DECLARE $value AS pgint4;`; automatic tagged-SQL declarations require a type name.
+
+### Tagged results
+
+`Tagged(item, tag)` and `TaggedType(tag, itemType)` preserve semantic tags and the underlying typed value.
+The tag is available through `.type.tag`, and the wrapped value through `.item`.
+YDB exports Tagged results but does not accept Tagged query parameter types.
+QueryClient and the tagged-SQL API reject Tagged anywhere in a parameter schema before sending ExecuteQuery; pass the inner value and apply `AsTagged` in the query when needed.
 
 ## Infer types from JavaScript
 
@@ -149,8 +242,9 @@ let rows = new List(
 ## Read results
 
 `fromYdb(wireValue, wireType)` reconstructs a typed Value from a protobuf value and its schema.
-For supported types, it preserves the schema and value semantics, including empty containers, absent Optionals, and nested Optional presence.
-It uses the supplied schema rather than inferring one from the contents; re-encoding the result produces a semantically equivalent type/value pair.
+It restores the supplied schema, including empty containers, absent Optionals, nested Optional presence, Variant alternatives, Tagged values, Void and PostgreSQL metadata.
+For an unambiguous wire representation, re-encoding produces a semantically equivalent type/value pair.
+If the server encoding cannot identify a unique Optional/Variant nesting, typed decoding throws with guidance to use raw query results or select an explicit representation in YQL.
 
 ```ts
 import { fromYdb, toJs } from '@ydbjs/value'
@@ -168,44 +262,47 @@ toJs(result) // null
 `toJs(value)` projects a typed Value into JavaScript data.
 This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and timestamps lose sub-millisecond precision.
 Use the typed Value when that distinction matters.
+Variant, Tagged, Pg and Void have no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
+This rule also applies recursively to those values inside arrays, structs, maps and Optionals.
 
-| YDB type                                                   | JavaScript result                                           |
-| ---------------------------------------------------------- | ----------------------------------------------------------- |
-| Bool                                                       | `boolean`                                                   |
-| Int8/16/32, Uint8/16/32, Float, Double                     | `number`                                                    |
-| Int64, Uint64                                              | `bigint`                                                    |
-| Utf8, Uuid, DyNumber, Decimal                              | `string`                                                    |
-| String, Yson                                               | `Uint8Array`                                                |
-| Json, JsonDocument                                         | Parsed JavaScript value                                     |
-| Date, Date32, Datetime, Datetime64, Timestamp, Timestamp64 | `Date` with millisecond precision                           |
-| TzDate, TzDatetime, TzTimestamp                            | `TZDate` with millisecond precision in the encoded timezone |
-| Interval                                                   | `number` of microseconds                                    |
-| Interval64                                                 | `bigint` of microseconds                                    |
-| Optional                                                   | Inner projection, or `null` when absent                     |
-| List, Tuple, EmptyList                                     | Array                                                       |
-| Dict, EmptyDict                                            | `Map`                                                       |
-| Struct                                                     | Object with own data properties                             |
-| Null                                                       | `null`                                                      |
+| YDB type                                                               | JavaScript result                                           |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Bool                                                                   | `boolean`                                                   |
+| Int8/16/32, Uint8/16/32, Float, Double                                 | `number`                                                    |
+| Int64, Uint64                                                          | `bigint`                                                    |
+| Utf8, Uuid, DyNumber, Decimal                                          | `string`                                                    |
+| String, Yson                                                           | `Uint8Array`                                                |
+| Json, JsonDocument                                                     | Parsed JavaScript value                                     |
+| Date, Date32, Datetime, Datetime64, Timestamp, Timestamp64             | `Date` with millisecond precision                           |
+| TzDate, TzDatetime, TzTimestamp, TzDate32, TzDatetime64, TzTimestamp64 | `TZDate` with millisecond precision in the encoded timezone |
+| Interval                                                               | `number` of microseconds                                    |
+| Interval64                                                             | `bigint` of microseconds                                    |
+| Optional                                                               | Inner projection, or `null` when absent                     |
+| List, Tuple, EmptyList                                                 | Array                                                       |
+| Dict, EmptyDict                                                        | `Map`                                                       |
+| Struct                                                                 | Object with own data properties                             |
+| Null                                                                   | `null`                                                      |
+| Variant, Tagged, Pg, Void                                              | The same SDK Value                                          |
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
 
-## Exact scalar construction
+### Ambiguous server values
 
-Import `Decimal`/`DecimalType` from `@ydbjs/value/decimal`, and `EmptyList`/`EmptyDict` from `@ydbjs/value/empty`.
-`new Decimal('1.23', new DecimalType(22, 9))` parses exact decimal text without rounding; bigint input is the scaled coefficient.
-Special values are `inf`, `-inf` and `nan`.
+Some server encodings of Optional around Variant reuse the same nested-value wrapper for different meanings.
+When more than one distinct typed interpretation is possible, `fromYdb` throws rather than assigning an alternative or Optional presence.
+Ordinary Query decoding reports the same error.
+Use raw results to inspect the protobuf, or change the YQL projection to return an explicit alternative and its tag.
 
-The primitive subpath exports named Date32, Datetime64, Timestamp64, Interval64 and DyNumber constructors.
-Date32 accepts a Date or an integer day count; Datetime64 and Timestamp64 accept a Date or exact bigint seconds/microseconds.
-Interval64 accepts bigint or safe integer microseconds; DyNumber accepts decimal text.
-Date, Datetime and Timestamp also accept exact day/second/microsecond units.
+QueryClient exposes raw cells together with their column schemas:
 
-TzDate32, TzDatetime64 and TzTimestamp64 use the server IDs 68–70, which are absent from the public protobuf enum.
-All timezone constructors accept a TZDate or an exact YDB string such as `-1-02-29T12:34:56.123456,UTC`.
-YDB has no year zero; JS astronomical year zero corresponds to YDB year -1.
-Typed values preserve microseconds; native Date/TZDate projection keeps millisecond precision.
-The timezone text does not contain a DST fold marker, so it cannot distinguish both instants of an overlapping wall-clock time.
+```ts
+let result = await client.retrySession((session) => session.execute(queryText, {}, { raw: true }))
+let { columns, rows } = result.resultSets[0]!
+```
+
+The tagged-SQL API also provides `.raw()` for protobuf cells; use QueryClient when column types are needed alongside those cells.
+A raw cell alone is not a typed parameter: preserve its column schema when inspecting it, and construct a supported, explicit Value before binding.
 
 ## Development
 
