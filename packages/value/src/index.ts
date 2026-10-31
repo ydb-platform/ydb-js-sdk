@@ -173,7 +173,7 @@ export function fromJs(native: JSValue): Value {
 			}
 
 			if (isFloat64Array(native)) {
-				return new List(...Array.from(native, (v) => new Float(v)))
+				return new List(...Array.from(native, (v) => new Double(v)))
 			}
 
 			if (isBigInt64Array(native)) {
