@@ -1,4 +1,4 @@
-import { equals } from '@bufbuild/protobuf'
+import { clone, equals } from '@bufbuild/protobuf'
 import * as Ydb from '@ydbjs/api/value'
 import { expect, test } from 'vitest'
 
@@ -37,9 +37,19 @@ test('schema compatibility agrees with protobuf equality for nested types', () =
 		for (let other of scalar)
 			types.push(new DictType(item, other), new TupleType([item, other]))
 	}
-	types.push(new OptionalType(new ListType(new OptionalType(new Int32Type()))))
+	types.push(
+		new OptionalType(new ListType(new OptionalType(new Int32Type()))),
+		new TupleType([]),
+		new TupleType([new Int32Type()]),
+		new StructType([], []),
+		new StructType(['a', 'b'], [new Int32Type(), new TextType()], true),
+		new StructType(['b', 'a'], [new TextType(), new Int32Type()], true)
+	)
+	let independent = types.map((type): Type =>
+		Object.create(type, { encode: { value: () => clone(Ydb.TypeSchema, type.encode()) } })
+	)
 	for (let left of types) {
-		for (let right of types) {
+		for (let right of independent) {
 			let matches = true
 			try {
 				assertType(left, right, 'Value')
