@@ -42,6 +42,7 @@ import {
 	Uuid,
 } from './primitive.js'
 import { Struct, StructType } from './struct.js'
+import { getTemporal, parseTimezoneDate } from './temporal.js'
 import { Tuple } from './tuple.js'
 import { type Type, TypeKind } from './type.js'
 import { uuidFromBigInts } from './uuid.js'
@@ -232,7 +233,34 @@ export function fromJs(native: JSValue | Value): Value {
 	}
 }
 
-export function toJs(value: Value): JSValue {
+export interface ToJsOptions {
+	temporal?: boolean | undefined
+}
+
+export function toJs(value: Value, options?: ToJsOptions): JSValue
+export function toJs(value: Value, index: number, array: readonly Value[]): JSValue
+export function toJs(
+	value: Value,
+	options?: ToJsOptions | number,
+	array?: readonly Value[]
+): JSValue {
+	// Array.map supplies an index and source array after the value.
+	if (typeof options === 'number') {
+		if (!Array.isArray(array)) throw new TypeError('toJs options must be an object')
+		options = undefined
+	}
+	if (
+		options !== undefined &&
+		(options === null || typeof options !== 'object' || Array.isArray(options))
+	)
+		throw new TypeError('toJs options must be an object')
+	let temporal = options?.temporal
+	if (temporal !== undefined && typeof temporal !== 'boolean')
+		throw new TypeError('temporal must be a boolean')
+	return convert(value, temporal ? getTemporal() : undefined)
+}
+
+function convert(value: Value, temporal?: typeof Temporal): JSValue {
 	switch (value.type.kind) {
 		case TypeKind.PRIMITIVE:
 			switch ((value.type as PrimitiveType).id) {
@@ -262,38 +290,79 @@ export function toJs(value: Value): JSValue {
 				case Ydb.Type_PrimitiveTypeId.UUID:
 					return uuidFromBigInts((value as Uuid).value as bigint, (value as Uuid).high128)
 				case Ydb.Type_PrimitiveTypeId.DATE:
-					return new Date(((value as Primitive).value as number) * 24 * 60 * 60 * 1000)
+				case Ydb.Type_PrimitiveTypeId.DATE32: {
+					let days = (value as Primitive).value as number
+					if (temporal) {
+						// The full YDB Date32 range fits Date; whole UTC days remain exact.
+						let date = new Date(days * 86_400_000)
+						return new temporal.PlainDate(
+							date.getUTCFullYear(),
+							date.getUTCMonth() + 1,
+							date.getUTCDate()
+						)
+					}
+					return (value.type as PrimitiveType).id === Ydb.Type_PrimitiveTypeId.DATE
+						? new Date(days * 86_400_000)
+						: value
+				}
 				case Ydb.Type_PrimitiveTypeId.DATETIME:
-					return new Date(Number((value as Primitive).value) * 1000)
+				case Ydb.Type_PrimitiveTypeId.DATETIME64: {
+					let seconds = (value as Primitive).value as number | bigint
+					if (temporal)
+						return temporal.Instant.fromEpochNanoseconds(
+							BigInt(seconds) * 1_000_000_000n
+						)
+					return (value.type as PrimitiveType).id === Ydb.Type_PrimitiveTypeId.DATETIME
+						? new Date(Number(seconds) * 1000)
+						: value
+				}
 				case Ydb.Type_PrimitiveTypeId.TIMESTAMP:
-					return new Date(Number(((value as Primitive).value as bigint) / 1000n))
+				case Ydb.Type_PrimitiveTypeId.TIMESTAMP64: {
+					let microseconds = (value as Primitive).value as bigint
+					if (temporal) return temporal.Instant.fromEpochNanoseconds(microseconds * 1000n)
+					return (value.type as PrimitiveType).id === Ydb.Type_PrimitiveTypeId.TIMESTAMP
+						? new Date(Number(microseconds / 1000n))
+						: value
+				}
 				case Ydb.Type_PrimitiveTypeId.INTERVAL:
-					return Number((value as Primitive).value)
-				case Ydb.Type_PrimitiveTypeId.DATE32:
-				case Ydb.Type_PrimitiveTypeId.DATETIME64:
-				case Ydb.Type_PrimitiveTypeId.TIMESTAMP64:
-				case Ydb.Type_PrimitiveTypeId.INTERVAL64:
-				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
+				case Ydb.Type_PrimitiveTypeId.INTERVAL64: {
+					if (temporal) {
+						let microseconds = BigInt((value as Primitive).value as number | bigint)
+						// Each Number component stays exact across the complete Interval64 range.
+						return temporal.Duration.from({
+							seconds: Number(microseconds / 1_000_000n),
+							microseconds: Number(microseconds % 1_000_000n),
+						})
+					}
+
+					return (value.type as PrimitiveType).id === Ydb.Type_PrimitiveTypeId.INTERVAL
+						? Number((value as Primitive).value)
+						: value
+				}
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
 				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
-				case ExtendedPrimitiveTypeId.TZ_DATE32:
 				case ExtendedPrimitiveTypeId.TZ_DATETIME64:
 				case ExtendedPrimitiveTypeId.TZ_TIMESTAMP64:
+					return temporal
+						? parseTimezoneDate((value as Primitive).value as string, temporal)
+						: value
+				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
+				case ExtendedPrimitiveTypeId.TZ_DATE32:
 					return value
 			}
 			break
 		case TypeKind.OPTIONAL: {
 			let { item } = value as Optional<Type>
-			return item === null ? null : toJs(item)
+			return item === null ? null : convert(item, temporal)
 		}
 		case TypeKind.LIST:
 		case TypeKind.TUPLE:
-			return (value as List).items.map(toJs)
+			return (value as List).items.map((item) => convert(item, temporal))
 		case TypeKind.DICT: {
 			let dict: Map<JSValue, JSValue> = new Map()
 
 			for (let [k, v] of (value as Dict).pairs) {
-				dict.set(toJs(k), toJs(v))
+				dict.set(convert(k, temporal), convert(v, temporal))
 			}
 
 			return dict
@@ -302,7 +371,10 @@ export function toJs(value: Value): JSValue {
 			let struct: { [key: string]: JSValue } = Object.create(null)
 
 			for (let i = 0; i < (value as Struct).type.names.length; i++) {
-				struct[(value as Struct).type.names[i]!] = toJs((value as Struct).items[i]!)
+				struct[(value as Struct).type.names[i]!] = convert(
+					(value as Struct).items[i]!,
+					temporal
+				)
 			}
 
 			return struct

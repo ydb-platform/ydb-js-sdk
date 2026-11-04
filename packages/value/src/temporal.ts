@@ -88,6 +88,13 @@ function timezoneDate(
 	return temporal.ZonedDateTime.from(parts, { disambiguation: 'reject', overflow: 'reject' })
 }
 
+export function parseTimezoneDate(text: string, temporal: typeof Temporal): Temporal.ZonedDateTime {
+	let parts = timezoneParts(text)
+	if (!parts.hasTime)
+		throw new TypeError('YDB timezone dates without time have no Temporal equivalent')
+	return timezoneDate(parts, temporal)
+}
+
 export function timezoneText(
 	value: Temporal.ZonedDateTime | string,
 	precision: TimezonePrecision,

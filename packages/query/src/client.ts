@@ -75,6 +75,7 @@ export interface TransactionOptions extends OperationOptions {
 }
 
 export interface QueryClientOptions {
+	temporal?: boolean | undefined
 	poolOptions?: SessionPoolOptions | undefined
 }
 
@@ -195,6 +196,7 @@ function validateOperation(options: OperationOptions): void {
 		throw new TypeError('Operation options must be an object.')
 	}
 	if (options.signal?.aborted) throw cancellationError(options.signal.reason)
+	if ('temporal' in options) throw new TypeError('temporal belongs to QueryClient options.')
 	if (options.idempotent !== undefined && typeof options.idempotent !== 'boolean')
 		throw new TypeError('idempotent must be a boolean.')
 	if (options.onRetry !== undefined && typeof options.onRetry !== 'function')
@@ -242,6 +244,7 @@ class Attempt implements Transaction {
 	readonly sessionId: string
 	readonly nodeId: bigint
 	readonly idempotent: boolean
+	readonly temporal: boolean
 	transactionId = ''
 	committed = false
 	#driver: Driver
@@ -260,13 +263,15 @@ class Attempt implements Transaction {
 		session: Session,
 		signal: AbortSignal,
 		cancellationSignal: AbortSignal,
-		idempotent: boolean
+		idempotent: boolean,
+		temporal: boolean
 	) {
 		this.#driver = driver
 		this.#session = session
 		this.signal = signal
 		this.cancellationSignal = cancellationSignal
 		this.idempotent = idempotent
+		this.temporal = temporal
 		this.sessionId = session.id
 		this.nodeId = session.nodeId
 	}
@@ -369,7 +374,8 @@ class Attempt implements Transaction {
 				prepared,
 				signal,
 				complete,
-				this.idempotent
+				this.idempotent,
+				this.temporal
 			)
 			finished = true
 		} catch (error) {
@@ -453,11 +459,22 @@ function transactionScope(attempt: Attempt): Transaction {
 }
 
 export class QueryClient implements AsyncDisposable, Disposable {
+	#temporal: boolean
 	#driver: Driver
 	#pool: SessionPool
 	#destroyed = new AbortController()
 
 	constructor(driver: Driver, options: QueryClientOptions = {}) {
+		if (options === null || typeof options !== 'object' || Array.isArray(options))
+			throw new TypeError('QueryClient options must be an object')
+		let temporal = options.temporal
+		if (temporal !== undefined && typeof temporal !== 'boolean')
+			throw new TypeError('temporal must be a boolean')
+		if (temporal && !globalThis.Temporal)
+			throw new Error(
+				'Temporal is not available; initialize globalThis.Temporal in your application'
+			)
+		this.#temporal = temporal ?? false
 		this.#driver = driver
 		this.#pool = new SessionPool(driver, options.poolOptions)
 	}
@@ -737,7 +754,8 @@ export class QueryClient implements AsyncDisposable, Disposable {
 							lease.session,
 							linked.signal,
 							signal,
-							options.idempotent ?? false
+							options.idempotent ?? false,
+							this.#temporal
 						)
 						currentAttempt = attempt
 						try {
@@ -805,11 +823,13 @@ async function* readQuery<Row>(
 	prepared: Request,
 	signal: AbortSignal,
 	complete: (summary: QuerySummary) => void,
-	idempotent: boolean
+	idempotent: boolean,
+	temporal: boolean
 ): AsyncGenerator<QueryPart<Row>> {
 	// oxlint-disable-next-line no-underscore-dangle
 	using _claim = session.claim()
 	let { text, parameters, options } = prepared
+	let valueOptions = temporal ? { temporal } : undefined
 	let rpc = driver.createClient(QueryServiceDefinition, session.nodeId)
 	let txControl = transactionId
 		? create(TransactionControlSchema, { txSelector: { case: 'txId', value: transactionId } })
@@ -916,7 +936,7 @@ async function* readQuery<Row>(
 				for (let i = 0; i < schema.length; i++) {
 					let column = schema[i]!
 					let wire = values.items[i]!
-					let value = options.raw ? wire : toJs(fromYdb(wire, column.type!))
+					let value = options.raw ? wire : toJs(fromYdb(wire, column.type!), valueOptions)
 					if (options.rowMode === 'array') row.push(value)
 					else row[column.name] = value
 				}
