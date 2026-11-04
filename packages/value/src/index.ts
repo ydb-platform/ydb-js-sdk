@@ -13,6 +13,7 @@ import {
 
 import * as Ydb from '@ydbjs/api/value'
 
+import { Decimal } from './decimal.js'
 import { Dict } from './dict.js'
 import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
@@ -301,6 +302,8 @@ export function toJs(value: Value): JSValue {
 
 			return struct
 		}
+		case TypeKind.DECIMAL:
+			return (value as Decimal).toString()
 		case TypeKind.NULL:
 			return null
 	}

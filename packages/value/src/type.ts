@@ -2,6 +2,7 @@ import * as Ydb from '@ydbjs/api/value'
 
 export enum TypeKind {
 	PRIMITIVE = 1,
+	DECIMAL = 2,
 	OPTIONAL = 3,
 	LIST = 4,
 	TUPLE = 5,

@@ -9,6 +9,7 @@ import {
 	date32,
 	datetime,
 	datetime64,
+	decimal,
 	double,
 	dyNumber,
 	interval,
@@ -34,6 +35,7 @@ test('column codecs preserve Date, numeric and string contracts through real YDB
 		timestamp: timestamp64(),
 		interval: interval(),
 		interval64: interval64(),
+		decimal: decimal(22, 9),
 		dyNumber: dyNumber(),
 		double: double(),
 		uuid: uuid(),
@@ -47,6 +49,7 @@ test('column codecs preserve Date, numeric and string contracts through real YDB
 		timestamp: new Date('1969-12-31T23:59:59.001Z'),
 		interval: -4_294_967_297,
 		interval64: -9_007_199_254_740_993n,
+		decimal: '123.456000001',
 		dyNumber: '1234567890.123',
 		double: 16777217,
 		uuid: '00112233-4455-6677-8899-aabbccddeeff',
@@ -77,6 +80,9 @@ test('column codecs preserve Date, numeric and string contracts through real YDB
 				),
 				interval64: yql`${yql.param(values.interval64, columns.interval64)}`.mapWith(
 					columns.interval64
+				),
+				decimal: yql`${yql.param(values.decimal, columns.decimal)}`.mapWith(
+					columns.decimal
 				),
 				dyNumber: yql`${yql.param(values.dyNumber, columns.dyNumber)}`.mapWith(
 					columns.dyNumber

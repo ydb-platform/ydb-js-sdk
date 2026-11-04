@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, and `/null`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, and `/decimal`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -56,6 +56,23 @@ let emptyLookup = new Dict([], new DictType(new TextType(), new Int32Type()))
 
 Without an explicit type, `new List()` uses `List<Null>` and `new Dict()` uses `Dict<Null,Null>`.
 For structs, `new Struct(fields, structType)` uses the supplied field schema and fills missing Optional fields with absent values.
+
+### Decimal
+
+Use a string for an exact decimal number and a `DecimalType` for its precision and scale:
+
+```ts
+import { Decimal, DecimalType } from '@ydbjs/value/decimal'
+
+let type = new DecimalType(22, 9)
+let amount = new Decimal('123.456000001', type)
+let sameAmount = new Decimal(123456000001n, type)
+```
+
+A bigint is the already scaled integer: `123n` with scale 2 means `1.23`.
+String input accepts plain decimal notation and `inf`, `-inf`, `nan`; it rejects exponents, overflow and values that would require rounding.
+Trailing fractional zeros beyond the declared scale are accepted because they do not change the value.
+JavaScript numbers are rejected to avoid precision loss before construction.
 
 ### Temporal values
 
@@ -241,7 +258,7 @@ Use the typed Value when that distinction matters.
 | Bool                                        | `boolean`                                      |
 | Int8/16/32, Uint8/16/32, Float, Double      | `number`                                       |
 | Int64, Uint64                               | `bigint`                                       |
-| Utf8, Uuid                                  | `string`                                       |
+| Utf8, Uuid, Decimal                         | `string`                                       |
 | String, Yson                                | `Uint8Array`                                   |
 | Json, JsonDocument                          | Parsed JavaScript value                        |
 | Date                                        | `Date` at midnight UTC; day precision          |
@@ -257,6 +274,7 @@ Use the typed Value when that distinction matters.
 | Null                                        | `null`                                         |
 | DyNumber                                    | The same SDK Value                             |
 
+Decimal results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
 
 ### Variant results

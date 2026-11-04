@@ -2,6 +2,7 @@ import { clone, equals } from '@bufbuild/protobuf'
 import * as Ydb from '@ydbjs/api/value'
 import { expect, test } from 'vitest'
 
+import { DecimalType } from './decimal.js'
 import { DictType } from './dict.js'
 import { ListType } from './list.js'
 import { NullType } from './null.js'
@@ -13,7 +14,13 @@ import { assertType } from './type-check.js'
 import type { Type } from './type.js'
 
 test('schema compatibility agrees with protobuf equality for nested types', () => {
-	let scalar = [new Int32Type(), new TextType(), new NullType()]
+	let scalar = [
+		new Int32Type(),
+		new TextType(),
+		new NullType(),
+		new DecimalType(22, 9),
+		new DecimalType(22, 8),
+	]
 	let types: Type[] = [...scalar]
 	for (let item of scalar) {
 		types.push(
