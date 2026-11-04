@@ -6,6 +6,7 @@ import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
 import { ExtendedPrimitiveTypeId, type PrimitiveTypeId } from './primitive.js'
 import type { PgType } from './pg.js'
+import type { TaggedType } from './tagged.js'
 import type { PrimitiveType } from './primitive.js'
 import type { StructType } from './struct.js'
 import type { TupleType } from './tuple.js'
@@ -102,6 +103,8 @@ export function typeToString(type: Type): string {
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(',')}>`
 		case TypeKind.STRUCT:
 			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
+		case TypeKind.TAGGED:
+			return `Tagged<${typeToString((type as TaggedType).itemType)},${JSON.stringify((type as TaggedType).tag)}>`
 		case TypeKind.PG_TYPE: {
 			let name = (type as PgType).typeName
 			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name))
