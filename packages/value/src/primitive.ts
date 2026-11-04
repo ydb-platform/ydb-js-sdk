@@ -605,3 +605,15 @@ export class Interval64 extends Primitive implements Value<Interval64Type> {
 		super({ value: { case: 'int64Value', value: microseconds } }, new Interval64Type())
 	}
 }
+
+export class DyNumberType extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DYNUMBER)
+	}
+}
+
+export class DyNumber extends Primitive implements Value<DyNumberType> {
+	constructor(value: string) {
+		super({ value: { case: 'textValue', value } }, new DyNumberType())
+	}
+}

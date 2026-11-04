@@ -87,7 +87,7 @@ EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict const
 
 ### Temporal values
 
-Date32, Datetime64, Timestamp64 and Interval64 also have named constructors and corresponding Type classes.
+Date32, Datetime64, Timestamp64, Interval64 and DyNumber also have named constructors and corresponding Type classes.
 
 | Constructors                    | Accepted input                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------------------- |
@@ -98,6 +98,7 @@ Date32, Datetime64, Timestamp64 and Interval64 also have named constructors and 
 | Interval                        | `Temporal.Duration`, or a safe integer number of microseconds                      |
 | Interval64                      | `Temporal.Duration`, bigint microseconds, or a safe integer number of microseconds |
 | TzDate, TzDatetime, TzTimestamp | `Temporal.ZonedDateTime`, or YDB date/time text followed by an IANA timezone       |
+| DyNumber                        | Decimal text as a string                                                           |
 
 Timezone constructors require a global Temporal implementation, including when validating string input; see [Temporal setup](#temporal-setup).
 
@@ -271,7 +272,7 @@ Use the typed Value when that distinction matters.
 | Bool                                        | `boolean`                                      |
 | Int8/16/32, Uint8/16/32, Float, Double      | `number`                                       |
 | Int64, Uint64                               | `bigint`                                       |
-| Utf8, Uuid, Decimal                         | `string`                                       |
+| Utf8, Uuid, DyNumber, Decimal               | `string`                                       |
 | String, Yson                                | `Uint8Array`                                   |
 | Json, JsonDocument                          | Parsed JavaScript value                        |
 | Date                                        | `Date` at midnight UTC; day precision          |
@@ -285,9 +286,8 @@ Use the typed Value when that distinction matters.
 | Dict, EmptyDict                             | `Map`                                          |
 | Struct                                      | Object with a null prototype                   |
 | Null                                        | `null`                                         |
-| DyNumber                                    | The same SDK Value                             |
 
-Decimal results remain strings to preserve numeric precision.
+Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
 
 ### Variant results

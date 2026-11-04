@@ -84,5 +84,5 @@ test('preserves DyNumber schema and wire data in the default projection', () => 
 	let decoded = fromYdb(fromBinary(Ydb.ValueSchema, toBinary(Ydb.ValueSchema, wire)), type)
 	expect(decoded.type.encode()).toEqual(type)
 	expect(decoded.encode()).toEqual(wire)
-	expect(toJs(decoded)).toBe(decoded)
+	expect(toJs(decoded)).toBe('123.456')
 })

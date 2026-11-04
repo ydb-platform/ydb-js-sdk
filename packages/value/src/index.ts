@@ -250,6 +250,7 @@ export function toJs(value: Value): JSValue {
 				case Ydb.Type_PrimitiveTypeId.UINT64:
 					return (value as Primitive).value as bigint
 				case Ydb.Type_PrimitiveTypeId.UTF8:
+				case Ydb.Type_PrimitiveTypeId.DYNUMBER:
 					return (value as Primitive).value as string
 				case Ydb.Type_PrimitiveTypeId.JSON:
 				case Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT:
