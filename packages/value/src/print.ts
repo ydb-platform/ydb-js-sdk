@@ -1,5 +1,6 @@
 import * as Ydb from '@ydbjs/api/value'
 
+import type { DecimalType } from './decimal.js'
 import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
@@ -83,6 +84,8 @@ export function typeToString(type: Type): string {
 	switch (type.kind) {
 		case TypeKind.PRIMITIVE:
 			return primitiveTypeToString((type as PrimitiveType).id)
+		case TypeKind.DECIMAL:
+			return `Decimal(${(type as DecimalType).precision},${(type as DecimalType).scale})`
 		case TypeKind.LIST:
 			return `List<${typeToString((type as ListType).item)}>`
 		case TypeKind.DICT:

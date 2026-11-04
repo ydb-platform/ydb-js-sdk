@@ -1,5 +1,6 @@
 import * as Ydb from '@ydbjs/api/value'
 
+import { Decimal, DecimalType } from './decimal.js'
 import { Dict, DictType } from './dict.js'
 import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
@@ -14,6 +15,8 @@ function decodeType(wire: Ydb.Type): Type {
 	switch (wire.type.case) {
 		case 'typeId':
 			return new PrimitiveType(wire.type.value)
+		case 'decimalType':
+			return new DecimalType(wire.type.value.precision, wire.type.value.scale)
 		case 'optionalType':
 			return new OptionalType(decodeType(wire.type.value.item!))
 		case 'listType':
@@ -46,6 +49,24 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 	switch (type.kind) {
 		case TypeKind.PRIMITIVE:
 			return new Primitive(wire, type as PrimitiveType)
+		case TypeKind.DECIMAL: {
+			if (wire.value.case !== 'low128')
+				throw new TypeError('Decimal requires a 128-bit value')
+			let low = wire.value.value
+			let high = wire.high128
+			// asIntN would turn out-of-range words into a different valid coefficient.
+			if (typeof low !== 'bigint' || typeof high !== 'bigint')
+				throw new TypeError('Decimal words require bigint')
+			if (
+				low < 0n ||
+				low > 0xffff_ffff_ffff_ffffn ||
+				high < 0n ||
+				high > 0xffff_ffff_ffff_ffffn
+			)
+				throw new RangeError('Decimal words are outside the uint64 range')
+
+			return new Decimal(BigInt.asIntN(128, (high << 64n) | low), type as DecimalType)
+		}
 		case TypeKind.OPTIONAL: {
 			let itemType = (type as OptionalType).itemType
 			if (wire.value.case === 'nullFlagValue') return new Optional(null, itemType)

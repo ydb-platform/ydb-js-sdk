@@ -37,6 +37,10 @@ function sameType(left: Ydb.Type, right: Ydb.Type): boolean {
 				)
 			)
 		}
+		case 'decimalType': {
+			let b = right.type.value as typeof a.value
+			return a.value.precision === b.precision && a.value.scale === b.scale
+		}
 		default:
 			return equals(Ydb.TypeSchema, left, right)
 	}
