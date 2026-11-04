@@ -230,6 +230,10 @@ await migrate(db, {
 
 Use `bytes()` for binary `String`, `text()` for `Utf8`.
 
+Date and time columns return JavaScript `Date` values.
+Date-only columns use UTC midnight; timestamps truncate fractional milliseconds toward zero.
+`interval()` returns microseconds as a `number`, and `interval64()` reads them as a `bigint`.
+
 ## Error Handling
 
 Failures are wrapped in Drizzle's `DrizzleQueryError` with YDB-specific subclasses when the status maps cleanly:

@@ -1,12 +1,22 @@
+/// <reference lib="esnext.temporal" preserve="true" />
+
 import { type MessageInitShape, create } from '@bufbuild/protobuf'
 import type { GenMessage } from '@bufbuild/protobuf/codegenv1'
-import type { TZDate } from '@date-fns/tz'
 import * as Ydb from '@ydbjs/api/value'
-import { type GenericDateConstructor, formatISO9075 } from 'date-fns'
 
+import { isDate, isUint8Array } from 'node:util/types'
+import {
+	dateToDays,
+	durationToMicroseconds,
+	instantToMicroseconds,
+	instantToSeconds,
+	timezoneText,
+} from './temporal.js'
 import { type Type, TypeKind } from './type.js'
 import { bigIntsFromUuid, uuidFromBigInts } from './uuid.js'
 import { type Value } from './value.js'
+
+type DateInput = InstanceType<typeof globalThis.Date>
 
 export class PrimitiveType implements Type {
 	declare id: Ydb.Type_PrimitiveTypeId
@@ -38,17 +48,120 @@ export class PrimitiveType implements Type {
 	}
 }
 
+let primitiveFields: Partial<Record<Ydb.Type_PrimitiveTypeId, Ydb.Value['value']['case']>> = {
+	[Ydb.Type_PrimitiveTypeId.BOOL]: 'boolValue',
+	[Ydb.Type_PrimitiveTypeId.INT8]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.INT16]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.INT32]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT8]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT16]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.UINT32]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.INT64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.UINT64]: 'uint64Value',
+	[Ydb.Type_PrimitiveTypeId.FLOAT]: 'floatValue',
+	[Ydb.Type_PrimitiveTypeId.DOUBLE]: 'doubleValue',
+	[Ydb.Type_PrimitiveTypeId.DATE]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.DATETIME]: 'uint32Value',
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP]: 'uint64Value',
+	[Ydb.Type_PrimitiveTypeId.INTERVAL]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.TZ_DATE]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.TZ_DATETIME]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.DATE32]: 'int32Value',
+	[Ydb.Type_PrimitiveTypeId.DATETIME64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.TIMESTAMP64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.INTERVAL64]: 'int64Value',
+	[Ydb.Type_PrimitiveTypeId.STRING]: 'bytesValue',
+	[Ydb.Type_PrimitiveTypeId.UTF8]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.YSON]: 'bytesValue',
+	[Ydb.Type_PrimitiveTypeId.JSON]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.UUID]: 'low128',
+	[Ydb.Type_PrimitiveTypeId.JSON_DOCUMENT]: 'textValue',
+	[Ydb.Type_PrimitiveTypeId.DYNUMBER]: 'textValue',
+}
+
+let primitiveFieldTypes: Partial<Record<NonNullable<Ydb.Value['value']['case']>, string>> = {
+	boolValue: 'boolean',
+	int32Value: 'number',
+	uint32Value: 'number',
+	int64Value: 'bigint',
+	uint64Value: 'bigint',
+	floatValue: 'number',
+	doubleValue: 'number',
+	textValue: 'string',
+	bytesValue: 'Uint8Array',
+	low128: 'bigint',
+}
+
+let integerRanges: Partial<Record<Ydb.Type_PrimitiveTypeId, [number, number] | [bigint, bigint]>> =
+	{
+		[Ydb.Type_PrimitiveTypeId.INT8]: [-128, 127],
+		[Ydb.Type_PrimitiveTypeId.UINT8]: [0, 255],
+		[Ydb.Type_PrimitiveTypeId.INT16]: [-32768, 32767],
+		[Ydb.Type_PrimitiveTypeId.UINT16]: [0, 65535],
+		[Ydb.Type_PrimitiveTypeId.INT32]: [-2147483648, 2147483647],
+		[Ydb.Type_PrimitiveTypeId.UINT32]: [0, 4294967295],
+		[Ydb.Type_PrimitiveTypeId.INT64]: [-(2n ** 63n), 2n ** 63n - 1n],
+		[Ydb.Type_PrimitiveTypeId.UINT64]: [0n, 2n ** 64n - 1n],
+		[Ydb.Type_PrimitiveTypeId.UUID]: [0n, 2n ** 64n - 1n],
+		[Ydb.Type_PrimitiveTypeId.DATE]: [0, 49672],
+		[Ydb.Type_PrimitiveTypeId.DATETIME]: [0, 4_291_747_199],
+		[Ydb.Type_PrimitiveTypeId.TIMESTAMP]: [0n, 4_291_747_199_999_999n],
+		[Ydb.Type_PrimitiveTypeId.INTERVAL]: [-4_291_747_199_999_999n, 4_291_747_199_999_999n],
+	}
+
 export class Primitive implements Value<PrimitiveType> {
 	type: PrimitiveType
 	value: unknown
+	declare high128?: bigint
 
 	// oxlint-disable no-unused-private-class-members
 	#value: MessageInitShape<GenMessage<Ydb.Value>>
 	#valueInstance?: Ydb.Value
 
 	constructor(value: MessageInitShape<GenMessage<Ydb.Value>>, type: PrimitiveType) {
+		let field = primitiveFields[type.id]
+		if (!field || value.value?.case !== field) {
+			throw new TypeError(
+				`Primitive type ${Ydb.Type_PrimitiveTypeId[type.id] ?? type.id} requires ${field ?? 'a supported wire field'}`
+			)
+		}
+		let scalar = value.value?.value
+		let scalarType = primitiveFieldTypes[field]
+		if (scalarType === 'Uint8Array' ? !isUint8Array(scalar) : typeof scalar !== scalarType) {
+			throw new TypeError(`${field} requires ${scalarType}`)
+		}
+
+		let range = integerRanges[type.id]
+		if (
+			range &&
+			((typeof scalar === 'number' && !Number.isInteger(scalar)) ||
+				(scalar as number | bigint) < range[0] ||
+				(scalar as number | bigint) > range[1])
+		) {
+			throw new RangeError(
+				`Value is outside the ${Ydb.Type_PrimitiveTypeId[type.id]} integer range`
+			)
+		}
+
+		if (
+			field === 'floatValue' &&
+			Number.isFinite(scalar) &&
+			!Number.isFinite(Math.fround(scalar as number))
+		) {
+			throw new RangeError('Value is outside the Float range')
+		}
+
+		if (field === 'low128') {
+			let high128 = value.high128 === undefined ? 0n : value.high128
+			if (typeof high128 !== 'bigint') throw new TypeError('high128 requires bigint')
+			if (high128 < range![0] || high128 > range![1])
+				throw new RangeError('UUID high128 is outside the uint64 range')
+			this.high128 = high128
+		}
+
 		this.type = type
-		this.value = value?.value?.value
+		this.value = scalar
 		this.#value = value
 	}
 
@@ -97,10 +210,6 @@ export class Uint8Type extends PrimitiveType {
 
 export class Uint8 extends Primitive implements Value<Uint8Type> {
 	constructor(value: number) {
-		if (value < 0) {
-			throw new Error('Value must be greater than or equal to 0')
-		}
-
 		super({ value: { case: 'uint32Value', value: value } }, new Uint8Type())
 	}
 }
@@ -125,10 +234,6 @@ export class Uint16Type extends PrimitiveType {
 
 export class Uint16 extends Primitive implements Value<Uint16Type> {
 	constructor(value: number) {
-		if (value < 0) {
-			throw new Error('Value must be greater than or equal to 0')
-		}
-
 		super({ value: { case: 'uint32Value', value: value } }, new Uint16Type())
 	}
 }
@@ -153,10 +258,6 @@ export class Uint32Type extends PrimitiveType {
 
 export class Uint32 extends Primitive implements Value<Uint32Type> {
 	constructor(value: number) {
-		if (value < 0) {
-			throw new Error('Value must be greater than or equal to 0')
-		}
-
 		super({ value: { case: 'uint32Value', value: value } }, new Uint32Type())
 	}
 }
@@ -181,10 +282,6 @@ export class Uint64Type extends PrimitiveType {
 
 export class Uint64 extends Primitive implements Value<Uint64Type> {
 	constructor(value: bigint) {
-		if (value < BigInt(0)) {
-			throw new Error('Value must be greater than or equal to 0')
-		}
-
 		super({ value: { case: 'uint64Value', value: value } }, new Uint64Type())
 	}
 }
@@ -281,7 +378,7 @@ export class UuidType extends PrimitiveType {
 
 export class Uuid extends Primitive implements Value<UuidType> {
 	low128: bigint = 0n
-	high128: bigint = 0n
+	override high128: bigint = 0n
 
 	constructor(value: string) {
 		let { low128, high128 } = bigIntsFromUuid(value)
@@ -304,8 +401,13 @@ export class DateType extends PrimitiveType {
 }
 
 export class Date extends Primitive implements Value<DateType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let datesFromEpoch = Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
+	constructor(value: DateInput | Temporal.PlainDate | number) {
+		let datesFromEpoch =
+			typeof value === 'number'
+				? value
+				: isDate(value)
+					? Math.floor(value.getTime() / (24 * 60 * 60 * 1000))
+					: dateToDays(value)
 
 		super({ value: { case: 'uint32Value', value: datesFromEpoch } }, new DateType())
 	}
@@ -318,16 +420,9 @@ export class TzDateType extends PrimitiveType {
 }
 
 export class TzDate extends Primitive implements Value<TzDateType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-
+	constructor(value: Temporal.ZonedDateTime | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'date') } },
 			new TzDateType()
 		)
 	}
@@ -340,8 +435,13 @@ export class DatetimeType extends PrimitiveType {
 }
 
 export class Datetime extends Primitive implements Value<DatetimeType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let secondsFromEpoch = Math.floor(value.getTime() / 1000)
+	constructor(value: DateInput | Temporal.Instant | number) {
+		let secondsFromEpoch =
+			typeof value === 'number'
+				? value
+				: isDate(value)
+					? Math.floor(value.getTime() / 1000)
+					: Number(instantToSeconds(value))
 
 		super({ value: { case: 'uint32Value', value: secondsFromEpoch } }, new DatetimeType())
 	}
@@ -354,17 +454,9 @@ export class TzDatetimeType extends PrimitiveType {
 }
 
 export class TzDatetime extends Primitive implements Value<TzDatetimeType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-		let time = formatISO9075(value, { representation: 'time' })
-
+	constructor(value: Temporal.ZonedDateTime | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date}T${time},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'datetime') } },
 			new TzDatetimeType()
 		)
 	}
@@ -377,12 +469,10 @@ export class IntervalType extends PrimitiveType {
 }
 
 export class Interval extends Primitive implements Value<IntervalType> {
-	constructor(value: number) {
-		if (!Number.isSafeInteger(value)) {
-			throw new RangeError('Interval must be a safe integer number of microseconds')
-		}
-		super({ value: { case: 'int64Value', value: BigInt(value) } }, new IntervalType())
-		this.value = value
+	constructor(value: number | Temporal.Duration) {
+		let microseconds = typeof value === 'number' ? BigInt(value) : durationToMicroseconds(value)
+		super({ value: { case: 'int64Value', value: microseconds } }, new IntervalType())
+		this.value = Number(microseconds)
 	}
 }
 
@@ -393,8 +483,13 @@ export class TimestampType extends PrimitiveType {
 }
 
 export class Timestamp extends Primitive implements Value<TimestampType> {
-	constructor(value: InstanceType<GenericDateConstructor>) {
-		let microSecondsFromEpoch = BigInt(value.getTime()) * 1000n
+	constructor(value: DateInput | Temporal.Instant | bigint) {
+		let microSecondsFromEpoch =
+			typeof value === 'bigint'
+				? value
+				: isDate(value)
+					? BigInt(value.getTime()) * 1000n
+					: instantToMicroseconds(value)
 
 		super({ value: { case: 'uint64Value', value: microSecondsFromEpoch } }, new TimestampType())
 	}
@@ -407,18 +502,9 @@ export class TzTimestampType extends PrimitiveType {
 }
 
 export class TzTimestamp extends Primitive implements Value<TzTimestampType> {
-	constructor(value: TZDate) {
-		let date = formatISO9075(value, { representation: 'date' })
-		let time = formatISO9075(value, { representation: 'time' })
-		let micro = String(value.getMilliseconds() * 1000).padStart(6, '0')
-
+	constructor(value: Temporal.ZonedDateTime | string) {
 		super(
-			{
-				value: {
-					case: 'textValue',
-					value: `${date}T${time}.${micro},${value.timeZone}`,
-				},
-			},
+			{ value: { case: 'textValue', value: timezoneText(value, 'timestamp') } },
 			new TzTimestampType()
 		)
 	}
