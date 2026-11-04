@@ -9,6 +9,8 @@ export enum TypeKind {
 	STRUCT = 6,
 	DICT = 7,
 	NULL = 10,
+	EMPTY_LIST = 12,
+	EMPTY_DICT = 13,
 }
 
 export interface Type {

@@ -2,6 +2,7 @@ import * as Ydb from '@ydbjs/api/value'
 
 import { Decimal, DecimalType } from './decimal.js'
 import { Dict, DictType } from './dict.js'
+import { Empty, EmptyType } from './empty.js'
 import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
 import { Optional, OptionalType } from './optional.js'
@@ -40,6 +41,10 @@ function decodeType(wire: Ydb.Type): Type {
 			)
 		case 'nullType':
 			return new NullType()
+		case 'emptyListType':
+			return new EmptyType(TypeKind.EMPTY_LIST)
+		case 'emptyDictType':
+			return new EmptyType(TypeKind.EMPTY_DICT)
 		default:
 			throw new TypeError(`Unsupported YDB type: ${wire.type.case}`)
 	}
@@ -117,6 +122,11 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 			if (wire.value.case !== 'nullFlagValue')
 				throw new TypeError('Null requires a null flag')
 			return new Null()
+		case TypeKind.EMPTY_LIST:
+		case TypeKind.EMPTY_DICT:
+			if (wire.items.length || wire.pairs.length || wire.value.case !== undefined)
+				throw new TypeError('Empty container cannot contain values')
+			return new Empty(type as EmptyType)
 		default:
 			throw new TypeError(`Unsupported YDB value kind: ${type.kind}`)
 	}

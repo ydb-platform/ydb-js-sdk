@@ -77,6 +77,10 @@
 		"./decimal": {
 			"development": "./src/decimal.ts",
 			"default": "./dist/decimal.js"
+		},
+		"./empty": {
+			"development": "./src/empty.ts",
+			"default": "./dist/empty.js"
 		}
 	},
 	"publishConfig": {

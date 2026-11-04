@@ -304,6 +304,10 @@ export function toJs(value: Value): JSValue {
 		}
 		case TypeKind.DECIMAL:
 			return (value as Decimal).toString()
+		case TypeKind.EMPTY_LIST:
+			return []
+		case TypeKind.EMPTY_DICT:
+			return new Map()
 		case TypeKind.NULL:
 			return null
 	}
