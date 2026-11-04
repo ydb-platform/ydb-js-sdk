@@ -1,5 +1,5 @@
 import { Driver, kRegisterLibrary } from '@ydbjs/core'
-import { type QueryClient, type TX, query as createQueryClient } from '@ydbjs/query'
+import { type SQLClient, type TX, query as createQueryClient } from '@ydbjs/query'
 import { fromJs } from '@ydbjs/value'
 
 import pkg from '../../package.json' with { type: 'json' }
@@ -73,7 +73,7 @@ function getRows<T = unknown>(result: unknown): T[] {
 }
 
 async function execQuery(
-	ql: QueryClient | TX,
+	ql: SQLClient | TX,
 	text: string,
 	params: unknown[],
 	method: YdbExecutionMethod,
@@ -144,7 +144,7 @@ export interface YdbDriverOptions {
 export class YdbDriver implements YdbTransactionalExecutor {
 	readonly driver: Driver
 	#ownsDriver: boolean
-	#client: QueryClient | undefined
+	#client: SQLClient | undefined
 
 	constructor(connectionString: string)
 	constructor(options: YdbDriverOptions)
@@ -170,13 +170,13 @@ export class YdbDriver implements YdbTransactionalExecutor {
 	}
 
 	// Lazy: avoid constructing SessionPool until the first query/transaction.
-	// Setter exists so callers (and tests) can swap in a pre-built QueryClient.
-	get client(): QueryClient {
+	// Setter exists so callers (and tests) can swap in a pre-built SQLClient.
+	get client(): SQLClient {
 		this.#client ??= createQueryClient(this.driver)
 		return this.#client
 	}
 
-	set client(value: QueryClient) {
+	set client(value: SQLClient) {
 		this.#client = value
 	}
 

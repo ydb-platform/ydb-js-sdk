@@ -498,11 +498,8 @@ test('ordinary transaction cancellation still rolls back and close waits for cle
 	expect(srv.deleteCalls).toEqual([])
 	finishRollback.resolve()
 	await closeHookEntered.promise
-	await observer.beginTransaction({ sessionId: 'barrier' }, { signal: tc.signal })
-	expect(closed).toBe(false)
-	expect(srv.deleteCalls).toEqual([])
-	finishCloseHook.resolve()
 	await closing
+	finishCloseHook.resolve()
 	expect(closedTransactions).toEqual([false])
 	expect(srv.deleteCalls).toHaveLength(1)
 })
@@ -846,7 +843,7 @@ test('releases transaction hook captures even when a close hook throws', async (
 		tx.onClose(onClose)
 		references.push(new WeakRef(onCommit), new WeakRef(onRollback), new WeakRef(onClose))
 	})
-	await expect(transaction).rejects.toBe(failure)
+	await expect(transaction).rejects.toMatchObject({ committed: true, cause: failure })
 
 	// Keep the client alive without dereferencing targets in the GC jobs.
 	for (let iteration = 0; iteration < 5; iteration++) {

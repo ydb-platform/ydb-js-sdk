@@ -36,7 +36,7 @@ let rows = await sql`SELECT 1 AS one`
 - `values()` and `raw()` — result formats:
   - Default: array of objects `{ columnName: value }`.
   - `values()`: array of arrays in column order.
-  - `raw()`: return raw wire values (TypedValue) without converting to JS.
+  - `raw()`: return protobuf `Ydb.Value` cells from `@ydbjs/api/value` without converting to JS. These cells do not include their type; use `QueryClient` result-set `columns` when the schema is needed.
 
 - `syntax(mode)` — text syntax (default `YQL_V1`).
 

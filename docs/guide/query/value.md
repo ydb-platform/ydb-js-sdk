@@ -118,3 +118,5 @@ console.log(typeToString(q.stats()?.resultSets?.[0]?.columns?.[0]?.type!))
 - For complex structures pass plain objects/arrays — fromJs will build the type automatically.
 - For nullable fields `null` is fine; use explicit Optional when strict control is needed.
 - Avoid mixing heterogeneous types within a single array, except for union-like struct merges (fields become Optional).
+
+`Variant` results, including nested values, require raw mode: `session.execute(text, parameters, { raw: true })` or `.raw()` on a tagged query. Ordinary result conversion rejects them. Raw cells preserve the protobuf `Ydb.Value`; `QueryClient` result-set `columns[].type` preserves the schema. The SDK does not expose typed `Variant` values or resolve ambiguous wire representations.

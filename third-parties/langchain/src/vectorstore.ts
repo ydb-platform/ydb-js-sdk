@@ -1,7 +1,7 @@
 import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
 import {
 	type Fragment,
-	type QueryClient,
+	type SQLClient,
 	type UnsafeString,
 	query as createQueryClient,
 	fragment,
@@ -298,7 +298,7 @@ class YDBVectorIndexConfig {
 export class YDBVectorStore extends VectorStore {
 	declare FilterType: YDBFilter
 
-	#sql: QueryClient
+	#sql: SQLClient
 	#driver: Driver
 	#promise: Promise<void> | undefined
 	#ownedDriver: boolean
@@ -644,7 +644,7 @@ export class YDBVectorStore extends VectorStore {
 	}
 
 	/**
-	 * Drain the QueryClient session pool, then close the Driver if this store
+	 * Drain the SQL client session pool, then close the Driver if this store
 	 * owns it. Idempotent. When an external `driver` was provided, only the
 	 * pool is released — the caller owns the Driver lifecycle.
 	 */

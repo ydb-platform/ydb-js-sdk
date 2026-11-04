@@ -4,7 +4,7 @@ import { setTimeout } from 'timers/promises'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { loggers } from '@ydbjs/debug'
-import { CommitError, YDBError, isServiceError } from '@ydbjs/error'
+import { CommitError, TransactionCompletionError, YDBError, isServiceError } from '@ydbjs/error'
 import { ProtocolError, Status, TransportError } from '@ydbjs/grpc'
 
 import type { RetryConfig } from './config.js'
@@ -193,6 +193,7 @@ async function runLoop<R>(
 }
 
 export function isRetryableError(error: unknown, idempotent = false): boolean {
+	if (error instanceof TransactionCompletionError) return false
 	if (error instanceof ProtocolError) return false
 	if (error instanceof TransportError && error.code === Status.RESOURCE_EXHAUSTED) {
 		// HTTP/2 overload resets can arrive after the server applied the request.
