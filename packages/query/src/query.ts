@@ -13,13 +13,16 @@ import { cancellationError } from './cancellation.js'
 import { bindParameters } from './parameters.js'
 import { SessionPoolClosedError } from './session-pool.js'
 
-// Utility type to convert a tuple of types to a tuple of arrays of those types
-type ArrayifyTuple<T extends any[]> = {
-	[K in keyof T]: T[K][]
+import type { ResultTypes } from './result.js'
+
+type QueryRows<T extends ResultTypes> = {
+	[Index in keyof T]: T[Index][]
 }
 
-export type QueryEventMap = {
-	done: [ArrayifyTuple<any>]
+type ValueRows<T extends ResultTypes> = Extract<{ [Index in keyof T]: unknown[] }, ResultTypes>
+
+export type QueryEventMap<T extends ResultTypes = ResultTypes> = {
+	done: [QueryRows<T>]
 	retry: [RetryContext]
 	error: [unknown]
 	stats: [QueryStats]
@@ -27,13 +30,13 @@ export type QueryEventMap = {
 	metadata: [Metadata]
 }
 
-export class Query<T extends any[] = unknown[]>
-	extends EventEmitter<QueryEventMap>
-	implements PromiseLike<ArrayifyTuple<T>>, AsyncDisposable
+export class Query<T extends ResultTypes = ResultTypes>
+	extends EventEmitter<QueryEventMap<T>>
+	implements PromiseLike<QueryRows<T>>, AsyncDisposable
 {
 	#client: QueryClient
 	#executor: QueryExecutor | undefined
-	#promise: Promise<ArrayifyTuple<T>> | null = null
+	#promise: Promise<QueryRows<T>> | null = null
 
 	#text: string
 	#parameters: Record<string, Value>
@@ -87,7 +90,7 @@ export class Query<T extends any[] = unknown[]>
 		return Promise
 	}
 
-	async #execute(): Promise<ArrayifyTuple<T>> {
+	async #execute(): Promise<QueryRows<T>> {
 		if (this.#disposed) throw new Error('Query has been disposed.')
 		if (this.#promise) return this.#promise
 		this.#client.signal.throwIfAborted()
@@ -128,14 +131,14 @@ export class Query<T extends any[] = unknown[]>
 				},
 			}
 			let operation = executor
-				? executor.execute(text, parameters, options)
+				? executor.execute<T>(text, parameters, options)
 				: this.#client.retrySession(
 						{
 							signal: linked.signal,
 							idempotent: this.#idempotent,
 							onRetry: (context: RetryContext) => this.emit('retry', context),
 						},
-						(session) => session.execute(text, parameters, options)
+						(session) => session.execute<T>(text, parameters, options)
 					)
 			this.#promise = operation
 				.then((result) => {
@@ -143,7 +146,7 @@ export class Query<T extends any[] = unknown[]>
 					this.#stats = result.stats
 					if (this.#stats) this.emit('stats', this.#stats)
 					linked.signal.throwIfAborted()
-					let rows = result.resultSets.map((set) => set.rows) as ArrayifyTuple<T>
+					let rows = result.resultSets.map((set) => set.rows) as QueryRows<T>
 					this.emit('done', rows)
 					linked.signal.throwIfAborted()
 					return rows
@@ -175,9 +178,9 @@ export class Query<T extends any[] = unknown[]>
 	}
 
 	/** Returns the result of the query */
-	then<TResult1 = ArrayifyTuple<T>, TResult2 = never>(
-		onfulfilled?: (value: ArrayifyTuple<T>) => TResult1 | PromiseLike<TResult1>,
-		onrejected?: (reason: unknown) => TResult2 | PromiseLike<TResult2>
+	then<TResult1 = QueryRows<T>, TResult2 = never>(
+		onfulfilled?: ((value: QueryRows<T>) => TResult1 | PromiseLike<TResult1>) | null,
+		onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
 	): Promise<TResult1 | TResult2> {
 		return this.#execute().then(onfulfilled, onrejected)
 	}
@@ -341,10 +344,10 @@ export class Query<T extends any[] = unknown[]>
 	}
 
 	/** Returns only the values from the query result */
-	values(): Query<[unknown][]> {
+	values(): Query<ValueRows<T>> {
 		this.#values = true
 
-		return this
+		return this as unknown as Query<ValueRows<T>>
 	}
 
 	/** Returns raw values */

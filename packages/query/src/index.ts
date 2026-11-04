@@ -10,12 +10,13 @@ import {
 	type TransactionOptions,
 } from './client.js'
 import { Query } from './query.js'
+import type { ResultTypes } from './result.js'
 import { ctx } from './ctx.js'
 import { Fragment, UnsafeString, fragment, identifier, join, unsafe, yql } from './yql.js'
 
 export type QueryOptions = QueryClientOptions
 
-export type SQL = <T extends any[] = unknown[], P extends any[] = unknown[]>(
+export type SQL = <T extends ResultTypes = ResultTypes, P extends any[] = unknown[]>(
 	strings: string | TemplateStringsArray,
 	...values: P
 ) => Query<T>
@@ -118,7 +119,7 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 	let client = source instanceof QueryClient ? source : new QueryClient(source, clientOptions)
 
 	function executorSQL(executor?: QueryExecutor): SQL {
-		return function <T extends any[] = unknown[], P extends any[] = unknown[]>(
+		return function <T extends ResultTypes = ResultTypes, P extends any[] = unknown[]>(
 			strings: string | TemplateStringsArray,
 			...values: P
 		): Query<T> {
@@ -225,6 +226,8 @@ export type {
 	QueryParameters,
 	QueryExecutor,
 	QueryResult,
+	ResultSet,
+	ResultTypes,
 	QueryPart,
 	QuerySummary,
 	QueryStream,

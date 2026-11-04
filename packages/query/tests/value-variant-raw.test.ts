@@ -29,7 +29,7 @@ test('Variant results require raw mode, including nested and ambiguous values', 
 	).rejects.toThrow(/Variant.*raw/i)
 
 	let raw = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<RawColumnsRow>(text, {}, { raw: true })
+		session.execute<[RawColumnsRow]>(text, {}, { raw: true })
 	)
 	let set = raw.resultSets[0]!
 	let row = set.rows[0]!

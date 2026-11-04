@@ -10,6 +10,8 @@ import { Uint64, Uint64Type } from '@ydbjs/value/primitive'
 import { query } from '../src/index.js'
 import { SessionBusyError } from '../src/session.js'
 
+type NumberRow = { id: number }
+
 function collectTrace(name: string): {
 	start: object[]
 	asyncEnd: object[]
@@ -487,12 +489,16 @@ test('emits tracing:ydb:query.rollback when the transaction body throws', async 
 
 test('do executes tagged queries inside its callback session scope', async (tc) => {
 	await using sql = query(driver)
+
 	let result = await sql.do({ signal: tc.signal }, async (signal) => {
 		expect(signal.aborted).toBe(false)
-		let [[first]] = await sql<[{ id: number }]>`SELECT 1 AS id`
-		let [[second]] = await sql<[{ id: number }]>`SELECT 2 AS id`
+
+		let [[first]] = await sql<[NumberRow]>`SELECT 1 AS id`
+		let [[second]] = await sql<[NumberRow]>`SELECT 2 AS id`
+
 		return first!.id + second!.id
 	})
+
 	expect(result).toBe(3)
 })
 

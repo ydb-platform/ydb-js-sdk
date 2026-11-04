@@ -34,9 +34,11 @@ import {
 	type SessionPoolOptions,
 	sessionAcquireCh,
 } from './session-pool.js'
-import { type QueryPart, type QueryResult, QueryStream, type QuerySummary } from './stream.js'
+import { type QueryPart, QueryStream, type QuerySummary } from './stream.js'
+import { type QueryResult, type ResultTypes, collect } from './result.js'
 
-export { type QueryStream, type QueryPart, type QueryResult, type QuerySummary } from './stream.js'
+export { type QueryStream, type QueryPart, type QuerySummary } from './stream.js'
+export type { QueryResult, ResultSet, ResultTypes } from './result.js'
 
 export type { QueryParameters } from './parameters.js'
 export type Isolation =
@@ -85,11 +87,11 @@ export interface QueryExecutor {
 	readonly signal: AbortSignal
 	readonly sessionId: string
 	readonly nodeId: bigint
-	execute<Row = Record<string, unknown>>(
+	execute<T extends ResultTypes = ResultTypes>(
 		text: string,
 		parameters?: QueryParameters,
 		options?: StatementOptions
-	): Promise<QueryResult<Row>>
+	): Promise<QueryResult<T>>
 	stream<Row = Record<string, unknown>>(
 		text: string,
 		parameters?: QueryParameters,
@@ -99,11 +101,11 @@ export interface QueryExecutor {
 
 export interface Transaction extends QueryExecutor {
 	readonly transactionId: string
-	execute<Row = Record<string, unknown>>(
+	execute<T extends ResultTypes = ResultTypes>(
 		text: string,
 		parameters?: QueryParameters,
 		options?: TransactionStatementOptions
-	): Promise<QueryResult<Row>>
+	): Promise<QueryResult<T>>
 	stream<Row = Record<string, unknown>>(
 		text: string,
 		parameters?: QueryParameters,
@@ -229,21 +231,6 @@ function validateStatement(options: StatementOptions): void {
 	}
 }
 
-async function collect<Row>(stream: QueryStream<Row>): Promise<QueryResult<Row>> {
-	let resultSets: QueryResult<Row>['resultSets'] = []
-	for await (let part of stream) {
-		let result = resultSets[part.resultSetIndex]
-		if (!result) {
-			result = { columns: part.columns, rows: part.rows, truncated: false }
-			resultSets[part.resultSetIndex] = result
-		} else {
-			for (let row of part.rows) result.rows.push(row)
-		}
-		result.truncated ||= part.truncated
-	}
-	return { resultSets, ...stream.summary }
-}
-
 function timeoutSignal(options: OperationOptions): AbortSignal | undefined {
 	return options.timeout === undefined ? undefined : AbortSignal.timeout(options.timeout)
 }
@@ -321,12 +308,12 @@ class Attempt implements Transaction {
 		this.closeHooks.push(fn)
 	}
 
-	async execute<Row = Record<string, unknown>>(
+	async execute<T extends ResultTypes = ResultTypes>(
 		text: string,
 		parameters: QueryParameters = {},
 		options: StatementOptions = {}
-	): Promise<QueryResult<Row>> {
-		return collect(this.stream<Row>(text, parameters, options))
+	): Promise<QueryResult<T>> {
+		return collect<T>(this.stream<T[number]>(text, parameters, options))
 	}
 
 	stream<Row = Record<string, unknown>>(

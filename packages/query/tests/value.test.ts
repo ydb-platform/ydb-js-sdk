@@ -36,7 +36,7 @@ test('server results retain optional presence, empty container schemas and UUID 
 		AsList(Just(42), CAST(NULL AS Int32)) AS nullable_list,
 		Uuid('00112233-4455-6677-8899-aabbccddeeff') AS uuid;`
 	let result = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<WireRow>(text, {}, { raw: true })
+		session.execute<[WireRow]>(text, {}, { raw: true })
 	)
 	let set = result.resultSets[0]!
 	let decoded = Object.fromEntries(
@@ -90,7 +90,7 @@ test('typed nested optional and missing own struct fields survive parameter bind
 		[{ optional: null, struct: JSON.parse('{"constructor":null,"__proto__":null}') }],
 	])
 	let wire = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<WireRow>(
+		session.execute<[WireRow]>(
 			'DECLARE $value AS Optional<Optional<Int32>>; SELECT $value AS value;',
 			{ value: optional },
 			{ raw: true }
