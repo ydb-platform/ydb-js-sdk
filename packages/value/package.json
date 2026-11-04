@@ -82,6 +82,10 @@
 			"development": "./src/empty.ts",
 			"default": "./dist/empty.js"
 		},
+		"./tagged": {
+			"development": "./src/tagged.ts",
+			"default": "./dist/tagged.js"
+		},
 		"./pg": {
 			"development": "./src/pg.ts",
 			"default": "./dist/pg.js"

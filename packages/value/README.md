@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, and `/pg`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, `/tagged`, and `/pg`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -165,6 +165,13 @@ It does not guess a JavaScript representation from PostgreSQL text or binary dat
 The string PgType constructor normalizes names such as `int4` and `_int4` to YQL names `pgint4` and `_pgint4`.
 OID-only descriptors can be bound with QueryClient and an explicit SQL declaration such as `DECLARE $value AS pgint4;`; automatic tagged-SQL declarations require a type name.
 
+### Tagged results
+
+`Tagged(item, tag)` and `TaggedType(tag, itemType)` preserve semantic tags and the underlying typed value.
+The tag is available through `.type.tag`, and the wrapped value through `.item`.
+YDB exports Tagged results but does not accept Tagged query parameter types.
+QueryClient and the tagged-SQL API reject Tagged anywhere in a parameter schema before sending ExecuteQuery; pass the inner value and apply `AsTagged` in the query when needed.
+
 ## Infer types from JavaScript
 
 | JavaScript input                   | Inferred YDB type              | Notes                                                                              |
@@ -264,7 +271,7 @@ let rows = new List(
 Struct records use `Object.create(null)` recursively, including Structs inside containers. Field names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(record, name)` instead of calling an inherited method. JSON-typed cells still use `JSON.parse`; their object prototypes are not changed.
 
 `fromYdb(wireValue, wireType)` reconstructs a typed Value from a protobuf value and its schema.
-It restores the supplied schema, including empty containers, absent Optionals, nested Optional presence and PostgreSQL metadata.
+It restores the supplied schema, including empty containers, absent Optionals, nested Optional presence, Tagged values and PostgreSQL metadata.
 For supported types, re-encoding produces a semantically equivalent type/value pair.
 A schema containing Variant requires raw query results, including when the value is an absent Optional or an empty container.
 
@@ -284,7 +291,7 @@ toJs(result) // null
 `toJs(value)` projects a typed Value into JavaScript data.
 This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and legacy Timestamp results lose sub-millisecond precision by default.
 Use the typed Value when that distinction matters.
-Pg has no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
+Tagged and Pg have no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
 This rule also applies recursively to those values inside arrays, structs, maps and Optionals.
 
 | YDB type                                                               | JavaScript result                              |
@@ -306,7 +313,7 @@ This rule also applies recursively to those values inside arrays, structs, maps 
 | Dict, EmptyDict                                                        | `Map`                                          |
 | Struct                                                                 | Object with a null prototype                   |
 | Null                                                                   | `null`                                         |
-| Pg                                                                     | The same SDK Value                             |
+| Tagged, Pg                                                             | The same SDK Value                             |
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.

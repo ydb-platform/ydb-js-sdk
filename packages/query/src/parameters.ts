@@ -82,6 +82,10 @@ function copyBuffers(value: WireValue): void {
 
 function assertParameterType(type: WireType): void {
 	switch (type.type.case) {
+		case 'taggedType':
+			throw new TypeError(
+				'YDB does not accept Tagged query parameters; unwrap the value and apply AsTagged in the query'
+			)
 		case 'optionalType':
 		case 'listType':
 			assertParameterType(type.type.value.item!)

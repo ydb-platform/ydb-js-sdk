@@ -7,6 +7,7 @@ import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
 import { Optional, OptionalType } from './optional.js'
 import { Pg, PgType } from './pg.js'
+import { Tagged, TaggedType } from './tagged.js'
 import { Primitive, PrimitiveType } from './primitive.js'
 import { Struct, StructType } from './struct.js'
 import { Tuple, TupleType } from './tuple.js'
@@ -40,6 +41,8 @@ function decodeType(wire: Ydb.Type): Type {
 			throw new TypeError(
 				'YDB Variant values require raw result mode: use .raw() or { raw: true }.'
 			)
+		case 'taggedType':
+			return new TaggedType(wire.type.value.tag, decodeType(wire.type.value.type!))
 		case 'pgType':
 			return new PgType(wire.type.value)
 		case 'nullType':
@@ -83,6 +86,8 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 				itemType
 			)
 		}
+		case TypeKind.TAGGED:
+			return new Tagged(decodeValue(wire, (type as TaggedType).itemType), type as TaggedType)
 		case TypeKind.PG_TYPE:
 			if (wire.value.case === 'nullFlagValue') return new Pg(null, type as PgType)
 			if (wire.value.case === 'textValue' || wire.value.case === 'bytesValue')
