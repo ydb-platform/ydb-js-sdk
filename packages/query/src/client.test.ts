@@ -180,7 +180,7 @@ test('execute discards partial output before retrying a failed attempt', async (
 	await using client = new QueryClient(server.driver)
 	let result = await client.retrySession(
 		{ signal: tc.signal, retry: { budget: 2, strategy: 0 } },
-		(session) => session.execute<{ id: number }>('SELECT id; SELECT other')
+		(session) => session.execute('SELECT id; SELECT other')
 	)
 	expect(result.resultSets.map((set) => set.rows)).toEqual([[{ id: 1 }, { id: 2 }], [{ id: 3 }]])
 	expect(server.executions).toHaveLength(2)

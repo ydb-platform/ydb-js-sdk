@@ -10,6 +10,10 @@ import { Optional } from '@ydbjs/value/optional'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { TransactionCompletionError, YDBError } from '@ydbjs/error'
 
+type IdRow = { id: bigint }
+type NumberRow = { id: number }
+type RawRow = Value[]
+type NestedStructRow = { nested: object }
 type PrototypeFieldsRow = { fields: Record<string, unknown> }
 
 function createDriver() {
@@ -57,11 +61,15 @@ test('a postcommit error cannot repeat a real update through an outer SDK retrie
 test('result rows and nested structs have null prototypes', async (tc) => {
 	using driver = createDriver()
 	await using client = new QueryClient(driver)
+
 	let result = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute('SELECT AsStruct(1 AS `__proto__`, 2 AS `constructor`) AS nested;')
+		session.execute<[NestedStructRow]>(
+			'SELECT AsStruct(1 AS `__proto__`, 2 AS `constructor`) AS nested;'
+		)
 	)
 	let row = result.resultSets[0]!.rows[0]!
 	let nested = row.nested
+
 	expect(nested).toEqual(JSON.parse('{"__proto__":1,"constructor":2}'))
 	expect(Object.getPrototypeOf(row)).toBe(null)
 	expect(Object.getPrototypeOf(nested)).toBe(null)
@@ -72,23 +80,29 @@ test('nested optional nulls decode correctly and retain their wire presence', as
 	await using client = new QueryClient(driver)
 	let text =
 		'SELECT CAST(NULL AS Int32) AS outer_null, Just(CAST(NULL AS Int32)) AS inner_null, Just(Just(42)) AS some_value;'
+
 	let result = await client.retrySession(
 		{
 			signal: tc.signal,
 		},
 		(session) => session.execute(text)
 	)
+
 	expect(result.resultSets[0]!.rows).toEqual([
 		{ outer_null: null, inner_null: null, some_value: 42 },
 	])
+
 	let raw = await client.retrySession(
 		{
 			signal: tc.signal,
 		},
 		(session) => session.execute(text, {}, { raw: true })
 	)
-	expect(raw.resultSets[0]!.rows[0]!.inner_null).toMatchObject({
-		value: { case: 'nestedValue', value: { value: { case: 'nullFlagValue' } } },
+
+	expect(raw.resultSets[0]!.rows[0]).toMatchObject({
+		inner_null: {
+			value: { case: 'nestedValue', value: { value: { case: 'nullFlagValue' } } },
+		},
 	})
 	let parameter = new Optional(new Optional(null, new Int32Type()))
 	let echoed = await client.retrySession({ signal: tc.signal }, (session) =>
@@ -98,20 +112,25 @@ test('nested optional nulls decode correctly and retain their wire presence', as
 			{ raw: true }
 		)
 	)
-	expect(echoed.resultSets[0]!.rows[0]!.value).toMatchObject({
-		value: { case: 'nestedValue', value: { value: { case: 'nullFlagValue' } } },
+
+	expect(echoed.resultSets[0]!.rows[0]).toMatchObject({
+		value: {
+			value: { case: 'nestedValue', value: { value: { case: 'nullFlagValue' } } },
+		},
 	})
 })
 
 test('ordinary query text binds explicitly declared native and typed parameters', async (tc) => {
 	using driver = createDriver()
 	await using client = new QueryClient(driver)
+
 	let result = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<{ id: bigint; name: string }>(typedQuery, {
+		session.execute(typedQuery, {
 			id: new Uint64(42n),
 			name: 'plain query',
 		})
 	)
+
 	expect(result.resultSets).toHaveLength(1)
 	expect(result.resultSets[0]!.rows).toEqual([{ id: 42n, name: 'plain query' }])
 	expect(result.resultSets[0]!.columns.map((column) => column.name)).toEqual(['id', 'name'])
@@ -139,13 +158,17 @@ test('array and raw result modes preserve column order and YDB types', async (tc
 	using driver = createDriver()
 	await using client = new QueryClient(driver)
 	let parameters = { id: new Uint64(42n), name: 'typed' }
+
 	let arrays = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<unknown[]>(typedQuery, parameters, { rowMode: 'array' })
+		session.execute(typedQuery, parameters, { rowMode: 'array' })
 	)
+
 	expect(arrays.resultSets[0]!.rows).toEqual([[42n, 'typed']])
+
 	let raw = await client.retrySession({ signal: tc.signal }, (session) =>
-		session.execute<Value[]>(typedQuery, parameters, { rowMode: 'array', raw: true })
+		session.execute<[RawRow]>(typedQuery, parameters, { rowMode: 'array', raw: true })
 	)
+
 	expect(raw.resultSets[0]!.columns.map((column) => column.name)).toEqual(['id', 'name'])
 	expect(raw.resultSets[0]!.rows[0]!.map((value) => value.value)).toEqual([
 		{ case: 'uint64Value', value: 42n },
@@ -167,12 +190,14 @@ test('query statistics and trailers arrive with the completed result', async (tc
 test('retrySession keeps sequential buffered and streamed queries inside its session scope', async (tc) => {
 	using driver = createDriver()
 	await using client = new QueryClient(driver, { poolOptions: { maxSize: 1 } })
+
 	let result = await client.retrySession({ signal: tc.signal }, async (executor, signal) => {
 		expect(executor.signal).toBe(signal)
 		expect(executor.sessionId.length).toBeGreaterThan(0)
-		let first = await executor.execute<{ id: number }>('SELECT 1 AS id')
+
+		let first = await executor.execute<[NumberRow]>('SELECT 1 AS id')
 		let total = first.resultSets[0]!.rows[0]!.id
-		for await (let part of executor.stream<{ id: number }>('SELECT 2 AS id')) {
+		for await (let part of executor.stream<NumberRow>('SELECT 2 AS id')) {
 			for (let row of part.rows) total += row.id
 		}
 		return total
@@ -259,8 +284,9 @@ test('transaction failure rolls back writes and reports uncommitted closure', as
 test('streaming reads all server parts without collecting rows', async (tc) => {
 	using driver = createDriver()
 	await using client = new QueryClient(driver)
+
 	let result = await client.retrySession({ signal: tc.signal }, async (scope) => {
-		let stream = scope.stream<{ id: bigint }>(rangeQuery, {}, { responsePartLimitBytes: 1024 })
+		let stream = scope.stream<IdRow>(rangeQuery, {}, { responsePartLimitBytes: 1024 })
 		let count = 0
 		let parts = 0
 		let sum = 0n
@@ -290,11 +316,7 @@ test('breaking an unfinished stream rejects its scope and allows a fresh query',
 			{ signal: tc.signal, idempotent: true, retry: { budget: 2, strategy: 0 } },
 			async (scope) => {
 				attempts++
-				let stream = scope.stream<{ id: bigint }>(
-					rangeQuery,
-					{},
-					{ responsePartLimitBytes: 1024 }
-				)
+				let stream = scope.stream<IdRow>(rangeQuery, {}, { responsePartLimitBytes: 1024 })
 				for await (let part of stream) {
 					read += part.rows.length
 					break
@@ -306,12 +328,14 @@ test('breaking an unfinished stream rejects its scope and allows a fresh query',
 	expect(attempts).toBe(1)
 	expect(read).toBeGreaterThan(0)
 	expect(read).toBeLessThan(100000)
+
 	let result = await client.retrySession(
 		{
 			signal: tc.signal,
 		},
 		(session) => session.execute('SELECT 7 AS id')
 	)
+
 	expect(result.resultSets[0]!.rows).toEqual([{ id: 7 }])
 })
 

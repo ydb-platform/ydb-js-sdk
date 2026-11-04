@@ -106,10 +106,14 @@ console.log(toJs(ydbVal)) // { a: 1, b: [true, false] }
 ## Печать типов (debug)
 
 ```ts
+import { QueryClient } from '@ydbjs/query'
 import { typeToString } from '@ydbjs/value/print'
-const q = sql`SELECT 1 AS a`
-await q
-console.log(typeToString(q.stats()?.resultSets?.[0]?.columns?.[0]?.type!))
+
+await using client = new QueryClient(driver)
+
+let result = await client.retrySession((session) => session.execute('SELECT 1 AS a'))
+
+console.log(typeToString(result.resultSets[0]!.columns[0]!.type!))
 ```
 
 ## Рекомендации

@@ -30,7 +30,7 @@ npm install @ydbjs/core @ydbjs/query
 - **Sessions & Transactions**: Sessions and transactions are managed automatically. You can run single queries or group multiple queries in a transaction with `begin`/`transaction`.
 - **Parameter Binding**: Parameters are bound by interpolation (`${}`) in the template string. Native JS types, YDB value classes, and arrays/objects are all supported. Use `.parameter()`/`.param()` for named parameters.
 - **Type Safety**: All values are converted using `@ydbjs/value` (see its docs for details). Complex/nested types and arrays are handled automatically.
-- **Result Sets**: Most queries return an array of result sets (YDB supports multiple result sets per query).
+- **Result Sets**: YDB supports multiple result sets per query. Tagged queries return row arrays; raw execution also provides the column schemas and execution summary in `QueryResult`.
 - **Query Statistics**: Use `.withStats()` or `.stats()` to access execution statistics.
 
 ## Usage
@@ -47,19 +47,30 @@ Each scoped statement snapshots its parameters when `execute()` or `stream()` is
 import { QueryClient, query } from '@ydbjs/query'
 import { Uint64 } from '@ydbjs/value/primitive'
 
+type Row = { id: bigint }
+
 await using client = new QueryClient(driver)
 let text = 'DECLARE $id AS Uint64; SELECT $id AS id;'
 let parameters = { id: new Uint64(42n) }
 let signal = AbortSignal.timeout(30_000)
+
 let result = await client.retrySession({ signal, idempotent: true }, (session) =>
-  session.execute(text, parameters, { timeout: 5000 })
+  session.execute<[Row]>(text, parameters, { timeout: 5000 })
 )
 
+console.log(result.resultSets[0].rows[0]?.id)
+console.log(result.resultSets[0].columns, result.resultSets[0].truncated)
+
 let sql = query(client)
-let rows = await sql`SELECT ${new Uint64(42n)} AS id`
+
+let [rows] = await sql<[Row]>`SELECT ${new Uint64(42n)} AS id`
 ```
 
-`session.execute()` returns `{ resultSets, stats, metadata }` after collecting the response. `session.stream()` returns response parts and is available only inside a retry callback. The root `QueryClient` has no `execute()`, `stream()`, `do()` or `transaction()` methods. A scoped stream retains only the current response parts, transport buffers and result schemas. Its memory use depends on part size, row size and concurrent operations, rather than the total result size. `responsePartLimitBytes` is a server-side packing target, not a strict JavaScript heap limit. `summary` becomes available only after successful full consumption.
+`session.execute()` returns a `QueryResult<T>` object with `resultSets`, `stats` and `metadata` after collecting the response. Each result set contains `rows`, `columns` and `truncated`; empty result sets retain their position and column schema. Tagged SQL returns an array of row arrays, without the result-set objects; statistics and metadata remain available through the query handle's methods and events.
+
+The type argument is a tuple of row types: `<[Row]>` for one result set or `<[FirstRow, SecondRow]>` for two. Each tuple entry is the type of one row in that result set. The declared types are not runtime validation of the database schema.
+
+`session.stream<Row>()` returns response parts and is available only inside a retry callback. The root `QueryClient` has no `execute()`, `stream()`, `do()` or `transaction()` methods. A scoped stream retains only the current response parts, transport buffers and result schemas. Its memory use depends on part size, row size and concurrent operations, rather than the total result size. `responsePartLimitBytes` is a server-side packing target, not a strict JavaScript heap limit. `summary` becomes available only after successful full consumption.
 
 The SDK owns the retry loop for every streaming operation. A stream does not independently replay rows; its failure reaches the surrounding retrier, which repeats the complete callback when allowed. Statement options reject `retry`, `idempotent` and `onRetry`: these belong to the callback. A failed attempt closes its streams before releasing its session. Unconsumed streams reject the callback, and executors or streams retained outside the callback cannot start further work. An early `break` cancels the RPC; a callback scope requires full consumption to succeed. `return()`, `cancel()` and async disposal also stop a pending `next()`.
 
@@ -68,7 +79,7 @@ let total = await client.retrySession(
   { signal, idempotent: true, retry: { budget: 3 } },
   async (session) => {
     let total = 0n
-    for await (let part of session.stream<{ id: bigint }>(text, parameters)) {
+    for await (let part of session.stream<Row>(text, parameters)) {
       for (let row of part.rows) total += row.id
     }
     return total
@@ -83,7 +94,7 @@ Callback options own `signal`, `timeout`, `retry`, `idempotent` and `onRetry`. T
 ```ts
 let result = await client.retryTransaction(
   { signal, isolation: 'snapshotReadOnly', idempotent: true },
-  (tx) => tx.execute(text, parameters)
+  (tx) => tx.execute<[Row]>(text, parameters)
 )
 ```
 
@@ -120,7 +131,7 @@ The [memory example](../../examples/query-clients/src/memory.ts) consumes a stre
 node --expose-gc --max-old-space-size=128 examples/query-clients/dist/memory.js 16384 1
 ```
 
-Server invariants were checked in YDB 25.3.1.25 (`8187ce049bed9e63a5ec04769da2d83dd237c08a`): [Attach loss closes its session](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/core/grpc_services/query/rpc_attach_session.cpp#L55-L94), [commit removes the transaction](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/core/kqp/session_actor/kqp_session_actor.cpp#L2285-L2296), and [the RPC contract requires transaction-wide retry after an interrupted stream](https://github.com/ydb-platform/ydb/blob/8187ce049bed9e63a5ec04769da2d83dd237c08a/ydb/public/api/grpc/ydb_query_v1.proto#L26-L32). Error-injection tests use a controlled gRPC peer to schedule failures that a live database cannot reproduce deterministically; integration tests exercise public entry points against real YDB.
+Server invariants were checked in YDB 26.3.1.20 (`50df67c51b946ac2cd7f4f88d49f706cf8195116`): [Attach loss closes its session](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/grpc_services/query/rpc_attach_session.cpp#L55-L94), [commit removes the transaction](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/session_actor/kqp_session_actor.cpp#L3173-L3184), and [the RPC contract requires transaction-wide retry after an interrupted stream](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/public/api/grpc/ydb_query_v1.proto#L26-L32). Error-injection tests use a controlled gRPC peer to schedule failures that a live database cannot reproduce deterministically; integration tests exercise public entry points against real YDB.
 
 ### Quick Start
 
@@ -184,10 +195,23 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
-// Multiple result sets
-type Result = [{ id: number }, { count: number }]
-const [rows, [{ count }]] =
-  await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
+
+type UserRow = { id: bigint }
+type CountRow = { count: bigint }
+
+let [users, counts] = await sql<[UserRow, CountRow]>`
+  SELECT id FROM users;
+  SELECT COUNT(*) AS count FROM users;
+`
+
+console.log(users[0]?.id, counts[0]?.count)
+
+let result = await client.retrySession((session) =>
+  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
+)
+
+console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
+console.log(result.resultSets[0].columns, result.stats, result.metadata)
 
 // Listen for query statistics and retries
 const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
@@ -226,7 +250,7 @@ Inside a legacy `sql.begin()` / `sql.transaction()` callback, `isolation()` and 
 
 ### Value Conversion and Type Safety
 
-All parameter values are converted using `@ydbjs/value`. See its documentation for details on supported types and conversion rules. You can pass native JS types, or use explicit YDB value classes for full control.
+All parameter values are converted using [`@ydbjs/value`](../value/README.md). You can pass native JS types, or use explicit YDB value classes for full control.
 
 Object result rows and decoded Struct values use `Object.create(null)`, including rows returned by tagged SQL and `.raw()`. Column names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to test field presence; result records do not inherit methods from `Object.prototype`. Array-mode rows and raw protobuf cells keep their respective representations.
 
@@ -234,6 +258,12 @@ Object result rows and decoded Struct values use `Object.create(null)`, includin
 import { fromJs } from '@ydbjs/value'
 await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
 ```
+
+`Variant` values are available only as raw results, including when nested in containers. Use `session.execute(text, parameters, { raw: true })` or tagged SQL's `.raw()`; ordinary result conversion rejects them. Raw cells retain the protobuf `Ydb.Value`, and `QueryClient` result sets retain their schemas in `columns[].type`. The SDK does not provide typed `Variant` values or infer a selected alternative from ambiguous wire data.
+
+By default, Date, Datetime and Timestamp results use JavaScript `Date`, and Interval uses a number of microseconds.
+Date has day precision, Datetime has whole-second precision, and Timestamp microseconds are truncated to milliseconds in this default representation.
+Date32, Datetime64, Timestamp64, Interval64, TzDate, TzDatetime and TzTimestamp results remain typed SDK Values, preserving their exact data and schemas.
 
 ## Query Statistics
 
@@ -445,5 +475,3 @@ This project is licensed under the [Apache 2.0 License](../../LICENSE).
 - [YDB Documentation](https://ydb.tech)
 - [GitHub Repository](https://github.com/ydb-platform/ydb-js-sdk)
 - [Issues](https://github.com/ydb-platform/ydb-js-sdk/issues)
-
-`Variant` values are available only as raw results, including when nested in containers. Use `session.execute(text, parameters, { raw: true })` or tagged SQL's `.raw()`; ordinary result conversion rejects them. Raw cells retain the protobuf `Ydb.Value`, and `QueryClient` result sets retain their schemas in `columns[].type`. The SDK does not provide typed `Variant` values or infer a selected alternative from ambiguous wire data.

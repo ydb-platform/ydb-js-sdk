@@ -15,10 +15,6 @@ export interface QueryPart<Row = Record<string, unknown>> {
 	truncated: boolean
 }
 
-export interface QueryResult<Row = Record<string, unknown>> extends QuerySummary {
-	resultSets: Array<Omit<QueryPart<Row>, 'resultSetIndex'>>
-}
-
 /** A single execution. Errors during consumption never restart this iterator. */
 export class QueryStream<Row = Record<string, unknown>>
 	implements AsyncIterableIterator<QueryPart<Row>>, AsyncDisposable

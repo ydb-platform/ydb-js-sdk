@@ -17,6 +17,42 @@ let sql = query(driver)
 let rows = await sql`SELECT 1 AS one`
 ```
 
+### Result sets
+
+`session.execute()` returns a `QueryResult<T>` object with `resultSets`, `stats` and `metadata`.
+Each result set contains `rows`, `columns` and `truncated`; empty result sets preserve their position and schema.
+Tagged SQL returns an array of row arrays; use the query handle's methods and events for statistics and metadata.
+The type argument is a tuple of row types, with one entry per result set; it does not validate the server schema at runtime.
+Streaming keeps its row type argument: `session.stream<Row>()` yields parts with `rows`, `columns`, `truncated` and `resultSetIndex` inside the retry callback.
+
+```ts
+import { QueryClient } from '@ydbjs/query'
+
+type UserRow = { id: bigint }
+type CountRow = { count: bigint }
+
+let [users, counts] = await sql<[UserRow, CountRow]>`
+  SELECT id FROM users;
+  SELECT COUNT(*) AS count FROM users;
+`
+
+console.log(users[0]?.id, counts[0]?.count)
+
+await using client = new QueryClient(driver)
+
+let result = await client.retrySession((session) =>
+  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
+)
+
+console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
+console.log(
+  result.resultSets[0].columns,
+  result.resultSets[0].truncated,
+  result.stats,
+  result.metadata
+)
+```
+
 ## Chainable query options
 
 - `idempotent(flag?: boolean)` — marks a single call as idempotent, which enables retries for conditionally retryable error codes.
@@ -32,9 +68,9 @@ let rows = await sql`SELECT 1 AS one`
   - mode: StatsMode.<...> from `@ydbjs/api/query` (e.g., StatsMode.FULL).
 
 - `values()` and `raw()` — result formats:
-  - Default: array of objects `{ columnName: value }`.
-  - `values()`: array of arrays in column order.
-  - `raw()`: return raw wire values (TypedValue) without converting to JS.
+  - Default: each result set contains objects `{ columnName: value }`.
+  - `values()`: each result set contains row arrays in column order.
+  - `raw()`: return protobuf `Ydb.Value` cells without converting to JS. Their types are available in the `QueryClient` result at `result.resultSets[0].columns`.
 
 - `syntax(mode)` — text syntax (default `YQL_V1`).
 
@@ -118,6 +154,42 @@ let sql = query(driver)
 let rows = await sql`SELECT 1 AS one`
 ```
 
+### Наборы результатов
+
+`session.execute()` возвращает объект `QueryResult<T>` с полями `resultSets`, `stats` и `metadata`.
+В каждом наборе доступны `rows`, `columns` и `truncated`; пустые наборы сохраняют свою позицию и схему колонок.
+Tagged SQL возвращает массив массивов строк; статистика и метаданные доступны через методы и события объекта запроса.
+Параметр типа — кортеж типов строк, по одному на каждый набор результатов; соответствие серверной схеме во время выполнения не проверяется.
+Для потока по-прежнему указывается тип одной строки: `session.stream<Row>()` выдаёт части с `rows`, `columns`, `truncated` и `resultSetIndex` внутри callback ретраера.
+
+```ts
+import { QueryClient } from '@ydbjs/query'
+
+type UserRow = { id: bigint }
+type CountRow = { count: bigint }
+
+let [users, counts] = await sql<[UserRow, CountRow]>`
+  SELECT id FROM users;
+  SELECT COUNT(*) AS count FROM users;
+`
+
+console.log(users[0]?.id, counts[0]?.count)
+
+await using client = new QueryClient(driver)
+
+let result = await client.retrySession((session) =>
+  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
+)
+
+console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
+console.log(
+  result.resultSets[0].columns,
+  result.resultSets[0].truncated,
+  result.stats,
+  result.metadata
+)
+```
+
 ## Чейнируемые опции запроса
 
 - `idempotent(flag?: boolean)` — помечает одиночный вызов как идемпотентный, что включает повторные попытки для кодов ошибок с «условной повторяемостью».
@@ -133,9 +205,9 @@ let rows = await sql`SELECT 1 AS one`
   - mode: StatsMode.<...> из `@ydbjs/api/query` (например, StatsMode.FULL).
 
 - `values()` и `raw()` — форматы результата:
-  - По умолчанию: массив объектов `{ columnName: value }`.
-  - `values()`: массив массивов значений в порядке колонок.
-  - `raw()`: вернуть «сырые» wire‑значения (TypedValue) без конвертации в JS.
+  - По умолчанию: каждый набор содержит объекты `{ columnName: value }`.
+  - `values()`: каждый набор содержит строки в виде массивов значений в порядке колонок.
+  - `raw()`: вернуть protobuf-значения `Ydb.Value` без конвертации в JS. Их типы доступны в результате `QueryClient` через `result.resultSets[0].columns`.
 
 - `syntax(mode)` — синтаксис текста (по умолчанию `YQL_V1`).
 

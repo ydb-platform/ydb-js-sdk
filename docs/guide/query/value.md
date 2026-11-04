@@ -94,6 +94,8 @@ await sql`INSERT INTO t(id, ts, meta) VALUES (${new Uint64(1n)}, ${new Timestamp
 
 Native JS types (number, string, boolean, Date) with fromJs are typically enough; special classes help enforce format/range.
 
+`Variant` results, including nested values, require raw mode: `session.execute(text, parameters, { raw: true })` or `.raw()` on a tagged query. Ordinary result conversion rejects them. Raw cells preserve the protobuf `Ydb.Value`; `QueryClient` result-set `columns[].type` preserves the schema. The SDK does not expose typed `Variant` values or resolve ambiguous wire representations.
+
 ## fromJs and toJs
 
 ```ts
@@ -106,10 +108,14 @@ console.log(toJs(ydbVal)) // { a: 1, b: [true, false] }
 ## Printing types (debug)
 
 ```ts
+import { QueryClient } from '@ydbjs/query'
 import { typeToString } from '@ydbjs/value/print'
-const q = sql`SELECT 1 AS a`
-await q
-console.log(typeToString(q.stats()?.resultSets?.[0]?.columns?.[0]?.type!))
+
+await using client = new QueryClient(driver)
+
+let result = await client.retrySession((session) => session.execute('SELECT 1 AS a'))
+
+console.log(typeToString(result.resultSets[0]!.columns[0]!.type!))
 ```
 
 ## Recommendations
@@ -118,5 +124,3 @@ console.log(typeToString(q.stats()?.resultSets?.[0]?.columns?.[0]?.type!))
 - For complex structures pass plain objects/arrays — fromJs will build the type automatically.
 - For nullable fields `null` is fine; use explicit Optional when strict control is needed.
 - Avoid mixing heterogeneous types within a single array, except for union-like struct merges (fields become Optional).
-
-`Variant` results, including nested values, require raw mode: `session.execute(text, parameters, { raw: true })` or `.raw()` on a tagged query. Ordinary result conversion rejects them. Raw cells preserve the protobuf `Ydb.Value`; `QueryClient` result-set `columns[].type` preserves the schema. The SDK does not expose typed `Variant` values or resolve ambiguous wire representations.

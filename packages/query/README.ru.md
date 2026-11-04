@@ -205,6 +205,8 @@ import { fromJs } from '@ydbjs/value'
 await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
 ```
 
+Результаты с `Variant`, в том числе внутри контейнеров, доступны только в raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у tagged SQL. Обычная конвертация отклоняет такие значения. Raw-ячейки сохраняют protobuf `Ydb.Value`, а наборы результатов `QueryClient` — схемы в `columns[].type`. SDK не предоставляет типизированные значения `Variant` и не определяет выбранную альтернативу по неоднозначным wire-данным.
+
 ## Статистика запросов
 
 ```ts
@@ -306,5 +308,3 @@ cp node_modules/@ydbjs/query/ai-instructions/.ai-instructions.example.md .ai-ins
 - Документация YDB: https://ydb.tech
 - Репозиторий: https://github.com/ydb-platform/ydb-js-sdk
 - Issues: https://github.com/ydb-platform/ydb-js-sdk/issues
-
-Результаты с `Variant`, в том числе внутри контейнеров, доступны только в raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у tagged SQL. Обычная конвертация отклоняет такие значения. Raw-ячейки сохраняют protobuf `Ydb.Value`, а наборы результатов `QueryClient` — схемы в `columns[].type`. SDK не предоставляет типизированные значения `Variant` и не определяет выбранную альтернативу по неоднозначным wire-данным.
