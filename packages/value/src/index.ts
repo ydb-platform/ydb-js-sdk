@@ -25,6 +25,7 @@ import {
 	Datetime,
 	Double,
 	DoubleType,
+	ExtendedPrimitiveTypeId,
 	Float,
 	FloatType,
 	Int32,
@@ -275,6 +276,9 @@ export function toJs(value: Value): JSValue {
 				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
 				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
+				case ExtendedPrimitiveTypeId.TZ_DATE32:
+				case ExtendedPrimitiveTypeId.TZ_DATETIME64:
+				case ExtendedPrimitiveTypeId.TZ_TIMESTAMP64:
 					return value
 			}
 			break

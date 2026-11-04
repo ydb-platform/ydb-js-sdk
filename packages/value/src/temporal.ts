@@ -90,7 +90,8 @@ function timezoneDate(
 
 export function timezoneText(
 	value: Temporal.ZonedDateTime | string,
-	precision: TimezonePrecision
+	precision: TimezonePrecision,
+	extended: boolean
 ): string {
 	let text: string
 	if (typeof value === 'string') {
@@ -130,8 +131,8 @@ export function timezoneText(
 	)
 		throw new RangeError('YDB timezone text does not preserve the supplied instant')
 	let microseconds = date.epochNanoseconds / 1000n
-	let min = 0n
-	let max = 4_291_747_199_999_999n
+	let min = extended ? -4_611_669_897_600_000_000n : 0n
+	let max = extended ? 4_611_669_811_199_999_999n : 4_291_747_199_999_999n
 	if (microseconds < min || microseconds > max)
 		throw new RangeError(`Timezone ${precision} is outside the YDB range`)
 	return text.slice(0, text.lastIndexOf(',') + 1) + date.timeZoneId
