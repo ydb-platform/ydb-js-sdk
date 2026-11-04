@@ -14,6 +14,8 @@ declare module 'vitest' {
 }
 
 let containerID: string | null = null
+let ydbImage =
+	'ydbplatform/local-ydb:26.3.1.20@sha256:c8fd4cdd30c8d48cf8e6c5b70a5e683a332862b033970c5e319d75dcfa006a5c'
 
 /**
  * Find a free TCP port on localhost.
@@ -58,7 +60,7 @@ export async function setup(project: TestProject) {
 	let grpcPort = await findFreePort()
 
 	// prettier-ignore
-	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish ${monPort}:${monPort} --publish ${grpcPort}:${grpcPort} --env MON_PORT=${monPort} --env GRPC_PORT=${grpcPort} ydbplatform/local-ydb:25.3`.text()
+	let container = await $`docker run --rm --detach --hostname localhost --platform linux/amd64 --publish ${monPort}:${monPort} --publish ${grpcPort}:${grpcPort} --env MON_PORT=${monPort} --env GRPC_PORT=${grpcPort} ${ydbImage}`.text()
 	containerID = container.trim()
 
 	// Ensure the container is removed when the process is interrupted (Ctrl-C)
