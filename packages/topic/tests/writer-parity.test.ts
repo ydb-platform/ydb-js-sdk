@@ -190,13 +190,14 @@ test(
 
 			await new Promise((resolve) => setTimeout(resolve, 2000))
 
-			// The kill arrives as a non-retryable BAD_REQUEST, so the preempted writer
-			// dies terminally instead of reconnecting — a reconnect would preempt the
-			// new session right back and the two writers would kill each other forever.
+			// Reconnecting after explicit takeover would preempt the surviving writer again.
 			expect(reconnecting).toHaveLength(0)
 			expect(errored).toHaveLength(1)
 			expect(errored[0]).toBeInstanceOf(YDBError)
-			expect((errored[0] as YDBError).code).toBe(StatusIds_StatusCode.BAD_REQUEST)
+			expect([
+				StatusIds_StatusCode.BAD_REQUEST,
+				StatusIds_StatusCode.SESSION_EXPIRED,
+			]).toContain((errored[0] as YDBError).code)
 			expect((errored[0] as YDBError).message).toContain(
 				'ownership session is killed by another session'
 			)

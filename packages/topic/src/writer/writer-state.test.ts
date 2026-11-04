@@ -1,9 +1,10 @@
 import { expect, test } from 'vitest'
+import { create } from '@bufbuild/protobuf'
 
 import { isRetryableTopicError } from '../retry.ts'
 import type { TransitionRuntime } from '@ydbjs/fsm'
 import { YDBError } from '@ydbjs/error'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { IssueMessageSchema, StatusIds_StatusCode } from '@ydbjs/api/operation'
 import { Status } from '@ydbjs/grpc'
 
 import {
@@ -419,6 +420,78 @@ test('fails terminally on a non-retryable stream disconnect', () => {
 		type: 'writer.error',
 		error,
 	})
+})
+
+test.each<WriterState>(['connecting', 'ready', 'reconnecting'])(
+	'fails terminally on producer takeover while %s',
+	(state) => {
+		let error = new YDBError(StatusIds_StatusCode.SESSION_EXPIRED, [
+			create(IssueMessageSchema, {
+				issueCode: 500004,
+				severity: 1,
+				message:
+					'status is not ok: ownership session is killed by another session with id producer|session_1 partition id 0',
+			}),
+		])
+		let ctx = ctxWith({ hasEverConnected: state !== 'connecting' })
+
+		let d = drive(state, { type: 'writer.stream.disconnected', error }, ctx)
+
+		expect(d.state).toBe('errored')
+		expect(d.emitted).toEqual([
+			{ type: 'writer.error', error },
+			{ type: 'writer.closed', reason: error },
+		])
+		expect(d.effects).toEqual([{ type: 'writer.effect.finalize', reason: error }])
+		expect(ctx.lastError).toBe(error)
+	}
+)
+
+test.each([
+	{
+		name: 'ordinary expired ownership',
+		code: StatusIds_StatusCode.SESSION_EXPIRED,
+		issueCode: 500004,
+		message: 'status is not ok: ReserveRequest from dead ownership session',
+	},
+	{
+		name: 'takeover text inside a producer id',
+		code: StatusIds_StatusCode.SESSION_EXPIRED,
+		issueCode: 500004,
+		message:
+			'status is not ok: new GetOwnership request needed for owner ownership session is killed by another session with id producer',
+	},
+	{
+		name: 'another issue code',
+		code: StatusIds_StatusCode.SESSION_EXPIRED,
+		issueCode: 500000,
+		message:
+			'status is not ok: ownership session is killed by another session with id producer|session_1 partition id 0',
+	},
+	{
+		name: 'another status',
+		code: StatusIds_StatusCode.UNAVAILABLE,
+		issueCode: 500004,
+		message:
+			'status is not ok: ownership session is killed by another session with id producer|session_1 partition id 0',
+	},
+])('retries $name without treating it as producer takeover', ({ code, issueCode, message }) => {
+	let error = new YDBError(code, [
+		create(IssueMessageSchema, { issueCode, message, severity: 1 }),
+	])
+	let states: WriterState[] = ['connecting', 'ready']
+
+	for (let state of states) {
+		let ctx = ctxWith({ hasEverConnected: state === 'ready' })
+		let d = drive(state, { type: 'writer.stream.disconnected', error }, ctx)
+
+		expect(d.state).toBe('reconnecting')
+		expect(d.emitted).toEqual([{ type: 'writer.reconnecting', attempt: 0, error }])
+		expect(d.effects).toContainEqual({
+			type: 'writer.effect.timer.schedule',
+			which: 'retry_backoff',
+		})
+	}
 })
 
 test('reconnects without getLastSeqNo after backoff elapses', () => {
