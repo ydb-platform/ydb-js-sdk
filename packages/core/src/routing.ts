@@ -115,23 +115,25 @@ export function createRoutingTransport(
 				if (pool) {
 					pool.callStarted(connection.endpoint.nodeId)
 					registeredWithPool = true
-					if (routing.hooks?.onCall) {
-						startedAt = performance.now()
-						let snapshot = pool.snapshot
-						let completion = safeHook('onCall', routing.hooks.onCall, {
-							method: method.path,
-							endpoint: connection.endpoint,
-							preferred:
-								routing.nodeId !== undefined &&
-								connection.endpoint.nodeId === routing.nodeId,
-							pool: {
-								activeCount: snapshot.prefer.length + snapshot.fallback.length,
-								pessimizedCount: snapshot.pessimizedCount,
-							},
-						})
-						if (typeof completion === 'function') {
-							onComplete = completion
-						}
+				}
+				if (routing.hooks?.onCall) {
+					startedAt = performance.now()
+					let snapshot = pool?.snapshot
+					let completion = safeHook('onCall', routing.hooks.onCall, {
+						method: method.path,
+						endpoint: connection.endpoint,
+						preferred:
+							routing.nodeId !== undefined &&
+							connection.endpoint.nodeId === routing.nodeId,
+						pool: {
+							activeCount: snapshot
+								? snapshot.prefer.length + snapshot.fallback.length
+								: 1,
+							pessimizedCount: snapshot?.pessimizedCount ?? 0,
+						},
+					})
+					if (typeof completion === 'function') {
+						onComplete = completion
 					}
 				}
 

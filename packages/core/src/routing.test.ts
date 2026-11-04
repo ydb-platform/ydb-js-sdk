@@ -89,6 +89,32 @@ function fixture(state: EndpointRef['state'] = 'active') {
 
 let metadata = async () => ({ 'x-test': 'value' })
 
+test('static connections publish call hooks in the caller context', async () => {
+	let f = fixture()
+	let storage = new AsyncLocalStorage<string>()
+	let contexts: Array<string | undefined> = []
+	let transport = createRoutingTransport(f.connection, metadata, {
+		hooks: {
+			onCall(event) {
+				expect(event.pool).toEqual({ activeCount: 1, pessimizedCount: 0 })
+				contexts.push(storage.getStore())
+				return () => {
+					contexts.push(storage.getStore())
+				}
+			},
+		},
+	})
+	let pending = storage.run('caller', () =>
+		transport.call(method, {})[Symbol.asyncIterator]().next()
+	)
+	await f.entered.promise
+	f.terminal.resolve({ code: Status.OK, details: '', metadata: {} })
+	await pending
+	expect(contexts).toEqual(['caller', 'caller'])
+	expect(f.started).toEqual([])
+	storage.disable()
+})
+
 async function finish(f: ReturnType<typeof fixture>, code: Status) {
 	let transport = createRoutingTransport(f.pool, metadata)
 	let iterator = transport.call(method, {})[Symbol.asyncIterator]()
