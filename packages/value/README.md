@@ -87,35 +87,38 @@ EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict const
 
 ### Temporal values
 
+The package supports all 32 primitive types exported by ydbd, including TzDate32, TzDatetime64 and TzTimestamp64.
+The three extended timezone IDs (68, 69 and 70) are named by `ExtendedPrimitiveTypeId` in the primitive subpath because the public protobuf enum does not name them; [ydbd exports them as numeric IDs](https://github.com/ydb-platform/ydb/blob/c8849250fc4a4d453b0188f89560f298587ef5cf/ydb/library/mkql_proto/mkql_proto.cpp#L854).
 Date32, Datetime64, Timestamp64, Interval64 and DyNumber also have named constructors and corresponding Type classes.
 
-| Constructors                    | Accepted input                                                                     |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| Date, Date32                    | JavaScript `Date`, `Temporal.PlainDate`, or integer days since the Unix epoch      |
-| Datetime                        | JavaScript `Date`, `Temporal.Instant`, or integer seconds since the Unix epoch     |
-| Datetime64                      | JavaScript `Date`, `Temporal.Instant`, or bigint seconds since the Unix epoch      |
-| Timestamp, Timestamp64          | JavaScript `Date`, `Temporal.Instant`, or bigint microseconds since the Unix epoch |
-| Interval                        | `Temporal.Duration`, or a safe integer number of microseconds                      |
-| Interval64                      | `Temporal.Duration`, bigint microseconds, or a safe integer number of microseconds |
-| TzDate, TzDatetime, TzTimestamp | `Temporal.ZonedDateTime`, or YDB date/time text followed by an IANA timezone       |
-| DyNumber                        | Decimal text as a string                                                           |
+| Constructors                                                    | Accepted input                                                                     |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Date, Date32                                                    | JavaScript `Date`, `Temporal.PlainDate`, or integer days since the Unix epoch      |
+| Datetime                                                        | JavaScript `Date`, `Temporal.Instant`, or integer seconds since the Unix epoch     |
+| Datetime64                                                      | JavaScript `Date`, `Temporal.Instant`, or bigint seconds since the Unix epoch      |
+| Timestamp, Timestamp64                                          | JavaScript `Date`, `Temporal.Instant`, or bigint microseconds since the Unix epoch |
+| Interval                                                        | `Temporal.Duration`, or a safe integer number of microseconds                      |
+| Interval64                                                      | `Temporal.Duration`, bigint microseconds, or a safe integer number of microseconds |
+| TzDate, TzDatetime, TzTimestamp and their extended counterparts | `Temporal.ZonedDateTime`, or YDB date/time text followed by an IANA timezone       |
+| DyNumber                                                        | Decimal text as a string                                                           |
 
 Timezone constructors require a global Temporal implementation, including when validating string input; see [Temporal setup](#temporal-setup).
 
 ```ts
-import { Timestamp64, TzTimestamp } from '@ydbjs/value/primitive'
+import { Timestamp64, TzTimestamp64 } from '@ydbjs/value/primitive'
 
 let timestamp = new Timestamp64(-1n)
-let zoned = new TzTimestamp('2025-01-01T12:34:56.123456,UTC')
+let zoned = new TzTimestamp64('-1-02-29T12:34:56.123456,UTC')
 ```
 
 Exact units and timezone strings preserve precision that JavaScript `Date` cannot represent.
 Constructors check YDB ranges and reject Temporal inputs with precision finer than the target type: Datetime requires whole seconds, while Timestamp and Interval require whole microseconds, including their extended counterparts.
 JavaScript `Date` input retains its existing conversion: Date uses the UTC calendar day and Datetime rounds down to whole seconds.
 Temporal date and timezone inputs must use the `iso8601` calendar; durations must contain only time units, with no years, months, weeks or days.
+YDB historical years have no year zero: `-1` in timezone text maps to Temporal astronomical year `0`.
 Timezone constructors reject nonexistent or repeated local times at timezone transitions because the wire text carries neither an offset nor a DST fold indicator.
 Timezone validation uses the runtime's timezone database; the server must also recognize the zone and its rules.
-TzDate takes the local date and timezone from a ZonedDateTime, discarding its time of day.
+TzDate and TzDate32 take the local date and timezone from a ZonedDateTime, discarding its time of day; their results remain SDK Values because Temporal has no zoned date-only type.
 `TZDate` from `@date-fns/tz` is no longer supported; use ZonedDateTime or explicit timezone text.
 
 #### Temporal setup
@@ -159,7 +162,7 @@ function parameter(instant: Temporal.Instant) {
 | `Date`                             | Datetime                       | Second precision; use `Timestamp` explicitly for milliseconds                      |
 | `Temporal.PlainDate`               | Date                           | ISO calendar; use `Date32` explicitly for the extended range                       |
 | `Temporal.Instant`                 | Timestamp                      | Exact microseconds; use `Timestamp64` for the extended range                       |
-| `Temporal.ZonedDateTime`           | TzTimestamp                    | ISO calendar and IANA timezone                                                     |
+| `Temporal.ZonedDateTime`           | TzTimestamp                    | ISO calendar and IANA timezone; use `TzTimestamp64` for the extended range         |
 | `Temporal.Duration`                | Interval                       | Exact microseconds without calendar units; use `Interval64` for the extended range |
 | `Uint8Array`                       | String                         | Binary data                                                                        |
 | `Float32Array` / `Float64Array`    | `List<Float>` / `List<Double>` |                                                                                    |
@@ -267,25 +270,25 @@ toJs(result) // null
 This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and legacy Timestamp results lose sub-millisecond precision by default.
 Use the typed Value when that distinction matters.
 
-| YDB type                                    | JavaScript result                              |
-| ------------------------------------------- | ---------------------------------------------- |
-| Bool                                        | `boolean`                                      |
-| Int8/16/32, Uint8/16/32, Float, Double      | `number`                                       |
-| Int64, Uint64                               | `bigint`                                       |
-| Utf8, Uuid, DyNumber, Decimal               | `string`                                       |
-| String, Yson                                | `Uint8Array`                                   |
-| Json, JsonDocument                          | Parsed JavaScript value                        |
-| Date                                        | `Date` at midnight UTC; day precision          |
-| Datetime                                    | `Date`; whole-second precision                 |
-| Timestamp                                   | `Date`; microseconds truncated to milliseconds |
-| Date32, Datetime64, Timestamp64, Interval64 | The same SDK Value                             |
-| TzDate, TzDatetime, TzTimestamp             | The same SDK Value                             |
-| Interval                                    | `number` of microseconds                       |
-| Optional                                    | Inner projection, or `null` when absent        |
-| List, Tuple, EmptyList                      | Array                                          |
-| Dict, EmptyDict                             | `Map`                                          |
-| Struct                                      | Object with a null prototype                   |
-| Null                                        | `null`                                         |
+| YDB type                                                               | JavaScript result                              |
+| ---------------------------------------------------------------------- | ---------------------------------------------- |
+| Bool                                                                   | `boolean`                                      |
+| Int8/16/32, Uint8/16/32, Float, Double                                 | `number`                                       |
+| Int64, Uint64                                                          | `bigint`                                       |
+| Utf8, Uuid, DyNumber, Decimal                                          | `string`                                       |
+| String, Yson                                                           | `Uint8Array`                                   |
+| Json, JsonDocument                                                     | Parsed JavaScript value                        |
+| Date                                                                   | `Date` at midnight UTC; day precision          |
+| Datetime                                                               | `Date`; whole-second precision                 |
+| Timestamp                                                              | `Date`; microseconds truncated to milliseconds |
+| Date32, Datetime64, Timestamp64, Interval64                            | The same SDK Value                             |
+| TzDate, TzDatetime, TzTimestamp, TzDate32, TzDatetime64, TzTimestamp64 | The same SDK Value                             |
+| Interval                                                               | `number` of microseconds                       |
+| Optional                                                               | Inner projection, or `null` when absent        |
+| List, Tuple, EmptyList                                                 | Array                                          |
+| Dict, EmptyDict                                                        | `Map`                                          |
+| Struct                                                                 | Object with a null prototype                   |
+| Null                                                                   | `null`                                         |
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
