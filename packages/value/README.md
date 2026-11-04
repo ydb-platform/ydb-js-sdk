@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, and `/decimal`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, and `/empty`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -73,6 +73,17 @@ A bigint is the already scaled integer: `123n` with scale 2 means `1.23`.
 String input accepts plain decimal notation and `inf`, `-inf`, `nan`; it rejects exponents, overflow and values that would require rounding.
 Trailing fractional zeros beyond the declared scale are accepted because they do not change the value.
 JavaScript numbers are rejected to avoid precision loss before construction.
+
+### Empty values
+
+```ts
+import { EmptyList, EmptyDict } from '@ydbjs/value/empty'
+
+let emptyList = new EmptyList()
+let emptyDict = new EmptyDict()
+```
+
+EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict constructors retain their element schemas instead.
 
 ### Temporal values
 
@@ -268,8 +279,8 @@ Use the typed Value when that distinction matters.
 | TzDate, TzDatetime, TzTimestamp             | The same SDK Value                             |
 | Interval                                    | `number` of microseconds                       |
 | Optional                                    | Inner projection, or `null` when absent        |
-| List, Tuple                                 | Array                                          |
-| Dict                                        | `Map`                                          |
+| List, Tuple, EmptyList                      | Array                                          |
+| Dict, EmptyDict                             | `Map`                                          |
 | Struct                                      | Object with a null prototype                   |
 | Null                                        | `null`                                         |
 | DyNumber                                    | The same SDK Value                             |

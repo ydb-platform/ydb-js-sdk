@@ -11,6 +11,8 @@ function sameType(left: Ydb.Type, right: Ydb.Type): boolean {
 	switch (a.case) {
 		case 'typeId':
 		case 'nullType':
+		case 'emptyListType':
+		case 'emptyDictType':
 			return a.value === right.type.value
 		case 'optionalType':
 		case 'listType':

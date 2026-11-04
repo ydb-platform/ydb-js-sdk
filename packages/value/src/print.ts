@@ -96,6 +96,10 @@ export function typeToString(type: Type): string {
 			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
+		case TypeKind.EMPTY_LIST:
+			return 'EmptyList'
+		case TypeKind.EMPTY_DICT:
+			return 'EmptyDict'
 		case TypeKind.NULL:
 			return 'Null'
 		default:
