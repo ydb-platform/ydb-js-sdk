@@ -22,6 +22,7 @@ import {
 	Yson as YdbYson,
 } from '@ydbjs/value/primitive'
 import { sql as yql } from 'drizzle-orm/sql/sql'
+import { dateFromDriver } from '../temporal.js'
 import { customType } from './custom.js'
 
 function escapeYqlString(value: string): string {
@@ -147,7 +148,7 @@ let doubleBase = customType<{ data: number; driverData: YdbDouble }>({
 	},
 })
 
-let dyNumberBase = customType<{ data: string; driverData: Primitive }>({
+let dyNumberBase = customType<{ data: string; driverData: string | Primitive }>({
 	dataType() {
 		return 'DyNumber'
 	},
@@ -158,7 +159,7 @@ let dyNumberBase = customType<{ data: string; driverData: Primitive }>({
 		)
 	},
 	fromDriver(value) {
-		return String(value)
+		return String(value instanceof Primitive ? value.value : value)
 	},
 })
 
@@ -171,16 +172,17 @@ let bytesBase = customType<{ data: Uint8Array; driverData: unknown }>({
 	},
 })
 
-let dateBase = customType<{ data: Date; driverData: YdbDate }>({
+let dateBase = customType<{ data: Date; driverData: Date | YdbDate }>({
 	dataType() {
 		return 'Date'
 	},
 	toDriver(value) {
 		return new YdbDate(value)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let date32Base = customType<{ data: Date; driverData: Primitive }>({
+let date32Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	dataType() {
 		return 'Date32'
 	},
@@ -190,18 +192,20 @@ let date32Base = customType<{ data: Date; driverData: Primitive }>({
 			new PrimitiveType(Ydb.Type_PrimitiveTypeId.DATE32)
 		)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let datetimeBase = customType<{ data: Date; driverData: YdbDatetime }>({
+let datetimeBase = customType<{ data: Date; driverData: Date | YdbDatetime }>({
 	dataType() {
 		return 'Datetime'
 	},
 	toDriver(value) {
 		return new YdbDatetime(value)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let datetime64Base = customType<{ data: Date; driverData: Primitive }>({
+let datetime64Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	dataType() {
 		return 'Datetime64'
 	},
@@ -211,18 +215,20 @@ let datetime64Base = customType<{ data: Date; driverData: Primitive }>({
 			new PrimitiveType(Ydb.Type_PrimitiveTypeId.DATETIME64)
 		)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let timestampBase = customType<{ data: Date; driverData: YdbTimestamp }>({
+let timestampBase = customType<{ data: Date; driverData: Date | YdbTimestamp }>({
 	dataType() {
 		return 'Timestamp'
 	},
 	toDriver(value) {
 		return new YdbTimestamp(value)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let timestamp64Base = customType<{ data: Date; driverData: Primitive }>({
+let timestamp64Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	dataType() {
 		return 'Timestamp64'
 	},
@@ -232,28 +238,37 @@ let timestamp64Base = customType<{ data: Date; driverData: Primitive }>({
 			new PrimitiveType(Ydb.Type_PrimitiveTypeId.TIMESTAMP64)
 		)
 	},
+	fromDriver: dateFromDriver,
 })
 
-let intervalBase = customType<{ data: number; driverData: YdbInterval }>({
+let intervalBase = customType<{ data: number; driverData: number | YdbInterval }>({
 	dataType() {
 		return 'Interval'
 	},
 	toDriver(value) {
 		return new YdbInterval(value)
 	},
+	fromDriver(value) {
+		return typeof value === 'number' ? value : Number(value.value)
+	},
 })
 
-let interval64Base = customType<{ data: bigint | number; driverData: Primitive }>({
-	dataType() {
-		return 'Interval64'
-	},
-	toDriver(value) {
-		return new Primitive(
-			{ value: { case: 'int64Value', value: BigInt(value) } },
-			new PrimitiveType(Ydb.Type_PrimitiveTypeId.INTERVAL64)
-		)
-	},
-})
+let interval64Base = customType<{ data: bigint | number; driverData: bigint | number | Primitive }>(
+	{
+		dataType() {
+			return 'Interval64'
+		},
+		toDriver(value) {
+			return new Primitive(
+				{ value: { case: 'int64Value', value: BigInt(value) } },
+				new PrimitiveType(Ydb.Type_PrimitiveTypeId.INTERVAL64)
+			)
+		},
+		fromDriver(value) {
+			return value instanceof Primitive ? (value.value as bigint) : value
+		},
+	}
+)
 
 let uuidBase = customType<{ data: string; driverData: YdbUuid }>({
 	dataType() {

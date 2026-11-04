@@ -1,4 +1,6 @@
 import { expect, test } from 'vitest'
+import * as Ydb from '@ydbjs/api/value'
+import { fromYdb, toJs } from '@ydbjs/value'
 import {
 	bigint,
 	boolean,
@@ -36,6 +38,8 @@ import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
 import { YdbSession } from '../../ydb-core/session.ts'
 import {
 	Bool,
+	Primitive,
+	PrimitiveType,
 	Date as YdbDate,
 	Datetime as YdbDatetime,
 	Double as YdbDouble,
@@ -324,4 +328,61 @@ test('decodes selected rows through column codecs', async () => {
 	expect(Array.from(row['ysonValue'] as Uint8Array)).toEqual(
 		Array.from(Buffer.from('<a=1>[3;%false]', 'latin1'))
 	)
+})
+
+test('preserves declared date and interval column types with exact SDK values', async () => {
+	let values = {
+		dateValue: new YdbDate(1),
+		datetimeValue: new YdbDatetime(1),
+		timestampValue: new YdbTimestamp(1234n),
+		intervalValue: new YdbInterval(-4_294_967_297),
+	}
+	let projected: Record<string, unknown> = Object.fromEntries(
+		Object.entries(values).map(([name, value]) => [
+			name,
+			toJs(fromYdb(value.encode(), value.type.encode())),
+		])
+	)
+	for (let [name, id, scalar] of [
+		['date32Value', Ydb.Type_PrimitiveTypeId.DATE32, { case: 'int32Value', value: -1 }],
+		[
+			'datetime64Value',
+			Ydb.Type_PrimitiveTypeId.DATETIME64,
+			{ case: 'int64Value', value: -1n },
+		],
+		[
+			'timestamp64Value',
+			Ydb.Type_PrimitiveTypeId.TIMESTAMP64,
+			{ case: 'int64Value', value: -1001n },
+		],
+		[
+			'interval64Value',
+			Ydb.Type_PrimitiveTypeId.INTERVAL64,
+			{ case: 'int64Value', value: -9_007_199_254_740_993n },
+		],
+	] as const) {
+		let value = new Primitive({ value: scalar }, new PrimitiveType(id))
+		projected[name] = toJs(fromYdb(value.encode(), value.type.encode()))
+	}
+	let mockSession = new YdbSession(
+		{ execute: async () => ({ rows: [typeRow(projected)] }) },
+		dialect
+	)
+	let rows = (await new YdbSelectBuilder(mockSession).from(typesTable).execute()) as Array<
+		Record<string, unknown>
+	>
+	let row = rows[0]!
+	for (let [name, milliseconds] of Object.entries({
+		dateValue: 86_400_000,
+		date32Value: -86_400_000,
+		datetimeValue: 1000,
+		datetime64Value: -1000,
+		timestampValue: 1,
+		timestamp64Value: -1,
+	})) {
+		expect(row[name]).toBeInstanceOf(Date)
+		expect((row[name] as Date).getTime()).toBe(milliseconds)
+	}
+	expect(row.intervalValue).toBe(-4_294_967_297)
+	expect(row.interval64Value).toBe(-9_007_199_254_740_993n)
 })

@@ -1,3 +1,5 @@
+/// <reference lib="esnext.temporal" preserve="true" />
+
 import {
 	isBigInt64Array,
 	isBigUint64Array,
@@ -9,26 +11,32 @@ import {
 	isUint8Array,
 } from 'node:util/types'
 
-import { TZDate } from '@date-fns/tz'
 import * as Ydb from '@ydbjs/api/value'
 
 import { Dict } from './dict.js'
-import { List } from './list.js'
-import { Null } from './null.js'
+import { List, ListType } from './list.js'
+import { Null, NullType } from './null.js'
 import { Optional } from './optional.js'
 import {
 	Bool,
 	Bytes,
+	Date as DateValue,
 	Datetime,
 	Double,
+	DoubleType,
 	Float,
+	FloatType,
 	Int32,
 	Int64,
+	Int64Type,
+	Interval,
 	Primitive,
 	PrimitiveType,
 	Text,
-	TzDatetime,
+	Timestamp,
+	TzTimestamp,
 	Uint64,
+	Uint64Type,
 	Uuid,
 } from './primitive.js'
 import { Struct, StructType } from './struct.js'
@@ -38,73 +46,37 @@ import { uuidFromBigInts } from './uuid.js'
 import type { Value } from './value.js'
 
 export type JSValue =
+	| Value
 	| null
 	| boolean
 	| number
 	| bigint
 	| string
 	| Date
+	| Temporal.PlainDate
+	| Temporal.Instant
+	| Temporal.ZonedDateTime
+	| Temporal.Duration
 	| Uint8Array
+	| Float32Array
+	| Float64Array
+	| BigInt64Array
+	| BigUint64Array
 	| JSValue[]
 	| Set<JSValue>
 	| Map<JSValue, JSValue>
 	| { [key: string]: JSValue }
 
-export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
-	switch (type.type.case) {
-		case 'typeId':
-			let pValue = new Primitive({ value: value.value }, new PrimitiveType(type.type.value))
-			if (value.high128) {
-				//@ts-expect-error
-				// Not all primitive types have a high128 property.
-				// Do not use this property unless you are sure it exists.
-				pValue.high128 = value.high128
-			}
+export { fromYdb } from './decode.js'
 
-			return pValue
-		case 'listType':
-			return new List(
-				...value.items.map((v) =>
-					fromYdb(v, (type.type.value as unknown as Ydb.ListType).item!)
-				)
-			)
-		case 'tupleType':
-			return new Tuple(
-				...value.items.map((v, i) =>
-					fromYdb(v, (type.type.value as unknown as Ydb.TupleType).elements[i]!)
-				)
-			)
-		case 'dictType': {
-			let dict: [Value, Value][] = []
-			for (let i = 0; i < value.pairs.length; i++) {
-				let pair = value.pairs[i]!
-				dict.push([
-					fromYdb(pair.key!, type.type.value.key!),
-					fromYdb(pair.payload!, (type.type.value as unknown as Ydb.DictType).payload!),
-				])
-			}
-			return new Dict(...dict)
-		}
-		case 'structType': {
-			let struct: { [key: string]: Value } = {}
-			for (let i = 0; i < value.items.length; i++) {
-				let member = (type.type.value as unknown as Ydb.StructType).members[i]!
-				struct[member.name] = fromYdb(value.items[i]!, member.type!)
-			}
-
-			return new Struct(struct)
-		}
-		case 'nullType':
-			return new Null()
-		case 'optionalType':
-			if (value.value.case === 'nullFlagValue') {
-				return new Null()
-			}
-
-			return new Optional(fromYdb(value, type.type.value.item!))
-	}
-
-	throw new Error('Unsupported value.')
+function isValue(value: unknown): value is Value {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'type' in value &&
+		'encode' in value &&
+		typeof value.encode === 'function'
+	)
 }
 
 /**
@@ -112,8 +84,7 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
  * the input structure.
  *
  * Note: when converting an array of plain objects (`[{}, ...]`), every struct
- * field is wrapped in `Optional`. This keeps the conversion single-pass and
- * lets heterogeneous arrays (objects with different key sets) produce a single
+ * field is wrapped in `Optional`. This lets heterogeneous arrays (objects with different key sets) produce a single
  * unified struct type. As a consequence, the resulting type never matches
  * `NOT NULL` columns on the YDB side.
  *
@@ -128,7 +99,8 @@ export function fromYdb(value: Ydb.Value, type: Ydb.Type): Value {
  * or build a `StructType` and pass it to `new Struct(obj, type)` to pin the
  * field types.
  */
-export function fromJs(native: JSValue): Value {
+
+export function fromJs(native: JSValue | Value): Value {
 	switch (typeof native) {
 		case 'undefined':
 			throw new Error('Cannot convert undefined to YDBValue.')
@@ -145,43 +117,61 @@ export function fromJs(native: JSValue): Value {
 				return new Null()
 			}
 
-			// Check if the object is already a YDB Value
-			if (
-				typeof native === 'object' &&
-				native !== null &&
-				'type' in native &&
-				'encode' in native &&
-				typeof (native as any).encode === 'function'
-			) {
-				return native as unknown as Value
-			}
+			if (isValue(native)) return native
 
 			if (isDate(native)) {
+				if ('timeZone' in native)
+					throw new TypeError(
+						'Use Temporal.ZonedDateTime or an explicit YDB timezone value instead of TZDate'
+					)
 				return new Datetime(native)
 			}
-
-			if (native instanceof TZDate) {
-				return new TzDatetime(native)
+			let temporalKind = Object.prototype.toString.call(native)
+			switch (temporalKind) {
+				case '[object Temporal.PlainDate]':
+					return new DateValue(native as Temporal.PlainDate)
+				case '[object Temporal.Instant]':
+					return new Timestamp(native as Temporal.Instant)
+				case '[object Temporal.ZonedDateTime]':
+					return new TzTimestamp(native as Temporal.ZonedDateTime)
+				case '[object Temporal.Duration]':
+					return new Interval(native as Temporal.Duration)
 			}
+			if (temporalKind.startsWith('[object Temporal.'))
+				throw new TypeError(
+					'This Temporal type has no inferred YDB type; use an explicit typed value'
+				)
 
 			if (isUint8Array(native)) {
 				return new Bytes(native)
 			}
 
 			if (isFloat32Array(native)) {
-				return new List(...Array.from(native, (v) => new Float(v)))
+				return new List(
+					Array.from(native, (v) => new Float(v)),
+					new ListType(new FloatType())
+				)
 			}
 
 			if (isFloat64Array(native)) {
-				return new List(...Array.from(native, (v) => new Double(v)))
+				return new List(
+					Array.from(native, (v) => new Double(v)),
+					new ListType(new DoubleType())
+				)
 			}
 
 			if (isBigInt64Array(native)) {
-				return new List(...Array.from(native, (v) => new Int64(v)))
+				return new List(
+					Array.from(native, (v) => new Int64(v)),
+					new ListType(new Int64Type())
+				)
 			}
 
 			if (isBigUint64Array(native)) {
-				return new List(...Array.from(native, (v) => new Uint64(v)))
+				return new List(
+					Array.from(native, (v) => new Uint64(v)),
+					new ListType(new Uint64Type())
+				)
 			}
 
 			if (isSet(native)) {
@@ -199,65 +189,38 @@ export function fromJs(native: JSValue): Value {
 			}
 
 			if (Array.isArray(native)) {
-				let values: Value[] = []
-				let structs: [string, Value][][] = []
-
-				for (let i = 0; i < native.length; i++) {
-					if (
-						typeof native[i] === 'object' &&
-						!Array.isArray(native[i]) &&
-						native[i] !== null
-					) {
-						let element = native[i] as { [key: string]: JSValue }
-
-						let struct: [string, Value][] = []
-						for (let key in element) {
-							let value = fromJs(element[key]!)
-							struct.push([key, value])
-						}
-
-						structs.push(struct)
-						continue
-					}
-
-					values.push(fromJs(native[i]!))
-				}
-
-				if (structs.length > 0) {
-					let structNames: string[] = []
-					let structNamesSet: Set<string> = new Set()
-					let structTypes: Type[] = []
-					let structValues: { [key: string]: Value }[] = []
-
-					for (let struct of structs) {
-						let record: { [key: string]: Value } = {}
-
-						for (let [key, value] of struct) {
-							value = new Optional(value)
-
-							if (!structNamesSet.has(key)) {
-								structNames.push(key)
-								structTypes.push(value.type)
-
-								structNamesSet.add(key)
+				let values = native.map(fromJs)
+				// Only inferred records participate in the optional-field union.
+				if (
+					values.length &&
+					values.every(
+						(value, index) => value instanceof Struct && !isValue(native[index])
+					)
+				) {
+					let names: string[] = []
+					let types: Type[] = []
+					let seen = new Set<string>()
+					let records: Record<string, Value>[] = []
+					for (let value of values as Struct[]) {
+						let record: Record<string, Value> = Object.create(null)
+						for (let [index, name] of value.type.names.entries()) {
+							let item = new Optional(value.items[index]!)
+							if (!seen.has(name)) {
+								seen.add(name)
+								names.push(name)
+								types.push(item.type)
 							}
-
-							record[key] = value
+							record[name] = item
 						}
-
-						structValues.push(record)
+						records.push(record)
 					}
-
-					let structTypeDef = new StructType(structNames, structTypes)
-					for (let struct of structValues) {
-						values.push(new Struct(struct, structTypeDef))
-					}
+					let type = new StructType(names, types)
+					values = records.map((record) => new Struct(record, type))
 				}
-
-				return new List(...values)
+				return new List(values, new ListType(values[0]?.type ?? new NullType()))
 			}
 
-			let struct: { [key: string]: Value } = {}
+			let struct: { [key: string]: Value } = Object.create(null)
 			for (let [k, v] of Object.entries(native)) {
 				struct[k] = fromJs(v)
 			}
@@ -298,16 +261,19 @@ export function toJs(value: Value): JSValue {
 				case Ydb.Type_PrimitiveTypeId.DATE:
 					return new Date(((value as Primitive).value as number) * 24 * 60 * 60 * 1000)
 				case Ydb.Type_PrimitiveTypeId.DATETIME:
-					return new Date(((value as Primitive).value as number) * 1000)
+					return new Date(Number((value as Primitive).value) * 1000)
 				case Ydb.Type_PrimitiveTypeId.TIMESTAMP:
 					return new Date(Number(((value as Primitive).value as bigint) / 1000n))
+				case Ydb.Type_PrimitiveTypeId.INTERVAL:
+					return Number((value as Primitive).value)
+				case Ydb.Type_PrimitiveTypeId.DATE32:
+				case Ydb.Type_PrimitiveTypeId.DATETIME64:
+				case Ydb.Type_PrimitiveTypeId.TIMESTAMP64:
+				case Ydb.Type_PrimitiveTypeId.INTERVAL64:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATE:
 				case Ydb.Type_PrimitiveTypeId.TZ_DATETIME:
-				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP: {
-					let [dateStr, tz] = ((value as Primitive).value as string).split(',')
-
-					return new TZDate(dateStr!, tz!)
-				}
+				case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
+					return value
 			}
 			break
 		case TypeKind.OPTIONAL: {
@@ -327,7 +293,7 @@ export function toJs(value: Value): JSValue {
 			return dict
 		}
 		case TypeKind.STRUCT: {
-			let struct: { [key: string]: JSValue } = {}
+			let struct: { [key: string]: JSValue } = Object.create(null)
 
 			for (let i = 0; i < (value as Struct).type.names.length; i++) {
 				struct[(value as Struct).type.names[i]!] = toJs((value as Struct).items[i]!)
@@ -339,7 +305,7 @@ export function toJs(value: Value): JSValue {
 			return null
 	}
 
-	throw new Error('Unsupported value.')
+	return value
 }
 export * from './type.js'
 export * from './value.js'

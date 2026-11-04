@@ -37,6 +37,8 @@ Modern, modular SDK for YDB in TypeScript/JavaScript.
 npm install @ydbjs/core @ydbjs/query
 ```
 
+TypeScript projects require TypeScript 7 or later.
+
 ### 2) Connect and Query
 
 ```ts

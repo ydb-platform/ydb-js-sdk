@@ -58,6 +58,14 @@ function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
 			return 'Timestamp'
 		case Ydb.Type_PrimitiveTypeId.TZ_TIMESTAMP:
 			return 'TzTimestamp'
+		case Ydb.Type_PrimitiveTypeId.DATE32:
+			return 'Date32'
+		case Ydb.Type_PrimitiveTypeId.DATETIME64:
+			return 'Datetime64'
+		case Ydb.Type_PrimitiveTypeId.TIMESTAMP64:
+			return 'Timestamp64'
+		case Ydb.Type_PrimitiveTypeId.INTERVAL64:
+			return 'Interval64'
 		case Ydb.Type_PrimitiveTypeId.DYNUMBER:
 			return 'DyNumber'
 		default:
@@ -65,12 +73,16 @@ function primitiveTypeToString(pTypeId: Ydb.Type_PrimitiveTypeId) {
 	}
 }
 
+function memberName(name: string): string {
+	return /^[A-Za-z_][A-Za-z_0-9]*$/.test(name)
+		? name
+		: '`' + name.replaceAll('\\', '\\\\').replaceAll('`', '``') + '`'
+}
+
 export function typeToString(type: Type): string {
 	switch (type.kind) {
 		case TypeKind.PRIMITIVE:
 			return primitiveTypeToString((type as PrimitiveType).id)
-		case TypeKind.DECIMAL:
-			return 'Decimal'
 		case TypeKind.LIST:
 			return `List<${typeToString((type as ListType).item)}>`
 		case TypeKind.DICT:
@@ -78,12 +90,12 @@ export function typeToString(type: Type): string {
 		case TypeKind.TUPLE:
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(',')}>`
 		case TypeKind.STRUCT:
-			return `Struct<${(type as StructType).names.map((name, index) => `${name}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
+			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
 		case TypeKind.NULL:
 			return 'Null'
+		default:
+			throw new Error(`Unsupported type: ${type}`)
 	}
-
-	throw new Error(`Unsupported type: ${type}`)
 }
