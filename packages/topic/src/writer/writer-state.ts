@@ -1,10 +1,12 @@
 import { create } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
 	type StreamWriteMessage_WriteRequest_MessageData,
 	StreamWriteMessage_WriteRequest_MessageDataSchema,
 } from '@ydbjs/api/topic'
 import { loggers } from '@ydbjs/debug'
+import { YDBError } from '@ydbjs/error'
 import type { TransitionResult, TransitionRuntime } from '@ydbjs/fsm'
 
 import { isRetryableTopicError } from '../retry.js'
@@ -160,6 +162,32 @@ export type WriterOutput =
 type WriterRuntime = TransitionRuntime<WriterState, WriterEvent, WriterOutput>
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
+
+let isRetryableWriterError = function isRetryableWriterError(
+	error: unknown,
+	retryOnSchemeError: boolean
+): boolean {
+	// WRONG_COOKIE also covers recoverable ownership loss; only explicit takeover is terminal.
+	if (
+		error instanceof YDBError &&
+		error.code === StatusIds_StatusCode.SESSION_EXPIRED &&
+		error.issues.some((issue) => {
+			if (!issue || typeof issue !== 'object' || Array.isArray(issue)) return false
+
+			return (
+				issue.issueCode === 500004 &&
+				typeof issue.message === 'string' &&
+				issue.message.startsWith(
+					'status is not ok: ownership session is killed by another session with id '
+				)
+			)
+		})
+	) {
+		return false
+	}
+
+	return isRetryableTopicError(error, retryOnSchemeError)
+}
 
 export let createWriterCtx = function createWriterCtx(
 	limits: WriterLimits,
@@ -730,7 +758,7 @@ export let writerTransition = function writerTransition(
 					ctx.attempts += 1
 					return { state: 'connecting', effects: connectEffects(ctx) }
 				case 'writer.stream.disconnected':
-					if (!isRetryableTopicError(event.error, ctx.retryOnSchemeError)) {
+					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
 
@@ -791,7 +819,7 @@ export let writerTransition = function writerTransition(
 				case 'writer.stream.token_response':
 					return
 				case 'writer.stream.disconnected':
-					if (!isRetryableTopicError(event.error, ctx.retryOnSchemeError)) {
+					if (!isRetryableWriterError(event.error, ctx.retryOnSchemeError)) {
 						return terminate(ctx, 'errored', event.error, runtime)
 					}
 
