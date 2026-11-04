@@ -265,7 +265,14 @@ Variant values are available only as raw protobuf results.
 Typed decoding and Variant query parameters are unsupported, including Variant schemas nested inside other types.
 Use raw results to inspect the value and its schema, or project the selected alternative and its discriminator explicitly in YQL.
 
-The tagged-SQL API provides `.raw()` for protobuf cells.
+QueryClient exposes raw cells together with their column schemas:
+
+```ts
+let result = await client.retrySession((session) => session.execute(queryText, {}, { raw: true }))
+let { columns, rows } = result.resultSets[0]!
+```
+
+The tagged-SQL API also provides `.raw()` for protobuf cells; use QueryClient when column types are needed alongside those cells.
 A raw cell alone is not a typed parameter: preserve its column schema when inspecting it, and construct a supported, explicit Value before binding.
 
 ## Development

@@ -1,10 +1,19 @@
 import { expect, test } from 'vitest'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
-import { CommitError, YDBError } from '@ydbjs/error'
+import { CommitError, TransactionCompletionError, YDBError } from '@ydbjs/error'
 import { Status } from '@ydbjs/grpc'
 
 import { defaultRetryConfig, isRetryableError } from './index.js'
 import type { RetryStrategy } from './strategy.js'
+
+test('confirmed commits are terminal even when their cleanup cause is retryable', () => {
+	let cause = new YDBError(StatusIds_StatusCode.ABORTED, [])
+	let error = new TransactionCompletionError(cause)
+	expect(error.committed).toBe(true)
+	expect(error.cause).toBe(cause)
+	expect(isRetryableError(error, false)).toBe(false)
+	expect(isRetryableError(error, true)).toBe(false)
+})
 
 // Tests for isRetryableError function
 test('ServiceError with ABORTED is retryable', () => {

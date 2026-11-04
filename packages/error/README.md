@@ -20,6 +20,8 @@ npm install @ydbjs/error@6.0.0-alpha.2
 
 ## Usage
 
+`TransactionCompletionError` means the database commit succeeded but a completion hook failed. Its `committed` field is `true`, and `cause` contains the original hook error. Retrying that error must not execute the transaction again. It differs from `CommitError`, which reports a failed commit response and does not confirm that a commit succeeded.
+
 ### Handling YDB Errors
 
 ```ts
