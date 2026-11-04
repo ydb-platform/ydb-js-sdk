@@ -105,6 +105,8 @@ export function typeToString(type: Type): string {
 			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
 		case TypeKind.TAGGED:
 			return `Tagged<${typeToString((type as TaggedType).itemType)},${JSON.stringify((type as TaggedType).tag)}>`
+		case TypeKind.VOID:
+			return 'Void'
 		case TypeKind.PG_TYPE: {
 			let name = (type as PgType).typeName
 			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name))

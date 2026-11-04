@@ -8,6 +8,7 @@ import { Null, NullType } from './null.js'
 import { Optional, OptionalType } from './optional.js'
 import { Pg, PgType } from './pg.js'
 import { Tagged, TaggedType } from './tagged.js'
+import { Void, VoidType } from './void.js'
 import { Primitive, PrimitiveType } from './primitive.js'
 import { Struct, StructType } from './struct.js'
 import { Tuple, TupleType } from './tuple.js'
@@ -45,6 +46,8 @@ function decodeType(wire: Ydb.Type): Type {
 			return new TaggedType(wire.type.value.tag, decodeType(wire.type.value.type!))
 		case 'pgType':
 			return new PgType(wire.type.value)
+		case 'voidType':
+			return new VoidType()
 		case 'nullType':
 			return new NullType()
 		case 'emptyListType':
@@ -136,11 +139,12 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 			if (wire.value.case !== 'nullFlagValue')
 				throw new TypeError('Null requires a null flag')
 			return new Null()
+		case TypeKind.VOID:
 		case TypeKind.EMPTY_LIST:
 		case TypeKind.EMPTY_DICT:
 			if (wire.items.length || wire.pairs.length || wire.value.case !== undefined)
 				throw new TypeError('Empty container cannot contain values')
-			return new Empty(type as EmptyType)
+			return type.kind === TypeKind.VOID ? new Void() : new Empty(type as EmptyType)
 		default:
 			throw new TypeError(`Unsupported YDB value kind: ${type.kind}`)
 	}

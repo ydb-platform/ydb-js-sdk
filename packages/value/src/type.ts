@@ -8,6 +8,7 @@ export enum TypeKind {
 	TUPLE = 5,
 	STRUCT = 6,
 	DICT = 7,
+	VOID = 9,
 	NULL = 10,
 	PG_TYPE = 11,
 	EMPTY_LIST = 12,
