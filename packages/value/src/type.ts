@@ -9,6 +9,7 @@ export enum TypeKind {
 	STRUCT = 6,
 	DICT = 7,
 	NULL = 10,
+	PG_TYPE = 11,
 	EMPTY_LIST = 12,
 	EMPTY_DICT = 13,
 }

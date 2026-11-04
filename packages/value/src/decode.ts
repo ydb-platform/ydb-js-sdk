@@ -6,6 +6,7 @@ import { Empty, EmptyType } from './empty.js'
 import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
 import { Optional, OptionalType } from './optional.js'
+import { Pg, PgType } from './pg.js'
 import { Primitive, PrimitiveType } from './primitive.js'
 import { Struct, StructType } from './struct.js'
 import { Tuple, TupleType } from './tuple.js'
@@ -39,6 +40,8 @@ function decodeType(wire: Ydb.Type): Type {
 			throw new TypeError(
 				'YDB Variant values require raw result mode: use .raw() or { raw: true }.'
 			)
+		case 'pgType':
+			return new PgType(wire.type.value)
 		case 'nullType':
 			return new NullType()
 		case 'emptyListType':
@@ -80,6 +83,12 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 				itemType
 			)
 		}
+		case TypeKind.PG_TYPE:
+			if (wire.value.case === 'nullFlagValue') return new Pg(null, type as PgType)
+			if (wire.value.case === 'textValue' || wire.value.case === 'bytesValue')
+				return new Pg(wire.value.value, type as PgType)
+			throw new TypeError('Pg value requires text, bytes or null')
+
 		case TypeKind.LIST:
 			if (wire.value.case !== undefined)
 				throw new TypeError('List cannot contain a scalar value')

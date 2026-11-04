@@ -81,6 +81,10 @@
 		"./empty": {
 			"development": "./src/empty.ts",
 			"default": "./dist/empty.js"
+		},
+		"./pg": {
+			"development": "./src/pg.ts",
+			"default": "./dist/pg.js"
 		}
 	},
 	"publishConfig": {
