@@ -87,27 +87,29 @@ EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict const
 
 ### Temporal values
 
-Use explicit date and timezone constructors when a parameter requires a particular YDB type.
+Date32, Datetime64, Timestamp64 and Interval64 also have named constructors and corresponding Type classes.
 
 | Constructors                    | Accepted input                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------------------- |
-| Date                            | JavaScript `Date`, `Temporal.PlainDate`, or integer days since the Unix epoch      |
+| Date, Date32                    | JavaScript `Date`, `Temporal.PlainDate`, or integer days since the Unix epoch      |
 | Datetime                        | JavaScript `Date`, `Temporal.Instant`, or integer seconds since the Unix epoch     |
-| Timestamp                       | JavaScript `Date`, `Temporal.Instant`, or bigint microseconds since the Unix epoch |
+| Datetime64                      | JavaScript `Date`, `Temporal.Instant`, or bigint seconds since the Unix epoch      |
+| Timestamp, Timestamp64          | JavaScript `Date`, `Temporal.Instant`, or bigint microseconds since the Unix epoch |
 | Interval                        | `Temporal.Duration`, or a safe integer number of microseconds                      |
+| Interval64                      | `Temporal.Duration`, bigint microseconds, or a safe integer number of microseconds |
 | TzDate, TzDatetime, TzTimestamp | `Temporal.ZonedDateTime`, or YDB date/time text followed by an IANA timezone       |
 
 Timezone constructors require a global Temporal implementation, including when validating string input; see [Temporal setup](#temporal-setup).
 
 ```ts
-import { Timestamp, TzTimestamp } from '@ydbjs/value/primitive'
+import { Timestamp64, TzTimestamp } from '@ydbjs/value/primitive'
 
-let timestamp = new Timestamp(1001n)
+let timestamp = new Timestamp64(-1n)
 let zoned = new TzTimestamp('2025-01-01T12:34:56.123456,UTC')
 ```
 
 Exact units and timezone strings preserve precision that JavaScript `Date` cannot represent.
-Constructors check YDB ranges and reject Temporal inputs with precision finer than the target type: Datetime requires whole seconds, while Timestamp and Interval require whole microseconds.
+Constructors check YDB ranges and reject Temporal inputs with precision finer than the target type: Datetime requires whole seconds, while Timestamp and Interval require whole microseconds, including their extended counterparts.
 JavaScript `Date` input retains its existing conversion: Date uses the UTC calendar day and Datetime rounds down to whole seconds.
 Temporal date and timezone inputs must use the `iso8601` calendar; durations must contain only time units, with no years, months, weeks or days.
 Timezone constructors reject nonexistent or repeated local times at timezone transitions because the wire text carries neither an offset nor a DST fold indicator.
@@ -146,28 +148,28 @@ function parameter(instant: Temporal.Instant) {
 
 ## Infer types from JavaScript
 
-| JavaScript input                   | Inferred YDB type              | Notes                                                         |
-| ---------------------------------- | ------------------------------ | ------------------------------------------------------------- |
-| `boolean`                          | Bool                           |                                                               |
-| Integer `number`                   | Int32                          | Use an explicit integer type when the required schema differs |
-| Non-integer `number`               | Double                         |                                                               |
-| `bigint`                           | Int64                          |                                                               |
-| `string`                           | Utf8                           |                                                               |
-| `Date`                             | Datetime                       | Second precision; use `Timestamp` explicitly for milliseconds |
-| `Temporal.PlainDate`               | Date                           | ISO calendar                                                  |
-| `Temporal.Instant`                 | Timestamp                      | Exact microseconds                                            |
-| `Temporal.ZonedDateTime`           | TzTimestamp                    | ISO calendar and IANA timezone                                |
-| `Temporal.Duration`                | Interval                       | Exact microseconds without calendar units                     |
-| `Uint8Array`                       | String                         | Binary data                                                   |
-| `Float32Array` / `Float64Array`    | `List<Float>` / `List<Double>` |                                                               |
-| `BigInt64Array` / `BigUint64Array` | `List<Int64>` / `List<Uint64>` |                                                               |
-| `null`                             | Null                           | Does not infer an Optional item type                          |
-| `Array`                            | List                           | Elements must have compatible types                           |
-| `Set`                              | Tuple                          | Elements may have different types                             |
-| `Map`                              | Dict                           | Keys and values are converted recursively                     |
-| Plain object                       | Struct                         | Own enumerable fields are converted recursively               |
+| JavaScript input                   | Inferred YDB type              | Notes                                                                              |
+| ---------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
+| `boolean`                          | Bool                           |                                                                                    |
+| Integer `number`                   | Int32                          | Use an explicit integer type when the required schema differs                      |
+| Non-integer `number`               | Double                         |                                                                                    |
+| `bigint`                           | Int64                          |                                                                                    |
+| `string`                           | Utf8                           |                                                                                    |
+| `Date`                             | Datetime                       | Second precision; use `Timestamp` explicitly for milliseconds                      |
+| `Temporal.PlainDate`               | Date                           | ISO calendar; use `Date32` explicitly for the extended range                       |
+| `Temporal.Instant`                 | Timestamp                      | Exact microseconds; use `Timestamp64` for the extended range                       |
+| `Temporal.ZonedDateTime`           | TzTimestamp                    | ISO calendar and IANA timezone                                                     |
+| `Temporal.Duration`                | Interval                       | Exact microseconds without calendar units; use `Interval64` for the extended range |
+| `Uint8Array`                       | String                         | Binary data                                                                        |
+| `Float32Array` / `Float64Array`    | `List<Float>` / `List<Double>` |                                                                                    |
+| `BigInt64Array` / `BigUint64Array` | `List<Int64>` / `List<Uint64>` |                                                                                    |
+| `null`                             | Null                           | Does not infer an Optional item type                                               |
+| `Array`                            | List                           | Elements must have compatible types                                                |
+| `Set`                              | Tuple                          | Elements may have different types                                                  |
+| `Map`                              | Dict                           | Keys and values are converted recursively                                          |
+| Plain object                       | Struct                         | Own enumerable fields are converted recursively                                    |
 
-Use explicit constructors when a parameter requires a different precision; unsupported Temporal types such as PlainDateTime require an explicit conversion first.
+Use explicit constructors when a parameter requires a different precision or extended range; unsupported Temporal types such as PlainDateTime require an explicit conversion first.
 
 ```ts
 import { fromJs, toJs } from '@ydbjs/value'

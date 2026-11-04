@@ -108,6 +108,16 @@ let integerRanges: Partial<Record<Ydb.Type_PrimitiveTypeId, [number, number] | [
 		[Ydb.Type_PrimitiveTypeId.DATETIME]: [0, 4_291_747_199],
 		[Ydb.Type_PrimitiveTypeId.TIMESTAMP]: [0n, 4_291_747_199_999_999n],
 		[Ydb.Type_PrimitiveTypeId.INTERVAL]: [-4_291_747_199_999_999n, 4_291_747_199_999_999n],
+		[Ydb.Type_PrimitiveTypeId.DATE32]: [-53_375_809, 53_375_807],
+		[Ydb.Type_PrimitiveTypeId.DATETIME64]: [-4_611_669_897_600n, 4_611_669_811_199n],
+		[Ydb.Type_PrimitiveTypeId.TIMESTAMP64]: [
+			-4_611_669_897_600_000_000n,
+			4_611_669_811_199_999_999n,
+		],
+		[Ydb.Type_PrimitiveTypeId.INTERVAL64]: [
+			-9_223_339_708_799_999_999n,
+			9_223_339_708_799_999_999n,
+		],
 	}
 
 export class Primitive implements Value<PrimitiveType> {
@@ -519,5 +529,79 @@ export class JsonDocumentType extends PrimitiveType {
 export class JsonDocument extends Primitive implements Value<JsonDocumentType> {
 	constructor(value: string) {
 		super({ value: { case: 'textValue', value: value } }, new JsonDocumentType())
+	}
+}
+
+export class Date32Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DATE32)
+	}
+}
+
+export class Date32 extends Primitive implements Value<Date32Type> {
+	constructor(value: DateInput | Temporal.PlainDate | number) {
+		let days =
+			typeof value === 'number'
+				? value
+				: isDate(value)
+					? Math.floor(value.getTime() / 86400000)
+					: dateToDays(value)
+		super({ value: { case: 'int32Value', value: days } }, new Date32Type())
+	}
+}
+
+export class Datetime64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.DATETIME64)
+	}
+}
+
+export class Datetime64 extends Primitive implements Value<Datetime64Type> {
+	constructor(value: DateInput | Temporal.Instant | bigint) {
+		let seconds =
+			typeof value === 'bigint'
+				? value
+				: isDate(value)
+					? BigInt(Math.floor(value.getTime() / 1000))
+					: instantToSeconds(value)
+		super({ value: { case: 'int64Value', value: seconds } }, new Datetime64Type())
+	}
+}
+
+export class Timestamp64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.TIMESTAMP64)
+	}
+}
+
+export class Timestamp64 extends Primitive implements Value<Timestamp64Type> {
+	constructor(value: DateInput | Temporal.Instant | bigint) {
+		let microseconds =
+			typeof value === 'bigint'
+				? value
+				: isDate(value)
+					? BigInt(value.getTime()) * 1000n
+					: instantToMicroseconds(value)
+		super({ value: { case: 'int64Value', value: microseconds } }, new Timestamp64Type())
+	}
+}
+
+export class Interval64Type extends PrimitiveType {
+	constructor() {
+		super(Ydb.Type_PrimitiveTypeId.INTERVAL64)
+	}
+}
+
+export class Interval64 extends Primitive implements Value<Interval64Type> {
+	constructor(value: bigint | number | Temporal.Duration) {
+		if (typeof value === 'number' && !Number.isSafeInteger(value))
+			throw new RangeError('Interval64 number is outside the exact integer range; use bigint')
+		let microseconds =
+			typeof value === 'number'
+				? BigInt(value)
+				: typeof value === 'bigint'
+					? value
+					: durationToMicroseconds(value)
+		super({ value: { case: 'int64Value', value: microseconds } }, new Interval64Type())
 	}
 }
