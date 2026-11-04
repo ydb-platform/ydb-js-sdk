@@ -1,7 +1,11 @@
+/// <reference lib="esnext.temporal" preserve="true" />
+
 import { Type_PrimitiveTypeId } from '@ydbjs/api/value'
 import { Primitive } from '@ydbjs/value/primitive'
 
-export function dateFromDriver(value: Date | Primitive): Date {
+export function dateFromDriver(
+	value: Date | Primitive | Temporal.PlainDate | Temporal.Instant
+): Date {
 	if (value instanceof Date) return value
 	if (value instanceof Primitive) {
 		switch (value.type.id) {
@@ -18,5 +22,10 @@ export function dateFromDriver(value: Date | Primitive): Date {
 				throw new TypeError('Expected a YDB date or timestamp value')
 		}
 	}
-	throw new TypeError('Expected a Date or YDB date value')
+	let instant =
+		Object.prototype.toString.call(value) === '[object Temporal.PlainDate]'
+			? (value as Temporal.PlainDate).toZonedDateTime('UTC')
+			: (value as Temporal.Instant)
+	// Preserve Date's truncation toward zero for instants before the epoch.
+	return new Date(Number(instant.epochNanoseconds / 1_000_000n))
 }

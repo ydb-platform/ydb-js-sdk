@@ -263,7 +263,36 @@ await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
 
 By default, Date, Datetime and Timestamp results use JavaScript `Date`, and Interval uses a number of microseconds.
 Date has day precision, Datetime has whole-second precision, and Timestamp microseconds are truncated to milliseconds in this default representation.
-Date32, Datetime64, Timestamp64, Interval64, TzDate, TzDatetime and TzTimestamp results remain typed SDK Values, preserving their exact data and schemas.
+Date32, Datetime64, Timestamp64, Interval64 and all timezone types remain typed SDK Values, preserving their exact data and schemas.
+
+To receive Temporal results, supply `temporal: true` when creating the client:
+
+```ts
+import { QueryClient, query } from '@ydbjs/query'
+
+await using client = new QueryClient(driver, { temporal: true })
+let sql = query(client)
+let resultSets = await sql`SELECT CurrentUtcTimestamp() AS created_at`
+```
+
+The tagged API also accepts `query(driver, { temporal: true })`; `query(client)` inherits the client's setting.
+The option applies to buffered and streamed results, including nested values, and is fixed for the client's lifetime.
+It maps dates to PlainDate, datetimes and timestamps to Instant, intervals to Duration, and timezone datetimes and timestamps to ZonedDateTime.
+These results use Temporal objects instead of JavaScript `Date`, preserving whole seconds for Datetime and exact microseconds for Timestamp, including their extended counterparts.
+TzDate and TzDate32 remain SDK Values because Temporal has no zoned date-only type.
+Raw results bypass JavaScript conversion.
+
+TypeScript projects require TypeScript 7 or later; SDK declarations include the standard Temporal types automatically.
+The SDK uses the runtime's `globalThis.Temporal` and does not include or install a polyfill.
+Node.js 26.3+ and Bun 1.4.3+ provide native Temporal; on Node.js 22/24, install and initialize an implementation in the application before creating a Temporal-enabled client.
+See [Temporal setup and the complete result mapping](../value/README.md#temporal-setup).
+Client construction throws immediately if `temporal: true` is requested without Temporal.
+Default result conversion and ordinary JavaScript `Date` inputs work without it.
+
+Result options do not change parameter inference: PlainDate maps to Date, Instant to Timestamp, ZonedDateTime to TzTimestamp, and Duration to Interval.
+Use explicit extended constructors for values outside those YDB ranges.
+Temporal parameters require ISO calendar dates, exact target precision and durations without calendar units; timezone constructors also require global Temporal to validate string input and reject skipped or repeated local times.
+The Drizzle adapter retains the Date and numeric representations declared by its column types.
 
 ## Query Statistics
 

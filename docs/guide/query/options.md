@@ -19,6 +19,18 @@ let sql = query(driver)
 let rows = await sql`SELECT 1 AS one`
 ```
 
+### Temporal result conversion
+
+Configure result conversion when creating the client with `query(driver, { temporal: true })` or `new QueryClient(driver, { temporal: true })`.
+`query(client)` inherits that setting, which applies to buffered and streamed results and recursively to nested values.
+It is a client option, not a chainable query method, and does not affect parameter inference.
+
+The application must provide `globalThis.Temporal` before enabling this option; the SDK does not bundle or install a polyfill.
+Runtimes with native Temporal need no setup; on Node.js 22/24, the application can install `temporal-polyfill` and import `temporal-polyfill/global` at startup.
+The client throws during construction if Temporal is unavailable.
+Raw results bypass conversion, and TzDate/TzDate32 remain SDK Values in both modes.
+See the [value package's setup, input rules and result mapping](https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/value#temporal-setup).
+
 ### Result sets
 
 `session.execute()` returns a `QueryResult<T>` object with `resultSets`, `stats` and `metadata`.

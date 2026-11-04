@@ -1,6 +1,5 @@
+import { install } from 'temporal-polyfill/shim'
 import { expect, test } from 'vitest'
-import * as Ydb from '@ydbjs/api/value'
-import { fromYdb, toJs } from '@ydbjs/value'
 import {
 	bigint,
 	boolean,
@@ -36,21 +35,24 @@ import { YdbDialect } from '../../ydb/dialect.ts'
 import { YdbInsertBuilder } from '../../ydb-core/query-builders/index.ts'
 import { YdbSelectBuilder } from '../../ydb-core/query-builders/index.ts'
 import { YdbSession } from '../../ydb-core/session.ts'
+import { fromYdb, toJs } from '@ydbjs/value'
 import {
 	Bool,
-	Primitive,
-	PrimitiveType,
 	Date as YdbDate,
+	Date32 as YdbDate32,
 	Datetime as YdbDatetime,
+	Datetime64 as YdbDatetime64,
 	Double as YdbDouble,
 	Float as YdbFloat,
 	Int16 as YdbInt16,
 	Int64 as YdbInt64,
 	Int8 as YdbInt8,
 	Interval as YdbInterval,
+	Interval64 as YdbInterval64,
 	Json as YdbJson,
 	JsonDocument as YdbJsonDocument,
 	Timestamp as YdbTimestamp,
+	Timestamp64 as YdbTimestamp64,
 	Uint16 as YdbUint16,
 	Uint32 as YdbUint32,
 	Uint64 as YdbUint64,
@@ -59,6 +61,8 @@ import {
 	Yson as YdbYson,
 } from '@ydbjs/value/primitive'
 import { type SQL, sql as yql } from 'drizzle-orm/sql/sql'
+
+install()
 
 let dialect = new YdbDialect()
 let session = {} as any
@@ -330,59 +334,44 @@ test('decodes selected rows through column codecs', async () => {
 	)
 })
 
-test('preserves declared date and interval column types with exact SDK values', async () => {
-	let values = {
-		dateValue: new YdbDate(1),
-		datetimeValue: new YdbDatetime(1),
-		timestampValue: new YdbTimestamp(1234n),
-		intervalValue: new YdbInterval(-4_294_967_297),
-	}
-	let projected: Record<string, unknown> = Object.fromEntries(
-		Object.entries(values).map(([name, value]) => [
-			name,
-			toJs(fromYdb(value.encode(), value.type.encode())),
-		])
-	)
-	for (let [name, id, scalar] of [
-		['date32Value', Ydb.Type_PrimitiveTypeId.DATE32, { case: 'int32Value', value: -1 }],
-		[
-			'datetime64Value',
-			Ydb.Type_PrimitiveTypeId.DATETIME64,
-			{ case: 'int64Value', value: -1n },
-		],
-		[
-			'timestamp64Value',
-			Ydb.Type_PrimitiveTypeId.TIMESTAMP64,
-			{ case: 'int64Value', value: -1001n },
-		],
-		[
-			'interval64Value',
-			Ydb.Type_PrimitiveTypeId.INTERVAL64,
-			{ case: 'int64Value', value: -9_007_199_254_740_993n },
-		],
-	] as const) {
-		let value = new Primitive({ value: scalar }, new PrimitiveType(id))
-		projected[name] = toJs(fromYdb(value.encode(), value.type.encode()))
-	}
-	let mockSession = new YdbSession(
-		{ execute: async () => ({ rows: [typeRow(projected)] }) },
-		dialect
-	)
-	let rows = (await new YdbSelectBuilder(mockSession).from(typesTable).execute()) as Array<
-		Record<string, unknown>
-	>
-	let row = rows[0]!
-	for (let [name, milliseconds] of Object.entries({
-		dateValue: 86_400_000,
-		date32Value: -86_400_000,
-		datetimeValue: 1000,
-		datetime64Value: -1000,
-		timestampValue: 1,
-		timestamp64Value: -1,
-	})) {
-		expect(row[name]).toBeInstanceOf(Date)
-		expect((row[name] as Date).getTime()).toBe(milliseconds)
-	}
-	expect(row.intervalValue).toBe(-4_294_967_297)
-	expect(row.interval64Value).toBe(-9_007_199_254_740_993n)
-})
+for (let temporal of [false, true]) {
+	test(`preserves date and interval column types with temporal=${temporal}`, async () => {
+		let values = {
+			dateValue: new YdbDate(1),
+			date32Value: new YdbDate32(-1),
+			datetimeValue: new YdbDatetime(1),
+			datetime64Value: new YdbDatetime64(-1n),
+			timestampValue: new YdbTimestamp(1234n),
+			timestamp64Value: new YdbTimestamp64(-1001n),
+			intervalValue: new YdbInterval(-4_294_967_297),
+			interval64Value: new YdbInterval64(-9_007_199_254_740_993n),
+		}
+		let projected = Object.fromEntries(
+			Object.entries(values).map(([name, value]) => [
+				name,
+				toJs(fromYdb(value.encode(), value.type.encode()), { temporal }),
+			])
+		)
+		let mockSession = new YdbSession(
+			{ execute: async () => ({ rows: [typeRow(projected)] }) },
+			dialect
+		)
+		let rows = (await new YdbSelectBuilder(mockSession).from(typesTable).execute()) as Array<
+			Record<string, unknown>
+		>
+		let row = rows[0]!
+		for (let [name, milliseconds] of Object.entries({
+			dateValue: 86_400_000,
+			date32Value: -86_400_000,
+			datetimeValue: 1000,
+			datetime64Value: -1000,
+			timestampValue: 1,
+			timestamp64Value: -1,
+		})) {
+			expect(row[name]).toBeInstanceOf(Date)
+			expect((row[name] as Date).getTime()).toBe(milliseconds)
+		}
+		expect(row.intervalValue).toBe(-4_294_967_297)
+		expect(row.interval64Value).toBe(-9_007_199_254_740_993n)
+	})
+}

@@ -1,18 +1,19 @@
 import { SQL, type SQLWrapper, sql as yql } from 'drizzle-orm/sql/sql'
+import { dateFromDriver } from '../temporal.js'
 
 // Current UTC clock readings. These are constant within a query — every call
 // site receives the same value — so they're safe to use multiple times in one
 // statement without diverging.
 export function currentUtcDate(): SQL<Date> {
-	return yql`CurrentUtcDate()`
+	return yql`CurrentUtcDate()`.mapWith(dateFromDriver)
 }
 
 export function currentUtcDatetime(): SQL<Date> {
-	return yql`CurrentUtcDatetime()`
+	return yql`CurrentUtcDatetime()`.mapWith(dateFromDriver)
 }
 
 export function currentUtcTimestamp(): SQL<Date> {
-	return yql`CurrentUtcTimestamp()`
+	return yql`CurrentUtcTimestamp()`.mapWith(dateFromDriver)
 }
 
 function joinKeys(keys: readonly SQLWrapper[]): SQL {

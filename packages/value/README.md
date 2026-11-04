@@ -118,7 +118,7 @@ Constructors check YDB ranges and reject Temporal inputs with precision finer th
 JavaScript `Date` input retains its existing conversion: Date uses the UTC calendar day and Datetime rounds down to whole seconds.
 Temporal date and timezone inputs must use the `iso8601` calendar; durations must contain only time units, with no years, months, weeks or days.
 YDB historical years have no year zero: `-1` in timezone text maps to Temporal astronomical year `0`.
-Timezone constructors reject nonexistent or repeated local times at timezone transitions because the wire text carries neither an offset nor a DST fold indicator.
+Timezone constructors and Temporal result conversion reject nonexistent or repeated local times at timezone transitions because the wire text carries neither an offset nor a DST fold indicator.
 Timezone validation uses the runtime's timezone database; the server must also recognize the zone and its rules.
 TzDate and TzDate32 take the local date and timezone from a ZonedDateTime, discarding its time of day; their results remain SDK Values because Temporal has no zoned date-only type.
 `TZDate` from `@date-fns/tz` is no longer supported; use ZonedDateTime or explicit timezone text.
@@ -134,7 +134,7 @@ On Node.js 22/24, the application can install a polyfill:
 npm install temporal-polyfill
 ```
 
-Initialize it in the application's entry point before constructing timezone parameters:
+Initialize it in the application's entry point before enabling Temporal results or constructing timezone parameters:
 
 ```ts
 import 'temporal-polyfill/global'
@@ -197,6 +197,7 @@ QueryClient and the tagged-SQL API reject Tagged anywhere in a parameter schema 
 | `Map`                              | Dict                           | Keys and values are converted recursively                                          |
 | Plain object                       | Struct                         | Own enumerable fields are converted recursively                                    |
 
+Temporal result options do not change parameter inference.
 Use explicit constructors when a parameter requires a different precision or extended range; unsupported Temporal types such as PlainDateTime require an explicit conversion first.
 
 ```ts
@@ -319,6 +320,37 @@ This rule also applies recursively to those values inside arrays, structs, maps 
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
+
+### Temporal results
+
+After [setting up Temporal](#temporal-setup), use `toJs(value, { temporal: true })` to preserve exact date, instant and interval values:
+
+```ts
+import { toJs } from '@ydbjs/value'
+import { Timestamp64 } from '@ydbjs/value/primitive'
+
+let value = new Timestamp64(-1n)
+toJs(value) // The same SDK Value
+toJs(value, { temporal: true }) // Temporal.Instant: 1969-12-31T23:59:59.999999Z
+```
+
+| YDB type                   | Result with `temporal: true` | Preserved YDB precision |
+| -------------------------- | ---------------------------- | ----------------------- |
+| Date, Date32               | `Temporal.PlainDate`         | Days                    |
+| Datetime, Datetime64       | `Temporal.Instant`           | Seconds                 |
+| Timestamp, Timestamp64     | `Temporal.Instant`           | Microseconds            |
+| Interval, Interval64       | `Temporal.Duration`          | Microseconds            |
+| TzDatetime, TzDatetime64   | `Temporal.ZonedDateTime`     | Seconds                 |
+| TzTimestamp, TzTimestamp64 | `Temporal.ZonedDateTime`     | Microseconds            |
+| TzDate, TzDate32           | The same SDK Value           | Date and timezone       |
+
+Temporal results retain the source precision without converting instants through JavaScript `Date`.
+Timestamp microseconds are converted exactly to Temporal nanoseconds with bigint arithmetic; this does not add precision to the source value.
+
+The option applies recursively inside Lists, Tuples, Dicts, Structs and Optionals; other projection rules remain the same.
+Enabling it requires a global Temporal implementation even when the particular value contains no dates.
+Keep the typed Value or use raw query results when timezone text cannot be converted unambiguously.
+QueryClient and the tagged query API accept the same `temporal: true` option at client creation; see [Query value conversion](../query/README.md#value-conversion-and-type-safety).
 
 ### Variant results
 

@@ -116,6 +116,8 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 export function query(driver: Driver, options?: QueryOptions): SQLClient
 export function query(client: QueryClient): SQLClient
 export function query(source: Driver | QueryClient, clientOptions?: QueryOptions): SQLClient {
+	if (source instanceof QueryClient && clientOptions !== undefined)
+		throw new TypeError('Configure options on QueryClient before passing it to query()')
 	let client = source instanceof QueryClient ? source : new QueryClient(source, clientOptions)
 
 	function executorSQL(executor?: QueryExecutor): SQL {

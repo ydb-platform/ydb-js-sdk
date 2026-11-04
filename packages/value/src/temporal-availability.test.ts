@@ -29,3 +29,19 @@ test('timezone constructors require Temporal even for string input', () => {
 		/Temporal is not available.*application/
 	)
 })
+
+test('Temporal result conversion requires an application implementation', () => {
+	vi.stubGlobal('Temporal', undefined)
+
+	expect(() => toJs(new Timestamp(0n), { temporal: true })).toThrow(
+		/Temporal is not available.*application/
+	)
+})
+
+test('conversion rejects invalid runtime mode options', () => {
+	let value = new Timestamp(0n)
+	expect(() => toJs(value, { temporal: 'false' } as never)).toThrow(/boolean/)
+	expect(() => toJs(value, { temporal: null } as never)).toThrow(/boolean/)
+	for (let options of [null, true, [], 'temporal'])
+		expect(() => toJs(value, options as never)).toThrow(/options must be an object/)
+})

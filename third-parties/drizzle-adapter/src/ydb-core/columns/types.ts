@@ -1,3 +1,5 @@
+/// <reference lib="esnext.temporal" preserve="true" />
+
 import * as Ydb from '@ydbjs/api/value'
 import {
 	Bool,
@@ -11,6 +13,7 @@ import {
 	Int64 as YdbInt64,
 	Int8 as YdbInt8,
 	Interval as YdbInterval,
+	Interval64 as YdbInterval64,
 	Json as YdbJson,
 	JsonDocument as YdbJsonDocument,
 	Timestamp as YdbTimestamp,
@@ -172,7 +175,7 @@ let bytesBase = customType<{ data: Uint8Array; driverData: unknown }>({
 	},
 })
 
-let dateBase = customType<{ data: Date; driverData: Date | YdbDate }>({
+let dateBase = customType<{ data: Date; driverData: Date | YdbDate | Temporal.PlainDate }>({
 	dataType() {
 		return 'Date'
 	},
@@ -182,7 +185,7 @@ let dateBase = customType<{ data: Date; driverData: Date | YdbDate }>({
 	fromDriver: dateFromDriver,
 })
 
-let date32Base = customType<{ data: Date; driverData: Date | Primitive }>({
+let date32Base = customType<{ data: Date; driverData: Date | Primitive | Temporal.PlainDate }>({
 	dataType() {
 		return 'Date32'
 	},
@@ -195,7 +198,7 @@ let date32Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	fromDriver: dateFromDriver,
 })
 
-let datetimeBase = customType<{ data: Date; driverData: Date | YdbDatetime }>({
+let datetimeBase = customType<{ data: Date; driverData: Date | YdbDatetime | Temporal.Instant }>({
 	dataType() {
 		return 'Datetime'
 	},
@@ -205,7 +208,7 @@ let datetimeBase = customType<{ data: Date; driverData: Date | YdbDatetime }>({
 	fromDriver: dateFromDriver,
 })
 
-let datetime64Base = customType<{ data: Date; driverData: Date | Primitive }>({
+let datetime64Base = customType<{ data: Date; driverData: Date | Primitive | Temporal.Instant }>({
 	dataType() {
 		return 'Datetime64'
 	},
@@ -218,7 +221,7 @@ let datetime64Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	fromDriver: dateFromDriver,
 })
 
-let timestampBase = customType<{ data: Date; driverData: Date | YdbTimestamp }>({
+let timestampBase = customType<{ data: Date; driverData: Date | YdbTimestamp | Temporal.Instant }>({
 	dataType() {
 		return 'Timestamp'
 	},
@@ -228,7 +231,7 @@ let timestampBase = customType<{ data: Date; driverData: Date | YdbTimestamp }>(
 	fromDriver: dateFromDriver,
 })
 
-let timestamp64Base = customType<{ data: Date; driverData: Date | Primitive }>({
+let timestamp64Base = customType<{ data: Date; driverData: Date | Primitive | Temporal.Instant }>({
 	dataType() {
 		return 'Timestamp64'
 	},
@@ -241,7 +244,10 @@ let timestamp64Base = customType<{ data: Date; driverData: Date | Primitive }>({
 	fromDriver: dateFromDriver,
 })
 
-let intervalBase = customType<{ data: number; driverData: number | YdbInterval }>({
+let intervalBase = customType<{
+	data: number
+	driverData: number | YdbInterval | Temporal.Duration
+}>({
 	dataType() {
 		return 'Interval'
 	},
@@ -249,26 +255,29 @@ let intervalBase = customType<{ data: number; driverData: number | YdbInterval }
 		return new YdbInterval(value)
 	},
 	fromDriver(value) {
-		return typeof value === 'number' ? value : Number(value.value)
+		if (typeof value === 'number') return value
+		return Number(value instanceof Primitive ? value.value : new YdbInterval(value).value)
 	},
 })
 
-let interval64Base = customType<{ data: bigint | number; driverData: bigint | number | Primitive }>(
-	{
-		dataType() {
-			return 'Interval64'
-		},
-		toDriver(value) {
-			return new Primitive(
-				{ value: { case: 'int64Value', value: BigInt(value) } },
-				new PrimitiveType(Ydb.Type_PrimitiveTypeId.INTERVAL64)
-			)
-		},
-		fromDriver(value) {
-			return value instanceof Primitive ? (value.value as bigint) : value
-		},
-	}
-)
+let interval64Base = customType<{
+	data: bigint | number
+	driverData: bigint | number | Primitive | Temporal.Duration
+}>({
+	dataType() {
+		return 'Interval64'
+	},
+	toDriver(value) {
+		return new Primitive(
+			{ value: { case: 'int64Value', value: BigInt(value) } },
+			new PrimitiveType(Ydb.Type_PrimitiveTypeId.INTERVAL64)
+		)
+	},
+	fromDriver(value) {
+		if (typeof value === 'bigint' || typeof value === 'number') return value
+		return (value instanceof Primitive ? value.value : new YdbInterval64(value).value) as bigint
+	},
+})
 
 let uuidBase = customType<{ data: string; driverData: YdbUuid }>({
 	dataType() {
