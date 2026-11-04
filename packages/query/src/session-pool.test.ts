@@ -205,29 +205,19 @@ test('Session.open deletes the server-side session when attach first message is 
 	expect(srv.deleteCalls).toHaveLength(1)
 })
 
-test('Session.open aborts the attach stream when the caller signal fires mid-wait', async () => {
+test('Session.open settles when caller cancellation races the first attach response', async () => {
 	using srv = await startQueryServer()
 
-	// Hold the first attach message forever — the harness normally yields
-	// SUCCESS on first message; here we want to verify cancellation during
-	// the wait, so swap the first status into a different keepalive.
-	// Easiest approach: don't emit first message — achieved by making the
-	// attach handler hang before yielding. Patch via the harness:
 	srv.setFirstAttachStatus(StatusIds_StatusCode.SUCCESS)
 
 	let ctrl = new AbortController()
 	let opening = Session.open(srv.driver, ctrl.signal)
 
-	// Wait for the attach RPC to reach the server.
 	await until(() => srv.attachCalls.length > 0)
 
-	// Client cancellation closes the attach stream; the forward
-	// listener in #bindAttach propagates the abort into #attach.
 	ctrl.abort(new Error('caller gave up'))
 
-	// The promise rejects. Session.open may resolve OK if attach's first
-	// SUCCESS message was already received before we aborted — in that
-	// race we simply verify that either resolution cleans up.
+	// The first response may win the race; either outcome must settle.
 	await opening.then(
 		(session) => session.close('pool_close'),
 		() => {}

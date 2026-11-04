@@ -11,6 +11,7 @@ export default defineProject({
 					},
 					include: ['src/**/*.test.ts'],
 					environment: 'node',
+					execArgv: ['--expose-gc'],
 				},
 			},
 			{

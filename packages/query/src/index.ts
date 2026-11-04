@@ -467,7 +467,7 @@ export function query(driver: Driver, options?: QueryOptions): QueryClient {
 					}
 				}
 			} finally {
-				sessionPool.endOperation()
+				sessionPool.endOperation(true)
 			}
 		}
 

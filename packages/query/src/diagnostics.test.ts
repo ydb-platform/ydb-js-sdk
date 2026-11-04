@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+import { setImmediate } from 'node:timers/promises'
 import { create } from '@bufbuild/protobuf'
 
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
@@ -107,6 +108,34 @@ function collectTrace(name: string): {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+test('acquisition and queue diagnostics survive collection between subscriptions', async (tc) => {
+	using srv = await startServer()
+	await using pool = new SessionPool(srv.driver, { maxSize: 1 })
+
+	let first = await pool.acquire(tc.signal)
+	let queued = pool.acquire(tc.signal)
+	first[Symbol.dispose]()
+	let second = await queued
+	second[Symbol.dispose]()
+
+	await setImmediate()
+	globalThis.gc!()
+
+	// Subscribe before the collected channels' finalizers get their next turn.
+	using acquired = collect('ydb:query.session.acquired')
+	using enqueued = collect('ydb:query.session.waiter.enqueued')
+	await setImmediate()
+
+	let lease = await pool.acquire(tc.signal)
+	let waiting = pool.acquire(tc.signal)
+	lease[Symbol.dispose]()
+	let successor = await waiting
+	successor[Symbol.dispose]()
+
+	expect(acquired.payloads).toHaveLength(2)
+	expect(enqueued.payloads).toHaveLength(1)
+})
 
 test('publishes ydb:query.session.created with sessionId and nodeId after pool.acquire()', async () => {
 	using srv = await startServer()

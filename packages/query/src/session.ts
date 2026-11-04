@@ -1,15 +1,3 @@
-/**
- * Alternative Session: lifecycle is driven by a single AbortSignal.
- *
- *   alive      -> signal.aborted === false
- *   broken     -> signal.aborted === true
- *
- * No BUSY/IDLE state on the session itself — that belongs to the pool.
- * A session entering the pool is guaranteed to be attached; if attach
- * fails during `Session.open`, the server-side session is deleted
- * before the error propagates to the caller. No leaks.
- */
-
 import { tracingChannel } from 'node:diagnostics_channel'
 
 import { linkSignals } from '@ydbjs/abortable'
@@ -20,23 +8,25 @@ import { loggers } from '@ydbjs/debug'
 import { YDBError } from '@ydbjs/error'
 
 /**
- * Why a session left the server. Carried on
+ * Why the SDK stopped using a session. Carried on
  * `tracing:ydb:query.session.delete` and `ydb:query.session.closed`.
- *
- * Only three real causes exist; `stream_closed` and `stream_error` split the
- * post-attach death by whether the server closed cleanly or the stream
- * errored, which subscribers care about for alerting.
  *
  *   - 'pool_close'    — pool is tearing down; we tell the server.
  *   - 'attach_failed' — initial AttachStream rejected; session never lived.
  *   - 'stream_closed' — attach stream ended cleanly (server-side timeout / drain).
  *   - 'stream_error' — attach stream errored mid-flight.
+ *   - 'invalidated' — an interrupted query left the session unsafe to reuse.
  *
  * No `user_close` — users do not manage sessions. No `evicted` /
  * `release_dead` — those were pool-side observations of stream death, the
  * underlying `stream_*` reason now propagates through.
  */
-export type SessionCloseReason = 'pool_close' | 'attach_failed' | 'stream_closed' | 'stream_error'
+export type SessionCloseReason =
+	| 'pool_close'
+	| 'attach_failed'
+	| 'stream_closed'
+	| 'stream_error'
+	| 'invalidated'
 
 type SessionDeleteCtx = {
 	driver: DriverIdentity
@@ -134,6 +124,7 @@ export class Session {
 	 * explicit dispose.
 	 */
 	claim(): Disposable {
+		this.#life.signal.throwIfAborted()
 		if (this.#inflight > 0) {
 			throw new SessionBusyError(this.id)
 		}
@@ -279,5 +270,9 @@ export class Session {
 		this.#closing = true
 		this.#deleting.abort()
 		this.#markBroken(reason)
+	}
+
+	invalidate(): void {
+		this.destroy('invalidated')
 	}
 }
