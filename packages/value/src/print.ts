@@ -5,6 +5,7 @@ import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
 import { ExtendedPrimitiveTypeId, type PrimitiveTypeId } from './primitive.js'
+import type { PgType } from './pg.js'
 import type { PrimitiveType } from './primitive.js'
 import type { StructType } from './struct.js'
 import type { TupleType } from './tuple.js'
@@ -101,6 +102,14 @@ export function typeToString(type: Type): string {
 			return `Tuple<${(type as TupleType).elements.map((element) => typeToString(element)).join(',')}>`
 		case TypeKind.STRUCT:
 			return `Struct<${(type as StructType).names.map((name, index) => `${memberName(name)}:${typeToString((type as StructType).types[index]!)}`).join(',')}>`
+		case TypeKind.PG_TYPE: {
+			let name = (type as PgType).typeName
+			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name))
+				throw new TypeError(
+					'A canonical Pg typeName is required for SQL declarations; use QueryClient with an explicit DECLARE for OID-only types'
+				)
+			return name
+		}
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
 		case TypeKind.EMPTY_LIST:

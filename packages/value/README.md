@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, and `/empty`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, and `/pg`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -150,6 +150,21 @@ function parameter(instant: Temporal.Instant) {
 }
 ```
 
+### PostgreSQL values
+
+```ts
+import { Pg, PgType } from '@ydbjs/value/pg'
+
+let integer = new Pg('42', new PgType('int4'))
+let absentInteger = new Pg(null, new PgType('int4'))
+let byOid = new Pg('42', new PgType({ oid: 23 }))
+```
+
+Pg keeps text, binary bytes or null in `.value` and preserves its type name, OID and modifiers in `.type`.
+It does not guess a JavaScript representation from PostgreSQL text or binary data.
+The string PgType constructor normalizes names such as `int4` and `_int4` to YQL names `pgint4` and `_pgint4`.
+OID-only descriptors can be bound with QueryClient and an explicit SQL declaration such as `DECLARE $value AS pgint4;`; automatic tagged-SQL declarations require a type name.
+
 ## Infer types from JavaScript
 
 | JavaScript input                   | Inferred YDB type              | Notes                                                                              |
@@ -249,7 +264,7 @@ let rows = new List(
 Struct records use `Object.create(null)` recursively, including Structs inside containers. Field names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(record, name)` instead of calling an inherited method. JSON-typed cells still use `JSON.parse`; their object prototypes are not changed.
 
 `fromYdb(wireValue, wireType)` reconstructs a typed Value from a protobuf value and its schema.
-It restores the supplied schema, including empty containers, absent Optionals and nested Optional presence.
+It restores the supplied schema, including empty containers, absent Optionals, nested Optional presence and PostgreSQL metadata.
 For supported types, re-encoding produces a semantically equivalent type/value pair.
 A schema containing Variant requires raw query results, including when the value is an absent Optional or an empty container.
 
@@ -269,6 +284,8 @@ toJs(result) // null
 `toJs(value)` projects a typed Value into JavaScript data.
 This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and legacy Timestamp results lose sub-millisecond precision by default.
 Use the typed Value when that distinction matters.
+Pg has no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
+This rule also applies recursively to those values inside arrays, structs, maps and Optionals.
 
 | YDB type                                                               | JavaScript result                              |
 | ---------------------------------------------------------------------- | ---------------------------------------------- |
@@ -289,6 +306,7 @@ Use the typed Value when that distinction matters.
 | Dict, EmptyDict                                                        | `Map`                                          |
 | Struct                                                                 | Object with a null prototype                   |
 | Null                                                                   | `null`                                         |
+| Pg                                                                     | The same SDK Value                             |
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.
