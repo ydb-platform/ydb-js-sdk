@@ -11,7 +11,7 @@
 		},
 		"build": {
 			"dependsOn": ["^build", "clean", "codegen"],
-			"inputs": ["./src/**"],
+			"inputs": ["./src/**", "$TURBO_ROOT$/tsconfig.json"],
 			"outputs": ["./dist/**"]
 		},
 		"test": {
