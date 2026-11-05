@@ -8,7 +8,7 @@
 // reference, select (pure), and materialize a channel — never dispatching on
 // the hot path except a cheap fire-and-forget RPC-outcome report.
 
-import { channel as dc, tracingChannel } from 'node:diagnostics_channel'
+import { tracingChannel } from 'node:diagnostics_channel'
 
 import { create } from '@bufbuild/protobuf'
 import { linkSignals } from '@ydbjs/abortable'
@@ -20,6 +20,7 @@ import { isRetryableError } from '@ydbjs/retry'
 import { type MachineRuntime, createMachineRuntime } from '@ydbjs/fsm'
 import type { ClientOptions } from '@ydbjs/grpc'
 
+import { driverChannels } from '../diagnostics.js'
 import { type Connection, GrpcConnection } from '../conn.js'
 import type { DriverIdentity } from '../driver-identity.js'
 import { EndpointsUnavailableError } from '../errors.js'
@@ -213,7 +214,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 	let { added, retired } = computeRoundDiff(ctx.byNodeId, result.endpoints)
 
 	for (let a of added) {
-		dc('ydb:driver.connection.added').publish({
+		driverChannels.connectionAdded.publish({
 			driver: ctx.identity,
 			nodeId: a.nodeId,
 			address: a.address,
@@ -222,7 +223,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 		})
 	}
 	for (let r of retired) {
-		dc('ydb:driver.connection.retired').publish({
+		driverChannels.connectionRetired.publish({
 			driver: ctx.identity,
 			nodeId: r.nodeId,
 			address: r.address,
@@ -232,7 +233,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 		})
 	}
 
-	dc('ydb:driver.discovery.completed').publish({
+	driverChannels.discoveryCompleted.publish({
 		driver: ctx.identity,
 		addedCount: added.length,
 		removedCount: retired.length,
@@ -247,7 +248,7 @@ let publishRoundDiagnostics = function publishRoundDiagnostics(
 	// last applied round (the first bridge round reports `before: []`). Refresh
 	// lastPileStates regardless — pool.stats reads it as the current roster.
 	if (!pilesEqual(ctx.lastPileStates, result.pileStates)) {
-		dc('ydb:driver.pile.changed').publish({
+		driverChannels.pileChanged.publish({
 			driver: ctx.identity,
 			selfLocation: result.selfLocation,
 			before: pileRoster(ctx.lastPileStates),
@@ -648,7 +649,7 @@ export class EndpointPool implements Disposable {
 					// Published within the discovery span by publishRoundDiagnostics.
 					break
 				case 'endpoints.removed':
-					dc('ydb:driver.connection.removed').publish({
+					driverChannels.connectionRemoved.publish({
 						driver: env.identity,
 						nodeId: out.nodeId,
 						address: out.address,
@@ -669,7 +670,7 @@ export class EndpointPool implements Disposable {
 							},
 						})
 					)
-					dc('ydb:driver.connection.pessimized').publish({
+					driverChannels.connectionPessimized.publish({
 						driver: env.identity,
 						nodeId: out.nodeId,
 						address: out.address,
@@ -690,7 +691,7 @@ export class EndpointPool implements Disposable {
 							},
 						})
 					)
-					dc('ydb:driver.connection.unpessimized').publish({
+					driverChannels.connectionUnpessimized.publish({
 						driver: env.identity,
 						nodeId: out.nodeId,
 						address: out.address,
@@ -728,14 +729,14 @@ export class EndpointPool implements Disposable {
 					env.readyAt = Date.now()
 					for (let waiter of env.readyWaiters) waiter.resolve()
 					env.readyWaiters.clear()
-					dc('ydb:driver.ready').publish({
+					driverChannels.ready.publish({
 						driver: env.identity,
 						duration: env.readyAt - env.initAt,
 					})
 					break
 				case 'endpoints.failed':
 					this.#rejectReadyWaiters(out.error)
-					dc('ydb:driver.failed').publish({
+					driverChannels.failed.publish({
 						driver: env.identity,
 						duration: Date.now() - env.initAt,
 						error: out.error,
@@ -747,7 +748,7 @@ export class EndpointPool implements Disposable {
 
 					this.#rejectReadyWaiters(reason)
 					this.#rejectPendingPins(reason)
-					dc('ydb:driver.closed').publish({
+					driverChannels.closed.publish({
 						driver: env.identity,
 						uptime: env.readyAt !== undefined ? Date.now() - env.readyAt : 0,
 					})
@@ -765,7 +766,7 @@ export class EndpointPool implements Disposable {
 	#publishPoolStats(): void {
 		let env = this.#env
 		let s = this.#snapshot
-		dc('ydb:driver.connection.pool.stats').publish({
+		driverChannels.poolStats.publish({
 			driver: env.identity,
 			total: s.byNodeId.size,
 			prefer: s.prefer.length,
@@ -791,7 +792,7 @@ export class EndpointPool implements Disposable {
 			s.fallback.length > 0
 		if (active === env.prevFallbackActive) return
 		env.prevFallbackActive = active
-		dc('ydb:driver.pile.fallback').publish({
+		driverChannels.pileFallback.publish({
 			driver: env.identity,
 			active,
 			primaryPile: primaryPileName(env.lastPileStates),
@@ -892,7 +893,7 @@ export let createEndpointsRuntime = function createEndpointsRuntime(
 
 	// One-shot config snapshot (AGENTS.md: config goes on *.pool.opened, fired once)
 	// so a subscriber attached before the first round has the full driver config.
-	dc('ydb:driver.connection.pool.opened').publish({
+	driverChannels.poolOpened.publish({
 		driver: config.identity,
 		config: {
 			localityEnabled: ctx.config.localityEnabled,

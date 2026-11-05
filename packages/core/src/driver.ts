@@ -1,5 +1,4 @@
 import * as assert from 'node:assert/strict'
-import { channel as dc } from 'node:diagnostics_channel'
 import * as tls from 'node:tls'
 
 import { create } from '@bufbuild/protobuf'
@@ -27,6 +26,7 @@ import { YDBError } from '@ydbjs/error'
 
 import pkg from '../package.json' with { type: 'json' }
 
+import { driverChannels } from './diagnostics.js'
 import { createRoutingTransport } from './routing.js'
 import { type Connection, GrpcConnection } from './conn.js'
 import type { DriverIdentity } from './driver-identity.js'
@@ -381,14 +381,14 @@ export class Driver implements Disposable {
 		this.#readyAt = performance.now()
 
 		let duration = this.#readyAt - this.#initAt
-		dc('ydb:driver.ready').publish({ driver: this.identity, duration })
+		driverChannels.ready.publish({ driver: this.identity, duration })
 
 		dbg.log('driver ready (discovery disabled) in %d ms', duration)
 	}
 
 	#markClosedDisabled(): void {
 		let uptime = this.#readyAt ? performance.now() - this.#readyAt : 0
-		dc('ydb:driver.closed').publish({ driver: this.identity, uptime })
+		driverChannels.closed.publish({ driver: this.identity, uptime })
 
 		dbg.log('closing driver (uptime %d ms)', uptime)
 	}
