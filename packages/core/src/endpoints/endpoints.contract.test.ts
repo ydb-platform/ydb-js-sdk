@@ -3,6 +3,7 @@ import { PileState_State } from '@ydbjs/api/bridge'
 import { ListEndpointsResultSchema } from '@ydbjs/api/discovery'
 import { Status } from '@ydbjs/grpc'
 import { expect, test } from 'vitest'
+import { setImmediate } from 'node:timers/promises'
 
 import { EndpointsUnavailableError } from '../errors.ts'
 import {
@@ -33,6 +34,33 @@ let setup = function setup(
 	discovery.push(discoveryResult(endpoints))
 	return makeEndpointPool({ ...over, discovery, connections })
 }
+
+test('rediscovery diagnostics survive collection before subscribing', async (tc) => {
+	let discovery = makeFakeDiscovery()
+	using h = setup([endpoint(1)], { discovery })
+	await h.pool.ready(tc.signal)
+
+	discovery.push(discoveryResult([endpoint(2)]))
+	h.pool.forceRediscovery()
+	await settle()
+	await setImmediate()
+	globalThis.gc!()
+
+	// Subscribe before the collected channels' finalizers get their next turn.
+	using retired = capture('ydb:driver.connection.retired')
+	using completed = capture('ydb:driver.discovery.completed')
+	await setImmediate()
+
+	discovery.push(discoveryResult([endpoint(3)]))
+	h.pool.forceRediscovery()
+	await settle()
+
+	expect(h.pool.acquire().endpoint.nodeId).toBe(3n)
+	expect(retired.events).toEqual([expect.objectContaining({ nodeId: 2n })])
+	expect(completed.events).toEqual([
+		expect.objectContaining({ addedCount: 1, removedCount: 1, totalCount: 1 }),
+	])
+})
 
 test('acquire routes to a discovered node after ready', async (tc) => {
 	using h = setup([endpoint(1), endpoint(2)])
