@@ -90,7 +90,7 @@ test('commits transactional work through createDrizzle', async () => {
 	)
 
 	assert.deepEqual(result, {
-		row: { id: 1, name: 'Rainbow Dash' },
+		row: { __proto__: null, id: 1, name: 'Rainbow Dash' },
 		hasSchema: true,
 	})
 	assert.deepEqual(transactionConfigs, [{ accessMode: 'read write', idempotent: false }])

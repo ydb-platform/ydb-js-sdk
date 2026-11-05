@@ -56,20 +56,25 @@ test('select builder maps joins and advanced queries', async () => {
 
 	assert.deepEqual(joinedRows, [
 		{
+			__proto__: null,
 			users: {
+				__proto__: null,
 				id: 1,
 				name: 'Twilight Sparkle',
 				createdAt: 100,
 				updatedAt: 200,
 			},
 			posts: {
+				__proto__: null,
 				id: 11,
 				userId: 1,
 				title: 'Lesson Zero',
 			},
 		},
 		{
+			__proto__: null,
 			users: {
+				__proto__: null,
 				id: 2,
 				name: 'Pinkie Pie',
 				createdAt: 100,
@@ -79,8 +84,8 @@ test('select builder maps joins and advanced queries', async () => {
 		},
 	])
 	assert.deepEqual(distinctOnRows, [
-		{ userId: 1, title: 'Zecora' },
-		{ userId: 2, title: 'Rainbow Dash' },
+		{ __proto__: null, userId: 1, title: 'Zecora' },
+		{ __proto__: null, userId: 2, title: 'Rainbow Dash' },
 	])
 	assert.match(
 		executedSql[0] ?? '',

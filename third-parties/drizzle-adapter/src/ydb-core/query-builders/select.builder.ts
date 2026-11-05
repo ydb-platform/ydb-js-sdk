@@ -52,7 +52,7 @@ export class YdbSelectBuilder<TResult = unknown[]>
 	readonly #dialect: YdbDialect
 	readonly #config: InternalSelectConfig
 	readonly #isPartialSelect: boolean
-	#joinsNotNullableMap: Record<string, boolean> = {}
+	#joinsNotNullableMap: Record<string, boolean> = Object.create(null)
 	#tableName: string | undefined
 	#usedInSetOperation = false
 
@@ -174,17 +174,21 @@ export class YdbSelectBuilder<TResult = unknown[]>
 			}
 
 			if (!this.#isPartialSelect) {
+				// Drizzle inspects the selection's prototype; table names such as __proto__ must be own fields.
 				if (
 					Object.keys(this.#joinsNotNullableMap).length === 1 &&
 					typeof baseTableName === 'string'
 				) {
-					this.#config.fields = {
-						[baseTableName]: this.#config.fields,
-					}
+					this.#config.fields = { [baseTableName]: this.#config.fields }
 				}
 
 				if (typeof tableName === 'string' && !is(table, SQL)) {
-					this.#config.fields[tableName] = getSourceSelection(table)
+					Object.defineProperty(this.#config.fields, tableName, {
+						value: getSourceSelection(table),
+						enumerable: true,
+						writable: true,
+						configurable: true,
+					})
 				}
 			}
 
@@ -208,17 +212,14 @@ export class YdbSelectBuilder<TResult = unknown[]>
 						this.#joinsNotNullableMap[tableName] = false
 						break
 					case 'right':
-						this.#joinsNotNullableMap = Object.fromEntries(
-							Object.keys(this.#joinsNotNullableMap).map((key) => [key, false])
-						)
-						this.#joinsNotNullableMap[tableName] = true
+					case 'full': {
+						let nullable: Record<string, boolean> = Object.create(null)
+						for (let key of Object.keys(this.#joinsNotNullableMap))
+							nullable[key] = false
+						nullable[tableName] = joinType === 'right'
+						this.#joinsNotNullableMap = nullable
 						break
-					case 'full':
-						this.#joinsNotNullableMap = Object.fromEntries(
-							Object.keys(this.#joinsNotNullableMap).map((key) => [key, false])
-						)
-						this.#joinsNotNullableMap[tableName] = false
-						break
+					}
 					case 'inner':
 					case 'cross':
 						this.#joinsNotNullableMap[tableName] = true
@@ -356,8 +357,8 @@ export class YdbSelectBuilder<TResult = unknown[]>
 			}
 		}
 
-		this.#joinsNotNullableMap =
-			typeof this.#tableName === 'string' ? { [this.#tableName]: true } : {}
+		this.#joinsNotNullableMap = Object.create(null)
+		if (typeof this.#tableName === 'string') this.#joinsNotNullableMap[this.#tableName] = true
 		return this
 	}
 

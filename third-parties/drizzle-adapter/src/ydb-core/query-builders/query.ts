@@ -565,7 +565,7 @@ export class YdbRelationalQuery<TResult> extends QueryPromise<TResult> {
 			)
 			.execute()
 		let values = rows.map((row) => {
-			let result: Record<string, unknown> = {}
+			let result: Record<string, unknown> = Object.create(null)
 
 			for (let entry of plan.columnEntries) {
 				result[entry.tsKey] = row[entry.alias]

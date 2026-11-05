@@ -163,10 +163,11 @@ test('relational builder handles flat findMany/findFirst queries', async () => {
 		.execute()
 
 	assert.deepEqual(many, [
-		{ id: 1, name: 'Pinkie Pie' },
-		{ id: 2, name: 'Rainbow Dash' },
+		{ __proto__: null, id: 1, name: 'Pinkie Pie' },
+		{ __proto__: null, id: 2, name: 'Rainbow Dash' },
 	])
 	assert.deepEqual(first, {
+		__proto__: null,
 		id: 1,
 		name: 'Pinkie Pie',
 		createdAt: undefined,
@@ -227,14 +228,16 @@ test('relational builder hydrates many/one relations through schema metadata', a
 
 	assert.deepEqual(usersWithPosts, [
 		{
+			__proto__: null,
 			id: 1,
 			name: 'Pinkie Pie',
 			posts: [
-				{ id: 10, title: 'Cupcakes' },
-				{ id: 11, title: 'Sonic Rainboom' },
+				{ __proto__: null, id: 10, title: 'Cupcakes' },
+				{ __proto__: null, id: 11, title: 'Sonic Rainboom' },
 			],
 		},
 		{
+			__proto__: null,
 			id: 2,
 			name: 'Rainbow Dash',
 			posts: [],
@@ -242,9 +245,11 @@ test('relational builder hydrates many/one relations through schema metadata', a
 	])
 	assert.deepEqual(postsWithAuthor, [
 		{
+			__proto__: null,
 			id: 10,
 			title: 'Cupcakes',
 			author: {
+				__proto__: null,
 				id: 1,
 				name: 'Pinkie Pie',
 			},
@@ -298,14 +303,16 @@ test('relational builder chunks relation filters for large parent sets', async (
 
 	assert.equal(rows.length, 260)
 	assert.deepEqual(rows[0], {
+		__proto__: null,
 		id: 1,
 		name: 'User 1',
-		posts: [{ id: 10, title: 'Post 1' }],
+		posts: [{ __proto__: null, id: 10, title: 'Post 1' }],
 	})
 	assert.deepEqual(rows[259], {
+		__proto__: null,
 		id: 260,
 		name: 'User 260',
-		posts: [{ id: 2600, title: 'Post 260' }],
+		posts: [{ __proto__: null, id: 2600, title: 'Post 260' }],
 	})
 	assert.equal(relationQueries.length, 2)
 	assert.deepEqual(

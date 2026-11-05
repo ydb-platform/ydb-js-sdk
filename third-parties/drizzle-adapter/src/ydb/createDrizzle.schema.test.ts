@@ -84,9 +84,9 @@ test('extracts relational schema config from createDrizzle', async () => {
 		})
 	)
 
-	assert.deepEqual(many, [{ id: 1, name: 'Twilight Sparkle' }])
-	assert.deepEqual(first, { id: 1, name: 'Twilight Sparkle' })
-	assert.deepEqual(firstViaGet, { id: 1, name: 'Twilight Sparkle' })
+	assert.deepEqual(many, [{ __proto__: null, id: 1, name: 'Twilight Sparkle' }])
+	assert.deepEqual(first, { __proto__: null, id: 1, name: 'Twilight Sparkle' })
+	assert.deepEqual(firstViaGet, { __proto__: null, id: 1, name: 'Twilight Sparkle' })
 	assert.equal(executedQueries.length, 3)
 	assert.match(
 		executedQueries[0] ?? '',
@@ -100,4 +100,44 @@ test('extracts relational schema config from createDrizzle', async () => {
 		executedQueries[2] ?? '',
 		/^select `users`\.`id` as `__ydb_c0`, `users`\.`name` as `__ydb_c1` from `users` `users` where `users`\.`id` = \$p0 limit \$p1$/
 	)
+})
+
+test('findMany and findFirst return null-prototype rows through nested relations', async () => {
+	let db = drizzle(
+		async (query) => {
+			let aliases = Array.from(query.matchAll(/ as `([^`]+)`/g), (match) => match[1]!)
+			let values = query.includes('from `posts`')
+				? [10, 1, 'Friendship lesson']
+				: [1, 'Twilight Sparkle']
+			return {
+				rows: [Object.fromEntries(aliases.map((alias, index) => [alias, values[index]]))],
+			}
+		},
+		{ schema }
+	)
+
+	let many = await db.query.users.findMany({ with: { posts: { with: { author: true } } } })
+	let first = await db.query.users.findFirst({ with: { posts: { with: { author: true } } } })
+
+	let expected = {
+		__proto__: null,
+		id: 1,
+		name: 'Twilight Sparkle',
+		posts: [
+			{
+				__proto__: null,
+				id: 10,
+				authorId: 1,
+				title: 'Friendship lesson',
+				author: { __proto__: null, id: 1, name: 'Twilight Sparkle' },
+			},
+		],
+	}
+	assert.deepEqual(many, [expected])
+	assert.deepEqual(first, expected)
+	for (let row of [many[0]!, first!]) {
+		assert.equal(Object.getPrototypeOf(row), null)
+		assert.equal(Object.getPrototypeOf(row.posts[0]), null)
+		assert.equal(Object.getPrototypeOf(row.posts[0]!.author), null)
+	}
 })
