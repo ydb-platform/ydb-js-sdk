@@ -76,7 +76,7 @@ console.log(
 
 - `pool(poolId)` — target pool (if configured server‑side by YDB Query services).
 
-- `parameter(name, value)` / `param(name, value)` — add/override a named parameter.
+- `parameter(name, value)` / `param(name, value)` — bind a JavaScript value or an explicit YDB Value by name. Pass `undefined` to remove the binding.
 
 - `signal(abortSignal)` — merge an external AbortSignal.
 
@@ -109,7 +109,7 @@ Interpolations `${...}` are always parameterized and automatically converted thr
 - Named parameters:
 
 ```ts
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', 42)
+await sql`SELECT $id AS id`.parameter('id', 42)
 ```
 
 - Complex types (arrays, structs) and table parameters via `AS_TABLE(${arrayOfObjects})`.
@@ -213,7 +213,7 @@ console.log(
 
 - `pool(poolId)` — назначение пула (если сконфигурирован на стороне YDB Query сервисов).
 
-- `parameter(name, value)` / `param(name, value)` — добавить/переопределить именованный параметр.
+- `parameter(name, value)` / `param(name, value)` — привязать JS-значение или явный YDB Value по имени. Передайте `undefined`, чтобы удалить привязку.
 
 - `signal(abortSignal)` — подмешать внешний AbortSignal.
 
@@ -246,7 +246,7 @@ await q
 - Именованные параметры:
 
 ```ts
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', 42)
+await sql`SELECT $id AS id`.parameter('id', 42)
 ```
 
 - Комплексные типы (массивы, структуры) и табличные параметры через `AS_TABLE(${arrayOfObjects})`.

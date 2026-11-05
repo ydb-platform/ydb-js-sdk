@@ -90,7 +90,7 @@ console.log(
 
 - `pool(poolId)` — target pool (if configured server‑side by YDB Query services).
 
-- `parameter(name, value)` / `param(name, value)` — add/override a named parameter.
+- `parameter(name, value)` / `param(name, value)` — bind a JavaScript value or an explicit YDB Value by name. Pass `undefined` to remove the binding.
 
 - `signal(abortSignal)` — merge an external AbortSignal.
 
@@ -123,7 +123,7 @@ Interpolations `${...}` are always parameterized and automatically converted thr
 - Named parameters:
 
 ```ts
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', 42)
+await sql`SELECT $id AS id`.parameter('id', 42)
 ```
 
 - Complex types (arrays, structs) and table parameters via `AS_TABLE(${arrayOfObjects})`.

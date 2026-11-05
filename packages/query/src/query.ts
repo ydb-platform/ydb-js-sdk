@@ -4,16 +4,15 @@ import { linkSignals } from '@ydbjs/abortable'
 import { type QueryStats, StatsMode, Syntax } from '@ydbjs/api/query'
 import type { Metadata } from '@ydbjs/grpc'
 import type { RetryContext } from '@ydbjs/retry'
-import type { Value } from '@ydbjs/value'
-import { typeToString } from '@ydbjs/value/print'
+import { type JSValue, type Value, fromJs } from '@ydbjs/value'
 
 import type { QueryClient, QueryExecutor, StatementOptions } from './client.js'
 import { ctx } from './ctx.js'
 import { cancellationError } from './cancellation.js'
-import { bindParameters } from './parameters.js'
+import { snapshotInputs } from './parameters.js'
 import { SessionPoolClosedError } from './session-pool.js'
 
-import type { ResultTypes } from './result.js'
+import type { QueryResult, ResultTypes } from './result.js'
 
 type QueryRows<T extends ResultTypes> = {
 	[Index in keyof T]: T[Index][]
@@ -91,25 +90,40 @@ export class Query<T extends ResultTypes = ResultTypes>
 	}
 
 	async #execute(): Promise<QueryRows<T>> {
-		if (this.#disposed) throw new Error('Query has been disposed.')
-		if (this.#promise) return this.#promise
+		if (this.#disposed) {
+			throw new Error('Query has been disposed.')
+		}
+
+		if (this.#promise) {
+			return this.#promise
+		}
+
 		this.#client.signal.throwIfAborted()
+
 		let store = ctx.getStore()
 		let executor =
 			this.#executor ?? (store?.client === this.#client ? store.executor : undefined)
-		if (!executor && this.#client.closed) throw new SessionPoolClosedError()
+
+		if (!executor && this.#client.closed) {
+			throw new SessionPoolClosedError()
+		}
+
 		let transactional =
 			executor && 'transactionId' in executor && Boolean(executor.transactionId)
 		let timeout = this.#timeout === undefined ? undefined : AbortSignal.timeout(this.#timeout)
 		let controller = (this.#controller ??= new AbortController())
 		let linked = linkSignals(controller.signal, this.#client.signal, this.#signal, timeout)
-		let onDestroy = () => this.destroy()
+		let onDestroy = () => {
+			return this.destroy()
+		}
+
 		this.#client.signal.addEventListener('abort', onDestroy, { once: true })
 		this.#active = true
+
 		try {
 			linked.signal.throwIfAborted()
+
 			let text = this.text
-			let parameters = executor ? this.#parameters : bindParameters(this.#parameters)
 			let options: StatementOptions = {
 				signal: linked.signal,
 				syntax: this.#syntax,
@@ -127,38 +141,66 @@ export class Query<T extends ResultTypes = ResultTypes>
 				rowMode: this.#values ? 'array' : 'object',
 				raw: this.#raw,
 				onMetadata: (metadata) => {
-					if (!this.#disposed && !linked.signal.aborted) this.emit('metadata', metadata)
+					if (!this.#disposed && !linked.signal.aborted) {
+						this.emit('metadata', metadata)
+					}
 				},
 			}
-			let operation = executor
-				? executor.execute<T>(text, parameters, options)
-				: this.#client.retrySession(
-						{
-							signal: linked.signal,
-							idempotent: this.#idempotent,
-							onRetry: (context: RetryContext) => this.emit('retry', context),
+
+			let operation: Promise<QueryResult<T>>
+
+			if (executor) {
+				operation = executor.execute<T>(text, this.#parameters, options)
+			} else {
+				// The tag owns this retry. Later attempts must see the inputs accepted at execution.
+				let inputs = snapshotInputs(this.#parameters)
+
+				operation = this.#client.retrySession(
+					{
+						signal: linked.signal,
+						idempotent: this.#idempotent,
+						onRetry: (context) => {
+							return this.emit('retry', context)
 						},
-						(session) => session.execute<T>(text, parameters, options)
-					)
+					},
+					(session) => {
+						return session.execute<T>(text, { ...inputs }, options)
+					}
+				)
+			}
+
 			this.#promise = operation
 				.then((result) => {
 					linked.signal.throwIfAborted()
+
 					this.#stats = result.stats
-					if (this.#stats) this.emit('stats', this.#stats)
+
+					if (this.#stats) {
+						this.emit('stats', this.#stats)
+					}
+
 					linked.signal.throwIfAborted()
-					let rows = result.resultSets.map((set) => set.rows) as QueryRows<T>
+
+					let rows = result.resultSets.map((set) => {
+						return set.rows
+					}) as QueryRows<T>
+
 					this.emit('done', rows)
 					linked.signal.throwIfAborted()
+
 					return rows
 				})
 				.catch((cause) => {
 					let error = linked.signal.aborted ? cancellationError(cause) : cause
+
 					if (
 						!this.#disposed &&
 						!this.#client.signal.aborted &&
 						this.listenerCount('error')
-					)
+					) {
 						this.emit('error', error)
+					}
+
 					throw error
 				})
 				.finally(() => {
@@ -167,12 +209,15 @@ export class Query<T extends ResultTypes = ResultTypes>
 					linked[Symbol.dispose]()
 					this.#client.signal.removeEventListener('abort', onDestroy)
 				})
+
 			return this.#promise
 		} catch (cause) {
 			let error = linked.signal.aborted ? cancellationError(cause) : cause
+
 			this.#active = false
 			linked[Symbol.dispose]()
 			this.#client.signal.removeEventListener('abort', onDestroy)
+
 			throw error
 		}
 	}
@@ -196,22 +241,7 @@ export class Query<T extends ResultTypes = ResultTypes>
 	}
 
 	get text(): string {
-		let queryText = this.#text
-		if (this.#parameters) {
-			for (let [name, value] of Object.entries(this.#parameters)) {
-				if (typeof value?.encode !== 'function' || typeof value.type?.encode !== 'function')
-					throw new TypeError(
-						'Query parameters must be YDB Values; use fromJs() for native data.'
-					)
-
-				// oxlint-disable no-unused-expressions
-				name.startsWith('$') || (name = '$' + name)
-
-				queryText = `DECLARE ${name} AS ${typeToString(value.type)};\n` + queryText
-			}
-		}
-
-		return queryText
+		return this.#text
 	}
 
 	get parameters(): Record<string, Value> {
@@ -230,22 +260,25 @@ export class Query<T extends ResultTypes = ResultTypes>
 		return this
 	}
 
-	/** Adds a parameter to the query */
-	parameter(name: string, parameter: Value | undefined): Query<T> {
-		name.startsWith('$') || (name = '$' + name)
+	/** Bind a JS value or an explicitly typed YDB Value. Pass undefined to remove the binding. */
+	parameter(name: string, parameter: JSValue | undefined): Query<T> {
+		if (!name.startsWith('$')) {
+			name = '$' + name
+		}
 
 		if (parameter === undefined) {
 			delete this.#parameters[name]
+
 			return this
 		}
 
-		this.#parameters[name] = parameter
+		this.#parameters[name] = fromJs(parameter)
 
 		return this
 	}
 
-	/** Adds a parameter to the query */
-	param(name: string, parameter: Value | undefined): Query<T> {
+	/** Alias for {@link parameter}. */
+	param(name: string, parameter: JSValue | undefined): Query<T> {
 		return this.parameter(name, parameter)
 	}
 

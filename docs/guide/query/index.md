@@ -40,8 +40,12 @@ await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 
 ### Named parameters {#examples-named-parameters}
 
+Pass a JavaScript value by name; the SDK infers its YDB type. In V7, the SQL tag no longer generates `DECLARE` statements. Add a declaration when required by your database or parameter type.
+
 ```ts
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', 42)
+let id = 42
+
+await sql`SELECT $id AS id`.parameter('id', id)
 ```
 
 ### Collecting stats {#examples-stats}

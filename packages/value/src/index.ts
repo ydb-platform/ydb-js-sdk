@@ -73,13 +73,20 @@ export type JSValue =
 export { fromYdb } from './decode.js'
 
 function isValue(value: unknown): value is Value {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		'type' in value &&
-		'encode' in value &&
-		typeof value.encode === 'function'
-	)
+	if (
+		typeof value !== 'object' ||
+		value === null ||
+		!('encode' in value) ||
+		typeof value.encode !== 'function'
+	) {
+		return false
+	}
+
+	if (typeof (value as Partial<Value>).type?.encode !== 'function') {
+		throw new TypeError('A YDB Value must provide type.encode().')
+	}
+
+	return true
 }
 
 /**
@@ -230,6 +237,8 @@ export function fromJs(native: JSValue | Value): Value {
 
 			return new Struct(struct)
 		}
+		default:
+			throw new TypeError(`Cannot convert ${typeof native} to a YDB Value.`)
 	}
 }
 

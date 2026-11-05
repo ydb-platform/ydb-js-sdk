@@ -84,6 +84,7 @@ export type TransactionStatementOptions = Omit<
 	'isolation' | 'allowInconsistentReads'
 >
 
+/** Each attempt binds values supplied by its callback. Keep inputs that must survive replay under the caller's control. */
 export interface QueryExecutor {
 	readonly signal: AbortSignal
 	readonly sessionId: string
@@ -328,13 +329,17 @@ class Attempt implements Transaction {
 	): QueryStream<Row> {
 		this.check()
 		validateStatement(options)
+
 		if (
 			this.transactionId &&
 			(options.isolation !== undefined || options.allowInconsistentReads !== undefined)
-		)
+		) {
 			throw new TypeError(
 				'Transaction isolation belongs to retryTransaction(), not a statement.'
 			)
+		}
+
+		// Capture this statement's values before its first read. A later callback attempt may supply different ones.
 		return this.open<Row>(request(text, parameters, options))
 	}
 
@@ -482,6 +487,12 @@ export class QueryClient implements AsyncDisposable, Disposable {
 	get signal(): AbortSignal {
 		return this.#destroyed.signal
 	}
+
+	/** Underlying transport, owned by the caller. */
+	get driver(): Driver {
+		return this.#driver
+	}
+
 	get closed(): boolean {
 		return this.#pool.closed
 	}
