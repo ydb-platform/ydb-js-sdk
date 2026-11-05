@@ -1,158 +1,287 @@
-import { test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import * as assert from 'node:assert/strict'
+import { sql } from 'drizzle-orm'
+import { DrizzleQueryError } from 'drizzle-orm/errors'
+import { StatusIds_StatusCode as Status } from '@ydbjs/api/operation'
+import { Type_PrimitiveTypeId as TypeId } from '@ydbjs/api/value'
 import { kRegisterLibrary } from '@ydbjs/core'
-import { YdbDriver } from '../index.ts'
+import { QueryClient } from '@ydbjs/query'
+import { Uint16 } from '@ydbjs/value/primitive'
+import { YdbDriver, YdbRetryableQueryError, drizzle } from '../index.ts'
 import {
-	createBorrowedDriverStub,
-	createMockQueryFunction,
-} from '../../tests/helpers/mock-driver.ts'
+	resultPart,
+	startClientServer,
+	statusPart,
+} from '../../../../packages/query/src/client.fixtures.ts'
 import pkg from '../../package.json' with { type: 'json' }
 
-test('wraps a borrowed Driver without owning it', async () => {
-	let readyCalls = 0
-	let closeCalls = 0
-	let signal = new AbortController().signal
-	let borrowedDriver = createBorrowedDriverStub()
+test('closes the owned pool and registers borrowed drivers and clients', async (tc) => {
+	using server = await startClientServer()
+	let ready = vi.spyOn(server.driver, 'ready')
+	let register = vi.spyOn(server.driver, kRegisterLibrary)
+	let adapter = new YdbDriver(server.driver)
 
-	borrowedDriver.ready = async (incomingSignal?: AbortSignal) => {
-		readyCalls++
-		assert.equal(incomingSignal, signal)
-	}
-	borrowedDriver.close = () => {
-		closeCalls++
-	}
+	await adapter.ready(tc.signal)
+	adapter.close()
 
-	let driver = new YdbDriver(borrowedDriver)
+	expect(ready).toHaveBeenCalledWith(tc.signal)
+	expect(adapter.client.closed).toBe(true)
 
-	await driver.ready(signal)
-	driver.close()
+	await using client = new QueryClient(server.driver)
+	let db = drizzle({ client })
 
-	assert.equal(driver.driver, borrowedDriver)
-	assert.equal(readyCalls, 1)
-	assert.equal(closeCalls, 0)
+	await db.$client.close?.()
+	let result = await client.retrySession({ signal: tc.signal }, (session) => {
+		return session.execute('SELECT 1')
+	})
+
+	expect(result.resultSets[0]?.rows).toEqual([{ id: 1 }])
+	expect(register.mock.calls).toEqual([
+		['@ydbjs/drizzle-adapter', pkg.version],
+		['@ydbjs/drizzle-adapter', pkg.version],
+	])
 })
 
-test('forwards execute params and result meta', async () => {
-	let borrowedDriver = createBorrowedDriverStub()
-	let driver = new YdbDriver(borrowedDriver)
-	let mockClient = createMockQueryFunction([{ pony: 'Twilight' }], [['Twilight', 7]])
+test('replays a standalone statement with its original parameters and preserves row modes and metadata', async () => {
+	let bytes = Buffer.from([1, 2])
+	let id = new Uint16(12)
+	let params = [bytes, id, 'Rainbow']
+	let attempts = 0
+	using server = await startClientServer({
+		async *executeQuery() {
+			if (++attempts === 1) {
+				bytes.fill(0)
+				id.type.encode().type = { case: 'typeId', value: TypeId.INT32 }
+				id.encode().value = { case: 'int32Value', value: 99 }
+				params[2] = 'Rose'
+				yield statusPart(Status.ABORTED)
+			} else {
+				yield resultPart([7])
+			}
+		},
+	})
+	await using client = new QueryClient(server.driver)
+	let driver = new YdbDriver(client)
+	let text = 'SELECT $p0, $p1, $p2'
 
-	;(driver as any).client = mockClient.ql
+	let result = await driver.execute(text, params, 'execute')
+	let values = await driver.execute('SELECT 7', [], 'all', { arrayMode: true, typings: ['none'] })
 
-	let executeResult = await driver.execute('select * from ponies', [1, 'Rainbow'], 'execute')
-	let valuesResult = await driver.execute('select * from ponies', [2], 'all', {
-		arrayMode: true,
-		typings: ['none'],
+	expect(driver.client).toBe(client)
+	expect(server.executions).toHaveLength(3)
+
+	for (let request of server.executions.slice(0, 2)) {
+		expect(request.query).toMatchObject({ case: 'queryContent', value: { text } })
+		expect(Object.keys(request.parameters)).toEqual(['$p0', '$p1', '$p2'])
+		expect(request.parameters.$p0?.type?.type).toEqual({ case: 'typeId', value: TypeId.STRING })
+		let received = request.parameters.$p0?.value?.value
+		expect(received?.case === 'bytesValue' ? [...received.value] : undefined).toEqual([1, 2])
+		expect(request.parameters.$p1).toMatchObject({
+			type: { type: { case: 'typeId', value: TypeId.UINT16 } },
+			value: { value: { case: 'uint32Value', value: 12 } },
+		})
+		expect(request.parameters.$p2).toMatchObject({
+			type: { type: { case: 'typeId', value: TypeId.UTF8 } },
+			value: { value: { case: 'textValue', value: 'Rainbow' } },
+		})
+	}
+
+	expect(Object.getPrototypeOf(result.rows[0])).toBe(null)
+	expect(result).toEqual({
+		rows: [{ id: 7 }],
+		rowCount: 1,
+		command: 'execute',
+		meta: { arrayMode: false, typings: undefined },
+	})
+	expect(values).toEqual({
+		rows: [[7]],
+		rowCount: 1,
+		command: 'all',
+		meta: { arrayMode: true, typings: ['none'] },
+	})
+})
+
+test('replays the whole transaction when a root statement aborts', async () => {
+	let statements = 0
+	using server = await startClientServer({
+		async *executeQuery() {
+			yield ++statements === 2 ? statusPart(Status.ABORTED) : resultPart([1])
+		},
+	})
+	await using client = new QueryClient(server.driver, {
+		poolOptions: { maxSize: 1, waitQueueFactor: 0 },
+	})
+	let db = drizzle(client)
+	let callbacks = 0
+
+	await db.transaction(async (tx) => {
+		callbacks++
+		await tx.execute(sql`SELECT 1`)
+		await db.execute(sql`SELECT 2`)
 	})
 
-	assert.deepEqual(executeResult.rows, [{ pony: 'Twilight' }])
-	assert.equal(executeResult.rowCount, 1)
-	assert.equal(executeResult.command, 'execute')
-	assert.deepEqual(executeResult.meta, {
-		arrayMode: false,
-		typings: undefined,
-	})
-	assert.deepEqual(valuesResult.rows, [['Twilight', 7]])
-	assert.equal(valuesResult.rowCount, 1)
-	assert.equal(valuesResult.command, 'all')
-	assert.deepEqual(valuesResult.meta, {
-		arrayMode: true,
-		typings: ['none'],
-	})
-	assert.equal(mockClient.calls.length, 2)
-	assert.equal(mockClient.calls[0]?.text, 'select * from ponies')
-	assert.deepEqual(
-		mockClient.calls[0]?.params.map(({ name }) => name),
-		['p0', 'p1']
-	)
-	assert.deepEqual(
-		mockClient.calls[1]?.params.map(({ name }) => name),
-		['p0']
+	expect(callbacks).toBe(2)
+	expect(server.begins).toHaveLength(2)
+	expect(server.rollbacks).toHaveLength(1)
+	expect(server.commits).toHaveLength(1)
+
+	let rolledBack = server.rollbacks[0]!.txId
+	let committed = server.commits[0]!.txId
+	expect(rolledBack).not.toBe(committed)
+	expect(
+		server.executions.map((request) => {
+			return request.txControl?.txSelector
+		})
+	).toEqual(
+		[rolledBack, rolledBack, committed, committed].map((value) => {
+			return { case: 'txId', value }
+		})
 	)
 })
 
-test('begins transactions with mapped isolation', async () => {
-	let borrowedDriver = createBorrowedDriverStub()
-	let driver = new YdbDriver(borrowedDriver)
-	let txQuery = createMockQueryFunction([{ ok: true }])
-	let beginCalls: unknown[][] = []
+test.for([undefined, false])(
+	'read-only transactions with idempotent=%s preserve an uncertain outcome',
+	async (idempotent) => {
+		let statements = 0
+		using server = await startClientServer({
+			async *executeQuery() {
+				yield ++statements === 1 ? statusPart(Status.UNDETERMINED) : resultPart([1])
+			},
+		})
+		await using client = new QueryClient(server.driver)
+		let db = drizzle(client)
 
-	;(driver as any).client = {
-		begin: async (...args: unknown[]) => {
-			beginCalls.push(args)
+		let transaction = db.transaction(
+			(tx) => {
+				return tx.execute(sql`SELECT 1`)
+			},
+			{
+				accessMode: 'read only',
+				...(idempotent === undefined ? {} : { idempotent }),
+			}
+		)
 
-			let callback = (typeof args[0] === 'function' ? args[0] : args[1]) as (
-				tx: any
-			) => Promise<unknown>
-			return callback(txQuery.ql)
-		},
+		await expect(transaction).rejects.toBeInstanceOf(YdbRetryableQueryError)
+		expect(
+			server.begins.map((request) => {
+				return request.txSettings?.txMode.case
+			})
+		).toEqual(['snapshotReadOnly'])
+		expect(server.commits).toHaveLength(0)
 	}
+)
 
-	let txResult = await driver.transaction(
-		async (tx) => {
-			let result = await tx.execute('select tx', [9], 'execute')
-
-			return result.rows
+test('rejects with the original Drizzle error after the callback catches a failed statement', async () => {
+	using server = await startClientServer({
+		async *executeQuery() {
+			yield statusPart(Status.BAD_REQUEST)
 		},
-		{ accessMode: 'read only' }
+	})
+	await using client = new QueryClient(server.driver)
+	let db = drizzle(client)
+	let statementError: unknown
+
+	let operation = db.transaction(async (tx) => {
+		try {
+			await tx.execute(sql`SELECT ${42}`)
+		} catch (error) {
+			statementError = error
+		}
+	})
+
+	let terminalError = await operation.catch((error: unknown) => {
+		return error
+	})
+
+	expect(statementError).toBeInstanceOf(DrizzleQueryError)
+	expect(terminalError).toBe(statementError)
+	expect(terminalError).toMatchObject({
+		query: 'SELECT $p0',
+		params: [42],
+		cause: { code: Status.BAD_REQUEST },
+	})
+	expect(server.rollbacks).toHaveLength(1)
+	expect(server.commits).toHaveLength(0)
+})
+
+test('a one-attempt transaction returns the aborted statement to the caller', async (tc) => {
+	using server = await startClientServer({
+		async *executeQuery() {
+			yield statusPart(Status.ABORTED)
+		},
+	})
+	await using client = new QueryClient(server.driver)
+	let db = drizzle(client)
+
+	let operation = db.transaction(
+		(tx) => {
+			return tx.execute(sql`SELECT 1`)
+		},
+		{
+			signal: tc.signal,
+			retry: { budget: 1 },
+		}
 	)
 
-	assert.deepEqual(txResult, [{ ok: true }])
-	assert.equal(beginCalls.length, 1)
-	assert.deepEqual(beginCalls[0]?.[0], { isolation: 'snapshotReadOnly', idempotent: true })
-	assert.equal(txQuery.calls.length, 1)
+	await expect(operation).rejects.toBeInstanceOf(YdbRetryableQueryError)
+	expect(server.begins).toHaveLength(1)
+	expect(server.rollbacks).toHaveLength(1)
+})
 
-	await driver.transaction(async () => 'ok', {
-		isolationLevel: 'serializableReadWrite',
-		idempotent: false,
+test('preserves application errors wrapping a failed statement', async () => {
+	let statements = 0
+	using server = await startClientServer({
+		async *executeQuery() {
+			yield ++statements === 1 ? statusPart(Status.ABORTED) : resultPart([1])
+		},
 	})
-	assert.deepEqual(beginCalls[1]?.[0], { isolation: 'serializableReadWrite', idempotent: false })
+	await using client = new QueryClient(server.driver)
+	let db = drizzle(client)
+	let statementError: unknown
+	let applicationError: DrizzleQueryError | undefined
 
-	await driver.transaction(async () => 'no-config')
-	assert.equal(typeof beginCalls[2]?.[0], 'function')
+	let operation = db.transaction(async (tx) => {
+		try {
+			await tx.execute(sql`SELECT 1`)
+		} catch (error) {
+			statementError = error
+			applicationError = new DrizzleQueryError(
+				'application query',
+				[],
+				(error as DrizzleQueryError).cause
+			)
+			throw applicationError
+		}
+	})
+
+	let caught = await operation.catch((error: unknown) => {
+		return error
+	})
+
+	expect(statementError).toBeInstanceOf(YdbRetryableQueryError)
+	expect(applicationError).toBeInstanceOf(DrizzleQueryError)
+	expect(caught).toBe(applicationError)
+	expect(server.begins).toHaveLength(1)
 })
 
 test('rejects multi-result-set responses', async () => {
-	let borrowedDriver = createBorrowedDriverStub()
-	let driver = new YdbDriver(borrowedDriver)
-
-	;(driver as any).client = ((_text: string) => {
-		let q: any = {
-			parameter() {
-				return q
-			},
-			async values() {
-				return [[1], [2]]
-			},
-			then(onfulfilled: any, onrejected: any) {
-				return Promise.resolve([[1], [2]]).then(onfulfilled, onrejected)
-			},
-		}
-		return q
-	}) as any
+	using server = await startClientServer({
+		async *executeQuery() {
+			yield resultPart([1], 0)
+			yield resultPart([2], 1)
+		},
+	})
+	await using client = new QueryClient(server.driver)
+	let driver = new YdbDriver(client)
 
 	await assert.rejects(driver.execute('select 1; select 2', [], 'execute'), /2 result sets/)
-})
-
-test('registers itself in x-ydb-sdk-build-info via kRegisterLibrary', () => {
-	let calls: Array<[string, string]> = []
-	let borrowedDriver = createBorrowedDriverStub()
-	;(borrowedDriver as unknown as Record<symbol, unknown>)[kRegisterLibrary] = (
-		name: string,
-		version: string
-	) => {
-		calls.push([name, version])
-	}
-
-	new YdbDriver(borrowedDriver)
-
-	assert.deepEqual(calls, [['@ydbjs/drizzle-adapter', pkg.version]])
 })
 
 test('creates an executor from a remote callback', async () => {
 	let calls: Array<{ sql: string; params: unknown[]; method: string; options: unknown }> = []
 	let executor = YdbDriver.fromCallback(async (query, params, method, options) => {
 		calls.push({ sql: query, params, method, options })
+
 		return { rows: [{ ok: true }] }
 	})
 

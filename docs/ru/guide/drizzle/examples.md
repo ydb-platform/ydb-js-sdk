@@ -373,7 +373,7 @@ await db
 ```ts
 await db.transaction(
   async (tx) => {
-    const newTask = {
+    let newTask = {
       id: 100,
       projectId: 10,
       assigneeId: 1,
@@ -386,6 +386,7 @@ await db.transaction(
     }
 
     await tx.insert(tasks).values(newTask).execute()
+
     return tx
       .select({ id: tasks.id, title: tasks.title })
       .from(tasks)
@@ -396,12 +397,11 @@ await db.transaction(
   {
     accessMode: 'read write',
     isolationLevel: 'serializableReadWrite',
-    idempotent: true,
   }
 )
 
 await db.transaction(async (tx) => {
-  const newTask = {
+  let newTask = {
     id: 101,
     projectId: 10,
     assigneeId: 1,
@@ -414,6 +414,7 @@ await db.transaction(async (tx) => {
   }
 
   await tx.insert(tasks).values(newTask).execute()
+
   tx.rollback()
 })
 ```

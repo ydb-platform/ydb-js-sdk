@@ -5,14 +5,15 @@ import { type Logger, NoopLogger } from 'drizzle-orm/logger'
 import type { RelationalSchemaConfig, TablesRelationalConfig } from 'drizzle-orm/relations'
 import type { QueryWithTypings, SQL, SQLWrapper } from 'drizzle-orm/sql/sql'
 import type { YdbDialect } from '../ydb/dialect.js'
-import { mapYdbQueryError } from '../ydb/errors.js'
-import type {
-	YdbExecuteOptions,
-	YdbExecutor,
-	YdbQueryResult,
-	YdbTransactionalExecutor,
+import {
+	YdbDriver,
+	type YdbExecuteOptions,
+	type YdbExecutor,
+	type YdbQueryResult,
+	type YdbTransactionConfig,
+	type YdbTransactionalExecutor,
+	mapStatementError,
 } from '../ydb/driver.js'
-import type { YdbTransactionConfig } from '../ydb/driver.js'
 import { type YdbSelectedFieldsOrdered, mapResultRow, rowToArray } from './result-mapping.js'
 import type {
 	YdbSchemaDefinition,
@@ -182,7 +183,7 @@ export class YdbPreparedQuery<T extends YdbPreparedQueryConfig = YdbPreparedQuer
 			)
 			return attachResultMeta(result.rows, result)
 		} catch (error) {
-			throw mapYdbQueryError(this.#query.sql, this.#query.params, error)
+			throw mapStatementError(this.#client, this.#query.sql, this.#query.params, error)
 		}
 	}
 
@@ -366,9 +367,14 @@ export class YdbSession {
 					session,
 					schema
 				)
+
 				return transaction(tx)
 			}, config)
 		} catch (error) {
+			if (this.#client instanceof YdbDriver) {
+				throw error
+			}
+
 			let rollbackError = findTransactionRollbackError(error)
 			if (rollbackError) {
 				throw rollbackError

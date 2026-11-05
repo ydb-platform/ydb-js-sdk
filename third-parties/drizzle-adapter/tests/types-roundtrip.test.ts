@@ -165,3 +165,33 @@ test('prepared query decodes typed object rows on live YDB', async (t) => {
 		await live.deleteTypeRows([id])
 	}
 })
+
+test('writes explicit nulls through insert, update, and upsert', async (t) => {
+	if (!live.requireLiveYdb(t)) {
+		return
+	}
+
+	let id = live.baseUint64Id + 3n
+	let where = eq(typesTable.id, id)
+	let readRow = () => {
+		return live.db
+			.select({ flag: typesTable.flag, u32: typesTable.u32 })
+			.from(typesTable)
+			.where(where)
+	}
+
+	await live.deleteTypeRows([id])
+
+	try {
+		await live.db.insert(typesTable).values({ id, flag: null, u32: 7 })
+		expect(await readRow()).toEqual([{ flag: null, u32: 7 }])
+
+		await live.db.update(typesTable).set({ flag: true, u32: null }).where(where)
+		expect(await readRow()).toEqual([{ flag: true, u32: null }])
+
+		await live.db.upsert(typesTable).values({ id, flag: null })
+		expect(await readRow()).toEqual([{ flag: null, u32: null }])
+	} finally {
+		await live.deleteTypeRows([id])
+	}
+})

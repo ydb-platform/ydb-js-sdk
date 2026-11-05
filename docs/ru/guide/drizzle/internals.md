@@ -10,7 +10,7 @@ title: Drizzle Adapter — Драйвер, Сессия, Диалект
 
 ## YdbDriver
 
-`YdbDriver` — это низкоуровневый компонент, обеспечивающий взаимодействие между Drizzle ORM и основным драйвером `@ydbjs/core`.
+`YdbDriver` передаёт YQL и именованные параметры в `QueryClient` из `@ydbjs/query`. Одиночный запрос выполняется через `retrySession()`, транзакция — через `retryTransaction()`.
 
 ### Инициализация
 
@@ -19,16 +19,14 @@ import { Driver } from '@ydbjs/core'
 import { YdbDriver } from '@ydbjs/drizzle-adapter'
 
 // 1. Из строки подключения
-const fromString = new YdbDriver('grpc://localhost:2136/local')
+let fromString = new YdbDriver('grpc://localhost:2136/local')
 
 // 2. Из существующего экземпляра Driver SDK
-const sdkDriver = new Driver({
-  /* ... */
-})
-const driver = new YdbDriver(sdkDriver)
+let sdkDriver = new Driver('grpc://localhost:2136/local')
+let driver = new YdbDriver(sdkDriver)
 ```
 
-**Примечание:** Если `YdbDriver` создает SDK-драйвер самостоятельно (через строку подключения), он владеет им и закроет его при вызове `driver.close()`.
+Вызов `driver.close()` освобождает пул и драйвер, созданные адаптером. Если передать `new YdbDriver(client)` существующий `QueryClient`, и пулом, и драйвером продолжает управлять приложение.
 
 ### Основные методы
 
@@ -39,13 +37,13 @@ const driver = new YdbDriver(sdkDriver)
 
 ## YdbSession
 
-`YdbSession` представляет контекст одной сессии базы данных. Она служит мостом между драйвером, диалектом и логгером.
+`YdbSession` готовит запросы Drizzle, записывает их в лог и сопоставляет результаты с выбранными полями. За сессию YDB отвечает `QueryClient`: он берёт её из пула для каждой попытки выполнить одиночный запрос или транзакцию.
 
 ### Основные методы
 
 - `.all()`, `.get()`, `.values()`, `.execute()`: Выполнение одиночных запросов в разных форматах.
 - `.prepareQuery(sql, fields, name, arrayMode)`: Создает `YdbPreparedQuery` для повторного использования.
-- `.batch([queries])`: Последовательное выполнение нескольких запросов в рамках одной сессии.
+- `.batch([queries])`: Выполняет запросы последовательно. Внутри транзакции они используют её сессию.
 - `.count(query)`: Эффективное получение количества строк.
 - `.transaction(callback)`: Запуск транзакционной сессии.
 

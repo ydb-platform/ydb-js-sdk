@@ -21,7 +21,7 @@ let db = createDrizzle({
 Client options:
 
 - `connectionString`: creates an owned `YdbDriver` from a connection string.
-- `client`: existing `YdbExecutor` or `YdbTransactionalExecutor`.
+- Pass a shared `QueryClient` from `@ydbjs/query` or a custom `YdbExecutor` or `YdbTransactionalExecutor` as `client`.
 - `schema`: enables typed Relational Query API (`db.query.*`).
 - `logger`: `true`, `false`, or a custom Drizzle `Logger`.
 - `casing`: Drizzle casing mode (`'snake_case'` or `'camelCase'`) passed to the dialect.
@@ -46,7 +46,7 @@ Transaction options:
 
 - `accessMode`: `'read write' | 'read only'`.
 - `isolationLevel`: `'serializableReadWrite' | 'snapshotReadOnly'`.
-- `idempotent`: if `true`, allows automatic retries for the transaction on network errors.
+- `idempotent` defaults to `false`, including for read-only transactions. Set it to `true` only if replaying the whole callback is safe when the previous outcome is unknown.
 
 ## Schema Options
 

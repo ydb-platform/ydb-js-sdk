@@ -10,7 +10,7 @@ Only `YdbDriver` is a root runtime export. `YdbSession` and `YdbDialect` are imp
 
 ## YdbDriver
 
-`YdbDriver` is the low-level component that facilitates communication between Drizzle ORM and the `@ydbjs/core` driver.
+`YdbDriver` passes YQL text and named parameters to `QueryClient` from `@ydbjs/query`. A standalone statement runs in `retrySession()`, and a transaction runs in `retryTransaction()`.
 
 ### Initialization
 
@@ -19,16 +19,14 @@ import { Driver } from '@ydbjs/core'
 import { YdbDriver } from '@ydbjs/drizzle-adapter'
 
 // 1. From connection string
-const fromString = new YdbDriver('grpc://localhost:2136/local')
+let fromString = new YdbDriver('grpc://localhost:2136/local')
 
 // 2. From an existing SDK Driver instance
-const sdkDriver = new Driver({
-  /* ... */
-})
-const driver = new YdbDriver(sdkDriver)
+let sdkDriver = new Driver('grpc://localhost:2136/local')
+let driver = new YdbDriver(sdkDriver)
 ```
 
-**Note:** If `YdbDriver` creates the SDK driver (via connection string), it owns it and will close it when `driver.close()` is called.
+`driver.close()` releases the pool and driver created by the adapter. With `new YdbDriver(client)`, the application owns both the supplied `QueryClient` and its driver.
 
 ### Key Methods
 
@@ -39,13 +37,13 @@ const driver = new YdbDriver(sdkDriver)
 
 ## YdbSession
 
-`YdbSession` represents a single database session context. It acts as the bridge between the driver, dialect, and logger.
+`YdbSession` prepares Drizzle queries, logs them, and maps executor results to the selected fields. The native query client acquires a YDB session for each standalone operation or transaction attempt.
 
 ### Key Methods
 
 - `.all()`, `.get()`, `.values()`, `.execute()`: Execute single queries in different formats.
 - `.prepareQuery(sql, fields, name, arrayMode)`: Creates a `YdbPreparedQuery` for reuse.
-- `.batch([queries])`: Executes multiple queries sequentially in one session.
+- `.batch([queries])`: Executes the queries sequentially. Inside a transaction they share its session.
 - `.count(query)`: Efficiently returns the row count.
 - `.transaction(callback)`: Starts a transactional session.
 

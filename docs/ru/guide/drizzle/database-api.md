@@ -21,7 +21,7 @@ Runnable-приложение, которое покрывает большин�
 ### Опции
 
 - `connectionString`: строка подключения YDB (например, `grpc://localhost:2136/local`). Адаптер автоматически создает и управляет экземпляром `Driver`.
-- `client`: существующий `YdbExecutor` или `YdbTransactionalExecutor`.
+- В `client` можно передать общий `QueryClient` из `@ydbjs/query` или собственный `YdbExecutor` либо `YdbTransactionalExecutor`.
 - `schema`: объект со схемами таблиц и связей для работы Relational Query API (`db.query.*`).
 - `logger`: `true` для стандартного логгера, `false` для отключения или кастомный `Logger` Drizzle.
 - `casing`: режим преобразования имен Drizzle (`'snake_case'` или `'camelCase'`).
@@ -40,15 +40,14 @@ const db = createDrizzle({
 
 ### Управление жизненным циклом
 
-При использовании `connectionString` адаптер владеет базовым драйвером. Используйте `$client` для управления его состоянием:
-
-- `await db.$client.ready()`: позволяет убедиться, что драйвер инициализирован и база доступна.
-- `db.$client.close()`: закрывает пул сессий и освобождает ресурсы драйвера. Синхронный; возвращает `void`. **Обязательно вызывайте этот метод при завершении работы приложения.**
+При подключении по строке адаптер владеет драйвером и пулом сессий. `new YdbDriver(driver)` владеет только пулом. Вызовите `db.$client.close?.()`, чтобы освободить ресурсы адаптера. Если вы передали общий `QueryClient`, его закрывает владелец.
 
 ```ts
-await db.$client.ready()
+await db.$client.ready?.()
+
 // ... логика приложения ...
-db.$client.close()
+
+db.$client.close?.()
 ```
 
 ## Выполнение запросов
@@ -74,6 +73,15 @@ const first = await db.get(sql`SELECT * FROM users LIMIT 1`)
 const values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
 
 const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
+```
+
+В SQL-шаблоне Drizzle подставляет вместо `${null}` константу YQL `NULL`. Если вы передаёте готовый SQL и массив параметров с `null`, объявите тип параметра в тексте запроса.
+
+```ts
+await db.execute({
+  sql: 'DECLARE $p0 AS Null; SELECT $p0 AS value',
+  params: [null],
+})
 ```
 
 ## Построители запросов
@@ -109,12 +117,13 @@ const rows = await db.select({ id: users.id, name: users.name }).from(users).lim
 
 ## Транзакции
 
-Метод `db.transaction()` обеспечивает атомарность выполнения группы операций.
+Внутри `db.transaction()` запросы через `tx` и тот же `db` входят в одну транзакцию. При конфликте `ABORTED` SDK может заново выполнить весь callback. Внешние действия, например списание платежа, выносите за пределы callback.
 
 ```ts
 await db.transaction(
   async (tx) => {
     await tx.insert(users).values({ id: 1, name: 'Alice' }).execute()
+
     await tx
       .update(stats)
       .set({ count: sql`count + 1` })
@@ -128,7 +137,6 @@ await db.transaction(
   {
     accessMode: 'read write',
     isolationLevel: 'serializableReadWrite',
-    idempotent: true,
   }
 )
 ```
@@ -137,7 +145,7 @@ await db.transaction(
 
 - `accessMode`: `'read write'` (по умолчанию) или `'read only'`. Используйте `'read only'` для оптимизации читающих транзакций.
 - `isolationLevel`: `'serializableReadWrite'` (рекомендуется для YDB) или `'snapshotReadOnly'`.
-- `idempotent`: если `true`, адаптер сможет автоматически перезапустить транзакцию при сетевых ошибках.
+- По умолчанию `idempotent` равен `false`, в том числе для читающей транзакции. Укажите `true`, только если весь callback можно безопасно повторить при неизвестном исходе предыдущей попытки.
 
 ## Relational Query API
 
