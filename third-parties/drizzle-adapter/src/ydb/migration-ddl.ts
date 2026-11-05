@@ -489,11 +489,11 @@ export interface YdbNormalizedMigration {
 }
 
 function escapeName(name: string): string {
-	return `\`${name.replace(/`/g, '``')}\``
+	return `\`${name.replace(/\\/g, '\\\\').replace(/`/g, '``')}\``
 }
 
 function escapeString(value: string): string {
-	return `'${value.replace(/'/g, "''")}'`
+	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00')}'`
 }
 
 function escapeDoubleQuoted(value: string): string {

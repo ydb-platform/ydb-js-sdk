@@ -421,6 +421,11 @@ export class Query<T extends any[] = unknown[]>
 		let queryText = this.#text
 		if (this.#parameters) {
 			for (let [name, value] of Object.entries(this.#parameters)) {
+				if (typeof value?.encode !== 'function' || typeof value.type?.encode !== 'function')
+					throw new TypeError(
+						'Query parameters must be YDB Values; use fromJs() for native data.'
+					)
+
 				// oxlint-disable no-unused-expressions
 				name.startsWith('$') || (name = '$' + name)
 

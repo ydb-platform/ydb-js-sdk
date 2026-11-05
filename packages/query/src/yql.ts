@@ -1,4 +1,4 @@
-import { type Value, fromJs } from '@ydbjs/value'
+import { type JSValue, type Value, fromJs } from '@ydbjs/value'
 
 // ──────────────────────────────────────────────────────────────────────────
 // Internal markers
@@ -37,12 +37,6 @@ function validateValue(value: unknown, index: number): void {
 	}
 }
 
-function toYdbValue(value: any): Value {
-	return isObject(value) && 'type' in value && 'kind' in (value as any)['type']
-		? (value as Value)
-		: fromJs(value as any)
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Raw SQL: identifiers and unsafe injection
 // ──────────────────────────────────────────────────────────────────────────
@@ -56,9 +50,7 @@ export function unsafe(value: string | { toString(): string }) {
 }
 
 export function identifier(path: string) {
-	// Escape backticks inside identifier by doubling them
-	// Example: my`table -> my``table
-	let escaped = path.replaceAll('`', '``')
+	let escaped = path.replaceAll('\\', '\\\\').replaceAll('`', '``')
 	return unsafe('`' + escaped + '`')
 }
 
@@ -152,7 +144,7 @@ function flatten(
 			text += flatten(value.strings, value.values, params, counter)
 		} else {
 			let name = `$p${counter.n}`
-			params[name] = toYdbValue(value)
+			params[name] = fromJs(value as JSValue)
 			text += name
 			counter.n++
 		}

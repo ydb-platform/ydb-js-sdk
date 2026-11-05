@@ -27,5 +27,6 @@ export function vectorToBytes(vector: number[]): Uint8Array {
  * as bound query parameters instead.
  */
 export function escJsonPathKey(value: string): string {
-	return value.replace(/'/g, "''")
+	// Default YQL string literals use backslash escapes, not doubled quotes.
+	return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00')
 }
