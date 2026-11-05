@@ -37,6 +37,7 @@ Requires Node.js 20.19+ and `drizzle-orm@^0.45.2`.
 
 - **Driver ownership**: `createDrizzle({ connectionString })` owns the driver and closes it with `db.$client.close?.()`. Pass `{ driver }` to share an existing `YdbDriver` with other YDB clients.
 - **Query execution**: all builders go through `YdbSession`, which uses the same driver/pool as `@ydbjs/query` under the hood.
+- **Result records**: mapped rows and nested selection groups use `Object.create(null)`. Selected names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to check field presence; records do not inherit object methods. Custom executor input rows still accept ordinary objects.
 - **Migrations**: `migrate()` records every applied migration in a YDB table; with `migrationLock` enabled, parallel deploy jobs coordinate through a lock table instead of racing.
 
 ## Usage

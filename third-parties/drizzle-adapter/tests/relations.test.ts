@@ -27,6 +27,7 @@ test('runs schema queries against live YDB', async (t) => {
 		})
 
 		expect(inserted).toEqual({ id, name: 'twilight sparkle' })
+		expect(Object.getPrototypeOf(inserted)).toBe(null)
 		expect((live.db as any)._.schema?.users).toBeTruthy()
 		expect(
 			live.liveQueryLog.some(({ query }) =>
@@ -74,6 +75,7 @@ test('returns hydrated rows from findMany on live YDB', async (t) => {
 			{ id: secondId, name: 'sweetie belle' },
 			{ id: firstId, name: 'apple bloom' },
 		])
+		for (let row of rows) expect(Object.getPrototypeOf(row)).toBe(null)
 	} finally {
 		await live.deleteUserRows([firstId, secondId])
 	}
@@ -126,6 +128,8 @@ test('hydrates many relations on live YDB', async (t) => {
 				{ id: secondPostId, title: 'party cannon' },
 			],
 		})
+		expect(Object.getPrototypeOf(row)).toBe(null)
+		for (let post of row.posts) expect(Object.getPrototypeOf(post)).toBe(null)
 		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${usersTableName}\``))
 		).toBe(true)
@@ -177,6 +181,8 @@ test('hydrates one relations on live YDB', async (t) => {
 				name: 'fluttershy',
 			},
 		})
+		expect(Object.getPrototypeOf(row)).toBe(null)
+		expect(Object.getPrototypeOf(row.author)).toBe(null)
 		expect(
 			live.liveQueryLog.some(({ query }) => query.includes(`from \`${postsTableName}\``))
 		).toBe(true)
