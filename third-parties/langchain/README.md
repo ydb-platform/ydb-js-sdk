@@ -14,44 +14,75 @@ npm install @ydbjs/langchain @langchain/core
 
 ### Using a connection string
 
-The store creates and owns the driver. Call `store.close()` when done.
+The store creates its own driver and query client. Call `await store.close()` to drain the session pool and close the driver.
 
 ```typescript
 import { YDBVectorStore } from '@ydbjs/langchain'
 import { OpenAIEmbeddings } from '@langchain/openai'
 
-const store = new YDBVectorStore(new OpenAIEmbeddings(), {
+let store = new YDBVectorStore(new OpenAIEmbeddings(), {
   connectionString: 'grpc://localhost:2136/local',
 })
 
-await store.addDocuments([{ pageContent: 'LangChain supports YDB', metadata: { source: 'docs' } }])
+await store.addDocuments([
+  {
+    pageContent: 'LangChain supports YDB',
+    metadata: { source: 'docs' },
+  },
+])
 
-const results = await store.similaritySearch('YDB vector search', 4)
+let results = await store.similaritySearch('YDB vector search', 4)
+
 console.log(results)
 
-store.close()
+await store.close()
 ```
 
 ### Using a pre-built Driver
 
-Pass your own `Driver` instance — its lifecycle is yours to manage.
+The store creates its own query client for the supplied driver. Close the store to drain that client’s pool, then close the driver when your application has finished with it.
 
 ```typescript
 import { Driver } from '@ydbjs/core'
 import { YDBVectorStore } from '@ydbjs/langchain'
 import { OpenAIEmbeddings } from '@langchain/openai'
 
-const driver = new Driver('grpc://localhost:2136/local')
+let driver = new Driver('grpc://localhost:2136/local')
+
 await driver.ready()
 
-const store = new YDBVectorStore(new OpenAIEmbeddings(), { driver })
+let store = new YDBVectorStore(new OpenAIEmbeddings(), { driver })
 
-await store.addDocuments([{ pageContent: 'LangChain supports YDB', metadata: { source: 'docs' } }])
+await store.addDocuments([
+  {
+    pageContent: 'LangChain supports YDB',
+    metadata: { source: 'docs' },
+  },
+])
 
-const results = await store.similaritySearch('YDB vector search', 4)
+let results = await store.similaritySearch('YDB vector search', 4)
+
 console.log(results)
 
+await store.close()
 driver.close()
+```
+
+### Sharing a QueryClient
+
+Pass `queryClient` to share an existing session pool across stores and application queries. The caller owns the shared client and its driver.
+
+```typescript
+import { Driver } from '@ydbjs/core'
+import { QueryClient } from '@ydbjs/query'
+import { YDBVectorStore } from '@ydbjs/langchain'
+import { OpenAIEmbeddings } from '@langchain/openai'
+
+using driver = new Driver('grpc://localhost:2136/local')
+await using queryClient = new QueryClient(driver)
+await using store = new YDBVectorStore(new OpenAIEmbeddings(), { queryClient })
+
+let results = await store.similaritySearch('YDB vector search', 4)
 ```
 
 ### Static helpers

@@ -37,29 +37,50 @@ console.log(results)
 
 ### Driver, управляемый стором (connection string)
 
-Стор создаёт Driver и владеет им. Используйте `await using` или вызывайте `store.close()` по завершении.
+Если передать строку подключения, стор сам создаст `Driver` и `QueryClient`. Используйте `await using` или вызовите `await store.close()`, чтобы дождаться закрытия пула сессий и драйвера.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
+
 // ...
-store.close()
+
+await store.close()
 ```
 
 ### Driver, управляемый вызывающим кодом
 
-Передайте готовый экземпляр `Driver` — его жизненный цикл остаётся за вами.
+Если передать готовый `Driver`, стор создаст собственный клиент запросов. Вызовите `await store.close()`, чтобы закрыть его пул сессий. Драйвер можно закрыть, когда с ним закончат работать все клиенты.
 
 ```typescript
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver('grpc://localhost:2136/local')
+let driver = new Driver('grpc://localhost:2136/local')
+
 await driver.ready()
 
-const store = new YDBVectorStore(embeddings, { driver })
+let store = new YDBVectorStore(embeddings, { driver })
+
 // ...
+
+await store.close()
 driver.close()
+```
+
+### Общий QueryClient
+
+Передайте `queryClient`, чтобы векторный поиск и остальные запросы приложения использовали один пул сессий. Общим клиентом и драйвером управляет приложение. Сначала закройте все сторы, затем клиент и последним драйвер. В примере ниже `await using` задаёт такой порядок при выходе из блока.
+
+```typescript
+import { Driver } from '@ydbjs/core'
+import { QueryClient } from '@ydbjs/query'
+
+using driver = new Driver('grpc://localhost:2136/local')
+await using queryClient = new QueryClient(driver)
+await using store = new YDBVectorStore(embeddings, { queryClient })
+
+await store.similaritySearch('векторный поиск в YDB', 4)
 ```
 
 ## Статические хелперы
