@@ -1,14 +1,5 @@
 import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
-import {
-	type Fragment,
-	type SQLClient,
-	type UnsafeString,
-	query as createQueryClient,
-	fragment,
-	identifier,
-	join,
-	unsafe,
-} from '@ydbjs/query'
+import { QueryClient, identifier } from '@ydbjs/query'
 import { Uint64 } from '@ydbjs/value/primitive'
 import type { EmbeddingsInterface } from '@langchain/core/embeddings'
 import { VectorStore } from '@langchain/core/vectorstores'
@@ -96,7 +87,7 @@ export interface YDBVectorStoreBaseConfig {
 	 */
 	strategy?: YDBSearchStrategyType
 	/**
-	 * When `true`, every schema-initialisation step issues `DROP TABLE IF EXISTS`
+	 * When `true`, the first schema initialisation issues `DROP TABLE IF EXISTS`
 	 * before `CREATE TABLE`. Useful during development or testing for a
 	 * guaranteed fresh start. Defaults to `false`.
 	 */
@@ -159,13 +150,21 @@ export type YDBVectorStoreIndexOptions =
 	  }
 
 /**
- * Pass either a pre-built Driver (you manage its lifecycle) or a connection
- * string (the store creates and owns the Driver; `await store.close()` when done).
+ * Supply a shared QueryClient, an existing Driver, or a connection string.
+ * The store closes only the client and driver it creates.
  */
 export type YDBVectorStoreDriverOptions =
 	| {
+			/** Borrow an existing QueryClient and its session pool. */
+			queryClient: QueryClient
+			driver?: never
+			connectionString?: never
+			driverOptions?: never
+	  }
+	| {
 			/** A ready-to-use Driver instance from `@ydbjs/core`. */
 			driver: Driver
+			queryClient?: never
 			connectionString?: never
 			driverOptions?: never
 	  }
@@ -177,6 +176,7 @@ export type YDBVectorStoreDriverOptions =
 			connectionString: string
 			/** Additional Driver options (auth, TLS, …). */
 			driverOptions?: DriverOptions
+			queryClient?: never
 			driver?: never
 	  }
 
@@ -223,6 +223,16 @@ export type YDBVectorStoreDeleteParams = {
 	deleteAll?: boolean
 }
 
+function quotedName(name: string): string {
+	if (typeof name !== 'string' || name.length === 0) {
+		throw new YDBVectorStoreConfigError(
+			'Table, column and index names must be non-empty strings.'
+		)
+	}
+
+	return identifier(name).toString()
+}
+
 function assertSameLength(nameA: string, lenA: number, nameB: string, lenB: number): void {
 	if (lenA !== lenB) {
 		throw new YDBVectorStoreArgumentError(
@@ -259,9 +269,13 @@ class YDBVectorIndexConfig {
 	readonly treeSearchTopSize: number
 
 	constructor(opts: YDBVectorStoreIndexOptions) {
+		if (opts.indexEnabled !== undefined && typeof opts.indexEnabled !== 'boolean') {
+			throw new YDBVectorStoreConfigError('indexEnabled must be a boolean.')
+		}
+
 		if (opts.indexEnabled) {
 			this.enabled = true
-			this.name = opts.indexName ?? 'langchain_vector_index'
+			this.name = quotedName(opts.indexName ?? 'langchain_vector_index')
 			this.levels = opts.indexConfigLevels ?? 2
 			this.clusters = opts.indexConfigClusters ?? 128
 			this.vectorDimension = opts.indexVectorDimension
@@ -272,6 +286,18 @@ class YDBVectorIndexConfig {
 			assertPositiveInteger('indexConfigClusters', this.clusters)
 			assertPositiveInteger('indexTreeSearchTopSize', this.treeSearchTopSize)
 		} else {
+			if (
+				opts.indexName !== undefined ||
+				opts.indexVectorDimension !== undefined ||
+				opts.indexConfigLevels !== undefined ||
+				opts.indexConfigClusters !== undefined ||
+				opts.indexTreeSearchTopSize !== undefined
+			) {
+				throw new YDBVectorStoreConfigError(
+					'Vector index options require indexEnabled: true.'
+				)
+			}
+
 			this.enabled = false
 			this.name = 'langchain_vector_index'
 			this.levels = 2
@@ -290,18 +316,16 @@ class YDBVectorIndexConfig {
 /**
  * LangChain vector store backed by YDB. See the package README for usage examples.
  *
- * Uses `@ydbjs/core` (Driver) and `@ydbjs/query` (tagged-template YQL client) —
- * both are bundled as regular dependencies of this package. Embeddings are
- * stored as packed little-endian `Float32` bytes in a `String` column and
+ * Embeddings are stored as packed little-endian `Float32` bytes in a `String` column and
  * searched with the built-in `Knn::*` UDFs.
  */
 export class YDBVectorStore extends VectorStore {
 	declare FilterType: YDBFilter
 
-	#sql: SQLClient
-	#driver: Driver
+	#client: QueryClient
+	#ownsClient: boolean
+	#ownedDriver?: Driver
 	#promise: Promise<void> | undefined
-	#ownedDriver: boolean
 
 	#table: string
 	#columnMap: YDBColumnMap
@@ -314,7 +338,7 @@ export class YDBVectorStore extends VectorStore {
 
 	#dropExistingTable: boolean
 
-	#closed: boolean = false
+	#closing?: Promise<void>
 
 	override _vectorstoreType(): string {
 		return 'ydb'
@@ -323,39 +347,23 @@ export class YDBVectorStore extends VectorStore {
 	constructor(embeddings: EmbeddingsInterface, config: YDBVectorStoreConfig) {
 		super(embeddings, config)
 
-		// Branch on `driver` first so that callers passing
-		// `{ driver, connectionString: undefined }` (or any partially-undefined
-		// union shape) land on the right path.
-		if ('driver' in config && config.driver !== undefined) {
-			this.#driver = config.driver
-			this.#ownedDriver = false
-		} else if ('connectionString' in config && config.connectionString) {
-			this.#driver = new Driver(config.connectionString, config.driverOptions)
-			this.#ownedDriver = true
-		} else {
-			throw new YDBVectorStoreConfigError(
-				'Either `driver` or a non-empty `connectionString` must be provided.'
-			)
+		this.#table = quotedName(config.table ?? 'langchain_vectors')
+		this.#columnMap = {
+			id: quotedName(config.columnMap?.id ?? 'id'),
+			document: quotedName(config.columnMap?.document ?? 'document'),
+			embedding: quotedName(config.columnMap?.embedding ?? 'embedding'),
+			metadata: quotedName(config.columnMap?.metadata ?? 'metadata'),
 		}
 
-		this.#driver[kRegisterLibrary]('@ydbjs/langchain', pkg.version)
-		this.#sql = createQueryClient(this.#driver)
-
-		this.#table = config.table ?? 'langchain_vectors'
-		this.#columnMap = {
-			id: 'id',
-			metadata: 'metadata',
-			document: 'document',
-			embedding: 'embedding',
-			...config.columnMap,
+		if (new Set(Object.values(this.#columnMap)).size !== 4) {
+			throw new YDBVectorStoreConfigError('Column names must be distinct.')
 		}
 
 		this.#strategy = config.strategy ?? YDBSearchStrategy.CosineSimilarity
-		// `this.#strategy` is spliced into YQL via `unsafe(...)` in Knn::* and the
-		// index DDL — guard against TS-bypass / JSON-driven values reaching the
-		// query as raw text. Reusing the DDL map doubles as a single source of
-		// truth: a strategy is "known" iff it has a DDL mapping.
-		if (INDEX_STRATEGY_DDL[this.#strategy] === undefined) {
+		if (
+			typeof this.#strategy !== 'string' ||
+			!Object.hasOwn(INDEX_STRATEGY_DDL, this.#strategy)
+		) {
 			throw new YDBVectorStoreConfigError(
 				`Unknown search strategy: "${this.#strategy}". Valid values: ${Object.keys(INDEX_STRATEGY_DDL).join(', ')}.`
 			)
@@ -363,14 +371,48 @@ export class YDBVectorStore extends VectorStore {
 
 		this.#batchSize = config.batchSize ?? 32
 		assertPositiveInteger('batchSize', this.#batchSize)
-
 		this.#indexConfig = new YDBVectorIndexConfig(config)
 
-		this.#dropExistingTable = config.dropExistingTable ?? false
-	}
+		if (
+			config.dropExistingTable !== undefined &&
+			typeof config.dropExistingTable !== 'boolean'
+		) {
+			throw new YDBVectorStoreConfigError('dropExistingTable must be a boolean.')
+		}
 
-	get #t(): UnsafeString {
-		return identifier(this.#table)
+		this.#dropExistingTable = config.dropExistingTable ?? false
+
+		let { queryClient, driver, connectionString, driverOptions } = config
+		if (
+			[queryClient, driver, connectionString].filter((source) => {
+				return source !== undefined
+			}).length !== 1
+		) {
+			throw new YDBVectorStoreConfigError(
+				'Provide exactly one of queryClient, driver, or connectionString.'
+			)
+		}
+
+		if (driverOptions !== undefined && connectionString === undefined) {
+			throw new YDBVectorStoreConfigError('driverOptions requires a connectionString.')
+		}
+
+		this.#ownsClient = queryClient === undefined
+
+		if (queryClient) {
+			this.#client = queryClient
+		} else if (driver) {
+			this.#client = new QueryClient(driver)
+		} else if (typeof connectionString === 'string' && connectionString.trim()) {
+			this.#ownedDriver = new Driver(connectionString, driverOptions)
+			this.#client = new QueryClient(this.#ownedDriver)
+		} else {
+			throw new YDBVectorStoreConfigError(
+				'Provide a queryClient, driver, or a non-empty connectionString.'
+			)
+		}
+
+		this.#client.driver[kRegisterLibrary]('@ydbjs/langchain', pkg.version)
 	}
 
 	// Similarity strategies sort highest-first; distance strategies lowest-first.
@@ -379,32 +421,46 @@ export class YDBVectorStore extends VectorStore {
 	}
 
 	#assertOpen(): void {
-		if (this.#closed) {
+		if (this.#closing) {
 			throw new YDBVectorStoreOperationError('Store is closed.')
 		}
 	}
 
 	async #ensureTable(): Promise<void> {
 		this.#assertOpen()
-		this.#promise ??= this.#runInit()
+
+		this.#promise ??= this.#runInit().catch((error: unknown) => {
+			// An unconfirmed DROP must not run again on the next read or write.
+			if (!this.#dropExistingTable) {
+				this.#promise = undefined
+			}
+
+			throw error
+		})
+
 		await this.#promise
 	}
 
 	async #runInit(): Promise<void> {
-		await this.#driver.ready()
-		let { id, document: doc, embedding: emb, metadata: meta } = this.#columnMap
+		let { id, document, embedding, metadata } = this.#columnMap
 
 		if (this.#dropExistingTable) {
-			await this.#sql`DROP TABLE IF EXISTS ${this.#t}`
+			await this.#client.retrySession((session) => {
+				return session.execute(`DROP TABLE IF EXISTS ${this.#table}`)
+			})
+
+			this.#dropExistingTable = false
 		}
 
-		await this.#sql`CREATE TABLE IF NOT EXISTS ${this.#t} (
-	        ${identifier(id)}   Utf8,
-	        ${identifier(doc)}  Utf8,
-	        ${identifier(emb)}  String,
-	        ${identifier(meta)} Json,
-	        PRIMARY KEY (${identifier(id)})
-		)`
+		await this.#client.retrySession((session) => {
+			return session.execute(`CREATE TABLE IF NOT EXISTS ${this.#table} (
+				${id} Utf8,
+				${document} Utf8,
+				${embedding} String,
+				${metadata} Json,
+				PRIMARY KEY (${id})
+			)`)
+		})
 	}
 
 	/**
@@ -421,24 +477,17 @@ export class YDBVectorStore extends VectorStore {
 	async addVectors(vectors: number[][], documents: Document[]): Promise<string[]> {
 		assertSameLength('vectors', vectors.length, 'documents', documents.length)
 
-		if (vectors.length === 0) return []
+		this.#assertOpen()
+
+		if (vectors.length === 0) {
+			return []
+		}
 
 		await this.#ensureTable()
 
-		// Single source of truth for column ↔ JS-key ↔ SQL-expression mapping.
-		// Positions must align: UPSERT cols[i] receives the value from selectExprs[i],
-		// which reads JS-key `selectExprs[i]` from each `batch` element.
-		let mappings: Array<[destCol: string, selectExpr: string]> = [
-			[this.#columnMap.id, 'id'],
-			[this.#columnMap.document, 'document'],
-			[this.#columnMap.embedding, 'embedding'],
-			[this.#columnMap.metadata, 'CAST(metadata AS Json)'],
-		]
-		let destCols = join(
-			mappings.map(([d]) => fragment`${identifier(d)}`),
-			', '
-		)
-		let selectExprs = mappings.map(([, e]) => e).join(', ')
+		let { id, document, embedding, metadata } = this.#columnMap
+		let text = `UPSERT INTO ${this.#table} (${id}, ${document}, ${embedding}, ${metadata})
+			SELECT id, document, embedding, CAST(metadata AS Json) FROM AS_TABLE($batch)`
 
 		let ids: string[] = []
 
@@ -446,6 +495,7 @@ export class YDBVectorStore extends VectorStore {
 			let batch = documents.slice(i, i + this.#batchSize).map((d, j) => {
 				let docId = d.id ?? crypto.randomUUID()
 				ids.push(docId)
+
 				return {
 					id: docId,
 					document: d.pageContent,
@@ -456,11 +506,9 @@ export class YDBVectorStore extends VectorStore {
 
 			// Batches are sent sequentially to avoid overwhelming the server.
 			// oxlint-disable-next-line no-await-in-loop
-			await this.#sql`
-				UPSERT INTO ${this.#t} (${destCols})
-				SELECT ${unsafe(selectExprs)}
-				FROM AS_TABLE(${batch})
-			`
+			await this.#client.retrySession((session) => {
+				return session.execute(text, { batch })
+			})
 		}
 
 		return ids
@@ -476,6 +524,7 @@ export class YDBVectorStore extends VectorStore {
 	 * @returns The ID of every inserted/updated document (same order as input).
 	 */
 	async addDocuments(documents: Document[]): Promise<string[]> {
+		this.#assertOpen()
 		let texts = documents.map((d) => d.pageContent)
 		let vectors = await this.embeddings.embedDocuments(texts)
 		return this.addVectors(vectors, documents)
@@ -497,40 +546,36 @@ export class YDBVectorStore extends VectorStore {
 		filter?: this['FilterType']
 	): Promise<[Document, number][]> {
 		assertNonNegativeInteger('k', k)
-		await this.#ensureTable()
 
-		let { id, document: doc, embedding: emb, metadata: meta } = this.#columnMap
-
-		if (filter && Object.keys(filter).length > 0 && this.#indexConfig.enabled) {
+		let entries = Object.entries(filter ?? {})
+		if (entries.length && this.#indexConfig.enabled) {
 			throw new YDBVectorStoreOperationError(
 				'Cannot use metadata filter with vector index enabled.'
 			)
 		}
 
-		// Compose the query from fragments so embedding bytes, filter values, and
-		// LIMIT all flow through bound parameters — query text stays stable across
-		// k values and filter shapes, letting YDB reuse its compiled plan.
-		// JSON path keys cannot be parameterised in YQL, so we escape them and
-		// splice them in as raw text via unsafe().
-		let pragma: Fragment = this.#indexConfig.enabled
-			? fragment`PRAGMA ydb.KMeansTreeSearchTopSize = "${unsafe(String(this.#indexConfig.treeSearchTopSize))}"; `
-			: fragment``
+		let { id, document, embedding, metadata } = this.#columnMap
+		let conditions = entries.map(([key, value], i) => {
+			if (typeof value !== 'string') {
+				throw new YDBVectorStoreArgumentError('Metadata filter values must be strings.')
+			}
 
-		let view: Fragment = this.#indexConfig.enabled
-			? fragment`VIEW ${identifier(this.#indexConfig.name)}`
-			: fragment``
+			return `JSON_VALUE(${metadata}, '$.${escJsonPathKey(key)}') = $filter${i}`
+		})
 
-		let filterEntries = Object.entries(filter ?? {})
-		let where: Fragment =
-			filterEntries.length > 0
-				? fragment`WHERE ${join(
-						filterEntries.map(
-							([key, value]) =>
-								fragment`JSON_VALUE(${identifier(meta)}, ${unsafe(`'$.${escJsonPathKey(key)}'`)}) = ${value}`
-						),
-						' AND '
-					)}`
-				: fragment``
+		let vector = vectorToBytes(query)
+		let index = this.#indexConfig
+		let pragma = index.enabled
+			? `PRAGMA ydb.KMeansTreeSearchTopSize = "${index.treeSearchTopSize}";`
+			: ''
+		let view = index.enabled ? ' VIEW ' + index.name : ''
+		let where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''
+		let text = `${pragma}
+			SELECT ${id} AS id, ${document} AS document, ${metadata} AS metadata,
+				Knn::${this.#strategy}(${embedding}, $vector) AS score
+			FROM ${this.#table}${view}
+			${where}
+			ORDER BY score ${this.#sortOrder} LIMIT $k`
 
 		type SearchResultRow = {
 			id: string
@@ -540,29 +585,34 @@ export class YDBVectorStore extends VectorStore {
 			score: number
 		}
 
-		let [rows = []] = await this.#sql<[SearchResultRow]>`
-			${pragma}
-			SELECT
-				${identifier(id)} AS id,
-				${identifier(doc)} AS document,
-				${identifier(meta)} AS metadata,
-				Knn::${unsafe(this.#strategy)}(${identifier(emb)}, ${vectorToBytes(query)}) AS score
-			FROM ${this.#t} ${view}
-			${where}
-			ORDER BY score ${unsafe(this.#sortOrder)} LIMIT ${new Uint64(BigInt(k))}
-		`
+		await this.#ensureTable()
 
-		return rows.map((row) => [
-			new Document({
-				id: row.id,
-				pageContent: row.document,
-				metadata:
-					typeof row.metadata === 'string'
-						? JSON.parse(row.metadata)
-						: (row.metadata ?? {}),
-			}),
-			Number(row.score),
-		])
+		let { resultSets } = await this.#client.retrySession({ idempotent: true }, (session) => {
+			let parameters: Record<string, Uint64 | Uint8Array | string> = {
+				vector,
+				k: new Uint64(BigInt(k)),
+			}
+
+			entries.forEach(([, value], i) => {
+				parameters['filter' + i] = value
+			})
+
+			return session.execute<[SearchResultRow]>(text, parameters)
+		})
+
+		return (resultSets[0]?.rows ?? []).map((row) => {
+			return [
+				new Document({
+					id: row.id,
+					pageContent: row.document,
+					metadata:
+						typeof row.metadata === 'string'
+							? JSON.parse(row.metadata)
+							: (row.metadata ?? {}),
+				}),
+				Number(row.score),
+			]
+		})
 	}
 
 	/**
@@ -578,11 +628,22 @@ export class YDBVectorStore extends VectorStore {
 	override async delete(params: YDBVectorStoreDeleteParams): Promise<void> {
 		if (params.deleteAll) {
 			await this.#ensureTable()
-			await this.#sql`DELETE FROM ${this.#t}`
+
+			await this.#client.retrySession((session) => {
+				return session.execute(`DELETE FROM ${this.#table}`)
+			})
 		} else if (params.ids && params.ids.length > 0) {
+			let ids = params.ids.slice()
 			await this.#ensureTable()
-			let col = identifier(this.#columnMap.id)
-			await this.#sql`DELETE FROM ${this.#t} WHERE ${col} IN ${params.ids}`
+
+			await this.#client.retrySession((session) => {
+				return session.execute(
+					`DELETE FROM ${this.#table} WHERE ${this.#columnMap.id} IN $ids`,
+					{
+						ids,
+					}
+				)
+			})
 		}
 	}
 
@@ -593,14 +654,19 @@ export class YDBVectorStore extends VectorStore {
 	 */
 	async drop(): Promise<void> {
 		this.#assertOpen()
-		await this.#driver.ready()
+
 		// Wait out any in-flight CREATE TABLE so DROP doesn't race with it.
 		try {
 			await this.#promise
 		} catch {
 			// Init failure is irrelevant — we're dropping the table anyway.
 		}
-		await this.#sql`DROP TABLE IF EXISTS ${this.#t}`
+
+		await this.#client.retrySession((session) => {
+			return session.execute(`DROP TABLE IF EXISTS ${this.#table}`)
+		})
+
+		this.#dropExistingTable = false
 		this.#promise = undefined
 	}
 
@@ -625,36 +691,34 @@ export class YDBVectorStore extends VectorStore {
 				'Cannot create vector index: indexEnabled is false in config.'
 			)
 		}
+
 		await this.#ensureTable()
 
 		let index = this.#indexConfig
-		await this.#sql`
-			ALTER TABLE ${this.#t}
-			ADD INDEX ${identifier(index.name)}
-			GLOBAL USING vector_kmeans_tree
-			ON (${identifier(this.#columnMap.embedding)})
-			WITH (
-				${this.#sql.unsafe(INDEX_STRATEGY_DDL[this.#strategy])},
-				vector_type = 'float',
-				vector_dimension=${this.#sql.unsafe(String(index.vectorDimension))},
-				levels=${this.#sql.unsafe(String(index.levels))},
-				clusters=${this.#sql.unsafe(String(index.clusters))}
-			)
-		`
+		await this.#client.retrySession((session) => {
+			return session.execute(`ALTER TABLE ${this.#table}
+				ADD INDEX ${index.name}
+				GLOBAL USING vector_kmeans_tree
+				ON (${this.#columnMap.embedding})
+				WITH (
+					${INDEX_STRATEGY_DDL[this.#strategy]},
+					vector_type = 'float',
+					vector_dimension=${index.vectorDimension},
+					levels=${index.levels},
+					clusters=${index.clusters}
+				)`)
+		})
 	}
 
 	/**
-	 * Drain the SQL client session pool, then close the Driver if this store
-	 * owns it. Idempotent. When an external `driver` was provided, only the
-	 * pool is released — the caller owns the Driver lifecycle.
+	 * Drain the session pool if the store created it, then close any owned driver.
 	 */
-	async close(): Promise<void> {
-		if (this.#closed) return
-		this.#closed = true
-		await this.#sql[Symbol.asyncDispose]()
-		if (this.#ownedDriver) {
-			this.#driver.close()
-		}
+	close(): Promise<void> {
+		return (this.#closing ??= this.#ownsClient
+			? this.#client.close().finally(() => {
+					return this.#ownedDriver?.close()
+				})
+			: Promise.resolve())
 	}
 
 	[Symbol.asyncDispose](): Promise<void> {
@@ -701,8 +765,24 @@ export class YDBVectorStore extends VectorStore {
 		config: YDBVectorStoreConfig
 	): Promise<YDBVectorStore> {
 		let store = new YDBVectorStore(embeddings, config)
-		await store.addDocuments(docs)
-		return store
+
+		try {
+			await store.addDocuments(docs)
+
+			return store
+		} catch (error) {
+			try {
+				await store.close()
+			} catch (closeError) {
+				throw new AggregateError(
+					[error, closeError],
+					'Failed to populate and close the vector store.',
+					{ cause: closeError }
+				)
+			}
+
+			throw error
+		}
 	}
 
 	/**
@@ -724,12 +804,15 @@ export class YDBVectorStore extends VectorStore {
 		embeddings: EmbeddingsInterface,
 		config: YDBVectorStoreExistingTableConfig
 	): YDBVectorStore {
-		let store = new YDBVectorStore(embeddings, config)
-		store.#markInitialized()
-		return store
-	}
+		if (!config.table || config.dropExistingTable !== undefined) {
+			throw new YDBVectorStoreConfigError(
+				'fromExistingTable requires a table and forbids dropExistingTable.'
+			)
+		}
 
-	#markInitialized(): void {
-		this.#promise = Promise.resolve()
+		let store = new YDBVectorStore(embeddings, config)
+		store.#promise = Promise.resolve()
+
+		return store
 	}
 }
