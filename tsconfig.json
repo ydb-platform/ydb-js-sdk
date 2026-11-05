@@ -1,12 +1,7 @@
 {
 	"compilerOptions": {
-		"target": "ES2022",
-		"lib": [
-			"ES2022",
-			// ES2024.Promise for the Promise.withResolvers().
-			"ES2024.Promise",
-			"ESNext.Disposable"
-		],
+		"target": "ES2024",
+		"lib": ["ES2024", "ESNext.Disposable", "ESNext.Temporal"],
 		"sourceMap": true,
 		"declaration": true,
 		"declarationMap": true,
@@ -33,8 +28,6 @@
 		"allowUnusedLabels": false,
 		"allowUnreachableCode": false,
 		"verbatimModuleSyntax": true,
-		// We're building with modern Node.js resolution for Node.js 20+
-		"moduleResolution": "NodeNext",
 		"module": "NodeNext",
 		// Better error reporting
 		"pretty": true
