@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/fsm",
-	"version": "6.1.1",
+	"version": "7.0.0",
 	"description": "Lightweight async-first FSM runtime for YDB JavaScript SDK packages.",
 	"keywords": [
 		"ydb",
@@ -48,7 +48,7 @@
 		"test": "tsc -b tsconfig.test.json && vitest --run"
 	},
 	"dependencies": {
-		"@ydbjs/abortable": "^6.1.0"
+		"@ydbjs/abortable": "^6.2.0"
 	},
 	"files": [
 		"dist",
