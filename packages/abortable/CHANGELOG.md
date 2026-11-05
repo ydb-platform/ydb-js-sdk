@@ -1,5 +1,11 @@
 # @ydbjs/abortable
 
+## 6.2.0
+
+### Minor Changes
+
+- [#680](https://github.com/ydb-platform/ydb-js-sdk/pull/680) [`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6) Thanks [@polRk](https://github.com/polRk)! - Accept an optional abort signal and return the original Promise when it is absent. Observe late rejections after cancellation, including when the signal was already aborted, without cancelling the underlying operation.
+
 ## 6.1.0
 
 ### Minor Changes

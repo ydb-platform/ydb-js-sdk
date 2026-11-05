@@ -1,5 +1,85 @@
 # @ydbjs/query
 
+## 7.0.0
+
+### Major Changes
+
+- [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096) Thanks [@polRk](https://github.com/polRk)! - Connect SDK services to `@ydbjs/grpc` and remove nice-grpc and grpc-js from the workspace. Service methods retain Promise results and AsyncIterable request/response streams, with AbortSignal cancellation and backpressure. Requires Node.js 22.15 or later supported by the SDK.
+
+  Use `createServiceClient(service, transport)` for standalone calls. `Driver.createClient` retains discovery and node selection; `createPinnedClient` explicitly awaits endpoint pin acquisition. Configure TLS, message limits, and HTTP/2 windows through `transportOptions`. The transport does not replay RPCs or duplicate YDB balancing and retry policies.
+
+  Call options accept plain metadata records, signals, absolute deadlines, and header/trailer/status observers. `RpcError` carries code, details, and trailing metadata; `MessageSizeError` identifies permanent local size-limit failures. Query metadata events expose the same record format. Register `addMetadataHook` before constructing Driver to add tracing headers. Credential providers supply `getToken`; Driver handles authentication and mandatory headers without middleware or interceptor adapters.
+
+  High-level TopicWriter, TopicReader, query, and coordination operations retain their APIs. Generated API definitions remain independent of the transport at runtime. Request framing sends the header and serialized body separately, avoiding the payload copy used to prepend a gRPC frame header.
+
+  Preserve explicit TLS server names when discovery provides no override, and avoid logging raw driver options.
+
+  Preserve explicit gRPC endpoint ports when selecting TLS, including mixed-case URL schemes. Merge repeated case-insensitive call metadata values while keeping required driver headers authoritative over caller metadata and hooks.
+
+- [#718](https://github.com/ydb-platform/ydb-js-sdk/pull/718) [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77) Thanks [@polRk](https://github.com/polRk)! - Report failed completion hooks after a confirmed commit as TransactionCompletionError, with committed=true and the original cause. Preserve this terminal classification across enclosing SDK retriers instead of exposing a retryable database error for an already committed transaction.
+
+  Release SDK resources when cancellation interrupts application cleanup hooks. Preserve confirmed commit information on cancellation, and wrap retryable database errors used as cancellation reasons in AbortError with the original cause so enclosing callbacks cannot replay them.
+
+- [#727](https://github.com/ydb-platform/ydb-js-sdk/pull/727) [`917508a`](https://github.com/ydb-platform/ydb-js-sdk/commit/917508a6f5a565a996ee966f4c9f4938cbdf5184) Thanks [@polRk](https://github.com/polRk)! - Use a tuple of row types for query results: `sql<[Row]>` and `session.execute<[Row]>()` describe one result set, while `<[Row, CountRow]>` describes two. Reject a single row type or an unbounded array such as `Row[]` as the result generic.
+
+  Keep `execute()` results as `{ resultSets, stats, metadata }`, with `rows`, `columns`, and `truncated` in each result set. Tagged queries continue returning arrays of rows. Preserve the result-set tuple when calling `.values()`.
+
+- [#718](https://github.com/ydb-platform/ydb-js-sdk/pull/718) [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77) Thanks [@polRk](https://github.com/polRk)! - Export the raw QueryClient class from the package root with retrySession(options, callback) and retryTransaction(options, callback) as its execution entry points. Options may be omitted, but the callback is always last. Each callback receives an executor and the current attempt's cancellation signal; execute() and stream() belong to that executor. The root client has no execute(), do(), transaction() or stream() methods. Retry policy belongs to the callback, while statement signal and timeout options can cap individual operations within the callback budget.
+
+  Rename the callable tagged client type to SQLClient and migrate the Drizzle and LangChain integrations. query(driver) and query(client) provide the convenient tagged API, preserving sql.do(), sql.begin(), sql.transaction(), result shapes and repeat-await behavior over the same execution engine and pool.
+
+  Streaming is available only from executors inside SDK-owned retry callbacks. The SDK owns retry boundaries and revokes streams when their callback ends.
+
+  Keep tagged query bindings stable across retries; raw retry callbacks may build new parameters on each attempt, while each statement snapshots its inputs before consumption. Revoke executors and unfinished streams when their callback ends, and prevent replay after a confirmed commit. Separate stream cancellation from session loss and preserve caller cancellation reasons. Expose beforeCommit for precommit work while retaining onCommit for transactional Topic compatibility.
+
+  Reject commit-hook registration after preparation starts, and observe all started hooks even when another hook throws synchronously.
+
+  Return object rows with null prototypes from execute(), stream() and the tagged SQL facade, including raw-mode rows. Array-mode rows and raw protobuf cells keep their respective representations.
+
+### Minor Changes
+
+- [#726](https://github.com/ydb-platform/ydb-js-sdk/pull/726) [`4b3db40`](https://github.com/ydb-platform/ydb-js-sdk/commit/4b3db408e6875661588f6428ff28f20081c90c34) Thanks [@polRk](https://github.com/polRk)! - Add opt-in Temporal result conversion with toJs(value, { temporal: true }), new QueryClient(driver, { temporal: true }) and query(driver, { temporal: true }). Preserve the default Value/Date representations when the option is disabled.
+
+  Use the application-provided global Temporal implementation. TzDate and TzDate32 remain SDK Values because Temporal has no zoned date-only type. Preserve Drizzle's Date and numeric column representations with Temporal-enabled clients.
+
+- [#704](https://github.com/ydb-platform/ydb-js-sdk/pull/704) [`4f76c1e`](https://github.com/ydb-platform/ydb-js-sdk/commit/4f76c1e760106f5305f9eddd2db5322e172214b7) Thanks [@polRk](https://github.com/polRk)! - Add graceful `QueryClient.close()` and immediate `destroy()`. Async disposal drains accepted queries, transactions and session cleanup; synchronous disposal cancels owned work without closing the shared Driver. Release query resources after failed readiness and destruction, and prevent late cleanup RPCs or callbacks after shutdown.
+
+  Keep actual query and transaction attempts owned until their cleanup completes, even when caller cancellation has already rejected the retry wrapper. Graceful close waits for rollback and close hooks; destroy still cancels them immediately.
+
+### Patch Changes
+
+- [#718](https://github.com/ydb-platform/ydb-js-sdk/pull/718) [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77) Thanks [@polRk](https://github.com/polRk)! - Keep caller cancellation terminal even when its reason is a retryable database error. Cover pre-aborted nested operations, statements and tagged queries, and streams cancelled before their first read. Preserve the original reason as the cause, and finish stream cleanup before classifying callback failures for retry.
+
+- [#738](https://github.com/ydb-platform/ydb-js-sdk/pull/738) [`f6159ec`](https://github.com/ydb-platform/ydb-js-sdk/commit/f6159ecbb40b31b23aef060a2aa608a9bfc7551e) Thanks [@polRk](https://github.com/polRk)! - Infer tagged parameters through fromJs so JSON type-like fields cannot supply SQL declaration syntax. Reject malformed explicit Value bindings before generating declarations. Escape backslashes as well as backticks in quoted identifiers.
+
+  Use default YQL string escaping in Drizzle inline values and DDL builders, and in LangChain filter paths. Preserve backslashes before escaping quotes so data cannot terminate generated SQL literals.
+
+- [#727](https://github.com/ydb-platform/ydb-js-sdk/pull/727) [`917508a`](https://github.com/ydb-platform/ydb-js-sdk/commit/917508a6f5a565a996ee966f4c9f4938cbdf5184) Thanks [@polRk](https://github.com/polRk)! - Accept null callbacks in Query.then() to preserve PromiseLike compatibility when tagged query results are widened to unknown[][].
+
+- [#717](https://github.com/ydb-platform/ydb-js-sdk/pull/717) [`9d69461`](https://github.com/ydb-platform/ydb-js-sdk/commit/9d69461c6fc1edefb741957a0babe7e2e2626a33) Thanks [@polRk](https://github.com/polRk)! - Continue serving queued queries after session creation fails, propagate cancellation into replacement session creation, and prevent repeated lease disposal from lending one session to concurrent callers. Reject invalid session-pool bounds and retire sessions that cannot safely be reused after interrupted queries.
+
+  Centralize pool ownership and shutdown transitions in one state machine. Bound admitted operations before driver readiness as well as queued acquisitions, while allowing already accepted work to finish retries during graceful shutdown.
+
+- [#718](https://github.com/ydb-platform/ydb-js-sdk/pull/718) [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77) Thanks [@polRk](https://github.com/polRk)! - Preserve the query tracing context while consuming or closing ExecuteQuery RPCs, without changing the consumer's async context.
+
+- [#718](https://github.com/ydb-platform/ydb-js-sdk/pull/718) [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77) Thanks [@polRk](https://github.com/polRk)! - Honor a zero timeout on tagged queries instead of treating it as an absent timeout. Keep the cancellation budget consistent with the raw QueryClient.
+
+- [#666](https://github.com/ydb-platform/ydb-js-sdk/pull/666) [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28) Thanks [@polRk](https://github.com/polRk)! - Upgrade protobuf to 2.16.0 to reduce temporary allocations during serialization and parsing.
+
+- [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1) Thanks [@polRk](https://github.com/polRk)! - Refresh compatible dependency versions and remove unused runtime packages. Include the `ms` types required by the Topic reader's published declarations.
+
+- [#735](https://github.com/ydb-platform/ydb-js-sdk/pull/735) [`84798d1`](https://github.com/ydb-platform/ydb-js-sdk/commit/84798d1a4ef66a62b7da8d13f709c261d761ca85) Thanks [@polRk](https://github.com/polRk)! - Add Tagged and TaggedType to preserve result tags and typed payloads. Reject Tagged parameter schemas before ExecuteQuery; apply AsTagged in YQL instead.
+- Updated dependencies [[`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6), [`5d0cc28`](https://github.com/ydb-platform/ydb-js-sdk/commit/5d0cc2869176b222a6c12e6f3455a530178599be), [`cdff086`](https://github.com/ydb-platform/ydb-js-sdk/commit/cdff0864d850ba1bd1c7cf7c7041dd9742f04ef6), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`3e75fad`](https://github.com/ydb-platform/ydb-js-sdk/commit/3e75fad0225cc56f7b921577e5d91db426cb6313), [`64df3b5`](https://github.com/ydb-platform/ydb-js-sdk/commit/64df3b50005490e7c5a1628a6a9f31cb19e07d3d), [`807010c`](https://github.com/ydb-platform/ydb-js-sdk/commit/807010c6d784828b63676e351fd807ae0dd47338), [`65ba0fd`](https://github.com/ydb-platform/ydb-js-sdk/commit/65ba0fdf81aaaa880699633b005e1cf134f226a8), [`4b3db40`](https://github.com/ydb-platform/ydb-js-sdk/commit/4b3db408e6875661588f6428ff28f20081c90c34), [`e6960f6`](https://github.com/ydb-platform/ydb-js-sdk/commit/e6960f6b4170c7d399739b364c45ed5ca8374eb4), [`549da21`](https://github.com/ydb-platform/ydb-js-sdk/commit/549da21a2f16312e5c774cb34ab4de87f40f3005), [`af97a85`](https://github.com/ydb-platform/ydb-js-sdk/commit/af97a858daea4a5a0a0df647abe19cf0f1e6bdb7), [`27bdd45`](https://github.com/ydb-platform/ydb-js-sdk/commit/27bdd45166b1e6b12bd7f83a559128cbb0f43ec1), [`0ca6e3a`](https://github.com/ydb-platform/ydb-js-sdk/commit/0ca6e3a44991d9aceedca3d777d86d1c8c3f9aae), [`6c3dee3`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c3dee3e5a84c666c3425cac779e18adc53be2b1), [`0edf569`](https://github.com/ydb-platform/ydb-js-sdk/commit/0edf569632df41da24e3a00d4ec5e141d914704a), [`031e586`](https://github.com/ydb-platform/ydb-js-sdk/commit/031e586337262eca797d5bbd013dc9c0fedc9f1b), [`dc41967`](https://github.com/ydb-platform/ydb-js-sdk/commit/dc419672abd79679b8f5d819067c374d9ff59208), [`986e841`](https://github.com/ydb-platform/ydb-js-sdk/commit/986e841781aebe4adb7d05a3deeeb105536fac93), [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096), [`b9342a1`](https://github.com/ydb-platform/ydb-js-sdk/commit/b9342a1648be7805047af2c15c43306998ee1726), [`6702070`](https://github.com/ydb-platform/ydb-js-sdk/commit/67020705c757ba4b0e5680b00e3107351bd9843b), [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77), [`9e16c2c`](https://github.com/ydb-platform/ydb-js-sdk/commit/9e16c2c2524658a1f56fdd465a317f4a2ae64846), [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28), [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1), [`6ad8ff0`](https://github.com/ydb-platform/ydb-js-sdk/commit/6ad8ff016a40d9036add4d7db8dc5d0e6b8365de), [`c29324d`](https://github.com/ydb-platform/ydb-js-sdk/commit/c29324d4adadf65bd2eb0b6de38672c0c286fc81), [`6702070`](https://github.com/ydb-platform/ydb-js-sdk/commit/67020705c757ba4b0e5680b00e3107351bd9843b), [`2fb8fb3`](https://github.com/ydb-platform/ydb-js-sdk/commit/2fb8fb33b7c7ffdb7a35fd986e27453d762e97f3), [`6c5994d`](https://github.com/ydb-platform/ydb-js-sdk/commit/6c5994db17833904b30e556ddd5f44a9af0830e7), [`fad487e`](https://github.com/ydb-platform/ydb-js-sdk/commit/fad487ee4c059c95cc89bb54d01af9d37b400a24), [`de9a120`](https://github.com/ydb-platform/ydb-js-sdk/commit/de9a12066039fac5ac4e701c48014bd320eefa77), [`84798d1`](https://github.com/ydb-platform/ydb-js-sdk/commit/84798d1a4ef66a62b7da8d13f709c261d761ca85), [`294b07c`](https://github.com/ydb-platform/ydb-js-sdk/commit/294b07c4875e0752509ec8b4d5a0fc9a04f9be57), [`74d66f3`](https://github.com/ydb-platform/ydb-js-sdk/commit/74d66f3eda573229b652a03401cade4d21139427), [`f518b6a`](https://github.com/ydb-platform/ydb-js-sdk/commit/f518b6a70376a0f20c42d208d3e3ad4b9226b3ce), [`6702070`](https://github.com/ydb-platform/ydb-js-sdk/commit/67020705c757ba4b0e5680b00e3107351bd9843b), [`52e319f`](https://github.com/ydb-platform/ydb-js-sdk/commit/52e319f3f9fab7ca2d71dd732725a788310c5b8c), [`6702070`](https://github.com/ydb-platform/ydb-js-sdk/commit/67020705c757ba4b0e5680b00e3107351bd9843b), [`6702070`](https://github.com/ydb-platform/ydb-js-sdk/commit/67020705c757ba4b0e5680b00e3107351bd9843b)]:
+  - @ydbjs/abortable@6.2.0
+  - @ydbjs/api@7.0.0
+  - @ydbjs/core@7.0.0
+  - @ydbjs/value@7.0.0
+  - @ydbjs/fsm@7.0.0
+  - @ydbjs/grpc@0.2.0
+  - @ydbjs/retry@7.0.0
+  - @ydbjs/error@6.1.0
+  - @ydbjs/debug@6.0.6
+
 ## 6.3.0
 
 ### Minor Changes
