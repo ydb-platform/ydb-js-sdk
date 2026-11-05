@@ -1,3 +1,4 @@
+import { QueryClient } from '@ydbjs/query'
 import { DefaultLogger, type Logger } from 'drizzle-orm/logger'
 import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm/relations'
 import type { Casing } from 'drizzle-orm/utils'
@@ -29,7 +30,7 @@ export interface YdbDrizzleOptions<
 	TSchemaDefinition extends YdbSchemaDefinition = YdbSchemaWithoutTables,
 > extends YdbDrizzleConfig<TSchemaDefinition> {
 	connectionString?: string | undefined
-	client?: YdbExecutor | YdbTransactionalExecutor | undefined
+	client?: QueryClient | YdbExecutor | YdbTransactionalExecutor | undefined
 }
 
 export type YdbDrizzleDatabase<
@@ -95,11 +96,11 @@ function isYdbOptions<TSchemaDefinition extends YdbSchemaDefinition>(
 }
 
 export function createDrizzle<TSchemaDefinition extends YdbSchemaDefinition>(
-	input: YdbExecutor | YdbTransactionalExecutor | YdbRemoteCallback,
+	input: QueryClient | YdbExecutor | YdbTransactionalExecutor | YdbRemoteCallback,
 	config: YdbDrizzleConfig<TSchemaDefinition> & { schema: TSchemaDefinition }
 ): YdbDrizzleDatabase<TSchemaDefinition>
 export function createDrizzle(
-	input: YdbExecutor | YdbTransactionalExecutor | YdbRemoteCallback,
+	input: QueryClient | YdbExecutor | YdbTransactionalExecutor | YdbRemoteCallback,
 	config?: YdbDrizzleConfig<YdbSchemaWithoutTables>
 ): YdbDrizzleDatabase<YdbSchemaWithoutTables>
 export function createDrizzle<TSchemaDefinition extends YdbSchemaDefinition>(
@@ -112,12 +113,17 @@ export function createDrizzle<
 	TSchemaDefinition extends YdbSchemaDefinition = YdbSchemaWithoutTables,
 >(
 	input:
+		| QueryClient
 		| YdbExecutor
 		| YdbTransactionalExecutor
 		| YdbRemoteCallback
 		| YdbDrizzleOptions<TSchemaDefinition>,
 	config?: YdbDrizzleConfig<TSchemaDefinition>
 ): YdbDrizzleDatabase<TSchemaDefinition> {
+	if (input instanceof QueryClient) {
+		return makeDb(new YdbDriver(input), config)
+	}
+
 	if (typeof input === 'function') {
 		return makeDb(YdbDriver.fromCallback(input), config)
 	}
@@ -128,7 +134,10 @@ export function createDrizzle<
 
 	if (isYdbOptions<TSchemaDefinition>(input)) {
 		if (input.client) {
-			return makeDb(input.client, input)
+			return makeDb(
+				input.client instanceof QueryClient ? new YdbDriver(input.client) : input.client,
+				input
+			)
 		}
 		if (input.connectionString) {
 			let client = new YdbDriver(input.connectionString)

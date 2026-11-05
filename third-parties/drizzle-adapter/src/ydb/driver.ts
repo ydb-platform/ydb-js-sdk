@@ -1,12 +1,15 @@
+import { DrizzleQueryError } from 'drizzle-orm/errors'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Driver, kRegisterLibrary } from '@ydbjs/core'
-import { type SQLClient, type TX, query as createQueryClient } from '@ydbjs/query'
-import { fromJs } from '@ydbjs/value'
+import { type OperationOptions, QueryClient, type QueryExecutor } from '@ydbjs/query'
+import type { JSValue } from '@ydbjs/value'
+import { mapYdbQueryError } from './errors.js'
 
 import pkg from '../../package.json' with { type: 'json' }
-export interface YdbTransactionConfig {
+
+export interface YdbTransactionConfig extends OperationOptions {
 	accessMode?: 'read only' | 'read write' | undefined
 	isolationLevel?: 'serializableReadWrite' | 'snapshotReadOnly' | undefined
-	idempotent?: boolean | undefined
 }
 
 export type YdbExecutionMethod = 'all' | 'execute'
@@ -53,88 +56,95 @@ export interface YdbTransactionalExecutor extends YdbExecutor {
 	): Promise<T>
 }
 
-function getRows<T = unknown>(result: unknown): T[] {
-	if (!Array.isArray(result) || result.length === 0) {
-		return []
-	}
-
-	if (result.length > 1) {
-		// Drizzle generates one statement per call, so multi-result-set responses
-		// only happen when the caller (or a raw SQL fragment) packs several
-		// statements into one query. Silently dropping the tail hides real bugs.
-		throw new Error(
-			`YDB query returned ${result.length} result sets, but the Drizzle adapter expects exactly one. ` +
-				'Split the query so each call runs a single statement, or use the @ydbjs/query API directly for multi-result-set responses.'
-		)
-	}
-
-	let [rows] = result
-	return Array.isArray(rows) ? (rows as T[]) : []
-}
-
 async function execQuery(
-	ql: SQLClient | TX,
+	executor: QueryExecutor,
 	text: string,
 	params: unknown[],
 	method: YdbExecutionMethod,
 	options?: YdbExecuteOptions
 ): Promise<YdbQueryResult> {
-	let query = ql(text)
-
-	for (let i = 0; i < params.length; i++) {
-		query = query.parameter(`p${i}`, fromJs(params[i] as any))
+	let parameters: Record<string, JSValue> = Object.create(null)
+	for (let i = 0; i < params.length; ++i) {
+		parameters[`$p${i}`] = params[i] as JSValue
 	}
 
-	let executedQuery = options?.arrayMode ? query.values() : query
-	let raw = await executedQuery
-	let rows = getRows(raw)
+	let arrayMode = options?.arrayMode === true
+	let { resultSets } = await executor.execute(text, parameters, {
+		rowMode: arrayMode ? 'array' : 'object',
+	})
+
+	if (resultSets.length > 1) {
+		throw new Error(
+			`YDB query returned ${resultSets.length} result sets, but the Drizzle adapter expects exactly one. ` +
+				'Split the query so each call runs a single statement, or use the @ydbjs/query API directly for multi-result-set responses.'
+		)
+	}
+
+	let rows = resultSets[0]?.rows ?? []
+
 	return {
 		rows,
 		rowCount: rows.length,
 		command: method,
-		meta: {
-			arrayMode: options?.arrayMode === true,
-			typings: options?.typings ? [...options.typings] : undefined,
-		},
+		meta: { arrayMode, typings: options?.typings ? [...options.typings] : undefined },
 	}
 }
 
-function mapTransactionConfig(
-	config?: YdbTransactionConfig
-): { isolation?: 'serializableReadWrite' | 'snapshotReadOnly'; idempotent?: boolean } | undefined {
-	if (!config) {
-		return undefined
-	}
-
-	function withIdempotent(
-		isolation: 'serializableReadWrite' | 'snapshotReadOnly',
-		idempotent?: boolean
-	): { isolation: 'serializableReadWrite' | 'snapshotReadOnly'; idempotent?: boolean } {
-		return idempotent === undefined ? { isolation } : { isolation, idempotent }
-	}
-
-	if (config.isolationLevel) {
-		return withIdempotent(config.isolationLevel, config.idempotent)
-	}
-
-	if (config.accessMode === 'read only') {
-		return { isolation: 'snapshotReadOnly', idempotent: true }
-	}
-
-	return withIdempotent('serializableReadWrite', config.idempotent)
-}
+let transactions = new AsyncLocalStorage<ReadonlyMap<YdbExecutor, YdbTxExecutor>>()
 
 class YdbTxExecutor implements YdbExecutor {
-	constructor(private readonly tx: TX) {}
+	#executor: QueryExecutor
+	#errors?: WeakMap<Error, DrizzleQueryError>
+
+	constructor(executor: QueryExecutor) {
+		this.#executor = executor
+	}
 
 	execute(
 		sql: string,
 		params: unknown[],
 		method: YdbExecutionMethod,
 		options?: YdbExecuteOptions
-	): Promise<YdbQueryResult> {
-		return execQuery(this.tx, sql, params, method, options)
+	) {
+		return execQuery(this.#executor, sql, params, method, options)
 	}
+
+	mapError(sql: string, params: unknown[], cause: unknown): DrizzleQueryError {
+		let previous = this.statementError(cause)
+		if (previous) {
+			return previous
+		}
+
+		let error = mapYdbQueryError(sql, params, cause)
+		if (cause instanceof Error) {
+			this.#errors ??= new WeakMap()
+			this.#errors.set(cause, error)
+		}
+
+		return error
+	}
+
+	statementCause(error: unknown): unknown {
+		if (error instanceof DrizzleQueryError && this.statementError(error.cause) === error) {
+			return error.cause
+		}
+
+		return error
+	}
+
+	statementError(cause: unknown): DrizzleQueryError | undefined {
+		return cause instanceof Error ? this.#errors?.get(cause) : undefined
+	}
+}
+
+export function mapStatementError(
+	client: YdbExecutor,
+	sql: string,
+	params: unknown[],
+	cause: unknown
+) {
+	let tx = client instanceof YdbTxExecutor ? client : transactions.getStore()?.get(client)
+	return tx ? tx.mapError(sql, params, cause) : mapYdbQueryError(sql, params, cause)
 }
 
 export interface YdbDriverOptions {
@@ -143,75 +153,90 @@ export interface YdbDriverOptions {
 
 export class YdbDriver implements YdbTransactionalExecutor {
 	readonly driver: Driver
+	#client: QueryClient
 	#ownsDriver: boolean
-	#client: SQLClient | undefined
+	#ownsClient: boolean
 
-	constructor(connectionString: string)
-	constructor(options: YdbDriverOptions)
-	/**
-	 * Wraps an existing YDB driver instance.
-	 *
-	 * @param driver Existing YDB driver instance. The adapter does not close borrowed drivers.
-	 */
-	constructor(driver: Driver)
-	constructor(arg: string | YdbDriverOptions | Driver) {
-		if (arg instanceof Driver) {
-			this.driver = arg
-			this.#ownsDriver = false
-		} else if (typeof arg === 'string') {
-			this.driver = new Driver(arg)
-			this.#ownsDriver = true
+	constructor(source: string | YdbDriverOptions | Driver | QueryClient) {
+		this.#ownsClient = !(source instanceof QueryClient)
+		this.#ownsDriver = this.#ownsClient && !(source instanceof Driver)
+
+		if (source instanceof QueryClient) {
+			this.driver = source.driver
+		} else if (source instanceof Driver) {
+			this.driver = source
 		} else {
-			this.driver = new Driver(arg.connectionString)
-			this.#ownsDriver = true
+			this.driver = new Driver(typeof source === 'string' ? source : source.connectionString)
 		}
 
+		this.#client = source instanceof QueryClient ? source : new QueryClient(this.driver)
 		this.driver[kRegisterLibrary]('@ydbjs/drizzle-adapter', pkg.version)
 	}
 
-	// Lazy: avoid constructing SessionPool until the first query/transaction.
-	// Setter exists so callers (and tests) can swap in a pre-built SQLClient.
-	get client(): SQLClient {
-		this.#client ??= createQueryClient(this.driver)
+	get client(): QueryClient {
 		return this.#client
 	}
 
-	set client(value: SQLClient) {
-		this.#client = value
+	ready(signal?: AbortSignal): Promise<void> {
+		return this.driver.ready(signal)
 	}
 
-	async ready(signal?: AbortSignal): Promise<void> {
-		await this.driver.ready(signal)
-	}
-
-	execute(
+	async execute(
 		sql: string,
 		params: unknown[],
 		method: YdbExecutionMethod,
 		options?: YdbExecuteOptions
 	): Promise<YdbQueryResult> {
-		return execQuery(this.client, sql, params, method, options)
+		let tx = transactions.getStore()?.get(this)
+		if (tx) {
+			return tx.execute(sql, params, method, options)
+		}
+
+		return this.client.retrySession((executor) => {
+			return execQuery(executor, sql, params, method, options)
+		})
 	}
 
 	async transaction<T>(
 		callback: (tx: YdbExecutor) => Promise<T>,
 		config?: YdbTransactionConfig
 	): Promise<T> {
-		let options = mapTransactionConfig(config)
-
-		if (options) {
-			return this.client.begin(options, async (tx) => callback(new YdbTxExecutor(tx)))
+		let parent = transactions.getStore()
+		if (parent?.has(this)) {
+			throw new Error('Nested YDB transactions are not supported')
 		}
 
-		return this.client.begin(async (tx) => callback(new YdbTxExecutor(tx)))
+		let { accessMode, isolationLevel, ...operation } = config ?? {}
+		let isolation =
+			isolationLevel ??
+			(accessMode === 'read only' ? 'snapshotReadOnly' : 'serializableReadWrite')
+		let attempt: YdbTxExecutor | undefined
+
+		try {
+			return await this.client.retryTransaction(
+				{ ...operation, isolation },
+				async (executor) => {
+					let tx = new YdbTxExecutor(executor)
+					attempt = tx
+
+					try {
+						return await transactions.run(new Map(parent).set(this, tx), callback, tx)
+					} catch (error) {
+						// The SDK classifies the original statement failure when deciding whether to replay the callback.
+						throw tx.statementCause(error)
+					}
+				}
+			)
+		} catch (error) {
+			throw attempt?.statementError(error) ?? error
+		}
 	}
 
-	/**
-	 * Closes the owned YDB driver instance.
-	 *
-	 * Borrowed driver instances passed to the constructor are not closed.
-	 */
 	close(): void {
+		if (this.#ownsClient) {
+			this.client.destroy()
+		}
+
 		if (this.#ownsDriver) {
 			this.driver.close()
 		}
