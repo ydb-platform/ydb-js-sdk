@@ -1,5 +1,11 @@
-import { expect, test } from 'vitest'
-import { type Driver, kRegisterLibrary } from '@ydbjs/core'
+import { expect, test, vi } from 'vitest'
+import { Driver, kRegisterLibrary } from '@ydbjs/core'
+import {
+	type OperationOptions,
+	QueryClient,
+	type QueryExecutor,
+	type QueryParameters,
+} from '@ydbjs/query'
 import type { EmbeddingsInterface } from '@langchain/core/embeddings'
 
 import { YDBVectorStoreConfigError, YDBVectorStoreError } from './errors.ts'
@@ -22,12 +28,11 @@ test('throws YDBVectorStoreConfigError for an empty connectionString', () => {
 	)
 })
 
-test('throws when neither driver nor connectionString is provided', () => {
-	expect(
-		() =>
-			// @ts-expect-error — exercising the runtime guard for the union shape.
-			new YDBVectorStore(embeddings, {})
-	).toThrow(/Either `driver` or a non-empty `connectionString`/)
+test('requires a connection source', () => {
+	expect(() => {
+		// @ts-expect-error — exercising the runtime guard for the union shape.
+		return new YDBVectorStore(embeddings, {})
+	}).toThrow(/exactly one of queryClient, driver, or connectionString/)
 })
 
 test('treats { driver, connectionString: undefined } as the driver branch', () => {
@@ -37,15 +42,14 @@ test('treats { driver, connectionString: undefined } as the driver branch', () =
 	expect(store).toBeInstanceOf(YDBVectorStore)
 })
 
-test('throws YDBVectorStoreConfigError for an unknown search strategy', () => {
-	expect(
-		() =>
-			new YDBVectorStore(embeddings, {
-				driver: stubDriver,
-				// @ts-expect-error — exercising the runtime guard against TS-bypass.
-				strategy: 'BogusStrategy',
-			})
-	).toThrow(/Unknown search strategy: "BogusStrategy"/)
+test.each(['BogusStrategy', 'constructor', '__proto__'])('rejects strategy %s', (strategy) => {
+	expect(() => {
+		return new YDBVectorStore(embeddings, {
+			driver: stubDriver,
+			// @ts-expect-error — exercising the runtime guard against TS-bypass.
+			strategy,
+		})
+	}).toThrow(/Unknown search strategy/)
 })
 
 test.each([
@@ -121,6 +125,104 @@ test('fromExistingTable accepts a config with table name', () => {
 	})
 
 	expect(store).toBeInstanceOf(YDBVectorStore)
+})
+
+test('rejects conflicting connection sources', async () => {
+	await using queryClient = new QueryClient(stubDriver)
+
+	expect(() => {
+		// @ts-expect-error — JavaScript callers can supply both sources.
+		return new YDBVectorStore(embeddings, { queryClient, driver: stubDriver })
+	}).toThrow(/exactly one/)
+})
+
+test('invalid options fail before the store registers with the driver', () => {
+	let register = vi.fn()
+	let driver = { [kRegisterLibrary]: register } as unknown as Driver
+
+	expect(() => {
+		return new YDBVectorStore(embeddings, { driver, batchSize: 0 })
+	}).toThrow(YDBVectorStoreConfigError)
+	expect(register).not.toHaveBeenCalled()
+})
+
+test('each attempt binds fresh parameters with the same IDs, embeddings and filters', async () => {
+	let execute = vi.fn(async (_text: string, _params?: QueryParameters) => {
+		return { resultSets: [] }
+	})
+	let session = { execute } as unknown as QueryExecutor
+
+	type Run = (executor: QueryExecutor) => Promise<unknown>
+	let retrySession = vi.fn(async (options: OperationOptions | Run, callback?: Run) => {
+		let run = typeof options === 'function' ? options : callback!
+		await run(session)
+
+		return run(session)
+	})
+
+	let queryClient = { driver: stubDriver, retrySession } as unknown as QueryClient
+	let vector = [1, 2]
+	let filter = { source: 'docs' }
+	let embedQuery = vi.fn(async () => {
+		return vector
+	})
+	let embedDocuments = vi.fn(embeddings.embedDocuments)
+	let store = YDBVectorStore.fromExistingTable(
+		{ embedDocuments, embedQuery },
+		{
+			queryClient,
+			table: 'vectors',
+		}
+	)
+
+	let ids = await store.addDocuments([{ pageContent: 'document', metadata: {} }])
+
+	execute.mockImplementationOnce(async () => {
+		vector[0] = 3
+		filter.source = 'changed'
+
+		return { resultSets: [] }
+	})
+
+	await store.similaritySearch('query', 2, filter)
+	await store.delete({ ids })
+
+	let [first, replay, search, searchReplay, deletion, deletionReplay] = execute.mock.calls
+	expect(first![1]?.batch).toEqual([expect.objectContaining({ id: ids[0] })])
+	expect(replay).toEqual(first)
+	expect(replay![1]).not.toBe(first![1])
+	expect(search![1]?.filter0).toBe('docs')
+	expect(searchReplay).toEqual(search)
+	expect(searchReplay![1]).not.toBe(search![1])
+	expect(searchReplay![1]?.k).not.toBe(search![1]?.k)
+	expect(deletion![1]?.ids).toEqual(ids)
+	expect(deletionReplay).toEqual(deletion)
+	expect(deletionReplay![1]).not.toBe(deletion![1])
+	expect(retrySession.mock.calls[0]![0]).toBeTypeOf('function')
+	expect(retrySession.mock.calls[1]![0]).toMatchObject({ idempotent: true })
+	expect(embedQuery).toHaveBeenCalledOnce()
+	expect(embedDocuments).toHaveBeenCalledOnce()
+})
+
+test('fromDocuments closes its client and driver when embedding fails', async () => {
+	using closeDriver = vi.spyOn(Driver.prototype, 'close')
+	using closeClient = vi.spyOn(QueryClient.prototype, 'close')
+	let error = new Error('embedding failed')
+	let embedDocuments = vi.fn().mockRejectedValue(error)
+
+	await expect(
+		YDBVectorStore.fromDocuments(
+			[{ pageContent: 'one', metadata: {} }],
+			{ ...embeddings, embedDocuments },
+			{
+				connectionString: 'grpc://localhost:2136/local',
+				driverOptions: { 'ydb.sdk.enable_discovery': false },
+			}
+		)
+	).rejects.toBe(error)
+
+	expect(closeClient).toHaveBeenCalledOnce()
+	expect(closeDriver).toHaveBeenCalledOnce()
 })
 
 test('every declared strategy is constructable', () => {

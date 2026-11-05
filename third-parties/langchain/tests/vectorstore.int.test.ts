@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import { Driver } from '@ydbjs/core'
+import { QueryClient } from '@ydbjs/query'
 import { Document } from '@langchain/core/documents'
 import { FakeEmbeddings, SyntheticEmbeddings } from '@langchain/core/utils/testing'
 import { YDBSearchStrategy, YDBVectorStore } from '../src/index.ts'
@@ -9,24 +10,26 @@ let TABLE = `langchain_int_test_${Date.now()}`
 let embeddings = new FakeEmbeddings()
 
 let driver: Driver
+let queryClient: QueryClient
 
 beforeAll(async () => {
 	driver = new Driver(CONNECTION_STRING)
 	await driver.ready()
+	queryClient = new QueryClient(driver)
 })
 
 afterAll(async () => {
 	try {
-		let store = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
+		let store = YDBVectorStore.fromExistingTable(embeddings, { queryClient, table: TABLE })
 		await store.drop()
-	} catch {
-		// table may not exist if an earlier test already dropped it
+	} finally {
+		await queryClient.close()
+		driver.close()
 	}
-	driver.close()
 })
 
 function makeStore(overrides: Record<string, unknown> = {}) {
-	return new YDBVectorStore(embeddings, { driver, table: TABLE, ...overrides })
+	return new YDBVectorStore(embeddings, { queryClient, table: TABLE, ...overrides })
 }
 
 // ── basic CRUD ───────────────────────────────────────────────────────
@@ -36,12 +39,12 @@ test('fromTexts creates store, inserts, and searches', async () => {
 		['cat sat on mat', 'dog ran in park', 'fish swam in sea'],
 		[{ animal: 'cat' }, { animal: 'dog' }, { animal: 'fish' }],
 		embeddings,
-		{ driver, table: TABLE, dropExistingTable: true }
+		{ queryClient, table: TABLE, dropExistingTable: true }
 	)
 
 	let results = await store.similaritySearch('cat', 2)
 	expect(results.length).toBe(2)
-	expect(results[0].pageContent).toBeDefined()
+	expect(results[0]!.pageContent).toBeDefined()
 })
 
 test('fromDocuments inserts and retrieves document content', async () => {
@@ -50,7 +53,7 @@ test('fromDocuments inserts and retrieves document content', async () => {
 		new Document({ pageContent: 'doc B', metadata: { n: 2 } }),
 	]
 	let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
-		driver,
+		queryClient,
 		table: TABLE,
 		dropExistingTable: true,
 	})
@@ -86,7 +89,7 @@ test('addDocuments returns IDs and results carry score and metadata', async () =
 	let results = await store.similaritySearchWithScore('database', 2)
 	expect(results).toHaveLength(2)
 
-	let [topDoc, topScore] = results[0]
+	let [topDoc, topScore] = results[0]!
 	expect(topDoc.pageContent).toBeDefined()
 	expect(typeof topScore).toBe('number')
 	expect(topDoc.metadata).toHaveProperty('source')
@@ -122,7 +125,7 @@ test('UPSERT replaces existing document on same ID', async () => {
 
 	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(1)
-	expect(results[0].pageContent).toBe('updated content')
+	expect(results[0]!.pageContent).toBe('updated content')
 })
 
 test('splits large batch insert into chunks of 32', async () => {
@@ -151,8 +154,8 @@ test('searches by raw embedding vector', async () => {
 	let queryVector = [0.1, 0.2, 0.3, 0.4]
 	let results = await store.similaritySearchVectorWithScore(queryVector, 2)
 	expect(results).toHaveLength(2)
-	expect(results[0][0]).toBeInstanceOf(Document)
-	expect(typeof results[0][1]).toBe('number')
+	expect(results[0]![0]).toBeInstanceOf(Document)
+	expect(typeof results[0]![1]).toBe('number')
 })
 
 // ── metadata filter ───────────────────────────────────────────────────
@@ -188,7 +191,7 @@ test('multi-key metadata filter narrows results to all matching keys', async () 
 
 	let results = await store.similaritySearch('anything', 10, { source: 'wiki', lang: 'en' })
 	expect(results).toHaveLength(1)
-	expect(results[0].pageContent).toBe('wiki en')
+	expect(results[0]!.pageContent).toBe('wiki en')
 })
 
 test('metadata filter with no matches returns empty array', async () => {
@@ -213,7 +216,8 @@ test('delete by IDs removes specific documents', async () => {
 		new Document({ pageContent: 'keep me too', metadata: {} }),
 	])
 
-	await store.delete({ ids: [ids[1]] })
+	expect(ids).toHaveLength(3)
+	await store.delete({ ids: [ids[1]!] })
 
 	let results = await store.similaritySearch('anything', 10)
 	expect(results).toHaveLength(2)
@@ -252,7 +256,7 @@ test('metadata types survive JSON round-trip', async () => {
 
 	let results = await store.similaritySearch('anything', 1)
 	expect(results).toHaveLength(1)
-	expect(results[0].metadata).toEqual({ str: 'hello', num: 42, flag: true, nested: { x: 1 } })
+	expect(results[0]!.metadata).toEqual({ str: 'hello', num: 42, flag: true, nested: { x: 1 } })
 })
 
 // ── auxiliary methods ─────────────────────────────────────────────────
@@ -263,24 +267,24 @@ test('fromExistingTable connects without CREATE TABLE', async () => {
 		new Document({ pageContent: 'persisted', metadata: { key: 'val' } }),
 	])
 
-	let store2 = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
+	let store2 = YDBVectorStore.fromExistingTable(embeddings, { queryClient, table: TABLE })
 	let results = await store2.similaritySearch('persisted', 1)
 	expect(results).toHaveLength(1)
-	expect(results[0].pageContent).toBe('persisted')
-	expect(results[0].metadata).toEqual({ key: 'val' })
+	expect(results[0]!.pageContent).toBe('persisted')
+	expect(results[0]!.metadata).toEqual({ key: 'val' })
 })
 
-test('custom column map stores and retrieves documents', async () => {
+test('stores and retrieves documents with quoted column names', async () => {
 	let customTable = `${TABLE}_custom`
 	let store = new YDBVectorStore(embeddings, {
-		driver,
+		queryClient,
 		table: customTable,
 		dropExistingTable: true,
 		columnMap: {
-			id: 'doc_id',
-			document: 'doc_text',
-			embedding: 'doc_vec',
-			metadata: 'doc_meta',
+			id: 'doc-id',
+			document: 'doc-text',
+			embedding: 'doc-vec',
+			metadata: 'doc-meta',
 		},
 	})
 
@@ -288,20 +292,20 @@ test('custom column map stores and retrieves documents', async () => {
 
 	let results = await store.similaritySearch('custom', 1)
 	expect(results).toHaveLength(1)
-	expect(results[0].pageContent).toBe('custom columns')
-	expect(results[0].metadata).toEqual({ x: 1 })
+	expect(results[0]!.pageContent).toBe('custom columns')
+	expect(results[0]!.metadata).toEqual({ x: 1 })
 
 	await store.drop()
 })
 
 test('drop removes the table', async () => {
 	let tmpTable = `${TABLE}_drop`
-	let store = new YDBVectorStore(embeddings, { driver, table: tmpTable })
+	let store = new YDBVectorStore(embeddings, { queryClient, table: tmpTable })
 
 	await store.addDocuments([new Document({ pageContent: 'bye', metadata: {} })])
 	await store.drop()
 
-	let store2 = new YDBVectorStore(embeddings, { driver, table: tmpTable })
+	let store2 = new YDBVectorStore(embeddings, { queryClient, table: tmpTable })
 	let ids = await store2.addDocuments([
 		new Document({ pageContent: 'hello again', metadata: {} }),
 	])
@@ -317,7 +321,7 @@ test('CosineSimilarity returns highest score first (DESC)', async () => {
 	// similar texts get closer vectors — unlike FakeEmbeddings which is fixed.
 	let synth = new SyntheticEmbeddings({ vectorSize: 4 })
 	let store = new YDBVectorStore(synth, {
-		driver,
+		queryClient,
 		table: TABLE,
 		dropExistingTable: true,
 		strategy: YDBSearchStrategy.CosineSimilarity,
@@ -331,14 +335,14 @@ test('CosineSimilarity returns highest score first (DESC)', async () => {
 	let results = await store.similaritySearchWithScore('cat', 2)
 	expect(results).toHaveLength(2)
 	// Similarity: higher = better → descending
-	expect(results[0][1]).toBeGreaterThanOrEqual(results[1][1])
-	expect(results[0][0].pageContent).toBe('cat')
+	expect(results[0]![1]).toBeGreaterThanOrEqual(results[1]![1])
+	expect(results[0]![0].pageContent).toBe('cat')
 })
 
 test('CosineDistance returns lowest score first (ASC)', async () => {
 	let synth = new SyntheticEmbeddings({ vectorSize: 4 })
 	let store = new YDBVectorStore(synth, {
-		driver,
+		queryClient,
 		table: TABLE,
 		dropExistingTable: true,
 		strategy: YDBSearchStrategy.CosineDistance,
@@ -352,8 +356,8 @@ test('CosineDistance returns lowest score first (ASC)', async () => {
 	let results = await store.similaritySearchWithScore('cat', 2)
 	expect(results).toHaveLength(2)
 	// Distance: lower = better → ascending
-	expect(results[0][1]).toBeLessThanOrEqual(results[1][1])
-	expect(results[0][0].pageContent).toBe('cat')
+	expect(results[0]![1]).toBeLessThanOrEqual(results[1]![1])
+	expect(results[0]![0].pageContent).toBe('cat')
 })
 
 // ── connectionString mode ─────────────────────────────────────────────
@@ -371,7 +375,8 @@ test('connectionString mode creates driver internally and close() releases it', 
 	expect(ids).toHaveLength(1)
 
 	let results = await store.similaritySearch('anything', 1)
-	expect(results[0].pageContent).toBe('via connection string')
+	expect(results).toHaveLength(1)
+	expect(results[0]!.pageContent).toBe('via connection string')
 
 	await store.drop()
 	await store.close()
@@ -382,7 +387,7 @@ test('connectionString mode creates driver internally and close() releases it', 
 test('createVectorIndex builds index and search uses it', async () => {
 	let indexTable = `${TABLE}_index`
 	let store = new YDBVectorStore(embeddings, {
-		driver,
+		queryClient,
 		table: indexTable,
 		dropExistingTable: true,
 		indexEnabled: true,
@@ -400,7 +405,7 @@ test('createVectorIndex builds index and search uses it', async () => {
 
 	let results = await store.similaritySearch('indexed', 3)
 	expect(results).toHaveLength(3)
-	expect(results[0].pageContent).toBeDefined()
+	expect(results[0]!.pageContent).toBeDefined()
 
 	await store.drop()
 })
@@ -410,20 +415,24 @@ test('createVectorIndex throws when indexEnabled is false', async () => {
 	await expect(store.createVectorIndex()).rejects.toThrow('indexEnabled is false')
 })
 
-test('search with filter and indexEnabled throws', async () => {
-	let store = makeStore({
+test('rejects an indexed search with a filter before dropping the table', async () => {
+	let existing = makeStore({ dropExistingTable: true })
+	await existing.addDocuments([{ id: 'keep', pageContent: 'existing', metadata: {} }])
+
+	let indexed = makeStore({
 		dropExistingTable: true,
 		indexEnabled: true,
 		indexVectorDimension: 4,
 	})
 
-	await store.addDocuments([new Document({ pageContent: 'test', metadata: { k: 'v' } })])
-
 	await expect(
-		store.similaritySearchVectorWithScore([0.1, 0.2, 0.3, 0.4], 1, { k: 'v' })
+		indexed.similaritySearchVectorWithScore([0.1, 0.2, 0.3, 0.4], 1, { k: 'v' })
 	).rejects.toThrow('Cannot use metadata filter with vector index enabled')
-
-	await store.drop()
+	expect(
+		(await existing.similaritySearch('existing', 1)).map((doc) => {
+			return doc.id
+		})
+	).toEqual(['keep'])
 })
 
 // ── concurrency, lifecycle, escaping ──────────────────────────────────
@@ -448,11 +457,36 @@ test('recreates the table after drop without re-dropping new data', async () => 
 
 	await store.addDocuments([new Document({ pageContent: 'first', metadata: {} })])
 	await store.drop()
-	await store.addDocuments([new Document({ pageContent: 'second', metadata: {} })])
+
+	let writer = makeStore()
+	await writer.addDocuments([{ pageContent: 'other writer', metadata: {} }])
+	await store.addDocuments([{ pageContent: 'second', metadata: {} }])
 
 	let results = await store.similaritySearch('anything', 10)
-	expect(results).toHaveLength(1)
-	expect(results[0].pageContent).toBe('second')
+	expect(
+		results
+			.map((doc) => {
+				return doc.pageContent
+			})
+			.sort()
+	).toEqual(['other writer', 'second'])
+})
+
+test('closing a store preserves its borrowed query client and driver', async (tc) => {
+	let borrowed = YDBVectorStore.fromExistingTable(embeddings, { queryClient, table: TABLE })
+	await borrowed.close()
+	await expect(borrowed.similaritySearchVectorWithScore([1, 1, 1, 1], 1)).rejects.toThrow(
+		/closed/i
+	)
+
+	let ownPool = YDBVectorStore.fromExistingTable(embeddings, { driver, table: TABLE })
+	await ownPool.close()
+
+	let { resultSets } = await queryClient.retrySession({ signal: tc.signal }, (session) => {
+		return session.execute<[{ n: number }]>('SELECT 1 AS n')
+	})
+
+	expect(resultSets[0].rows).toEqual([{ n: 1 }])
 })
 
 test('close releases the session pool and refuses further ops', async () => {
@@ -480,7 +514,7 @@ test('filter value containing a single quote round-trips correctly', async () =>
 
 	let results = await store.similaritySearch('anything', 10, { name: "O'Reilly" })
 	expect(results).toHaveLength(1)
-	expect(results[0].metadata.name).toBe("O'Reilly")
+	expect(results[0]!.metadata.name).toBe("O'Reilly")
 })
 
 test('construction throws when indexEnabled is true and indexVectorDimension is missing', () => {
@@ -505,7 +539,7 @@ test('asRetriever().invoke() returns Document instances', async () => {
 
 	expect(results.length).toBeGreaterThan(0)
 	expect(results[0]).toBeInstanceOf(Document)
-	expect(results[0].pageContent).toBeDefined()
+	expect(results[0]!.pageContent).toBeDefined()
 })
 
 test('asRetriever(k) limits the number of returned documents', async () => {
