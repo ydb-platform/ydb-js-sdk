@@ -8,7 +8,7 @@ test('instantiates YdbDialect with default options', () => {
 
 	assert.equal(dialect.escapeName('pony`name'), '`pony``name`')
 	assert.equal(dialect.escapeParam(7), '$p7')
-	assert.equal(dialect.escapeString("Pinkie's pie"), "'Pinkie''s pie'")
+	assert.equal(dialect.escapeString("Pinkie's pie"), "'Pinkie\\'s pie'")
 	assert.equal(dialect.prepareTyping(), 'none')
 
 	let query = dialect.sqlToQuery(yql`select ${123} as ${yql.identifier('pony_id')}`)

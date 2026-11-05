@@ -175,7 +175,9 @@ import { unsafe } from '@ydbjs/query'
 await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 ```
 
-Security note: identifier() only quotes the name and escapes backticks. Do not pass untrusted input without validation/allow‑listing.
+`identifier()` quotes one identifier and escapes backslashes and backticks. The application must still decide which table or column a caller is allowed to select.
+
+Template interpolation binds values separately from SQL text. JSON objects with fields named `type` or `encode` are inferred as data, not SQL type declarations. Explicit `.parameter()` bindings require SDK Values; use `fromJs()` for native data. SQL text, `unsafe()` fragments and `join()` string separators must come from trusted code. Parameterization does not enforce application permissions, tenant filters or access to individual rows. JavaScript getters, proxies and custom Value implementations can execute code during conversion; they are not equivalent to parsed JSON.
 
 ## Closing a client
 

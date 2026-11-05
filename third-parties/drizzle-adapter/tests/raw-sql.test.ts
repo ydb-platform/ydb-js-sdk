@@ -5,6 +5,36 @@ import { usersTableName } from './helpers/schema.ts'
 
 let live = createLiveContext()
 
+test('preserves inline string values in read-only queries on live YDB', async (t) => {
+	if (!live.requireLiveYdb(t)) return
+	live.describeDbChange(t, 'read-only SELECT of inline strings with quotes and backslashes')
+	let values = {
+		quote: "Pinkie's pie",
+		backslash: String.raw`C:\new\test`,
+		backslashQuote: String.raw`pony\' OR TRUE --`,
+		trailingBackslash: 'pony\\',
+		control: 'line\n\r\t\b\f\v\0end',
+	}
+	let selection = Object.entries(values).map(
+		([name, value]) => yql`cast(${value} as Utf8) as ${yql.identifier(name)}`
+	)
+
+	let rows = await live.db.execute(yql`select ${yql.join(selection, yql`, `)}`.inlineParams())
+
+	expect(rows).toEqual([values])
+})
+
+test('preserves quoted aliases in read-only queries on live YDB', async (t) => {
+	if (!live.requireLiveYdb(t)) return
+	live.describeDbChange(t, 'read-only SELECT with aliases containing backticks and backslashes')
+	let names = ['pony`name', 'pony\\name', 'pony\\`name', 'pony\\']
+	let selection = names.map((name) => yql`${1} as ${yql.identifier(name)}`)
+
+	let rows = await live.db.execute(yql`select ${yql.join(selection, yql`, `)}`)
+
+	expect(rows).toEqual([Object.fromEntries(names.map((name) => [name, 1]))])
+})
+
 test('runs raw sql against live YDB', async (t) => {
 	if (!live.requireLiveYdb(t)) return
 	live.describeDbChange(

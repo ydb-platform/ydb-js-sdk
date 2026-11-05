@@ -442,7 +442,7 @@ export class YdbDialect {
 	}
 
 	escapeName(name: string): string {
-		return `\`${name.replace(/`/g, '``')}\``
+		return `\`${name.replace(/\\/g, '\\\\').replace(/`/g, '``')}\``
 	}
 
 	escapeParam(num: number): string {
@@ -450,7 +450,7 @@ export class YdbDialect {
 	}
 
 	escapeString(str: string): string {
-		return `'${str.replace(/'/g, "''")}'`
+		return `'${str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '\\x00')}'`
 	}
 
 	prepareTyping(encoder?: DriverValueEncoder<unknown, unknown>): QueryTypingsValue {

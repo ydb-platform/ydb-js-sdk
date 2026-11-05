@@ -687,7 +687,7 @@ test('escapes service object identifiers and literal values', () => {
 		buildCreateUserSql('user`name', {
 			password: "pa'ss",
 		}),
-		"CREATE USER `user``name` PASSWORD 'pa''ss'"
+		"CREATE USER `user``name` PASSWORD 'pa\\'ss'"
 	)
 	assert.equal(
 		buildGrantSql({
