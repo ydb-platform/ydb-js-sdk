@@ -8,9 +8,7 @@ on:
 
 jobs:
   publish-slo-report:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' ||
-      github.event.workflow_run.conclusion == 'failure'
+    if: always()
     runs-on: ubuntu-latest
     name: Publish YDB SLO Report
     permissions:
@@ -20,24 +18,8 @@ jobs:
       pull-requests: write
     steps:
       - name: Publish YDB SLO Report
-        uses: ydb-platform/ydb-slo-action/report@6b8e6cd4b96d70e747fbba2f2cfa196a6e2b2717
+        uses: ydb-platform/ydb-slo-action/report@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          github_run_id: ${{ github.event.workflow_run.id }}
-
-  remove-slo-label:
-    if: github.event.workflow_run.event == 'pull_request'
-    runs-on: ubuntu-latest
-    name: Remove SLO Label
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Remove SLO label from PR
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
-          REPO: ${{ github.event.workflow_run.repository.full_name }}
-        run: |
-          set -euo pipefail
-          PR=$(jq -r '.[0].number' <<<"$PRS")
-          gh pr edit "$PR" --repo "$REPO" --remove-label SLO
+          github_workflows: SLO
+          remove_label: SLO

@@ -7,6 +7,7 @@ import { YDBError } from '@ydbjs/error'
 import { query } from '@ydbjs/query'
 import { Timestamp, Uint64 } from '@ydbjs/value/primitive'
 
+import { kvTableName } from '../../lib/kv-control.ts'
 import { installSafetyHandlers } from '../../lib/safety.ts'
 import type { WorkerData } from '../../lib/worker-api.ts'
 
@@ -19,14 +20,15 @@ let concurrency = parseInt(params['concurrency'] ?? '50', 10)
 let driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 let sql = query(driver)
+let table = sql.identifier(kvTableName(process.env['SLO_KV_NAMESPACE']))
 
 let [[[version]]] = (await sql`SELECT CAST(version() as Text);`.values()) as [[[string]]]
 console.log('[kv.setup] YDB server version:', version)
 
-await sql`DROP TABLE IF EXISTS test;`
+await sql`DROP TABLE IF EXISTS ${table};`
 
 await sql`
-	CREATE TABLE IF NOT EXISTS test (
+	CREATE TABLE IF NOT EXISTS ${table} (
 		hash				Uint64,
 		id					Uint64,
 		payload_str			Text,
@@ -55,7 +57,7 @@ async function prefillOp(): Promise<void> {
 	while (true) {
 		try {
 			// oxlint-disable-next-line no-await-in-loop
-			await sql`INSERT INTO test (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
+			await sql`INSERT INTO ${table} (hash, id, payload_str, payload_double, payload_timestamp) VALUES (
 				Digest::NumericHash(${id}),
 				${id},
 				${randomUUID()},
