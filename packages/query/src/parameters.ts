@@ -1,83 +1,140 @@
-import { clone, create } from '@bufbuild/protobuf'
+import { isUint8Array } from 'node:util/types'
+import { create } from '@bufbuild/protobuf'
+import { type ReflectMessage, isReflectMessage, reflect } from '@bufbuild/protobuf/reflect'
 import {
 	type TypedValue,
 	TypedValueSchema,
 	type Type as WireType,
 	type Value as WireValue,
 } from '@ydbjs/api/value'
-import { type JSValue, type Type, type TypeKind, type Value, fromJs } from '@ydbjs/value'
+import { type JSValue, type Type, type Value, fromJs } from '@ydbjs/value'
 
 export type QueryParameters = Readonly<Record<string, Value | JSValue>>
 
-class BoundValue implements Value {
+// An SDK-owned retry must send the original type and bytes even if the caller mutates a Value or Buffer.
+class SnapshotValue implements Value {
 	readonly type: Type
-	readonly snapshot: TypedValue
 
-	constructor(snapshot: TypedValue, kind: TypeKind) {
-		this.snapshot = snapshot
-		this.type = { kind, encode: () => snapshot.type! }
+	constructor(
+		readonly wire: TypedValue,
+		kind: Type['kind']
+	) {
+		this.type = {
+			kind,
+			encode: () => {
+				return wire.type!
+			},
+		}
 	}
 
 	encode(): WireValue {
-		return this.snapshot.value!
+		return this.wire.value!
 	}
+}
+
+/** @internal Capture one input for a standalone operation before admitting it to the pool. */
+export function snapshotValue(input: JSValue): Value {
+	let value = fromJs(input)
+
+	return new SnapshotValue(encodeValue(value), value.type.kind)
+}
+
+function encodeValue(value: Value): TypedValue {
+	let wire = create(TypedValueSchema, { type: value.type.encode(), value: value.encode() })
+	let snapshot = copyMessage(reflect(TypedValueSchema, wire)).message as TypedValue
+
+	assertParameterType(snapshot.type!)
+
+	return snapshot
 }
 
 export function encodeParameters(parameters: QueryParameters): Record<string, TypedValue> {
-	if (parameters === null || typeof parameters !== 'object' || Array.isArray(parameters))
+	return mapParameters(parameters, (input) => {
+		return input instanceof SnapshotValue ? input.wire : encodeValue(fromJs(input))
+	})
+}
+
+export function snapshotInputs(parameters: QueryParameters): Record<string, Value> {
+	return mapParameters(parameters, snapshotValue)
+}
+
+function mapParameters<T>(
+	parameters: QueryParameters,
+	convert: (input: JSValue) => T
+): Record<string, T> {
+	if (parameters === null || typeof parameters !== 'object' || Array.isArray(parameters)) {
 		throw new TypeError('Query parameters must be a named object.')
-	let encoded: Record<string, TypedValue> = Object.create(null)
+	}
+
+	let result: Record<string, T> = Object.create(null)
+
 	for (let [key, input] of Object.entries(parameters)) {
 		let name = key.startsWith('$') ? key : '$' + key
-		if (!/^\$[A-Za-z_][A-Za-z_0-9]*$/.test(name))
+
+		if (!/^\$[A-Za-z_][A-Za-z_0-9]*$/.test(name)) {
 			throw new TypeError(`Invalid query parameter name: ${key}`)
-		if (name in encoded) throw new TypeError(`Duplicate query parameter: ${name}`)
-		if (input === undefined) throw new TypeError(`Query parameter ${name} is undefined.`)
-		if (input instanceof BoundValue) {
-			// Tagged bindings already own detached wire values for the whole retry operation.
-			encoded[name] = input.snapshot
+		}
+
+		if (name in result) {
+			throw new TypeError(`Duplicate query parameter: ${name}`)
+		}
+
+		if (input === undefined) {
+			throw new TypeError(`Query parameter ${name} is undefined.`)
+		}
+
+		result[name] = convert(input)
+	}
+
+	return result
+}
+
+function copyFieldValue(value: unknown): unknown {
+	if (isReflectMessage(value)) {
+		return copyMessage(value)
+	}
+
+	return isUint8Array(value) ? new Uint8Array(value) : value
+}
+
+// Reflection validates field assignments while copying only the bytes visible through each view.
+// Protobuf clone() shares unknown fields and uses .slice() on Buffer, which shares its storage.
+function copyMessage(source: ReflectMessage): ReflectMessage {
+	let target = reflect(source.desc)
+
+	for (let field of source.fields) {
+		if (!source.isSet(field)) {
 			continue
 		}
-		let value =
-			input !== null &&
-			typeof input === 'object' &&
-			'encode' in input &&
-			typeof input.encode === 'function'
-				? (input as Value)
-				: fromJs(input as JSValue)
-		let snapshot = clone(
-			TypedValueSchema,
-			create(TypedValueSchema, {
-				type: value.type.encode(),
-				value: value.encode(),
+
+		if (field.fieldKind === 'list') {
+			let list = target.get(field)
+
+			for (let item of source.get(field)) {
+				list.add(copyFieldValue(item))
+			}
+		} else if (field.fieldKind === 'map') {
+			let map = target.get(field)
+
+			for (let [key, item] of source.get(field)) {
+				map.set(key, copyFieldValue(item))
+			}
+		} else {
+			target.set(field, copyFieldValue(source.get(field)))
+		}
+	}
+
+	let unknown = source.getUnknown()
+
+	if (unknown?.length) {
+		target.setUnknown(
+			unknown.map(({ no, wireType, data }) => {
+				return { no, wireType, data: new Uint8Array(data) }
 			})
 		)
-		assertParameterType(snapshot.type!)
-		copyBuffers(snapshot.value!)
-		encoded[name] = snapshot
 	}
-	return encoded
-}
 
-export function bindParameters(parameters: Readonly<Record<string, Value>>): Record<string, Value> {
-	let bound: Record<string, Value> = Object.create(null)
-	for (let [name, snapshot] of Object.entries(encodeParameters(parameters))) {
-		let original = parameters[name] ?? parameters[name.slice(1)]!
-		bound[name] = new BoundValue(snapshot, original.type.kind)
-	}
-	return bound
-}
-
-function copyBuffers(value: WireValue): void {
-	// Protobuf clone uses .slice(); Buffer overrides it with a shared-memory view.
-	if (value.value.case === 'bytesValue' && Buffer.isBuffer(value.value.value))
-		value.value.value = new Uint8Array(value.value.value)
-	if (value.value.case === 'nestedValue') copyBuffers(value.value.value)
-	for (let item of value.items) copyBuffers(item)
-	for (let pair of value.pairs) {
-		if (pair.key) copyBuffers(pair.key)
-		if (pair.payload) copyBuffers(pair.payload)
-	}
+	return target
 }
 
 function assertParameterType(type: WireType): void {
@@ -95,10 +152,14 @@ function assertParameterType(type: WireType): void {
 			assertParameterType(type.type.value.payload!)
 			break
 		case 'tupleType':
-			for (let item of type.type.value.elements) assertParameterType(item)
+			for (let item of type.type.value.elements) {
+				assertParameterType(item)
+			}
 			break
 		case 'structType':
-			for (let item of type.type.value.members) assertParameterType(item.type!)
+			for (let item of type.type.value.members) {
+				assertParameterType(item.type!)
+			}
 			break
 		case 'variantType':
 			throw new TypeError(

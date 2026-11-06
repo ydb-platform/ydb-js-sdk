@@ -28,7 +28,7 @@ npm install @ydbjs/core @ydbjs/query
 - **Клиент для SQL строкой**: `new QueryClient(driver)` предоставляет `retrySession(options, callback)` и `retryTransaction(options, callback)`. Настройки можно опустить; callback всегда передаётся последним. Он получает сессию или транзакцию и сигнал отмены текущей попытки. `query(client)` добавляет теговый интерфейс с общим пулом и жизненным циклом.
 - **Пул сессий**: сессии автоматически переиспользуются между запросами и транзакциями (размер пула по умолчанию: 50). Настройка: `query(driver, { poolOptions: { maxSize: 100 } })`.
 - **Сессии и транзакции**: управление жизненным циклом выполняется автоматически. Можно запускать одиночные запросы или объединять несколько запросов в транзакцию через `begin`/`transaction`.
-- **Параметры**: параметры передаются через интерполяцию (`${}`) в шаблоне. Поддерживаются нативные типы JS, классы значений YDB и массивы/объекты. Для именованных параметров используйте `.parameter()`/`.param()`.
+- **Параметры.** В шаблон, в `.parameter()` (или `.param()`) и в объект параметров для `execute()` или `stream()` можно передавать обычные значения JavaScript. SDK сам определяет их типы YDB. Если запросу нужен конкретный тип YDB, используйте соответствующий класс из SDK.
 - **Безопасность типов**: все значения конвертируются с помощью `@ydbjs/value`. Сложные и вложенные типы обрабатываются автоматически.
 - **Результаты**: YDB может возвращать несколько наборов результатов за один запрос.
 - **Статистика**: используйте `.withStats()` или `.stats()` для доступа к статистике выполнения.
@@ -37,40 +37,52 @@ npm install @ydbjs/core @ydbjs/query
 
 ### SQL строкой, поток и повтор callback
 
-`execute()` и `stream()` фиксируют параметры при вызове. Повторный callback может сформировать новые параметры для следующей попытки. Самостоятельный tagged-запрос фиксирует текст, настройки и параметры перед первой попыткой и сохраняет их при ретраях.
-
 В V7 класс `QueryClient` экспортируется из `@ydbjs/query`. Его методы запуска — `retrySession(options, callback)` и `retryTransaction(options, callback)`, либо `retrySession(callback)` и `retryTransaction(callback)` с настройками по умолчанию. Callback всегда передаётся последним. Также доступны `close()`, `destroy()` и structured disposal. Callback получает `(session, signal)` для текущей попытки. У корневого клиента нет методов `execute()`, `stream()`, `do()` и `transaction()`.
 
 `session.execute()` принимает SQL строкой без изменений, именованные параметры и настройки запроса, накапливает ответ и возвращает `{ resultSets, stats, metadata }`. `session.stream()` возвращает части ответа. Если в базе не включены неявные типы параметров, объявляйте их через YQL `DECLARE`.
 
 Прежний callable-тип называется `SQLClient`. `query(driver)` и `query(client)` предоставляют удобный теговый API с методами `sql.do()`, `sql.begin()` и `sql.transaction()`. `query(client)` использует тот же пул и жизненный цикл, что и переданный клиент.
 
+`client.driver` возвращает драйвер, переданный в конструктор. За него отвечает вызывающий код. Закрывайте драйвер после всех клиентов, которые его используют.
+
+`retrySession()` и `retryTransaction()` могут вызвать ваш callback несколько раз. Если всем попыткам нужен один и тот же ID заказа или результат расчёта эмбеддинга, получите его до вызова этих методов. Внутри каждой попытки собирайте объект параметров из этих значений.
+Если callback читает изменяемый объект, при следующей попытке он увидит его текущее содержимое. Новый объект параметров может ссылаться на тот же `Buffer`. Если другой код может изменить буфер, сделайте копию через `Buffer.from(input)` перед вызовом `retrySession()` или `retryTransaction()` и используйте её во всех попытках.
+
+Самостоятельный запрос с тегом `sql` фиксирует параметры при первом запуске, до ожидания сессии. Повтор получает исходные типы и байты, даже если вызывающий код изменил `Buffer`, содержимое `Value` или заменил параметр у объекта запроса. Внутри `sql.do()` и `sql.begin()` повторяется весь пользовательский callback, который может создать новый запрос.
+
 ```ts
 import { QueryClient, query } from '@ydbjs/query'
-import { Uint64 } from '@ydbjs/value/primitive'
+
+type Row = { id: bigint }
 
 await using client = new QueryClient(driver)
-let text = 'DECLARE $id AS Uint64; SELECT $id AS id;'
-let parameters = { id: new Uint64(42n) }
+
+let text = 'SELECT $id AS id;'
+let id = 42n
 let signal = AbortSignal.timeout(30_000)
 
-let result = await client.retrySession({ signal, idempotent: true }, (session) =>
-  session.execute(text, parameters, { timeout: 5000 })
-)
+let result = await client.retrySession({ signal, idempotent: true }, (session) => {
+  return session.execute<[Row]>(text, { id }, { timeout: 5000 })
+})
 
 let total = await client.retrySession(
   { signal, idempotent: true, retry: { budget: 3 } },
   async (session) => {
     let total = 0n
-    for await (let part of session.stream<{ id: bigint }>(text, parameters)) {
-      for (let row of part.rows) total += row.id
+
+    for await (let part of session.stream<Row>(text, { id })) {
+      for (let row of part.rows) {
+        total += row.id
+      }
     }
+
     return total
   }
 )
 
 let sql = query(client)
-let rows = await sql`SELECT ${new Uint64(42n)} AS id`
+
+let [rows] = await sql<[Row]>`SELECT ${id} AS id`
 ```
 
 Весь цикл чтения остаётся внутри retry callback. Поток сам не повторяет уже полученные строки: его ошибка передаётся ретраеру, который при допустимой ошибке повторяет callback целиком. Состояние обработки создаётся заново при каждом вызове callback. Внешние эффекты callback тоже могут повториться; `idempotent: false` не запрещает повтор после статуса с однозначно прерванной операцией. `retrySession()` закрепляет сессию за попыткой, но не объединяет запросы в атомарную операцию. Для группы записей, которые должны откатиться вместе, используйте `retryTransaction()`.
@@ -80,7 +92,9 @@ let rows = await sql`SELECT ${new Uint64(42n)} AS id`
 ```ts
 let result = await client.retryTransaction(
   { signal, isolation: 'snapshotReadOnly', idempotent: true },
-  (tx) => tx.execute(text, parameters)
+  (tx) => {
+    return tx.execute<[Row]>(text, { id })
+  }
 )
 ```
 
@@ -112,6 +126,8 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 
 ### Параметризованные запросы
 
+Тег `sql` подставляет в текст запроса имена параметров (`$p0`, `$p1`, …). Значение и тип YDB каждого параметра SDK передаёт отдельно от текста запроса. В V7 тег больше не добавляет `DECLARE`. В YDB 26.3.1.20 запросы с неявными типами параметров входят в [тесты Query Service](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/ut/query/kqp_params_ut.cpp#L1196-L1228).
+
 ```ts
 const userId = 42n
 const userName = 'Alice'
@@ -121,12 +137,28 @@ await sql`
 `
 ```
 
-#### Именованные параметры и кастомные типы
+#### Именованные параметры
+
+Если имя параметра уже есть в тексте запроса, передайте значение по имени.
+
+```ts
+let id = 42n
+
+await sql`SELECT $id AS id`.parameter('id', id)
+```
+
+Если в базе отключены неявные типы параметров, добавьте `DECLARE $id AS Int64;` перед `SELECT`. В YDB 26.3.1.20 объявление нужно для `Null`, `EmptyList`, `EmptyDict` и контейнеров с типом элемента `Null`, например `List<Null>`. Если тип элемента известен, передайте отсутствующее значение как `Optional<T>`, а пустой список как `List<T>` с конкретным типом `T`. [Пустые значения](../value/README.md#empty-values)
+
+#### Как задать тип параметра явно
+
+Для JavaScript-значения типа `bigint` SDK выбирает `Int64`. Если нужно передать беззнаковое число выше верхней границы `Int64`, укажите `Uint64` явно.
 
 ```ts
 import { Uint64 } from '@ydbjs/value/primitive'
-const id = new Uint64(123n)
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', id)
+
+let id = new Uint64(2n ** 63n)
+
+await sql`SELECT ${id} AS id`
 ```
 
 #### Массивы, структуры и табличные параметры
@@ -198,11 +230,12 @@ await sql`SELECT * FROM users`
 
 ### Конвертация значений и безопасность типов
 
-Все значения конвертируются с помощью `@ydbjs/value`. См. документацию `@ydbjs/value` по типам и правилам конвертации. Можно передавать нативные типы JS или использовать классы YDB для полного контроля.
+SDK преобразует значения JavaScript в параметры YDB. Например, обычный объект становится структурой `Struct`. [Соответствие типов](../value/README.md#infer-types-from-javascript)
 
 ```ts
-import { fromJs } from '@ydbjs/value'
-await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
+let meta = { foo: 'bar' }
+
+await sql`SELECT * FROM users WHERE meta = ${meta}`
 ```
 
 Результаты с `Variant`, в том числе внутри контейнеров, доступны только в raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у tagged SQL. Обычная конвертация отклоняет такие значения. Raw-ячейки сохраняют protobuf `Ydb.Value`, а наборы результатов `QueryClient` — схемы в `columns[].type`. SDK не предоставляет типизированные значения `Variant` и не определяет выбранную альтернативу по неоднозначным wire-данным.
@@ -237,6 +270,8 @@ await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 ```
 
 Заметка по безопасности: identifier() лишь экранирует обратные кавычки и оборачивает имя в обратные кавычки. Не передавайте туда непроверенный ввод — используйте валидацию/allow‑list.
+
+При интерполяции и привязке по имени SDK передаёт значения отдельно от текста запроса. В JSON-объекте поля `type` и `encode` остаются обычными полями данных. Текст SQL, фрагменты для `unsafe()` и строковый разделитель для `join()` должны поступать из доверенного кода. Геттеры, прокси и пользовательские реализации `Value` могут выполнять код при преобразовании.
 
 ## Завершение клиента
 

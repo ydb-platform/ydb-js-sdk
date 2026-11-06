@@ -37,6 +37,10 @@
 		".": {
 			"development": "./src/index.ts",
 			"default": "./dist/index.js"
+		},
+		"./internal": {
+			"development": "./src/internal.ts",
+			"default": "./dist/internal.js"
 		}
 	},
 	"publishConfig": {
