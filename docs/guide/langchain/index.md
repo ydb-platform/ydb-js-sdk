@@ -35,29 +35,50 @@ console.log(results)
 
 ### Store-managed Driver (connection string)
 
-The store creates and owns the Driver. Use `await using` or call `store.close()` when done.
+With a connection string, the store creates both a `Driver` and a `QueryClient`. Use `await using` or call `await store.close()` to drain the session pool and close the driver.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
+
 // ...
-store.close()
+
+await store.close()
 ```
 
 ### Caller-managed Driver
 
-Pass your own `Driver` instance — its lifecycle is yours to manage.
+With an existing `Driver`, the store creates its own query client. Close the store to drain its session pool, then close the driver when all its users have finished.
 
 ```typescript
 import { Driver } from '@ydbjs/core'
 
-const driver = new Driver('grpc://localhost:2136/local')
+let driver = new Driver('grpc://localhost:2136/local')
+
 await driver.ready()
 
-const store = new YDBVectorStore(embeddings, { driver })
+let store = new YDBVectorStore(embeddings, { driver })
+
 // ...
+
+await store.close()
 driver.close()
+```
+
+### Sharing a QueryClient
+
+Pass `queryClient` to use the same session pool for vector searches and other application queries. The application owns the shared client and its driver. Close all stores first, then the client, then the driver. With `await using`, declaring them in the order below handles cleanup on scope exit.
+
+```typescript
+import { Driver } from '@ydbjs/core'
+import { QueryClient } from '@ydbjs/query'
+
+using driver = new Driver('grpc://localhost:2136/local')
+await using queryClient = new QueryClient(driver)
+await using store = new YDBVectorStore(embeddings, { queryClient })
+
+await store.similaritySearch('YDB vector search', 4)
 ```
 
 ## Static Helpers
