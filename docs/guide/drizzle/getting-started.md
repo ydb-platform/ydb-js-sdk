@@ -48,6 +48,10 @@ const db = createDrizzle({
 })
 ```
 
+### Shared QueryClient
+
+If the application already owns a `QueryClient`, pass it to `createDrizzle(client, { schema })` to share its pool and decoding options.
+
 ### Callback Executor
 
 Use callback mode for tests, RPC proxies, serverless environments, or any transport that is not direct gRPC to YDB.
@@ -135,7 +139,8 @@ try {
     async (tx) => {
       await tx.insert(users).values({ id: 4, email: 'delta@example.com' }).execute()
 
-      const user = await tx.select().from(users).where(eq(users.id, 4)).execute()
+      let user = await tx.select().from(users).where(eq(users.id, 4)).execute()
+
       if (user.length === 0) {
         tx.rollback()
       }
@@ -143,7 +148,6 @@ try {
     {
       accessMode: 'read write',
       isolationLevel: 'serializableReadWrite',
-      idempotent: true,
     }
   )
 } catch (error) {
@@ -163,7 +167,7 @@ await db.execute(sql`SELECT 1`)
 
 ## Shutdown
 
-If the adapter created the driver from `connectionString`, close the owned client on application shutdown.
+Release adapter-owned resources on application shutdown. The owner of a shared `QueryClient` closes its pool and driver.
 
 ```ts
 db.$client.close?.()

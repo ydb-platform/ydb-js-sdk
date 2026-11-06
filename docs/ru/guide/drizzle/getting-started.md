@@ -48,6 +48,10 @@ const db = createDrizzle({
 })
 ```
 
+### Общий QueryClient
+
+Если в приложении уже есть `QueryClient`, передайте его в `createDrizzle(client, { schema })`. Запросы Drizzle будут использовать его пул сессий и настройки декодирования.
+
 ### Callback-исполнитель
 
 Режим callback подходит для тестов, RPC-прокси, serverless-окружений и любого транспорта, отличного от прямого gRPC к YDB.
@@ -135,7 +139,8 @@ try {
     async (tx) => {
       await tx.insert(users).values({ id: 4, email: 'delta@example.com' }).execute()
 
-      const user = await tx.select().from(users).where(eq(users.id, 4)).execute()
+      let user = await tx.select().from(users).where(eq(users.id, 4)).execute()
+
       if (user.length === 0) {
         tx.rollback()
       }
@@ -143,7 +148,6 @@ try {
     {
       accessMode: 'read write',
       isolationLevel: 'serializableReadWrite',
-      idempotent: true,
     }
   )
 } catch (error) {
@@ -163,7 +167,7 @@ await db.execute(sql`SELECT 1`)
 
 ## Завершение работы
 
-Если адаптер создавал драйвер из `connectionString`, закройте принадлежащий ему клиент при завершении приложения.
+Закройте ресурсы адаптера при завершении приложения. Пул и драйвер переданного `QueryClient` закрывает владелец.
 
 ```ts
 db.$client.close?.()

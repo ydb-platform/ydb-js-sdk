@@ -1,9 +1,10 @@
+import { addAbortListener } from 'node:events'
 import { install } from 'temporal-polyfill/shim'
 import { expect, inject, test } from 'vitest'
 import { sql as yql } from 'drizzle-orm'
 import { Driver } from '@ydbjs/core'
-import { query } from '@ydbjs/query'
-import { YdbDriver, drizzle } from '../src/index.ts'
+import { QueryClient } from '@ydbjs/query'
+import { drizzle } from '../src/index.ts'
 import { currentUtcDate, currentUtcDatetime, currentUtcTimestamp } from '../src/sql.ts'
 import {
 	date,
@@ -26,10 +27,11 @@ install()
 for (let temporal of [false, true]) {
 	test(`column codecs preserve their contracts through real YDB with temporal=${temporal}`, async (tc) => {
 		using core = new Driver(inject('connectionString'), { 'ydb.sdk.enable_discovery': false })
-		await using sql = query(core, { temporal })
-		let adapter = new YdbDriver(core)
-		adapter.client = sql
-		let db = drizzle(adapter)
+		await using client = new QueryClient(core, { temporal })
+		using _ = addAbortListener(tc.signal, () => {
+			return client.destroy()
+		})
+		let db = drizzle(client)
 		let columns = ydbTable('scalar_codecs', {
 			legacyDate: date(),
 			legacyDatetime: datetime(),
@@ -58,49 +60,47 @@ for (let temporal of [false, true]) {
 			double: 16777217,
 			uuid: '00112233-4455-6677-8899-aabbccddeeff',
 		}
-		let rows = await sql.do({ signal: tc.signal }, () =>
-			db
-				.select({
-					legacyDate: yql`${yql.param(values.legacyDate, columns.legacyDate)}`.mapWith(
-						columns.legacyDate
+
+		let rows = await db
+			.select({
+				legacyDate: yql`${yql.param(values.legacyDate, columns.legacyDate)}`.mapWith(
+					columns.legacyDate
+				),
+				legacyDatetime:
+					yql`${yql.param(values.legacyDatetime, columns.legacyDatetime)}`.mapWith(
+						columns.legacyDatetime
 					),
-					legacyDatetime:
-						yql`${yql.param(values.legacyDatetime, columns.legacyDatetime)}`.mapWith(
-							columns.legacyDatetime
-						),
-					legacyTimestamp:
-						yql`${yql.param(values.legacyTimestamp, columns.legacyTimestamp)}`.mapWith(
-							columns.legacyTimestamp
-						),
-					date: yql`${yql.param(values.date, columns.date)}`.mapWith(columns.date),
-					datetime: yql`${yql.param(values.datetime, columns.datetime)}`.mapWith(
-						columns.datetime
+				legacyTimestamp:
+					yql`${yql.param(values.legacyTimestamp, columns.legacyTimestamp)}`.mapWith(
+						columns.legacyTimestamp
 					),
-					timestamp: yql`${yql.param(values.timestamp, columns.timestamp)}`.mapWith(
-						columns.timestamp
-					),
-					interval: yql`${yql.param(values.interval, columns.interval)}`.mapWith(
-						columns.interval
-					),
-					interval64: yql`${yql.param(values.interval64, columns.interval64)}`.mapWith(
-						columns.interval64
-					),
-					decimal: yql`${yql.param(values.decimal, columns.decimal)}`.mapWith(
-						columns.decimal
-					),
-					dyNumber: yql`${yql.param(values.dyNumber, columns.dyNumber)}`.mapWith(
-						columns.dyNumber
-					),
-					double: yql`${yql.param(values.double, columns.double)}`.mapWith(
-						columns.double
-					),
-					uuid: yql`${yql.param(values.uuid, columns.uuid)}`.mapWith(columns.uuid),
-					currentDate: currentUtcDate(),
-					currentDatetime: currentUtcDatetime(),
-					currentTimestamp: currentUtcTimestamp(),
-				})
-				.execute()
-		)
+				date: yql`${yql.param(values.date, columns.date)}`.mapWith(columns.date),
+				datetime: yql`${yql.param(values.datetime, columns.datetime)}`.mapWith(
+					columns.datetime
+				),
+				timestamp: yql`${yql.param(values.timestamp, columns.timestamp)}`.mapWith(
+					columns.timestamp
+				),
+				interval: yql`${yql.param(values.interval, columns.interval)}`.mapWith(
+					columns.interval
+				),
+				interval64: yql`${yql.param(values.interval64, columns.interval64)}`.mapWith(
+					columns.interval64
+				),
+				decimal: yql`${yql.param(values.decimal, columns.decimal)}`.mapWith(
+					columns.decimal
+				),
+				dyNumber: yql`${yql.param(values.dyNumber, columns.dyNumber)}`.mapWith(
+					columns.dyNumber
+				),
+				double: yql`${yql.param(values.double, columns.double)}`.mapWith(columns.double),
+				uuid: yql`${yql.param(values.uuid, columns.uuid)}`.mapWith(columns.uuid),
+				currentDate: currentUtcDate(),
+				currentDatetime: currentUtcDatetime(),
+				currentTimestamp: currentUtcTimestamp(),
+			})
+			.execute()
+
 		expect(rows).toHaveLength(1)
 		let [row] = rows as [Record<string, unknown>]
 		expect(row).toEqual({
