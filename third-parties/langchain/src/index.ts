@@ -9,6 +9,7 @@ export {
 	type YDBVectorStoreConfig,
 	type YDBVectorStoreExistingTableConfig,
 	type YDBVectorStoreDeleteParams,
+	type YDBVectorStoreAddOptions,
 	type YDBFilter,
 } from './vectorstore.js'
 

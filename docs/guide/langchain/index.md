@@ -9,6 +9,8 @@ description: 'YDB VectorStore for LangChain.js: KNN search, metadata filtering, 
 
 ## Installation
 
+Requires Node.js `^22.15.0 || >=23.8.0`.
+
 ```bash
 npm install @ydbjs/langchain @langchain/core
 ```
@@ -25,7 +27,7 @@ await using store = new YDBVectorStore(new OpenAIEmbeddings(), {
 
 await store.addDocuments([{ pageContent: 'LangChain supports YDB', metadata: { source: 'docs' } }])
 
-const results = await store.similaritySearch('YDB vector search', 4)
+let results = await store.similaritySearch('YDB vector search', 4)
 console.log(results)
 ```
 
@@ -85,12 +87,12 @@ await store.similaritySearch('YDB vector search', 4)
 
 ```typescript
 // Create store and insert documents in one call
-const store = await YDBVectorStore.fromDocuments(docs, embeddings, {
+let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
 
 // Connect to an existing table without running CREATE TABLE
-const store = YDBVectorStore.fromExistingTable(embeddings, {
+let store = YDBVectorStore.fromExistingTable(embeddings, {
   driver,
   table: 'my_vectors',
 })
@@ -101,7 +103,7 @@ const store = YDBVectorStore.fromExistingTable(embeddings, {
 ```typescript
 import { Document } from '@langchain/core/documents'
 
-const ids = await store.addDocuments([
+let ids = await store.addDocuments([
   new Document({ pageContent: 'first doc', metadata: { source: 'wiki' } }),
   new Document({ pageContent: 'second doc', metadata: { source: 'docs' }, id: 'my-id' }),
 ])
@@ -109,32 +111,50 @@ const ids = await store.addDocuments([
 // ids[1] → 'my-id'
 ```
 
-- Documents without an `id` receive a random UUID.
-- Re-inserting a document with the same `id` **replaces** it (UPSERT semantics).
-- Batches larger than 32 documents are split automatically.
+`addDocuments(documents, { ids })` and `addVectors(vectors, documents, { ids })` accept explicit IDs. `options.ids` takes precedence over `Document.id`. If neither is supplied, the store generates a UUID. The `ids` array must contain one non-empty string per document. IDs are validated before embedding or schema initialization.
+
+```typescript
+await store.addDocuments(docs, { ids: ['source-a', 'source-b'] })
+await store.addVectors(vectors, docs, { ids: ['source-a', 'source-b'] })
+```
+
+Inserting the same ID replaces the document (`UPSERT`). This also applies to IDs supplied by LangChain `index()` with a `RecordManager`.
+
+`batchSize` limits both embedding requests and YDB write batches; the default is 32 documents. Batches run sequentially and commit separately. If a later batch fails, earlier writes remain. Use stable IDs when retrying a failed call: generated UUIDs stay fixed across internal write retries, but a new call generates new UUIDs.
+
+Embeddings must be non-empty, contain finite Float32 values, and have a consistent dimension within an ingestion call. With an index, ingestion and query vectors must match `indexVectorDimension`. Without an index, the store does not infer the dimension of existing rows; use a table with compatible embeddings when changing models.
 
 ## Similarity Search
 
 ```typescript
 // Returns Document[]
-const docs = await store.similaritySearch('query text', 4)
+let docs = await store.similaritySearch('query text', 4)
 
 // Returns [Document, score][]
-const scored = await store.similaritySearchWithScore('query text', 4)
+let scored = await store.similaritySearchWithScore('query text', 4)
 
 // Search using a pre-computed embedding vector
-const vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
+let vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
 ```
+
+With `k: 0`, search returns an empty array without embedding or accessing the table. A null or invalid score returned by YDB causes an error rather than being converted to zero.
 
 ## Metadata Filtering
 
 Each key-value pair becomes a `JSON_VALUE` predicate; multiple pairs are combined with `AND`.
 
 ```typescript
-const results = await store.similaritySearch('query', 4, {
+let results = await store.similaritySearch('query', 4, {
   source: 'docs',
   lang: 'en',
 })
+```
+
+Filter values must be strings. Keys are relative JSON paths: `tenant.id` selects the nested `id` field of `tenant`, while `'"tenant.id"'` selects a literal field named `tenant.id`.
+
+```typescript
+await store.similaritySearch('query', 4, { 'tenant.id': 'nested-value' })
+await store.similaritySearch('query', 4, { '"tenant.id"': 'literal-value' })
 ```
 
 > **Note:** metadata filtering is incompatible with `indexEnabled: true`.
@@ -152,7 +172,7 @@ const results = await store.similaritySearch('query', 4, {
 ```typescript
 import { YDBVectorStore, YDBSearchStrategy } from '@ydbjs/langchain'
 
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   strategy: YDBSearchStrategy.EuclideanDistance,
 })
@@ -163,10 +183,10 @@ const store = new YDBVectorStore(embeddings, {
 Build a `vector_kmeans_tree` index for sub-linear search on large tables.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   indexEnabled: true,
-  vectorDimension: 1536, // skip auto-detect probe
+  indexVectorDimension: 1536, // Embedding model dimension
 })
 
 await store.addDocuments(docs)
@@ -195,12 +215,14 @@ await store.delete({ deleteAll: true })
 await store.drop()
 ```
 
+`deleteAll` must be a boolean; clearing the entire table requires `deleteAll: true`. Invalid IDs are rejected before schema initialization. An empty `ids` array without `deleteAll: true` issues no queries.
+
 ## Column Name Overrides
 
 Use `columnMap` when connecting to a table with a custom schema.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   table: 'my_vectors',
   columnMap: {

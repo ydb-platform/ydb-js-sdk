@@ -1,13 +1,15 @@
 import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
 import { QueryClient, identifier } from '@ydbjs/query'
 import { Uint64 } from '@ydbjs/value/primitive'
+import { Float32Vector } from '@ydbjs/value/vector'
+import type { Callbacks } from '@langchain/core/callbacks/manager'
 import type { EmbeddingsInterface } from '@langchain/core/embeddings'
 import { VectorStore } from '@langchain/core/vectorstores'
 import { Document } from '@langchain/core/documents'
 
 import pkg from '../package.json' with { type: 'json' }
 
-import { escJsonPathKey, vectorToBytes } from './encoding.js'
+import { escJsonPathKey } from './encoding.js'
 import {
 	YDBVectorStoreArgumentError,
 	YDBVectorStoreConfigError,
@@ -31,7 +33,7 @@ import {
  * | `ManhattanDistance` |
  * | `InnerProductSimilarity` |
  */
-export const YDBSearchStrategy = {
+export let YDBSearchStrategy = {
 	CosineDistance: 'CosineDistance',
 	CosineSimilarity: 'CosineSimilarity',
 	ManhattanDistance: 'ManhattanDistance',
@@ -46,7 +48,7 @@ export type YDBSearchStrategyType = (typeof YDBSearchStrategy)[keyof typeof YDBS
  * index DDL. `Record` enforces exhaustiveness at compile time — a new strategy
  * added to {@link YDBSearchStrategy} must be added here too.
  */
-const INDEX_STRATEGY_DDL: Record<YDBSearchStrategyType, string> = {
+let INDEX_STRATEGY_DDL: Record<YDBSearchStrategyType, string> = {
 	CosineSimilarity: "similarity = 'cosine'",
 	InnerProductSimilarity: "similarity = 'inner_product'",
 	CosineDistance: "distance = 'cosine'",
@@ -93,7 +95,7 @@ export interface YDBVectorStoreBaseConfig {
 	 */
 	dropExistingTable?: boolean
 	/**
-	 * Number of documents flushed per `UPSERT` batch in {@link YDBVectorStore.addVectors}.
+	 * Maximum documents per embedding request and `UPSERT` batch.
 	 * Must be a positive integer. Defaults to `32`.
 	 */
 	batchSize?: number
@@ -203,7 +205,8 @@ export type YDBVectorStoreExistingTableConfig = Omit<
  * Metadata filter for similarity search.
  *
  * Each key-value pair is translated to a
- * `JSON_VALUE(metadata, '$.key') = 'value'` condition.
+ * `JSON_VALUE(metadata, '$.key') = 'value'` condition. Keys are relative JSON paths:
+ * `tenant.id` selects a nested field; `'"tenant.id"'` selects a literal dotted key.
  * Multiple entries are combined with `AND`.
  *
  * **Limitations:**
@@ -212,6 +215,11 @@ export type YDBVectorStoreExistingTableConfig = Omit<
  *   does not support pre-filtering.
  */
 export type YDBFilter = Record<string, string>
+
+/** IDs supplied here take precedence over document IDs. */
+export interface YDBVectorStoreAddOptions {
+	ids?: string[]
+}
 
 /**
  * Parameters for {@link YDBVectorStore.delete}. `deleteAll: true` truncates the
@@ -239,6 +247,38 @@ function assertSameLength(nameA: string, lenA: number, nameB: string, lenB: numb
 			`${nameA}.length (${lenA}) must equal ${nameB}.length (${lenB}).`
 		)
 	}
+}
+
+function validateIds(ids: string[]): void {
+	if (!Array.isArray(ids)) {
+		throw new YDBVectorStoreArgumentError('ids must be an array of non-empty strings.')
+	}
+
+	for (let id of ids) {
+		if (typeof id !== 'string' || id.length === 0) {
+			throw new YDBVectorStoreArgumentError('ids must be an array of non-empty strings.')
+		}
+	}
+}
+
+function documentIds(documents: Document[], options: YDBVectorStoreAddOptions): string[] {
+	if (options.ids !== undefined) {
+		validateIds(options.ids)
+		assertSameLength('ids', options.ids.length, 'documents', documents.length)
+
+		return options.ids.slice()
+	}
+
+	let ids = documents.map((document) => {
+		if (document.id === undefined) {
+			return crypto.randomUUID()
+		}
+
+		return document.id
+	})
+	validateIds(ids)
+
+	return ids
 }
 
 function assertPositiveInteger(option: string, value: number): void {
@@ -474,60 +514,150 @@ export class YDBVectorStore extends VectorStore {
 	 * @param documents - Documents to store.
 	 * @returns The ID of every inserted/updated document (same order as input).
 	 */
-	async addVectors(vectors: number[][], documents: Document[]): Promise<string[]> {
-		assertSameLength('vectors', vectors.length, 'documents', documents.length)
-
+	async addVectors(
+		vectors: ArrayLike<number>[],
+		documents: Document[],
+		options: YDBVectorStoreAddOptions = {}
+	): Promise<string[]> {
 		this.#assertOpen()
-
-		if (vectors.length === 0) {
-			return []
-		}
-
-		await this.#ensureTable()
-
-		let { id, document, embedding, metadata } = this.#columnMap
-		let text = `UPSERT INTO ${this.#table} (${id}, ${document}, ${embedding}, ${metadata})
-			SELECT id, document, embedding, CAST(metadata AS Json) FROM AS_TABLE($batch)`
-
-		let ids: string[] = []
+		assertSameLength('vectors', vectors.length, 'documents', documents.length)
+		let ids = documentIds(documents, options)
+		this.#validateDimensions(vectors)
 
 		for (let i = 0; i < vectors.length; i += this.#batchSize) {
-			let batch = documents.slice(i, i + this.#batchSize).map((d, j) => {
-				let docId = d.id ?? crypto.randomUUID()
-				ids.push(docId)
-
-				return {
-					id: docId,
-					document: d.pageContent,
-					metadata: JSON.stringify(d.metadata ?? {}),
-					embedding: vectorToBytes(vectors[i + j]!),
-				}
-			})
-
-			// Batches are sent sequentially to avoid overwhelming the server.
 			// oxlint-disable-next-line no-await-in-loop
-			await this.#client.retrySession((session) => {
-				return session.execute(text, { batch })
-			})
+			await this.#writeBatch(
+				vectors.slice(i, i + this.#batchSize),
+				documents.slice(i, i + this.#batchSize),
+				ids.slice(i, i + this.#batchSize)
+			)
 		}
 
 		return ids
 	}
 
+	#validateDimensions(
+		vectors: ArrayLike<number>[],
+		dimension = this.#indexConfig.vectorDimension
+	): number | undefined {
+		for (let vector of vectors) {
+			let length = vector?.length
+
+			if (typeof length !== 'number') {
+				throw new YDBVectorStoreArgumentError(
+					'Each vector must have an array-like numeric length.'
+				)
+			}
+
+			if (!Number.isSafeInteger(length) || length < 1) {
+				throw new YDBVectorStoreArgumentError(
+					'Vector dimension must be a positive integer.'
+				)
+			}
+
+			dimension ??= length
+
+			if (length !== dimension) {
+				throw new YDBVectorStoreArgumentError(
+					`Expected a vector with ${dimension} dimensions, got ${length}.`
+				)
+			}
+
+			for (let index = 0; index < length; index++) {
+				if (!Number.isFinite(vector[index])) {
+					throw new YDBVectorStoreArgumentError(
+						`Vector coordinate ${index} must be finite.`
+					)
+				}
+			}
+		}
+
+		return dimension
+	}
+
+	async #writeBatch(
+		vectors: ArrayLike<number>[],
+		documents: Document[],
+		ids: string[]
+	): Promise<void> {
+		let batch = documents.map((doc, i) => {
+			return {
+				id: ids[i]!,
+				document: doc.pageContent,
+				metadata: JSON.stringify(doc.metadata ?? {}),
+				embedding: new Float32Vector(vectors[i]!),
+			}
+		})
+
+		await this.#ensureTable()
+		let { id, document, embedding, metadata } = this.#columnMap
+		let text = `UPSERT INTO ${this.#table} (${id}, ${document}, ${embedding}, ${metadata})
+			SELECT id, document, embedding, CAST(metadata AS Json) FROM AS_TABLE($batch)`
+
+		await this.#client.retrySession((session) => {
+			return session.execute(text, { batch })
+		})
+	}
+
 	/**
-	 * Embed and store documents.
-	 *
-	 * Embeds each document's `pageContent` with the configured embeddings model,
-	 * then delegates to {@link addVectors}.  Uses `UPSERT` semantics.
-	 *
-	 * @param documents - Documents to embed and store.
-	 * @returns The ID of every inserted/updated document (same order as input).
+	 * Embed and upsert documents in batches of at most `batchSize`.
+	 * Each batch commits separately; completed batches remain if a later batch fails.
+	 * IDs are resolved once, before embedding. Supply stable IDs when retrying a failed call.
 	 */
-	async addDocuments(documents: Document[]): Promise<string[]> {
+	async addDocuments(
+		documents: Document[],
+		options: YDBVectorStoreAddOptions = {}
+	): Promise<string[]> {
 		this.#assertOpen()
-		let texts = documents.map((d) => d.pageContent)
-		let vectors = await this.embeddings.embedDocuments(texts)
-		return this.addVectors(vectors, documents)
+		let ids = documentIds(documents, options)
+		let dimension = this.#indexConfig.vectorDimension
+
+		for (let i = 0; i < documents.length; i += this.#batchSize) {
+			let batch = documents.slice(i, i + this.#batchSize)
+			// oxlint-disable-next-line no-await-in-loop
+			let vectors = await this.embeddings.embedDocuments(
+				batch.map((doc) => {
+					return doc.pageContent
+				})
+			)
+			assertSameLength('vectors', vectors.length, 'documents', batch.length)
+			dimension = this.#validateDimensions(vectors, dimension)
+			// oxlint-disable-next-line no-await-in-loop
+			await this.#writeBatch(vectors, batch, ids.slice(i, i + this.#batchSize))
+		}
+
+		return ids
+	}
+
+	override async similaritySearch(
+		query: string,
+		k = 4,
+		filter?: this['FilterType'],
+		callbacks?: Callbacks
+	): Promise<Document[]> {
+		let results = await this.similaritySearchWithScore(query, k, filter, callbacks)
+
+		return results.map(([document]) => {
+			return document
+		})
+	}
+
+	override async similaritySearchWithScore(
+		query: string,
+		k = 4,
+		filter?: this['FilterType'],
+		_callbacks?: Callbacks
+	): Promise<[Document, number][]> {
+		this.#assertOpen()
+		assertNonNegativeInteger('k', k)
+
+		if (k === 0) {
+			return []
+		}
+
+		let vector = await this.embeddings.embedQuery(query)
+
+		return this.#searchVector(vector, k, filter)
 	}
 
 	/**
@@ -541,11 +671,26 @@ export class YDBVectorStore extends VectorStore {
 	 *   descending for similarity strategies, ascending for distance strategies.
 	 */
 	async similaritySearchVectorWithScore(
-		query: number[],
+		query: ArrayLike<number>,
 		k: number,
 		filter?: this['FilterType']
 	): Promise<[Document, number][]> {
+		this.#assertOpen()
+		return this.#searchVector(query, k, filter)
+	}
+
+	async #searchVector(
+		query: ArrayLike<number>,
+		k: number,
+		filter: this['FilterType'] | undefined
+	): Promise<[Document, number][]> {
 		assertNonNegativeInteger('k', k)
+
+		if (k === 0) {
+			return []
+		}
+
+		this.#validateDimensions([query])
 
 		let entries = Object.entries(filter ?? {})
 		if (entries.length && this.#indexConfig.enabled) {
@@ -563,7 +708,7 @@ export class YDBVectorStore extends VectorStore {
 			return `JSON_VALUE(${metadata}, '$.${escJsonPathKey(key)}') = $filter${i}`
 		})
 
-		let vector = vectorToBytes(query)
+		let vector = new Float32Vector(query)
 		let index = this.#indexConfig
 		let pragma = index.enabled
 			? `PRAGMA ydb.KMeansTreeSearchTopSize = "${index.treeSearchTopSize}";`
@@ -582,13 +727,13 @@ export class YDBVectorStore extends VectorStore {
 			document: string
 			// Json column — string when the driver returns raw text, parsed value otherwise.
 			metadata: string | Record<string, unknown> | null
-			score: number
+			score: number | null
 		}
 
 		await this.#ensureTable()
 
 		let { resultSets } = await this.#client.retrySession({ idempotent: true }, (session) => {
-			let parameters: Record<string, Uint64 | Uint8Array | string> = {
+			let parameters: Record<string, Uint64 | Float32Vector | string> = {
 				vector,
 				k: new Uint64(BigInt(k)),
 			}
@@ -601,6 +746,11 @@ export class YDBVectorStore extends VectorStore {
 		})
 
 		return (resultSets[0]?.rows ?? []).map((row) => {
+			if (typeof row.score !== 'number' || !Number.isFinite(row.score)) {
+				throw new YDBVectorStoreOperationError(
+					'YDB returned an invalid vector score; check the stored vector format and dimensions.'
+				)
+			}
 			return [
 				new Document({
 					id: row.id,
@@ -610,7 +760,7 @@ export class YDBVectorStore extends VectorStore {
 							? JSON.parse(row.metadata)
 							: (row.metadata ?? {}),
 				}),
-				Number(row.score),
+				row.score,
 			]
 		})
 	}
@@ -626,7 +776,13 @@ export class YDBVectorStore extends VectorStore {
 	 *   Takes precedence over `ids`.
 	 */
 	override async delete(params: YDBVectorStoreDeleteParams): Promise<void> {
-		if (params.deleteAll) {
+		if (params.deleteAll !== undefined && typeof params.deleteAll !== 'boolean') {
+			throw new YDBVectorStoreArgumentError('deleteAll must be a boolean.')
+		}
+		if (params.ids !== undefined) {
+			validateIds(params.ids)
+		}
+		if (params.deleteAll === true) {
 			await this.#ensureTable()
 
 			await this.#client.retrySession((session) => {
@@ -675,8 +831,7 @@ export class YDBVectorStore extends VectorStore {
 	 * embedding column.
 	 *
 	 * **When to call:** after inserting the initial batch of documents and before
-	 * the store goes into production.  Documents added after index creation are
-	 * still searchable — YDB scans them without the index, then merges results.
+	 * the store goes into production.
 	 *
 	 * **Trade-off:** the index enables sub-linear search at the cost of recall.
 	 * Tune `indexConfigLevels`, `indexConfigClusters`, and
