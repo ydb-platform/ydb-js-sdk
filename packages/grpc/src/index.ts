@@ -8,6 +8,7 @@ export type {
 	MetadataValue,
 	MethodDefinition,
 	RpcStatus,
+	SerializedMessage,
 	ServiceClient,
 	ServiceImplementation,
 	ServerContext,

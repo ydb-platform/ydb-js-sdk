@@ -17,7 +17,14 @@ import { type Deadline, createDeadline } from './deadline.js'
 import { MessageSizeError, ProtocolError, RpcError, Status, TransportError } from './error.js'
 import { type Frame, createFrameStream, decompress } from './framing.js'
 import { requestHeaders, responseMetadata } from './metadata.js'
-import type { CallOptions, ClientOptions, MethodDefinition, RpcStatus, Transport } from './types.js'
+import type {
+	CallOptions,
+	ClientOptions,
+	MethodDefinition,
+	RpcStatus,
+	SerializedMessage,
+	Transport,
+} from './types.js'
 
 interface Session {
 	http2: ClientHttp2Session
@@ -154,7 +161,7 @@ async function writeRequests<Request, Response>(
 				stream.end()
 				return
 			}
-			let bytes: Uint8Array
+			let bytes: SerializedMessage
 			try {
 				bytes = method.requestSerialize(next.value)
 			} catch (error) {
@@ -165,22 +172,40 @@ async function writeRequests<Request, Response>(
 					{ cause: error }
 				)
 			}
-			if (bytes.length > limit || bytes.length > 0xffffffff) {
+			let chunks: readonly Uint8Array[] | undefined = Array.isArray(bytes) ? bytes : undefined
+			let length = chunks ? 0 : (bytes as Uint8Array).byteLength
+			if (chunks) {
+				for (let chunk of chunks) {
+					length += chunk.byteLength
+				}
+			}
+			if (length > limit || length > 0xffffffff) {
 				throw new MessageSizeError('request', limit)
 			}
+			signal.throwIfAborted()
 			let header = Buffer.allocUnsafe(5)
 			header[0] = 0
-			header.writeUInt32BE(bytes.length, 1)
-			let body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+			header.writeUInt32BE(length, 1)
 			let drain: Promise<unknown> | undefined
 			stream.cork()
 			try {
-				let canWriteAfterHeader = stream.write(header)
-				let canWriteAfterBody = true
-				if (body.length > 0) {
-					canWriteAfterBody = stream.write(body)
+				let canWrite = stream.write(header)
+				for (let index = 0; index < (chunks?.length ?? 1); index++) {
+					let body = chunks ? chunks[index]! : (bytes as Uint8Array)
+					if (body.byteLength === 0) {
+						continue
+					}
+					if (!canWrite) {
+						let pendingDrain = once(stream, 'drain', { signal })
+						stream.uncork()
+						// oxlint-disable-next-line no-await-in-loop
+						await pendingDrain
+						signal.throwIfAborted()
+						stream.cork()
+					}
+					canWrite = stream.write(body)
 				}
-				if (!canWriteAfterHeader || !canWriteAfterBody) {
+				if (!canWrite) {
 					drain = once(stream, 'drain', { signal })
 				}
 			} finally {
