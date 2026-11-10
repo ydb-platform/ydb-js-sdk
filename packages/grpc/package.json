@@ -1,6 +1,6 @@
 {
 	"name": "@ydbjs/grpc",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Async gRPC transport over Node.js HTTP/2",
 	"keywords": [
 		"grpc",
@@ -52,7 +52,7 @@
 	},
 	"engineStrict": true,
 	"dependencies": {
-		"@ydbjs/abortable": "^6.1.0"
+		"@ydbjs/abortable": "^6.2.0"
 	},
 	"devDependencies": {
 		"@bufbuild/protobuf": "2.16.0"
