@@ -86,6 +86,11 @@ let nothing = new Void()
 ```
 
 EmptyList and EmptyDict are distinct protocol types; typed empty List/Dict constructors retain their element schemas instead.
+On YDB 26.3.1.20, declare the parameter type in the query for `EmptyList`, `EmptyDict`, `Null` and containers such as `List<Null>`. Its [YQL translator](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/provider/yql_kikimr_results.cpp#L268-L374) cannot infer those types from the parameter map.
+
+```ts
+await sql`DECLARE $items AS EmptyList; SELECT $items`.parameter('items', emptyList)
+```
 
 ### Temporal values
 
@@ -165,7 +170,7 @@ let byOid = new Pg('42', new PgType({ oid: 23 }))
 Pg keeps text, binary bytes or null in `.value` and preserves its type name, OID and modifiers in `.type`.
 It does not guess a JavaScript representation from PostgreSQL text or binary data.
 The string PgType constructor normalizes names such as `int4` and `_int4` to YQL names `pgint4` and `_pgint4`.
-OID-only descriptors can be bound with QueryClient and an explicit SQL declaration such as `DECLARE $value AS pgint4;`; automatic tagged-SQL declarations require a type name.
+Tagged SQL and QueryClient both send the PostgreSQL descriptor with the bound value. Binding `byOid` sends OID 23 in the parameter type.
 
 ### Tagged results
 

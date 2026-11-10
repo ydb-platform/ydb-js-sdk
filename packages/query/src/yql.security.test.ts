@@ -27,16 +27,28 @@ test('JSON type fields do not require a type discriminator', () => {
 	expect(toJs(statement.params.$p0!)).toEqual(input)
 })
 
-test('explicit parameter declarations reject JSON impersonating a Value', async () => {
+test('a malformed Value fails synchronously and preserves the previous named binding', async () => {
 	using driver = new Driver('grpc://127.0.0.1:2136/local', { 'ydb.sdk.enable_discovery': false })
 	await using sql = query(driver)
-	let input = JSON.parse('{"type":{"kind":2,"precision":"1,0); SELECT 999; --","scale":0}}')
+	let value = fromJs(42)
+	let malformed = {
+		encode() {},
+		type: {},
+	}
 
-	let invalid = sql`SELECT $value;`.parameter('value', input)
-	let converted = sql`SELECT $value;`.parameter('value', fromJs(input))
+	let statement = sql`SELECT $value;`.parameter('value', value)
 
-	expect(() => invalid.text).toThrow(/YDB Value/)
-	expect(converted.text).not.toContain('SELECT 999')
+	expect(() => {
+		// @ts-expect-error JavaScript callers may pass a Value with a malformed type.
+		statement.parameter('value', malformed)
+	}).toThrow(/type\.encode/)
+
+	expect(statement.parameters.$value).toBe(value)
+	expect(statement.text).toBe('SELECT $value;')
+
+	statement.param('value', undefined)
+
+	expect(statement.parameters).not.toHaveProperty('$value')
 })
 
 test('quoted identifiers escape backslashes before backticks', () => {

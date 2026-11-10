@@ -9,12 +9,14 @@ import {
 	QueryServiceDefinition,
 	StatsMode,
 	Syntax,
+	type TransactionControl,
 	TransactionControlSchema,
+	TransactionSettingsSchema,
 } from '@ydbjs/api/query'
-import { type Column, type TypedValue } from '@ydbjs/api/value'
+import type { Column } from '@ydbjs/api/value'
 import type { Driver, DriverIdentity } from '@ydbjs/core'
 import { CommitError, TransactionCompletionError, YDBError } from '@ydbjs/error'
-import type { Metadata } from '@ydbjs/grpc'
+import type { Metadata, ServiceDefinition } from '@ydbjs/grpc'
 import {
 	type RetryConfig,
 	type RetryContext,
@@ -84,6 +86,7 @@ export type TransactionStatementOptions = Omit<
 	'isolation' | 'allowInconsistentReads'
 >
 
+/** Each attempt binds values supplied by its callback. Keep inputs that must survive replay under the caller's control. */
 export interface QueryExecutor {
 	readonly signal: AbortSignal
 	readonly sessionId: string
@@ -151,18 +154,51 @@ class StreamClosedError extends Error {
 	}
 }
 
-type Request = { text: string; parameters: Record<string, TypedValue>; options: StatementOptions }
+type PreparedQuery = {
+	text: string
+	bytes: Uint8Array
+	options: StatementOptions
+}
 
-function request(text: string, parameters: QueryParameters, options: StatementOptions): Request {
+let executorAttempts = new WeakMap<QueryExecutor, Attempt>()
+
+let executeMethod = QueryServiceDefinition.executeQuery
+
+let encodedQueryService = {
+	executeQuery: {
+		path: executeMethod.path,
+		requestStream: executeMethod.requestStream,
+		responseStream: executeMethod.responseStream,
+		responseDeserialize: executeMethod.responseDeserialize,
+		requestSerialize(parts: readonly Uint8Array[]) {
+			return parts
+		},
+	},
+} satisfies ServiceDefinition
+
+/** @internal Encode one statement before it can wait for a session or enter a retry. */
+export function prepareQuery(
+	text: string,
+	parameters: QueryParameters,
+	options: StatementOptions = {},
+	transactionId = ''
+): PreparedQuery {
 	validateOperation(options)
-	if (typeof text !== 'string') throw new TypeError('Query text must be a string.')
+
+	if (typeof text !== 'string') {
+		throw new TypeError('Query text must be a string.')
+	}
+
 	let encoded = encodeParameters(parameters)
+
 	if (
 		options.rowMode !== undefined &&
 		options.rowMode !== 'object' &&
 		options.rowMode !== 'array'
-	)
+	) {
 		throw new TypeError('rowMode must be object or array.')
+	}
+
 	if (
 		options.isolation !== undefined &&
 		![
@@ -173,22 +209,82 @@ function request(text: string, parameters: QueryParameters, options: StatementOp
 			'onlineReadOnly',
 			'staleReadOnly',
 		].includes(options.isolation)
-	)
+	) {
 		throw new TypeError('Unsupported query isolation.')
+	}
+
 	if (
 		options.syntax !== undefined &&
 		options.syntax !== Syntax.YQL_V1 &&
 		options.syntax !== Syntax.PG
-	)
+	) {
 		throw new TypeError('Unsupported query syntax.')
+	}
+
 	if (
 		options.responsePartLimitBytes !== undefined &&
 		(!Number.isSafeInteger(options.responsePartLimitBytes) ||
 			options.responsePartLimitBytes < 0 ||
 			options.responsePartLimitBytes > 32 * 1024 * 1024)
-	)
+	) {
 		throw new RangeError('responsePartLimitBytes must be an integer between 0 and 33554432.')
-	return { text, parameters: encoded, options: { ...options } }
+	}
+
+	let txControl: TransactionControl | undefined
+
+	if (transactionId) {
+		txControl = create(TransactionControlSchema, {
+			txSelector: { case: 'txId', value: transactionId },
+		})
+	} else if (options.isolation && options.isolation !== 'implicit') {
+		let settings = create(TransactionSettingsSchema, {
+			txMode:
+				options.isolation === 'onlineReadOnly'
+					? {
+							case: options.isolation,
+							value: {
+								allowInconsistentReads: options.allowInconsistentReads ?? false,
+							},
+						}
+					: { case: options.isolation, value: {} },
+		})
+
+		txControl = create(TransactionControlSchema, {
+			commitTx: true,
+			txSelector: { case: 'beginTx', value: settings },
+		})
+	}
+
+	let bytes = executeMethod.requestSerialize({
+		query: {
+			case: 'queryContent',
+			value: { syntax: options.syntax ?? Syntax.YQL_V1, text },
+		},
+		parameters: encoded,
+		execMode: ExecMode.EXECUTE,
+		statsMode: options.statsMode ?? StatsMode.UNSPECIFIED,
+		poolId: options.poolId ?? '',
+		responsePartLimitBytes: BigInt(options.responsePartLimitBytes ?? 1024 * 1024),
+		...(txControl ? { txControl } : {}),
+	})
+
+	return { text, bytes, options: { ...options } }
+}
+
+/** @internal Only SDK-owned retry callbacks may reuse an already encoded statement. */
+export function executePrepared<T extends ResultTypes = ResultTypes>(
+	executor: QueryExecutor,
+	prepared: PreparedQuery
+): Promise<QueryResult<T>> {
+	let attempt = executorAttempts.get(executor)
+
+	if (!attempt) {
+		throw new TypeError('An encoded query requires a QueryClient attempt.')
+	}
+
+	attempt.check()
+
+	return collect<T>(attempt.open<T[number]>(prepared))
 }
 
 function validateOperation(options: OperationOptions): void {
@@ -328,17 +424,21 @@ class Attempt implements Transaction {
 	): QueryStream<Row> {
 		this.check()
 		validateStatement(options)
+
 		if (
 			this.transactionId &&
 			(options.isolation !== undefined || options.allowInconsistentReads !== undefined)
-		)
+		) {
 			throw new TypeError(
 				'Transaction isolation belongs to retryTransaction(), not a statement.'
 			)
-		return this.open<Row>(request(text, parameters, options))
+		}
+
+		// Serialization owns the bytes before asynchronous work. A new callback attempt encodes anew.
+		return this.open<Row>(prepareQuery(text, parameters, options, this.transactionId))
 	}
 
-	open<Row>(prepared: Request): QueryStream<Row> {
+	open<Row>(prepared: PreparedQuery): QueryStream<Row> {
 		let timeout = timeoutSignal(prepared.options)
 		let stream: QueryStream<Row> = new QueryStream<Row>(
 			(signal, complete) => this.#read<Row>(prepared, signal, complete),
@@ -360,7 +460,7 @@ class Attempt implements Transaction {
 	}
 
 	async *#read<Row>(
-		prepared: Request,
+		prepared: PreparedQuery,
 		signal: AbortSignal,
 		complete: (summary: QuerySummary) => void
 	): AsyncGenerator<QueryPart<Row>> {
@@ -370,7 +470,6 @@ class Attempt implements Transaction {
 			yield* readQuery<Row>(
 				this.#driver,
 				this.#session,
-				this.transactionId,
 				prepared,
 				signal,
 				complete,
@@ -437,13 +536,17 @@ class Attempt implements Transaction {
 }
 
 function executorScope(attempt: Attempt): QueryExecutor {
-	return Object.freeze({
+	let executor = Object.freeze({
 		signal: attempt.signal,
 		sessionId: attempt.sessionId,
 		nodeId: attempt.nodeId,
 		execute: attempt.execute.bind(attempt),
 		stream: attempt.stream.bind(attempt),
 	})
+
+	executorAttempts.set(executor, attempt)
+
+	return executor
 }
 
 function transactionScope(attempt: Attempt): Transaction {
@@ -482,6 +585,12 @@ export class QueryClient implements AsyncDisposable, Disposable {
 	get signal(): AbortSignal {
 		return this.#destroyed.signal
 	}
+
+	/** Underlying transport, owned by the caller. */
+	get driver(): Driver {
+		return this.#driver
+	}
+
 	get closed(): boolean {
 		return this.#pool.closed
 	}
@@ -819,8 +928,7 @@ function tracedParts<T>(
 async function* readQuery<Row>(
 	driver: Driver,
 	session: Session,
-	transactionId: string,
-	prepared: Request,
+	prepared: PreparedQuery,
 	signal: AbortSignal,
 	complete: (summary: QuerySummary) => void,
 	idempotent: boolean,
@@ -828,31 +936,9 @@ async function* readQuery<Row>(
 ): AsyncGenerator<QueryPart<Row>> {
 	// oxlint-disable-next-line no-underscore-dangle
 	using _claim = session.claim()
-	let { text, parameters, options } = prepared
+	let { text, bytes, options } = prepared
 	let valueOptions = temporal ? { temporal } : undefined
-	let rpc = driver.createClient(QueryServiceDefinition, session.nodeId)
-	let txControl = transactionId
-		? create(TransactionControlSchema, { txSelector: { case: 'txId', value: transactionId } })
-		: options.isolation && options.isolation !== 'implicit'
-			? create(TransactionControlSchema, {
-					commitTx: true,
-					txSelector: {
-						case: 'beginTx',
-						value: {
-							txMode:
-								options.isolation === 'onlineReadOnly'
-									? {
-											case: options.isolation,
-											value: {
-												allowInconsistentReads:
-													options.allowInconsistentReads ?? false,
-											},
-										}
-									: { case: options.isolation, value: {} },
-						},
-					},
-				})
-			: undefined
+	let rpc = driver.createClient(encodedQueryService, session.nodeId)
 	let summary: QuerySummary = {}
 	let columns = new Map<number, readonly Column[]>()
 	let finished = false
@@ -886,34 +972,19 @@ async function* readQuery<Row>(
 		void traced.catch(() => {})
 	}
 	try {
-		let stream = rpc.executeQuery(
-			{
-				sessionId: session.id,
-				query: {
-					case: 'queryContent',
-					value: { syntax: options.syntax ?? Syntax.YQL_V1, text },
-				},
-				parameters,
-				execMode: ExecMode.EXECUTE,
-				statsMode: options.statsMode ?? StatsMode.UNSPECIFIED,
-				poolId: options.poolId ?? '',
-				responsePartLimitBytes: BigInt(options.responsePartLimitBytes ?? 1024 * 1024),
-				...(txControl ? { txControl } : {}),
-			},
-			{
-				signal,
-				onTrailer: (metadata) => {
-					summary.metadata = metadata
-					if (!signal.aborted && options.onMetadata) {
-						try {
-							options.onMetadata(metadata)
-						} catch (cause) {
-							throw new Error('Query metadata observer failed.', { cause })
-						}
+		let stream = rpc.executeQuery([session.encodedId, bytes], {
+			signal,
+			onTrailer: (metadata) => {
+				summary.metadata = metadata
+				if (!signal.aborted && options.onMetadata) {
+					try {
+						options.onMetadata(metadata)
+					} catch (cause) {
+						throw new Error('Query metadata observer failed.', { cause })
 					}
-				},
-			}
-		)
+				}
+			},
+		})
 		for await (let part of enter ? tracedParts(stream, enter) : stream) {
 			signal.throwIfAborted()
 			if (part.status !== Status.SUCCESS) {

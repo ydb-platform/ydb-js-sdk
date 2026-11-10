@@ -109,10 +109,12 @@ export function typeToString(type: Type): string {
 			return 'Void'
 		case TypeKind.PG_TYPE: {
 			let name = (type as PgType).typeName
-			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name))
+			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name)) {
 				throw new TypeError(
-					'A canonical Pg typeName is required for SQL declarations; use QueryClient with an explicit DECLARE for OID-only types'
+					'A canonical Pg typeName is required to format a PostgreSQL type as YQL'
 				)
+			}
+
 			return name
 		}
 		case TypeKind.OPTIONAL:

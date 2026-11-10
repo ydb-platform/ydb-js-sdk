@@ -34,8 +34,12 @@ await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 
 ### Именованные параметры {#examples-named-parameters}
 
+Передайте JS-значение по имени; SDK определит его тип YDB. В V7 тег `sql` больше не добавляет `DECLARE`. Если база или тип параметра требуют объявления, добавьте его в запрос.
+
 ```ts
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', 42)
+let id = 42
+
+await sql`SELECT $id AS id`.parameter('id', id)
 ```
 
 ### Получение статистики {#examples-stats}

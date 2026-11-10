@@ -33,6 +33,7 @@ test('Pg text, binary, null and OID-only parameters reach the server without JS 
 		[new Pg('42', type), '42'],
 		[new Pg(new Uint8Array([0, 0, 0, 42]), type), '42'],
 		[new Pg(null, type), null],
+		[new Pg('42', new PgType({ oid: 23 })), '42'],
 	] as const
 	for (let [value, expected] of cases) {
 		let rows = await sql<[PgRow]>`SELECT ${value} AS value`.signal(tc.signal)
