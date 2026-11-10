@@ -496,22 +496,6 @@ test('retriever invocations propagate cancellation and isolate concurrent calls'
 	expect(execute).toHaveBeenCalledOnce()
 })
 
-test('retry settings apply only to the current operation', async () => {
-	let { client, retrySession } = fakeClient()
-	await using store = YDBVectorStore.fromExistingTable(embeddings, {
-		queryClient: client,
-		table: 'vectors',
-	})
-
-	await store.similaritySearchVectorWithScore([1, 2], 1, undefined, {
-		retry: { budget: 3 },
-	})
-	await store.similaritySearchVectorWithScore([1, 2], 1)
-
-	expect(retrySession.mock.calls[0]![0].retry).toEqual({ budget: 3 })
-	expect(retrySession.mock.calls[1]![0].retry).toBeUndefined()
-})
-
 test('non-finite search coordinates fail before schema setup', async () => {
 	let { client, execute } = fakeClient()
 	await using store = new YDBVectorStore(embeddings, {

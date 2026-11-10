@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import type { Abortable } from 'node:events'
 import { abortable, linkSignals } from '@ydbjs/abortable'
 import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
-import { type OperationOptions, QueryClient, identifier } from '@ydbjs/query'
+import { QueryClient, identifier } from '@ydbjs/query'
 import { Uint64 } from '@ydbjs/value/primitive'
 import { Float32Vector } from '@ydbjs/value/vector'
 import type { Callbacks } from '@langchain/core/callbacks/manager'
@@ -78,8 +79,6 @@ export interface YDBColumnMap {
 	/** Column that holds the packed `Float32` embedding bytes (`String`). Default: `"embedding"`. */
 	embedding: string
 }
-
-export type YDBVectorStoreOperationOptions = Pick<OperationOptions, 'signal' | 'retry'>
 
 /** Common options, independent of how the driver is provided. */
 export interface YDBVectorStoreBaseConfig {
@@ -226,7 +225,7 @@ export type YDBVectorStoreExistingTableConfig = Omit<
 export type YDBFilter = Record<string, string>
 
 /** IDs supplied here take precedence over document IDs. */
-export interface YDBVectorStoreAddOptions extends YDBVectorStoreOperationOptions {
+export interface YDBVectorStoreAddOptions extends Abortable {
 	ids?: string[]
 }
 
@@ -235,7 +234,7 @@ export interface YDBVectorStoreAddOptions extends YDBVectorStoreOperationOptions
  * table; otherwise rows matching `ids` are removed. Empty/omitted `ids` is a
  * no-op.
  */
-export type YDBVectorStoreDeleteParams = YDBVectorStoreOperationOptions & {
+export type YDBVectorStoreDeleteParams = Abortable & {
 	ids?: string[]
 	deleteAll?: boolean
 }
@@ -512,10 +511,7 @@ export class YDBVectorStore extends VectorStore {
 		return work
 	}
 
-	#run<T>(
-		options: YDBVectorStoreOperationOptions,
-		action: (operation: OperationOptions) => Promise<T>
-	): Promise<T> {
+	#run<T>(options: Abortable, action: (operation: Abortable) => Promise<T>): Promise<T> {
 		this.#assertOpen()
 
 		if (this.#client.closed) {
@@ -526,9 +522,8 @@ export class YDBVectorStore extends VectorStore {
 		let context = retrieverContext.getStore()
 		let inheritedSignal = context?.store === this ? context.signal : undefined
 		let linked = linkSignals(this.#client.signal, inheritedSignal, options.signal)
-		let operation: OperationOptions = {
+		let operation: Abortable = {
 			signal: linked.signal,
-			retry: options.retry,
 		}
 		let work = Promise.resolve().then(async () => {
 			try {
@@ -541,7 +536,7 @@ export class YDBVectorStore extends VectorStore {
 		return this.#track(work)
 	}
 
-	async #ensureTable(operation: OperationOptions): Promise<void> {
+	async #ensureTable(operation: Abortable): Promise<void> {
 		operation.signal?.throwIfAborted()
 		let initialization = this.#initialization
 
@@ -593,7 +588,7 @@ export class YDBVectorStore extends VectorStore {
 		}
 	}
 
-	async #runInit(operation: OperationOptions): Promise<void> {
+	async #runInit(operation: Abortable): Promise<void> {
 		let { id, document, embedding, metadata } = this.#columnMap
 
 		if (this.#dropExistingTable) {
@@ -693,7 +688,7 @@ export class YDBVectorStore extends VectorStore {
 		vectors: ArrayLike<number>[],
 		documents: Document[],
 		ids: string[],
-		operation: OperationOptions
+		operation: Abortable
 	): Promise<void> {
 		let batch = documents.map((doc, i) => {
 			return {
@@ -754,7 +749,7 @@ export class YDBVectorStore extends VectorStore {
 		k = 4,
 		filter?: this['FilterType'],
 		callbacks?: Callbacks,
-		options: YDBVectorStoreOperationOptions = {}
+		options: Abortable = {}
 	): Promise<Document[]> {
 		let results = await this.similaritySearchWithScore(query, k, filter, callbacks, options)
 
@@ -768,7 +763,7 @@ export class YDBVectorStore extends VectorStore {
 		k = 4,
 		filter?: this['FilterType'],
 		_callbacks?: Callbacks,
-		options: YDBVectorStoreOperationOptions = {}
+		options: Abortable = {}
 	): Promise<[Document, number][]> {
 		return this.#run(options, async (operation) => {
 			assertNonNegativeInteger('k', k)
@@ -797,7 +792,7 @@ export class YDBVectorStore extends VectorStore {
 		query: ArrayLike<number>,
 		k: number,
 		filter?: this['FilterType'],
-		options: YDBVectorStoreOperationOptions = {}
+		options: Abortable = {}
 	): Promise<[Document, number][]> {
 		return this.#run(options, (operation) => {
 			return this.#searchVector(query, k, filter, operation)
@@ -808,7 +803,7 @@ export class YDBVectorStore extends VectorStore {
 		query: ArrayLike<number>,
 		k: number,
 		filter: this['FilterType'] | undefined,
-		operation: OperationOptions
+		operation: Abortable
 	): Promise<[Document, number][]> {
 		assertNonNegativeInteger('k', k)
 
@@ -939,7 +934,7 @@ export class YDBVectorStore extends VectorStore {
 	 * All data is permanently deleted. The store can be reused after this call —
 	 * the next operation re-creates the table (without re-dropping).
 	 */
-	async drop(options: YDBVectorStoreOperationOptions = {}): Promise<void> {
+	async drop(options: Abortable = {}): Promise<void> {
 		return this.#run(options, async (operation) => {
 			// Wait out any in-flight CREATE TABLE so DROP doesn't race with it.
 			try {
@@ -974,7 +969,7 @@ export class YDBVectorStore extends VectorStore {
 	 * Requires `indexEnabled: true` AND `indexVectorDimension` in the store config.
 	 * Throws if the index already exists (re-building requires dropping first).
 	 */
-	async createVectorIndex(options: YDBVectorStoreOperationOptions = {}): Promise<void> {
+	async createVectorIndex(options: Abortable = {}): Promise<void> {
 		return this.#run(options, async (operation) => {
 			if (!this.#indexConfig.isEnabled()) {
 				throw new YDBVectorStoreOperationError(

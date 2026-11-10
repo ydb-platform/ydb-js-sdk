@@ -143,13 +143,12 @@ With `k: 0`, search returns an empty array without embedding or accessing the ta
 
 ## Cancellation and Timeouts
 
-Pass `signal` and `retry` options from `@ydbjs/query` to each operation. Use `AbortSignal.timeout(milliseconds)` for a time limit, or combine it with an application signal using `AbortSignal.any(...)`. Retrievers propagate the signal supplied to `invoke`, including when used inside a `RunnableSequence`.
+Pass `signal` to control cancellation for each operation. Use `AbortSignal.timeout(milliseconds)` for a time limit, or combine it with an application signal using `AbortSignal.any(...)`. Retrievers propagate the signal supplied to `invoke`, including when used inside a `RunnableSequence`.
 
 ```typescript
 await store.addDocuments(docs, {
   ids,
   signal: AbortSignal.timeout(30_000),
-  retry: { budget: 3 },
 })
 let results = await store.similaritySearch('query', 4, undefined, undefined, {
   signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),

@@ -145,13 +145,12 @@ let vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
 
 ## Отмена и ограничения времени
 
-Передавайте `signal` и `retry` из `@ydbjs/query` в каждый вызов. Для ограничения времени используйте `AbortSignal.timeout(миллисекунды)`. Через `AbortSignal.any(...)` его можно объединить с сигналом отмены приложения. Retriever передаёт сигнал из `invoke` операции стора, в том числе при вызове внутри `RunnableSequence`.
+Передавайте `signal`, чтобы управлять отменой операции. Для ограничения времени используйте `AbortSignal.timeout(миллисекунды)`. Через `AbortSignal.any(...)` его можно объединить с сигналом отмены приложения. Retriever передаёт сигнал из `invoke` операции стора, в том числе при вызове внутри `RunnableSequence`.
 
 ```typescript
 await store.addDocuments(docs, {
   ids,
   signal: AbortSignal.timeout(30_000),
-  retry: { budget: 3 },
 })
 let results = await store.similaritySearch('query', 4, undefined, undefined, {
   signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),

@@ -10,7 +10,6 @@ export {
 	type YDBVectorStoreExistingTableConfig,
 	type YDBVectorStoreDeleteParams,
 	type YDBVectorStoreAddOptions,
-	type YDBVectorStoreOperationOptions,
 	type YDBFilter,
 } from './vectorstore.js'
 
