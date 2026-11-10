@@ -20,7 +20,7 @@ The `createDrizzle` function (aliased as `drizzle`) is the entry point for creat
 ### Options
 
 - `connectionString`: YDB connection string (e.g., `grpc://localhost:2136/local`). The adapter automatically creates and manages a `Driver` instance.
-- `client`: existing `YdbExecutor` or `YdbTransactionalExecutor`.
+- Pass a shared `QueryClient` from `@ydbjs/query` or a custom `YdbExecutor` or `YdbTransactionalExecutor` as `client`.
 - `schema`: table and relations object for typed Relational Query API (`db.query.*`).
 - `logger`: `true` for default logger, `false` to disable, or a custom Drizzle `Logger`.
 - `casing`: Drizzle casing mode (`'snake_case'` or `'camelCase'`) passed to the dialect.
@@ -39,15 +39,14 @@ const db = createDrizzle({
 
 ### Lifecycle Management
 
-When a `connectionString` is used, the adapter owns the underlying driver. Use `$client` to manage its lifecycle:
-
-- `await db.$client.ready()`: ensures the driver is initialized and the database is accessible.
-- `db.$client.close()`: closes the session pool and releases driver resources. Synchronous; returns `void`. **Always call this when the application shuts down.**
+A connection string gives the adapter ownership of both the driver and the session pool. `new YdbDriver(driver)` owns only the pool. Call `db.$client.close?.()` to release adapter-owned resources. The owner of a shared `QueryClient` closes it.
 
 ```ts
-await db.$client.ready()
+await db.$client.ready?.()
+
 // ... application logic ...
-db.$client.close()
+
+db.$client.close?.()
 ```
 
 ## Execution Methods
@@ -73,6 +72,15 @@ const first = await db.get(sql`SELECT * FROM users LIMIT 1`)
 const values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
 
 const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
+```
+
+In a Drizzle SQL template, `${null}` renders as the YQL constant `NULL`. For prebuilt SQL with a bare null in the positional parameter list, use an explicit declaration.
+
+```ts
+await db.execute({
+  sql: 'DECLARE $p0 AS Null; SELECT $p0 AS value',
+  params: [null],
+})
 ```
 
 ## Query Builders
@@ -108,12 +116,13 @@ const rows = await db.select({ id: users.id, name: users.name }).from(users).lim
 
 ## Transactions
 
-The `db.transaction()` method ensures atomicity for a group of operations.
+Statements issued through `tx` and through the same `db` inside `db.transaction()` participate in one transaction. On a conflict such as `ABORTED`, the SDK may rerun the entire callback. Keep external side effects such as charging a payment outside the callback.
 
 ```ts
 await db.transaction(
   async (tx) => {
     await tx.insert(users).values({ id: 1, name: 'Alice' }).execute()
+
     await tx
       .update(stats)
       .set({ count: sql`count + 1` })
@@ -127,7 +136,6 @@ await db.transaction(
   {
     accessMode: 'read write',
     isolationLevel: 'serializableReadWrite',
-    idempotent: true,
   }
 )
 ```
@@ -136,7 +144,7 @@ await db.transaction(
 
 - `accessMode`: `'read write'` (default) or `'read only'`. Use `'read only'` for optimized read-heavy transactions.
 - `isolationLevel`: `'serializableReadWrite'` (recommended for YDB) or `'snapshotReadOnly'`.
-- `idempotent`: if `true`, the adapter can automatically retry the transaction on network errors.
+- `idempotent` defaults to `false`, including for read-only transactions. Set it to `true` only if replaying the whole callback is safe when the previous outcome is unknown.
 
 ## Relational Query API
 

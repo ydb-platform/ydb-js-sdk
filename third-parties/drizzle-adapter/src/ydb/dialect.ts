@@ -1077,13 +1077,36 @@ export class YdbDialect {
 	}
 
 	sqlToQuery(sqlValue: SQL, invokeSource?: 'indexes'): QueryWithTypings {
-		return sqlValue.toQuery({
+		let nulls = 0
+		let query = sqlValue.toQuery({
 			casing: this.#casing,
 			escapeName: this.escapeName,
-			escapeParam: this.escapeParam,
+			escapeParam: (index, value) => {
+				// The server cannot infer a standalone Null parameter from its wire type.
+				if (value === null) {
+					nulls++
+					return 'null'
+				}
+
+				return this.escapeParam(index - nulls)
+			},
 			escapeString: this.escapeString,
 			prepareTyping: this.prepareTyping,
 			invokeSource,
 		})
+
+		if (nulls) {
+			if (query.typings) {
+				query.typings = query.typings.filter((_, index) => {
+					return query.params[index] !== null
+				})
+			}
+
+			query.params = query.params.filter((value) => {
+				return value !== null
+			})
+		}
+
+		return query
 	}
 }

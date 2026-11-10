@@ -35,8 +35,11 @@ Requires Node.js 20.19+ and `drizzle-orm@^0.45.2`.
   | `@ydbjs/drizzle-adapter/sql`      | YQL expression helpers (hash UDFs, `currentUtc*`, `random*`, `unwrap`, `maxOf`/`minOf`, `Knn::*`, set operators, pragmas, scripts) |
   | `@ydbjs/drizzle-adapter/migrator` | `migrate()` plus `build*Sql` DDL builders and migration types                                                                      |
 
-- **Driver ownership**: `createDrizzle({ connectionString })` owns the driver and closes it with `db.$client.close?.()`. Pass `{ driver }` to share an existing `YdbDriver` with other YDB clients.
-- **Query execution**: all builders go through `YdbSession`, which uses the same driver/pool as `@ydbjs/query` under the hood.
+- `createDrizzle({ connectionString })` owns the driver and session pool. Call `db.$client.close?.()` to close them. `new YdbDriver(driver)` owns only its pool.
+- Pass a configured `QueryClient` to `drizzle(client, { schema })` or `drizzle({ client, schema })` to share its session pool, admission limits, and Temporal decoding. Its owner closes the client and driver.
+- The native Drizzle driver reads parameter types and values on each attempt. Changes to a buffer, a typed value, or the parameter array between attempts affect the retried request. To repeat identical inputs, keep those inputs unchanged until the operation finishes. If you call `QueryClient.retrySession()` directly, each attempt uses the parameters your callback supplies to `session.execute()`.
+- `db.transaction(async (tx) => ...)` retries the whole callback when the SDK can replay it. The callback constructs its statements and parameter values again on each attempt. Statements on `tx` and on the same `db` inside the callback use that transaction. To group Drizzle statements in a transaction, use this callback. A tagged client's `sql.do()` and `sql.begin()` scopes apply only to tagged queries.
+- Generated YQL uses the `NULL` literal for JavaScript `null` and binds other parameter values separately from the query text. For a prebuilt query with positional parameters, declare a bare null explicitly, for example `db.execute({ sql: 'DECLARE $p0 AS Null; SELECT $p0 AS value', params: [null] })`.
 - **Result records**: mapped rows and nested selection groups use `Object.create(null)`. Selected names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to check field presence; records do not inherit object methods. Custom executor input rows still accept ordinary objects.
 - **Migrations**: `migrate()` records every applied migration in a YDB table; with `migrationLock` enabled, parallel deploy jobs coordinate through a lock table instead of racing.
 
@@ -130,34 +133,13 @@ await db.transaction(
 )
 ```
 
-Transactions are not nestable through the adapter — open one boundary at the top of the unit of work and pass `tx` down. Supported isolations are `serializableReadWrite` and `snapshotReadOnly` (`snapshotReadOnly` is read-only by definition; the adapter rejects mutations under it).
+Start the transaction at the top of the unit of work and pass `tx` to helpers. The native adapter supports `serializableReadWrite` and `snapshotReadOnly`.
 
-#### When to use `idempotent: true`
+#### Transaction retries
 
-`idempotent: true` opts the transaction into the `@ydbjs/retry` policy: on a retryable YDB failure the **entire callback re-runs from scratch**, not just the failed statement. Set it only when re-running the whole callback is safe.
+On a conflict such as `ABORTED`, the SDK can replay the entire callback with a fresh transaction. Keep external side effects such as charging a payment outside that callback.
 
-```ts
-// Safe — only YDB mutations inside the callback
-await db.transaction(
-  async (tx) => {
-    await tx.insert(events).values({/* ... */}).execute()
-  },
-  { isolationLevel: 'serializableReadWrite', idempotent: true }
-)
-```
-
-```ts
-// UNSAFE — the Stripe charge will fire twice on retry
-await db.transaction(
-  async (tx) => {
-    await stripe.charges.create({/* ... */}) // external side effect!
-    await tx.insert(payments).values({/* ... */}).execute()
-  },
-  { idempotent: true } // ← don't do this
-)
-```
-
-When in doubt, leave `idempotent` unset and handle the retryable error in your own code.
+`idempotent` defaults to `false`, including for read-only transactions. Set it to `true` only if replaying the whole callback is safe even when the outcome of the previous attempt is unknown. For example, an upsert of fixed values at a stable primary key can be repeated.
 
 ### YQL Helpers
 

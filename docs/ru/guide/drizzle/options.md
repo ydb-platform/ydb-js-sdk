@@ -21,7 +21,7 @@ let db = createDrizzle({
 Опции клиента:
 
 - `connectionString`: создает собственный `YdbDriver` на основе строки подключения.
-- `client`: существующий `YdbExecutor` или `YdbTransactionalExecutor`.
+- В `client` можно передать общий `QueryClient` из `@ydbjs/query` или собственный `YdbExecutor` либо `YdbTransactionalExecutor`.
 - `schema`: включает типизированный Relational Query API (`db.query.*`).
 - `logger`: `true`, `false` или кастомный логгер Drizzle.
 - `casing`: режим именования Drizzle (`'snake_case'` или `'camelCase'`) для диалекта.
@@ -46,7 +46,7 @@ let db = createDrizzle({
 
 - `accessMode`: `'read write' | 'read only'`.
 - `isolationLevel`: `'serializableReadWrite' | 'snapshotReadOnly'`.
-- `idempotent`: если `true`, адаптер сможет автоматически перезапустить транзакцию при сетевых ошибках.
+- По умолчанию `idempotent` равен `false`, в том числе для читающей транзакции. Укажите `true`, только если весь callback можно безопасно повторить при неизвестном исходе предыдущей попытки.
 
 ## Опции схемы
 
