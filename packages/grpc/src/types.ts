@@ -3,12 +3,14 @@ import type { ConnectionOptions } from 'node:tls'
 
 export type MetadataValue = string | Uint8Array
 export type Metadata = Readonly<Record<string, MetadataValue | readonly MetadataValue[]>>
+/** One gRPC message. Byte views are sent directly and must remain immutable. */
+export type SerializedMessage = Uint8Array | readonly Uint8Array[]
 
 export interface MethodDefinition<RequestMessage = any, ResponseMessage = any> {
 	path: string
 	requestStream: boolean
 	responseStream: boolean
-	requestSerialize(request: RequestMessage): Uint8Array
+	requestSerialize(request: RequestMessage): SerializedMessage
 	responseDeserialize(bytes: Uint8Array): ResponseMessage
 	requestDeserialize?: (bytes: Uint8Array) => RequestMessage
 	responseSerialize?: (response: ResponseMessage) => Uint8Array
