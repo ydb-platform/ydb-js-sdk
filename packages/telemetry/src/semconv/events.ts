@@ -23,3 +23,17 @@ export let ATTR_YDB_DRIVER_CONNECTION_PESSIMIZATION_DURATION =
 
 export let ATTR_YDB_DRIVER_CONNECTION_RETIRE_REASON = 'ydb.driver.connection.retire.reason'
 export let ATTR_YDB_DRIVER_CONNECTION_REMOVE_REASON = 'ydb.driver.connection.remove.reason'
+
+// Bridge (2DC) pile roster change, recorded on the discovery span the round
+// fires within.
+export let EVENT_YDB_DRIVER_PILE_CHANGED = 'ydb.driver.pile.changed'
+
+export let ATTR_YDB_DRIVER_PILE_PRIMARY_BEFORE = 'ydb.driver.pile.primary_before'
+export let ATTR_YDB_DRIVER_PILE_PRIMARY_AFTER = 'ydb.driver.pile.primary_after'
+// Full rosters as `name:STATUS` strings. The producer fires this channel on ANY
+// roster or status difference, not just a primary handover, so the scalar
+// primary_before/after alone would describe nothing for a status-only change
+// (and nothing at all when no pile is PRIMARY — the split-brain window this
+// event exists to trace). Span-event attributes are not cardinality-budgeted.
+export let ATTR_YDB_DRIVER_PILE_BEFORE = 'ydb.driver.pile.before'
+export let ATTR_YDB_DRIVER_PILE_AFTER = 'ydb.driver.pile.after'

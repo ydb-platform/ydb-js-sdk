@@ -1,78 +1,34 @@
 import { channel, tracingChannel } from 'node:diagnostics_channel'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
-import { type MetricAttributes, metrics } from '@opentelemetry/api'
-import {
-	AggregationTemporality,
-	type DataPoint,
-	type Histogram as HistogramData,
-	InMemoryMetricExporter,
-	MeterProvider,
-	PeriodicExportingMetricReader,
-	type ResourceMetrics,
-} from '@opentelemetry/sdk-metrics'
+import { metrics } from '@opentelemetry/api'
+import type { Histogram as HistogramData } from '@opentelemetry/sdk-metrics'
 
 import { YdbInstrumentation } from '../src/index.ts'
+import {
+	type MetricHarness,
+	createMetricHarness,
+	driverIdentity,
+	findPoint,
+} from '../src/telemetry.fixtures.ts'
 
-let exporter: InMemoryMetricExporter
-let reader: PeriodicExportingMetricReader
-let provider: MeterProvider
+let harness: MetricHarness
 let instrumentation: YdbInstrumentation
 
 beforeEach(() => {
-	exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE)
-	reader = new PeriodicExportingMetricReader({
-		exporter,
-		// Long enough that it never auto-fires within a test; we drive flushes
-		// explicitly via provider.forceFlush().
-		exportIntervalMillis: 60_000,
-		exportTimeoutMillis: 5_000,
-	})
-	provider = new MeterProvider({ readers: [reader] })
-	metrics.setGlobalMeterProvider(provider)
+	harness = createMetricHarness()
+	metrics.setGlobalMeterProvider(harness.provider)
 	instrumentation = new YdbInstrumentation()
 	instrumentation.enable()
 })
 
 afterEach(async () => {
 	instrumentation.disable()
-	await provider.shutdown()
+	await harness.shutdown()
 	metrics.disable()
 })
 
-let driverIdentity = {
-	address: '127.0.0.1',
-	port: 2136,
-	database: '/local',
-	registeredAt: 0,
-}
-
-async function collect(): Promise<ResourceMetrics> {
-	await provider.forceFlush()
-	let exported = exporter.getMetrics()
-	return exported[exported.length - 1]
-}
-
-function findInstrument(rm: ResourceMetrics, name: string) {
-	for (let scope of rm.scopeMetrics) {
-		let found = scope.metrics.find((inst) => inst.descriptor.name === name)
-		if (found) return found
-	}
-	throw new Error(`no instrument named ${name}`)
-}
-
-function findPoint<T>(rm: ResourceMetrics, name: string, filter: MetricAttributes): DataPoint<T> {
-	let inst = findInstrument(rm, name)
-	let point = (inst.dataPoints as DataPoint<T>[]).find((p) =>
-		Object.entries(filter).every(([k, v]) => (p.attributes as Record<string, unknown>)[k] === v)
-	)
-	if (!point) {
-		throw new Error(
-			`no datapoint for ${name} matching ${JSON.stringify(filter)}. Got: ${JSON.stringify(inst.dataPoints.map((p) => p.attributes))}`
-		)
-	}
-	return point
-}
+let collect = async () => (await harness.collect())!
 
 // --- duration histogram ----------------------------------------------------
 
