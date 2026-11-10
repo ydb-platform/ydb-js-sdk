@@ -35,7 +35,7 @@ let id = new Int64(42n)
 let absentCount = new Optional(null, new Int32Type())
 ```
 
-Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, `/tagged`, `/void`, and `/pg`.
+Value and type classes are exported from their subpaths: `@ydbjs/value/primitive`, `/optional`, `/list`, `/dict`, `/tuple`, `/struct`, `/null`, `/decimal`, `/empty`, `/tagged`, `/void`, `/pg`, and `/vector`.
 The package root exports the conversion functions and the `Type` and `Value` interfaces.
 
 ### Explicit container types
@@ -179,6 +179,47 @@ The tag is available through `.type.tag`, and the wrapped value through `.item`.
 YDB exports Tagged results but does not accept Tagged query parameter types.
 QueryClient and the tagged-SQL API reject Tagged anywhere in a parameter schema before sending ExecuteQuery; pass the inner value and apply `AsTagged` in the query when needed.
 
+### Vectors
+
+Use the vector constructors to send coordinates in the compact binary format understood by [YDB vector search](https://ydb.tech/docs/en/yql/reference/udf/list/knn):
+
+```ts
+import { BitVector, Float32Vector, Int8Vector, Uint8Vector } from '@ydbjs/value/vector'
+
+let embedding = new Float32Vector([0.25, -0.5, 1])
+let signed = new Int8Vector(new Int8Array([-128, 0, 127]))
+let unsigned = new Uint8Vector(new Uint8Array([0, 128, 255]))
+let bits = new BitVector([1, 0, 1])
+let signs = BitVector.fromSigns([-0.5, 0, 0.25])
+```
+
+These Values have YDB type `String`; they pack coordinates directly without creating a Value object for each coordinate.
+Constructors accept numeric arrays and typed-array views, copy their coordinates into an owned buffer and validate the selected representation.
+Float32Vector preserves IEEE754 values, including NaN and infinities, rounds to Float32 and rejects overflow of a finite coordinate; integer vectors reject fractional or out-of-range coordinates.
+Numeric vectors support zero dimensions; BitVector requires at least one coordinate because the server's bit-vector reader rejects an empty payload.
+The codec represents binary data; consumers such as LangChain separately require non-empty, finite embeddings suitable for search.
+BitVector accepts only 0 and 1; `fromSigns` maps positive finite coordinates to 1 and other finite coordinates to 0, matching `Knn::ToBinaryStringBit`.
+
+Every vector exposes `dimension`, packed `value` bytes and `toTypedArray()`.
+The returned typed array owns its storage; changing it does not change the vector.
+BitVector also has `at(index)` for reading a coordinate without expanding the packed data.
+`Float32Vector.fromBytes(bytes)` and the equivalent methods on other vector classes validate and borrow an existing packed buffer, including its format marker; the caller must keep it immutable.
+Passing a `Bytes` Value to a constructor has the same borrowing behavior.
+Ordinary `Uint8Array` input to a vector constructor always means coordinates, not encoded bytes.
+
+Known `Tagged<String, tag>` results are projected automatically by `toJs`, QueryClient and tagged SQL:
+
+| Tag           | JavaScript result         |
+| ------------- | ------------------------- |
+| `FloatVector` | `Float32Array`            |
+| `Int8Vector`  | `Int8Array`               |
+| `Uint8Vector` | `Uint8Array`              |
+| `BitVector`   | Compact `BitVector` Value |
+
+An untagged `String` remains binary data; the SDK does not guess its contents.
+Unknown tags remain Tagged Values, and malformed payloads under a recognized vector tag throw.
+`fromYdb` still reconstructs the original Tagged schema and value; only the native projection changes.
+
 ## Infer types from JavaScript
 
 | JavaScript input                   | Inferred YDB type              | Notes                                                                              |
@@ -194,6 +235,7 @@ QueryClient and the tagged-SQL API reject Tagged anywhere in a parameter schema 
 | `Temporal.ZonedDateTime`           | TzTimestamp                    | ISO calendar and IANA timezone; use `TzTimestamp64` for the extended range         |
 | `Temporal.Duration`                | Interval                       | Exact microseconds without calendar units; use `Interval64` for the extended range |
 | `Uint8Array`                       | String                         | Binary data                                                                        |
+| `Int8Array`                        | `List<Int8>`                   | Use `Int8Vector` for compact vector storage                                        |
 | `Float32Array` / `Float64Array`    | `List<Float>` / `List<Double>` |                                                                                    |
 | `BigInt64Array` / `BigUint64Array` | `List<Int64>` / `List<Uint64>` |                                                                                    |
 | `null`                             | Null                           | Does not infer an Optional item type                                               |
@@ -299,7 +341,7 @@ toJs(result) // null
 `toJs(value)` projects a typed Value into JavaScript data.
 This projection can lose information: different Optional levels become `null`, Lists and Tuples become arrays, and legacy Timestamp results lose sub-millisecond precision by default.
 Use the typed Value when that distinction matters.
-Tagged, Pg and Void have no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
+Except for the [known vector tags](#vectors), Tagged, Pg and Void have no automatic native projection: `toJs` returns the SDK Value unchanged, retaining its schema and typed fields.
 This rule also applies recursively to those values inside arrays, structs, maps and Optionals.
 
 | YDB type                                                               | JavaScript result                              |
@@ -321,7 +363,8 @@ This rule also applies recursively to those values inside arrays, structs, maps 
 | Dict, EmptyDict                                                        | `Map`                                          |
 | Struct                                                                 | Object with a null prototype                   |
 | Null                                                                   | `null`                                         |
-| Tagged, Pg, Void                                                       | The same SDK Value                             |
+| Tagged vector String                                                   | See [Vectors](#vectors)                        |
+| Other Tagged, Pg, Void                                                 | The same SDK Value                             |
 
 Decimal and DyNumber results remain strings to preserve numeric precision.
 `Interval` accepts safe integer numbers of microseconds; the supported YDB Interval range fits exactly in a JavaScript number.

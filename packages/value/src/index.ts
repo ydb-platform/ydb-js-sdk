@@ -6,6 +6,7 @@ import {
 	isDate,
 	isFloat32Array,
 	isFloat64Array,
+	isInt8Array,
 	isMap,
 	isSet,
 	isUint8Array,
@@ -31,6 +32,8 @@ import {
 	Int32,
 	Int64,
 	Int64Type,
+	Int8,
+	Int8Type,
 	Interval,
 	Primitive,
 	PrimitiveType,
@@ -42,11 +45,13 @@ import {
 	Uuid,
 } from './primitive.js'
 import { Struct, StructType } from './struct.js'
+import type { Tagged } from './tagged.js'
 import { getTemporal, parseTimezoneDate } from './temporal.js'
 import { Tuple } from './tuple.js'
 import { type Type, TypeKind } from './type.js'
 import { uuidFromBigInts } from './uuid.js'
 import type { Value } from './value.js'
+import { BitVector, Float32Vector, Int8Vector, Uint8Vector } from './vector.js'
 
 export type JSValue =
 	| Value
@@ -61,6 +66,7 @@ export type JSValue =
 	| Temporal.ZonedDateTime
 	| Temporal.Duration
 	| Uint8Array
+	| Int8Array
 	| Float32Array
 	| Float64Array
 	| BigInt64Array
@@ -160,6 +166,15 @@ export function fromJs(native: JSValue | Value): Value {
 				return new List(
 					Array.from(native, (v) => new Float(v)),
 					new ListType(new FloatType())
+				)
+			}
+
+			if (isInt8Array(native)) {
+				return new List(
+					Array.from(native, (value) => {
+						return new Int8(value)
+					}),
+					new ListType(new Int8Type())
 				)
 			}
 
@@ -360,6 +375,32 @@ function convert(value: Value, temporal?: typeof Temporal): JSValue {
 					return value
 			}
 			break
+		case TypeKind.TAGGED: {
+			let tagged = value as Tagged
+			let itemType = tagged.item.type
+
+			if (
+				itemType.kind !== TypeKind.PRIMITIVE ||
+				(itemType as PrimitiveType).id !== Ydb.Type_PrimitiveTypeId.STRING
+			) {
+				return value
+			}
+
+			let bytes = (tagged.item as Bytes).value as Uint8Array
+
+			switch (tagged.type.tag) {
+				case 'FloatVector':
+					return Float32Vector.decode(bytes)
+				case 'Int8Vector':
+					return Int8Vector.decode(bytes)
+				case 'Uint8Vector':
+					return Uint8Vector.decode(bytes)
+				case 'BitVector':
+					return BitVector.fromBytes(bytes)
+				default:
+					return value
+			}
+		}
 		case TypeKind.OPTIONAL: {
 			let { item } = value as Optional<Type>
 			return item === null ? null : convert(item, temporal)
