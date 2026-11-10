@@ -1,3 +1,4 @@
+import { addAbortListener } from 'node:events'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import { Driver } from '@ydbjs/core'
 import { QueryClient } from '@ydbjs/query'
@@ -130,9 +131,14 @@ test('UPSERT replaces existing document on same ID', async () => {
 })
 
 test('LangChain indexing preserves record IDs and removes stale vectors during cleanup', async (tc) => {
+	await using client = new QueryClient(driver)
+	// LangChain index() does not forward a signal to vector-store methods.
+	using _ = addAbortListener(tc.signal, () => {
+		client.destroy()
+	})
 	await using store = makeStore({
+		queryClient: client,
 		dropExistingTable: true,
-		operationOptions: { signal: tc.signal },
 	})
 	let clock = 0
 	let records = new Map<string, number>()
@@ -276,23 +282,35 @@ test('multi-key metadata filter narrows results to all matching keys', async () 
 test('metadata filters distinguish nested JSON paths from quoted literal keys', async (tc) => {
 	await using store = makeStore({
 		dropExistingTable: true,
-		operationOptions: { signal: tc.signal },
 	})
-	await store.addDocuments([
-		new Document({
-			id: 'nested',
-			pageContent: 'nested tenant',
-			metadata: { tenant: { id: 'match' }, 'tenant.id': 'other' },
-		}),
-		new Document({
-			id: 'literal',
-			pageContent: 'literal tenant',
-			metadata: { tenant: { id: 'other' }, 'tenant.id': 'match' },
-		}),
-	])
+	await store.addDocuments(
+		[
+			new Document({
+				id: 'nested',
+				pageContent: 'nested tenant',
+				metadata: { tenant: { id: 'match' }, 'tenant.id': 'other' },
+			}),
+			new Document({
+				id: 'literal',
+				pageContent: 'literal tenant',
+				metadata: { tenant: { id: 'other' }, 'tenant.id': 'match' },
+			}),
+		],
+		{ signal: tc.signal }
+	)
 
-	let nested = await store.similaritySearch('tenant', 10, { 'tenant.id': 'match' })
-	let literal = await store.similaritySearch('tenant', 10, { '"tenant.id"': 'match' })
+	let nested = await store.similaritySearch('tenant', 10, { 'tenant.id': 'match' }, undefined, {
+		signal: tc.signal,
+	})
+	let literal = await store.similaritySearch(
+		'tenant',
+		10,
+		{ '"tenant.id"': 'match' },
+		undefined,
+		{
+			signal: tc.signal,
+		}
+	)
 	expect(
 		nested.map((doc) => {
 			return doc.id

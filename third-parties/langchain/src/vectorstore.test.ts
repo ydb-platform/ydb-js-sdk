@@ -496,37 +496,20 @@ test('retriever invocations propagate cancellation and isolate concurrent calls'
 	expect(execute).toHaveBeenCalledOnce()
 })
 
-test('timeout includes embedding and per-call retry overrides configured defaults', async () => {
-	let controller = new AbortController()
-	using timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
-	let { client, execute, retrySession } = fakeClient()
-	let embedding = Promise.withResolvers<number[]>()
-	let started = Promise.withResolvers<void>()
-	await using store = YDBVectorStore.fromExistingTable(
-		{
-			...embeddings,
-			embedQuery: () => {
-				started.resolve()
-				return embedding.promise
-			},
-		},
-		{
-			queryClient: client,
-			table: 'vectors',
-			operationOptions: { timeout: 100, retry: { budget: 1 } },
-		}
-	)
-	let search = store.similaritySearch('one', 1, undefined, undefined, { timeout: 10 })
-	await started.promise
-	expect(timeout).toHaveBeenCalledWith(10)
-	let error = new DOMException('Operation timeout', 'TimeoutError')
-	controller.abort(error)
-	await expect(search).rejects.toBe(error)
-	expect(execute).not.toHaveBeenCalled()
-	timeout.mockReturnValue(new AbortController().signal)
-	await store.similaritySearchVectorWithScore([1, 2], 1, undefined, { retry: { budget: 3 } })
-	expect(timeout).toHaveBeenLastCalledWith(100)
+test('retry settings apply only to the current operation', async () => {
+	let { client, retrySession } = fakeClient()
+	await using store = YDBVectorStore.fromExistingTable(embeddings, {
+		queryClient: client,
+		table: 'vectors',
+	})
+
+	await store.similaritySearchVectorWithScore([1, 2], 1, undefined, {
+		retry: { budget: 3 },
+	})
+	await store.similaritySearchVectorWithScore([1, 2], 1)
+
 	expect(retrySession.mock.calls[0]![0].retry).toEqual({ budget: 3 })
+	expect(retrySession.mock.calls[1]![0].retry).toBeUndefined()
 })
 
 test('non-finite search coordinates fail before schema setup', async () => {
@@ -738,26 +721,6 @@ test('malformed JavaScript vectors fail before schema setup', async () => {
 	expect(execute).not.toHaveBeenCalled()
 })
 
-test.each([null, [], 'options', 5, true])(
-	'rejects malformed operationOptions %j before connection setup',
-	(operationOptions) => {
-		let connectionRead = vi.fn(() => {
-			throw new Error('Connection setup must not start')
-		})
-		let config = {
-			operationOptions,
-			get connectionString() {
-				return connectionRead()
-			},
-		} as unknown as YDBVectorStoreConfig
-
-		expect(() => {
-			return new YDBVectorStore(embeddings, config)
-		}).toThrow('operationOptions must be an object')
-		expect(connectionRead).not.toHaveBeenCalled()
-	}
-)
-
 test('a closed query client rejects operations before embedding', async () => {
 	await using client = new QueryClient(stubDriver)
 	let embedDocuments = vi.fn(embeddings.embedDocuments)
@@ -799,53 +762,41 @@ test('destroying the query client cancels pending embeddings without later write
 	expect(retrySession).not.toHaveBeenCalled()
 })
 
-test('direct and composed retrievers apply the Runnable budget together with store defaults', async () => {
-	let { client } = fakeClient()
-	let started = Promise.withResolvers<void>()
-	let pendingEmbedding = Promise.withResolvers<number[]>()
-	let timers: { milliseconds: number; controller: AbortController }[] = []
-	using timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
-		let controller = new AbortController()
-		timers.push({ milliseconds, controller })
-		return controller.signal
-	})
-	await using store = YDBVectorStore.fromExistingTable(
-		{
-			...embeddings,
-			embedQuery: () => {
-				started.resolve()
-				return pendingEmbedding.promise
+test.each(['direct', 'sequence'] as const)(
+	'%s retriever forwards the caller signal through embedding',
+	async (mode) => {
+		let { client, execute } = fakeClient()
+		let started = Promise.withResolvers<void>()
+		let embedding = Promise.withResolvers<number[]>()
+		await using store = YDBVectorStore.fromExistingTable(
+			{
+				...embeddings,
+				embedQuery: () => {
+					started.resolve()
+					return embedding.promise
+				},
 			},
-		},
-		{
-			queryClient: client,
-			table: 'vectors',
-			operationOptions: { timeout: 100 },
-		}
-	)
-	let retriever = store.asRetriever()
-	let identity = RunnableLambda.from((input: string) => {
-		return input
-	})
-	let sequence = RunnableSequence.from([identity, retriever])
-	let reason = new DOMException('Store timeout', 'TimeoutError')
-	let direct = retriever.invoke('direct', { timeout: 200 })
-	await started.promise
-	expect(timeout.mock.calls).toEqual([[200], [100]])
-	timers[1]!.controller.abort(reason)
-	await expect(direct).rejects.toBe(reason)
-	expect(timers[0]!.controller.signal.aborted).toBe(false)
+			{ queryClient: client, table: 'vectors' }
+		)
+		let retriever = store.asRetriever()
+		let identity = RunnableLambda.from((input: string) => {
+			return input
+		})
+		let runnable = mode === 'direct' ? retriever : RunnableSequence.from([identity, retriever])
+		let controller = new AbortController()
 
-	started = Promise.withResolvers<void>()
-	timers = []
-	timeout.mockClear()
-	let composed = sequence.invoke('composed', { timeout: 200 })
-	await started.promise
-	expect(timeout.mock.calls).toEqual([[200], [100]])
-	timers[1]!.controller.abort(reason)
-	await expect(composed).rejects.toBe(reason)
-	expect(timers[0]!.controller.signal.aborted).toBe(false)
-})
+		let search = runnable.invoke('query', { signal: controller.signal })
+		await started.promise
+
+		let reason = new Error('Cancelled retrieval')
+		controller.abort(reason)
+
+		await expect(search).rejects.toBe(reason)
+		embedding.resolve([1, 2])
+		await embedding.promise
+		expect(execute).not.toHaveBeenCalled()
+	}
+)
 
 test('empty embeddings fail before schema setup', async () => {
 	let { client, execute } = fakeClient()

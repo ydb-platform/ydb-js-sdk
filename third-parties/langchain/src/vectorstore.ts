@@ -79,12 +79,10 @@ export interface YDBColumnMap {
 	embedding: string
 }
 
-export type YDBVectorStoreOperationOptions = Pick<OperationOptions, 'signal' | 'timeout' | 'retry'>
+export type YDBVectorStoreOperationOptions = Pick<OperationOptions, 'signal' | 'retry'>
 
 /** Common options, independent of how the driver is provided. */
 export interface YDBVectorStoreBaseConfig {
-	/** Defaults for each operation; timeout includes embedding, schema setup and all batches. */
-	operationOptions?: YDBVectorStoreOperationOptions
 	/** YDB table name. Defaults to `"langchain_vectors"`. */
 	table?: string
 	/**
@@ -417,7 +415,6 @@ export class YDBVectorStore extends VectorStore {
 
 	#closing?: Promise<void>
 	#pending = new Set<Promise<unknown>>()
-	#operationOptions: YDBVectorStoreOperationOptions
 
 	override _vectorstoreType(): string {
 		return 'ydb'
@@ -425,18 +422,6 @@ export class YDBVectorStore extends VectorStore {
 
 	constructor(embeddings: EmbeddingsInterface, config: YDBVectorStoreConfig) {
 		super(embeddings, config)
-		let operationOptions = config.operationOptions
-
-		if (
-			operationOptions !== undefined &&
-			(operationOptions === null ||
-				typeof operationOptions !== 'object' ||
-				Array.isArray(operationOptions))
-		) {
-			throw new YDBVectorStoreConfigError('operationOptions must be an object.')
-		}
-
-		this.#operationOptions = { ...operationOptions }
 
 		this.#table = quotedName(config.table ?? 'langchain_vectors')
 		this.#columnMap = {
@@ -540,20 +525,10 @@ export class YDBVectorStore extends VectorStore {
 
 		let context = retrieverContext.getStore()
 		let inheritedSignal = context?.store === this ? context.signal : undefined
-		let timeout = options.timeout ?? this.#operationOptions.timeout
-		if (timeout !== undefined && (!Number.isSafeInteger(timeout) || timeout < 0)) {
-			throw new YDBVectorStoreArgumentError('timeout must be a non-negative integer.')
-		}
-		let linked = linkSignals(
-			this.#client.signal,
-			this.#operationOptions.signal,
-			inheritedSignal,
-			options.signal,
-			timeout === undefined ? undefined : AbortSignal.timeout(timeout)
-		)
+		let linked = linkSignals(this.#client.signal, inheritedSignal, options.signal)
 		let operation: OperationOptions = {
 			signal: linked.signal,
-			retry: options.retry ?? this.#operationOptions.retry,
+			retry: options.retry,
 		}
 		let work = Promise.resolve().then(async () => {
 			try {
