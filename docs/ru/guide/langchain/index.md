@@ -9,6 +9,8 @@ description: 'YDB VectorStore для LangChain.js: KNN-поиск, фильтр�
 
 ## Установка
 
+Требуется Node.js `^22.15.0 || >=23.8.0`.
+
 ```bash
 npm install @ydbjs/langchain @langchain/core
 ```
@@ -27,7 +29,7 @@ await store.addDocuments([
   { pageContent: 'LangChain поддерживает YDB', metadata: { source: 'docs' } },
 ])
 
-const results = await store.similaritySearch('YDB векторный поиск', 4)
+let results = await store.similaritySearch('YDB векторный поиск', 4)
 console.log(results)
 ```
 
@@ -87,12 +89,12 @@ await store.similaritySearch('векторный поиск в YDB', 4)
 
 ```typescript
 // Создать стор и вставить документы за один вызов
-const store = await YDBVectorStore.fromDocuments(docs, embeddings, {
+let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
 
 // Подключиться к существующей таблице без CREATE TABLE
-const store = YDBVectorStore.fromExistingTable(embeddings, {
+let store = YDBVectorStore.fromExistingTable(embeddings, {
   driver,
   table: 'my_vectors',
 })
@@ -103,7 +105,7 @@ const store = YDBVectorStore.fromExistingTable(embeddings, {
 ```typescript
 import { Document } from '@langchain/core/documents'
 
-const ids = await store.addDocuments([
+let ids = await store.addDocuments([
   new Document({ pageContent: 'первый документ', metadata: { source: 'wiki' } }),
   new Document({ pageContent: 'второй документ', metadata: { source: 'docs' }, id: 'my-id' }),
 ])
@@ -111,32 +113,46 @@ const ids = await store.addDocuments([
 // ids[1] → 'my-id'
 ```
 
-- Документы без явного `id` получают случайный UUID.
-- Повторная вставка документа с тем же `id` **заменяет** его (семантика UPSERT).
-- Батчи больше 32 документов разбиваются автоматически.
+`addDocuments(documents, { ids })` и `addVectors(vectors, documents, { ids })` принимают явные идентификаторы. `options.ids` имеет приоритет над `Document.id`; без обоих значений стор генерирует UUID. Массив `ids` должен содержать по одной непустой строке на документ. Идентификаторы проверяются до обращения к модели эмбеддингов и создания таблицы.
+
+```typescript
+await store.addDocuments(docs, { ids: ['source-a', 'source-b'] })
+await store.addVectors(vectors, docs, { ids: ['source-a', 'source-b'] })
+```
+
+Повторная вставка с тем же ID заменяет документ (`UPSERT`). Это правило применяется и к ID, которые передаёт LangChain `index()` через `RecordManager`.
+
+`batchSize` ограничивает число документов и в запросе к модели эмбеддингов, и в записи в YDB; по умолчанию — 32. Пакеты обрабатываются последовательно и фиксируются отдельно. Если поздний пакет завершится с ошибкой, уже записанные документы останутся в таблице. Для повторного вызова используйте стабильные ID: автоматически сгенерированные UUID сохраняются при внутренних повторах записи, но новый вызов создаёт новые UUID.
+
+Эмбеддинги должны быть непустыми, содержать конечные значения Float32 и иметь одинаковую размерность в пределах одной загрузки. При включённом индексе размерность загрузки и поискового вектора должна совпадать с `indexVectorDimension`. Без индекса стор не определяет размерность существующих данных автоматически; при смене модели используйте таблицу с совместимыми эмбеддингами.
 
 ## Поиск по сходству
 
 ```typescript
 // Возвращает Document[]
-const docs = await store.similaritySearch('текст запроса', 4)
+let docs = await store.similaritySearch('текст запроса', 4)
 
 // Возвращает [Document, score][]
-const scored = await store.similaritySearchWithScore('текст запроса', 4)
+let scored = await store.similaritySearchWithScore('текст запроса', 4)
 
 // Поиск по готовому вектору эмбеддинга
-const vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
+let vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
 ```
+
+При `k: 0` методы поиска возвращают пустой массив без запроса к модели эмбеддингов и без обращения к таблице. Если YDB возвращает `null` или некорректный score, поиск завершается ошибкой вместо подмены результата нулём.
 
 ## Фильтрация по метаданным
 
-Каждая пара ключ-значение превращается в предикат `JSON_VALUE`; несколько пар объединяются через `AND`.
+Каждая пара ключ-значение превращается в предикат `JSON_VALUE`; несколько пар объединяются через `AND`. Значения фильтра должны быть строками. Ключ — относительный JSONPath: `tenant.id` выбирает поле `id` внутри объекта `tenant`, а `'"tenant.id"'` — поле с буквальным именем `tenant.id`.
 
 ```typescript
-const results = await store.similaritySearch('запрос', 4, {
+let results = await store.similaritySearch('запрос', 4, {
   source: 'docs',
   lang: 'ru',
 })
+
+await store.similaritySearch('query', 4, { 'tenant.id': 'nested-value' })
+await store.similaritySearch('query', 4, { '"tenant.id"': 'literal-value' })
 ```
 
 > **Примечание:** фильтрация по метаданным несовместима с `indexEnabled: true`.
@@ -154,7 +170,7 @@ const results = await store.similaritySearch('запрос', 4, {
 ```typescript
 import { YDBVectorStore, YDBSearchStrategy } from '@ydbjs/langchain'
 
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   strategy: YDBSearchStrategy.EuclideanDistance,
 })
@@ -165,10 +181,10 @@ const store = new YDBVectorStore(embeddings, {
 Создайте индекс `vector_kmeans_tree` для сублинейного поиска на больших таблицах.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   indexEnabled: true,
-  vectorDimension: 1536, // пропустить авто-определение размерности
+  indexVectorDimension: 1536, // Embedding model dimension
 })
 
 await store.addDocuments(docs)
@@ -197,12 +213,14 @@ await store.delete({ deleteAll: true })
 await store.drop()
 ```
 
+`deleteAll` принимает только boolean; очистка всей таблицы требует `deleteAll: true`. Неверные ID отклоняются до подготовки таблицы. Пустой массив `ids` без `deleteAll: true` не выполняет запросов.
+
 ## Переопределение имён колонок
 
 Используйте `columnMap` при подключении к таблице с нестандартной схемой.
 
 ```typescript
-const store = new YDBVectorStore(embeddings, {
+let store = new YDBVectorStore(embeddings, {
   driver,
   table: 'my_vectors',
   columnMap: {

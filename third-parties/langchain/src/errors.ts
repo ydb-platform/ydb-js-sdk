@@ -1,6 +1,6 @@
 /**
- * Base class for every error thrown by `@ydbjs/langchain`. Catch this to
- * separate store errors from framework errors at the LangChain layer.
+ * Base class for validation and state errors raised by `@ydbjs/langchain`.
+ * Embedding-provider, vector-value and YDB errors retain their original types.
  */
 export class YDBVectorStoreError extends Error {
 	constructor(msg: string) {

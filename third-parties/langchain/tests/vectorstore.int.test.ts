@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import { Driver } from '@ydbjs/core'
 import { QueryClient } from '@ydbjs/query'
 import { Document } from '@langchain/core/documents'
+import { type RecordManagerInterface, index } from '@langchain/core/indexing'
 import { FakeEmbeddings, SyntheticEmbeddings } from '@langchain/core/utils/testing'
 import { YDBSearchStrategy, YDBVectorStore } from '../src/index.ts'
 
@@ -128,6 +129,83 @@ test('UPSERT replaces existing document on same ID', async () => {
 	expect(results[0]!.pageContent).toBe('updated content')
 })
 
+test('LangChain indexing preserves record IDs and removes stale vectors during cleanup', async () => {
+	await using store = makeStore({
+		dropExistingTable: true,
+	})
+	let clock = 0
+	let records = new Map<string, number>()
+	// Only the record manager uses memory; indexing, vector writes and deletion use real YDB.
+	let recordManager: RecordManagerInterface = {
+		async createSchema() {},
+		async getTime() {
+			return ++clock
+		},
+		async update(keys, { timeAtLeast }) {
+			clock = Math.max(clock, timeAtLeast ?? clock)
+			for (let key of keys) {
+				records.set(key, clock)
+			}
+		},
+		async exists(keys) {
+			return keys.map((key) => {
+				return records.has(key)
+			})
+		},
+		async listKeys({ before = Infinity, limit = Infinity }) {
+			return [...records]
+				.filter(([, timestamp]) => {
+					return timestamp < before
+				})
+				.map(([key]) => {
+					return key
+				})
+				.slice(0, limit)
+		},
+		async deleteKeys(keys) {
+			for (let key of keys) {
+				records.delete(key)
+			}
+		},
+	}
+	let docs = [
+		new Document({ pageContent: 'retained document', metadata: { source: 'a' } }),
+		new Document({ pageContent: 'stale document', metadata: { source: 'b' } }),
+	]
+
+	let initial = await index({
+		docsSource: docs,
+		recordManager,
+		vectorStore: store,
+		options: { cleanup: 'full' },
+	})
+	expect(initial).toEqual({ numAdded: 2, numDeleted: 0, numUpdated: 0, numSkipped: 0 })
+	let inserted = await store.similaritySearch('document', 10)
+	expect(
+		inserted
+			.map((doc) => {
+				return doc.id
+			})
+			.sort()
+	).toEqual([...records.keys()].sort())
+
+	let refreshed = await index({
+		docsSource: [docs[0]!],
+		recordManager,
+		vectorStore: store,
+		options: { cleanup: 'full' },
+	})
+	expect(refreshed).toEqual({ numAdded: 0, numDeleted: 1, numUpdated: 0, numSkipped: 1 })
+	let remaining = await store.similaritySearch('document', 10)
+	expect(remaining).toHaveLength(1)
+	expect(remaining[0]!.pageContent).toBe('retained document')
+	expect(
+		remaining.map((doc) => {
+			return doc.id
+		})
+	).toEqual([...records.keys()])
+})
+
 test('splits large batch insert into chunks of 32', async () => {
 	let store = makeStore({ dropExistingTable: true })
 
@@ -192,6 +270,37 @@ test('multi-key metadata filter narrows results to all matching keys', async () 
 	let results = await store.similaritySearch('anything', 10, { source: 'wiki', lang: 'en' })
 	expect(results).toHaveLength(1)
 	expect(results[0]!.pageContent).toBe('wiki en')
+})
+
+test('metadata filters distinguish nested JSON paths from quoted literal keys', async () => {
+	await using store = makeStore({
+		dropExistingTable: true,
+	})
+	await store.addDocuments([
+		new Document({
+			id: 'nested',
+			pageContent: 'nested tenant',
+			metadata: { tenant: { id: 'match' }, 'tenant.id': 'other' },
+		}),
+		new Document({
+			id: 'literal',
+			pageContent: 'literal tenant',
+			metadata: { tenant: { id: 'other' }, 'tenant.id': 'match' },
+		}),
+	])
+
+	let nested = await store.similaritySearch('tenant', 10, { 'tenant.id': 'match' })
+	let literal = await store.similaritySearch('tenant', 10, { '"tenant.id"': 'match' })
+	expect(
+		nested.map((doc) => {
+			return doc.id
+		})
+	).toEqual(['nested'])
+	expect(
+		literal.map((doc) => {
+			return doc.id
+		})
+	).toEqual(['literal'])
 })
 
 test('metadata filter with no matches returns empty array', async () => {
