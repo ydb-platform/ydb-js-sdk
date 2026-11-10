@@ -80,6 +80,7 @@ export class Session {
 	lastUsedAt: number = Date.now()
 
 	#driver: Driver
+	#encodedId: Uint8Array | undefined
 	#life = new AbortController()
 	#attach = new AbortController()
 	#closing = false
@@ -95,6 +96,14 @@ export class Session {
 		this.#driver = driver
 		this.id = id
 		this.nodeId = nodeId
+	}
+
+	get encodedId(): Uint8Array {
+		this.#encodedId ??= QueryServiceDefinition.executeQuery.requestSerialize({
+			sessionId: this.id,
+		})
+
+		return this.#encodedId
 	}
 
 	/** Fires as soon as the session is known unusable. Stays aborted forever after. */

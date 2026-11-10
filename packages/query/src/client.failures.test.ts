@@ -157,7 +157,7 @@ test('retrySession reencodes typed parameters on each callback attempt', async (
 	expect(server.executions).toHaveLength(2)
 })
 
-test('a scoped statement snapshots byte and typed parameters before consumption', async (tc) => {
+test('a scoped statement encodes byte and typed parameters before consumption', async (tc) => {
 	using server = await startClientServer()
 	await using client = new QueryClient(server.driver)
 	let payload = Buffer.from([1, 2, 3])
@@ -190,16 +190,25 @@ test('a tagged query preserves bound byte and typed parameters across retries', 
 	statement.on('retry', () => {
 		payload[0] = 9
 		id.encode().value = { case: 'int32Value', value: 9 }
+		statement.parameter('p0', new Int32(42))
 	})
+
 	await statement
+
 	expect(server.executions).toHaveLength(2)
+
 	for (let request of server.executions) {
-		let values = Object.values(request.parameters).map((parameter) => parameter.value?.value)
-		let bytes = values.find((value) => value?.case === 'bytesValue')
+		expect(request.query).toMatchObject({
+			case: 'queryContent',
+			value: { text: 'SELECT $p0, $p1' },
+		})
+
+		let bytes = request.parameters.$p0?.value?.value
+
 		expect(bytes?.case === 'bytesValue' ? Array.from(bytes.value) : undefined).toEqual([
 			1, 2, 3,
 		])
-		expect(values).toContainEqual({ case: 'int32Value', value: 1 })
+		expect(request.parameters.$p1?.value?.value).toEqual({ case: 'int32Value', value: 1 })
 	}
 })
 

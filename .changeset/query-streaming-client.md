@@ -10,7 +10,7 @@ Rename the callable tagged client type to SQLClient and migrate the Drizzle and 
 
 Streaming is available only from executors inside SDK-owned retry callbacks. The SDK owns retry boundaries and revokes streams when their callback ends.
 
-Keep tagged query bindings stable across retries; raw retry callbacks may build new parameters on each attempt, while each statement snapshots its inputs before consumption. Revoke executors and unfinished streams when their callback ends, and prevent replay after a confirmed commit. Separate stream cancellation from session loss and preserve caller cancellation reasons. Expose beforeCommit for precommit work while retaining onCommit for transactional Topic compatibility.
+Keep tagged query bindings stable across retries; raw retry callbacks may build new parameters on each attempt, while each statement encodes its inputs before consumption. Revoke executors and unfinished streams when their callback ends, and prevent replay after a confirmed commit. Separate stream cancellation from session loss and preserve caller cancellation reasons. Expose beforeCommit for precommit work while retaining onCommit for transactional Topic compatibility.
 
 Reject commit-hook registration after preparation starts, and observe all started hooks even when another hook throws synchronously.
 

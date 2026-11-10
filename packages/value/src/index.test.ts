@@ -5,6 +5,20 @@ import { Int32, Int32Type } from './primitive.ts'
 import { Null } from './null.ts'
 import { typeToString } from './print.ts'
 
+test('rejects unsupported JavaScript values during type inference', (t) => {
+	t.expect(() => {
+		// @ts-expect-error JavaScript callers can pass functions.
+		fromJs(() => {
+			return 42
+		})
+	}).toThrow(/function/)
+
+	t.expect(() => {
+		// @ts-expect-error JavaScript callers can pass symbols.
+		fromJs(Symbol('id'))
+	}).toThrow(/symbol/)
+})
+
 test('struct records have null prototypes and preserve own fields through value conversion', (t) => {
 	let input = JSON.parse('{"__proto__":{"role":"reader"},"constructor":7}')
 

@@ -9,13 +9,18 @@ function createDriver() {
 	return new Driver(inject('connectionString'), { 'ydb.sdk.enable_discovery': false })
 }
 
-test('named empty constructors work as query parameters', async (tc) => {
+test('tagged SQL binds explicitly declared EmptyList and EmptyDict parameters', async (tc) => {
 	using driver = createDriver()
 	await using sql = query(driver)
 
-	let result = await sql<
-		[EmptyRow]
-	>`SELECT ${new EmptyList()} AS list, ${new EmptyDict()} AS dict`.signal(tc.signal)
+	let result = await sql<[EmptyRow]>`
+		DECLARE $list AS EmptyList;
+		DECLARE $dict AS EmptyDict;
+		SELECT $list AS list, $dict AS dict;
+	`
+		.parameter('list', new EmptyList())
+		.parameter('dict', new EmptyDict())
+		.signal(tc.signal)
 
 	expect(result[0]![0]).toEqual({ list: [], dict: new Map() })
 })

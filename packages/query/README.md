@@ -28,7 +28,7 @@ npm install @ydbjs/core @ydbjs/query
 - **Raw SQL Client**: `new QueryClient(driver)` exposes `retrySession(options, callback)` and `retryTransaction(options, callback)`. Options may be omitted; the callback is always last. It receives a session or transaction executor and the current attempt's cancellation signal. `query(client)` adds the tagged interface to that client's pool and lifecycle.
 - **Session Pool**: Sessions are automatically pooled and reused between queries and transactions (default pool size: 50). Configure with `query(driver, { poolOptions: { maxSize: 100 } })`.
 - **Sessions & Transactions**: Sessions and transactions are managed automatically. You can run single queries or group multiple queries in a transaction with `begin`/`transaction`.
-- **Parameter Binding**: Parameters are bound by interpolation (`${}`) in the template string. Native JS types, YDB value classes, and arrays/objects are all supported. Use `.parameter()`/`.param()` for named parameters.
+- **Parameter binding.** Template interpolations, `.parameter()` (also `.param()`) and the parameter object for `execute()` or `stream()` all accept JavaScript values. The SDK infers their YDB types. Use an SDK Value when the query needs a specific YDB type.
 - **Type Safety**: All values are converted using `@ydbjs/value` (see its docs for details). Complex/nested types and arrays are handled automatically.
 - **Result Sets**: YDB supports multiple result sets per query. Tagged queries return row arrays; raw execution also provides the column schemas and execution summary in `QueryResult`.
 - **Query Statistics**: Use `.withStats()` or `.stats()` to access execution statistics.
@@ -41,29 +41,34 @@ V7 exports the raw `QueryClient` class from `@ydbjs/query`. Its execution entry 
 
 The previous callable `QueryClient` type is named `SQLClient`. `query(driver)` and `query(client)` provide the convenient tagged API, including `sql.do()`, `sql.begin()` and `sql.transaction()`. `query(client)` shares the raw client's pool and lifecycle.
 
-Each scoped statement snapshots its parameters when `execute()` or `stream()` is called. A retried callback may deliberately construct different parameters on its next attempt. A standalone tagged query instead fixes its text, settings and parameter values before its first attempt and reuses those bindings on retries.
+`client.driver` exposes the driver passed to the constructor. The caller owns the driver and closes it after all clients that share it.
+
+`retrySession()` and `retryTransaction()` can run your callback more than once. Choose inputs that must stay the same, such as an order ID or a computed embedding, before entering the callback. Build the parameter object from those inputs inside each attempt.
+If the callback reads a mutable object, it sees the current contents on each attempt. A fresh parameter object can still reference the same `Buffer`. If another caller can modify it, make a private copy with `Buffer.from(input)` before starting the retry and use that copy on every attempt.
+
+A standalone tagged query encodes its text, settings and parameters once when execution starts, before waiting for a session. Automatic retries reuse those private bytes and attach the current session ID. Every retry sends the original text, types and values, even if the caller later changes a `Buffer`, mutates a `Value`, or replaces a binding on the query handle. Inside `sql.do()` or `sql.begin()`, the entire application callback can run again and construct a new statement.
 
 ```ts
 import { QueryClient, query } from '@ydbjs/query'
-import { Uint64 } from '@ydbjs/value/primitive'
 
 type Row = { id: bigint }
 
 await using client = new QueryClient(driver)
-let text = 'DECLARE $id AS Uint64; SELECT $id AS id;'
-let parameters = { id: new Uint64(42n) }
+
+let text = 'SELECT $id AS id;'
+let id = 42n
 let signal = AbortSignal.timeout(30_000)
 
-let result = await client.retrySession({ signal, idempotent: true }, (session) =>
-  session.execute<[Row]>(text, parameters, { timeout: 5000 })
-)
+let result = await client.retrySession({ signal, idempotent: true }, (session) => {
+  return session.execute<[Row]>(text, { id }, { timeout: 5000 })
+})
 
 console.log(result.resultSets[0].rows[0]?.id)
 console.log(result.resultSets[0].columns, result.resultSets[0].truncated)
 
 let sql = query(client)
 
-let [rows] = await sql<[Row]>`SELECT ${new Uint64(42n)} AS id`
+let [rows] = await sql<[Row]>`SELECT ${id} AS id`
 ```
 
 `session.execute()` returns a `QueryResult<T>` object with `resultSets`, `stats` and `metadata` after collecting the response. Each result set contains `rows`, `columns` and `truncated`; empty result sets retain their position and column schema. Tagged SQL returns an array of row arrays, without the result-set objects; statistics and metadata remain available through the query handle's methods and events.
@@ -79,22 +84,28 @@ let total = await client.retrySession(
   { signal, idempotent: true, retry: { budget: 3 } },
   async (session) => {
     let total = 0n
-    for await (let part of session.stream<Row>(text, parameters)) {
-      for (let row of part.rows) total += row.id
+
+    for await (let part of session.stream<Row>(text, { id })) {
+      for (let row of part.rows) {
+        total += row.id
+      }
     }
+
     return total
   }
 )
 ```
 
-The accumulator belongs to an attempt. External effects performed by the callback also repeat; a read-only SQL statement does not make those effects idempotent. `idempotent: false` does not disable retries for definite-abort statuses: the entire callback must be safe to restart. `retrySession()` reuses a session for the attempt but does not make its statements atomic. Use `retryTransaction()` when a group of database writes must roll back together. The SDK does not resume an arbitrary `ExecuteQuery` at the last delivered row. Caller cancellation ends the retry budget and does not establish whether a write committed.
+The accumulator belongs to an attempt. External effects performed by the callback can repeat even when the SQL statement is read-only. `idempotent: false` does not disable retries for definite-abort statuses: the entire callback must be safe to restart. `retrySession()` reuses a session for the attempt but does not make its statements atomic. Use `retryTransaction()` when a group of database writes must roll back together. The SDK does not resume an arbitrary `ExecuteQuery` at the last delivered row. Caller cancellation ends the retry budget and does not establish whether a write committed.
 
 Callback options own `signal`, `timeout`, `retry`, `idempotent` and `onRetry`. The second callback argument is the current attempt's signal; pass it to application work that needs to stop when the attempt is cancelled. Statements may add a `signal` or `timeout` cap within the callback's remaining budget, but cannot replace its retry policy. Transaction isolation belongs to `retryTransaction()` options; statement isolation is available only in `retrySession()`.
 
 ```ts
 let result = await client.retryTransaction(
   { signal, isolation: 'snapshotReadOnly', idempotent: true },
-  (tx) => tx.execute<[Row]>(text, parameters)
+  (tx) => {
+    return tx.execute<[Row]>(text, { id })
+  }
 )
 ```
 
@@ -149,6 +160,8 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 
 ### Parameterized Queries
 
+The SQL tag replaces interpolated values with placeholders (`$p0`, `$p1`, …) and sends each value and its YDB type in the request's parameter map. In V7, it no longer generates `DECLARE` statements. YDB 26.3.1.20 covers implicit parameter types in its [Query Service tests](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/ut/query/kqp_params_ut.cpp#L1196-L1228).
+
 ```ts
 const userId = 42n
 const userName = 'Alice'
@@ -158,12 +171,28 @@ await sql`
 `
 ```
 
-#### Named Parameters and Custom Types
+#### Named parameters
+
+For a placeholder already present in the SQL text, bind its value by name.
+
+```ts
+let id = 42n
+
+await sql`SELECT $id AS id`.parameter('id', id)
+```
+
+If your database has implicit parameter types disabled, add `DECLARE $id AS Int64;` before the `SELECT`. On YDB 26.3.1.20, `Null`, `EmptyList`, `EmptyDict` and containers such as `List<Null>` require a declaration. For an absent value or an empty list with a known element type, bind `Optional<T>` or `List<T>` with a concrete `T`. [Empty values](../value/README.md#empty-values)
+
+#### Explicit parameter types
+
+The SDK infers `Int64` for a JavaScript `bigint`. To pass an unsigned integer above the `Int64` maximum, use `Uint64` explicitly.
 
 ```ts
 import { Uint64 } from '@ydbjs/value/primitive'
-const id = new Uint64(123n)
-await sql`SELECT * FROM users WHERE id = $id`.parameter('id', id)
+
+let id = new Uint64(2n ** 63n)
+
+await sql`SELECT ${id} AS id`
 ```
 
 #### Arrays, Structs, and Table Parameters
@@ -250,14 +279,15 @@ Inside a legacy `sql.begin()` / `sql.transaction()` callback, `isolation()` and 
 
 ### Value Conversion and Type Safety
 
-All parameter values are converted using [`@ydbjs/value`](../value/README.md). You can pass native JS types, or use explicit YDB value classes for full control.
-
-Object result rows and decoded Struct values use `Object.create(null)`, including rows returned by tagged SQL and `.raw()`. Column names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to test field presence; result records do not inherit methods from `Object.prototype`. Array-mode rows and raw protobuf cells keep their respective representations.
+The SDK converts JavaScript values to YDB parameters, including plain objects to `Struct`. [Type mappings](../value/README.md#infer-types-from-javascript)
 
 ```ts
-import { fromJs } from '@ydbjs/value'
-await sql`SELECT * FROM users WHERE meta = ${fromJs({ foo: 'bar' })}`
+let meta = { foo: 'bar' }
+
+await sql`SELECT * FROM users WHERE meta = ${meta}`
 ```
+
+Object result rows and decoded Struct values use `Object.create(null)`, including rows returned by tagged SQL and `.raw()`. Column names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to test field presence; result records do not inherit methods from `Object.prototype`. Array-mode rows and raw protobuf cells keep their respective representations.
 
 `Variant` values are available only as raw results, including when nested in containers. Use `session.execute(text, parameters, { raw: true })` or tagged SQL's `.raw()`; ordinary result conversion rejects them. Raw cells retain the protobuf `Ydb.Value`, and `QueryClient` result sets retain their schemas in `columns[].type`. The SDK does not provide typed `Variant` values or infer a selected alternative from ambiguous wire data.
 
@@ -327,7 +357,7 @@ await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 
 `identifier()` quotes one identifier and escapes backslashes and backticks. The application must still decide which table or column a caller is allowed to select.
 
-Template interpolation binds values separately from SQL text. JSON objects with fields named `type` or `encode` are inferred as data, not SQL type declarations. Explicit `.parameter()` bindings require SDK Values; use `fromJs()` for native data. SQL text, `unsafe()` fragments and `join()` string separators must come from trusted code. Parameterization does not enforce application permissions, tenant filters or access to individual rows. JavaScript getters, proxies and custom Value implementations can execute code during conversion; they are not equivalent to parsed JSON.
+Template interpolation and named parameters send values separately from SQL text. Fields named `type` or `encode` in a JSON object are ordinary data fields. SQL text, `unsafe()` fragments and `join()` string separators must come from trusted code. The application controls permissions, tenant filters and access to individual rows. JavaScript getters, proxies and custom Value implementations can execute code during conversion.
 
 ## Closing a client
 
