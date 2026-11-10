@@ -15,9 +15,9 @@
 		"@opentelemetry/exporter-trace-otlp-http": "^0.300.0",
 		"@opentelemetry/sdk-metrics": "^3.0.0",
 		"@opentelemetry/resources": "^3.0.0",
-		"@ydbjs/core": "^6.3.1",
-		"@ydbjs/query": "^6.3.0",
-		"@ydbjs/telemetry": "^6.0.1",
+		"@ydbjs/core": "^7.0.0",
+		"@ydbjs/query": "^7.0.0",
+		"@ydbjs/telemetry": "^7.0.0",
 		"@opentelemetry/sdk-trace": "^3.0.0",
 		"@opentelemetry/context-async-hooks": "^3.0.0",
 		"@opentelemetry/core": "^3.0.0"
