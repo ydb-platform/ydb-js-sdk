@@ -299,18 +299,21 @@ test('metadata filters distinguish nested JSON paths from quoted literal keys', 
 		{ signal: tc.signal }
 	)
 
-	let nested = await store.similaritySearch('tenant', 10, { 'tenant.id': 'match' }, undefined, {
+	let nestedRetriever = store.asRetriever({
+		k: 10,
+		filter: { 'tenant.id': 'match' },
+	})
+	let literalRetriever = store.asRetriever({
+		k: 10,
+		filter: { '"tenant.id"': 'match' },
+	})
+
+	let nested = await nestedRetriever.invoke('tenant', {
 		signal: tc.signal,
 	})
-	let literal = await store.similaritySearch(
-		'tenant',
-		10,
-		{ '"tenant.id"': 'match' },
-		undefined,
-		{
-			signal: tc.signal,
-		}
-	)
+	let literal = await literalRetriever.invoke('tenant', {
+		signal: tc.signal,
+	})
 	expect(
 		nested.map((doc) => {
 			return doc.id

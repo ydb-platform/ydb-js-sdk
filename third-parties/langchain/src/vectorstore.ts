@@ -748,10 +748,9 @@ export class YDBVectorStore extends VectorStore {
 		query: string,
 		k = 4,
 		filter?: this['FilterType'],
-		callbacks?: Callbacks,
-		options: Abortable = {}
+		callbacks?: Callbacks
 	): Promise<Document[]> {
-		let results = await this.similaritySearchWithScore(query, k, filter, callbacks, options)
+		let results = await this.similaritySearchWithScore(query, k, filter, callbacks)
 
 		return results.map(([document]) => {
 			return document
@@ -762,10 +761,9 @@ export class YDBVectorStore extends VectorStore {
 		query: string,
 		k = 4,
 		filter?: this['FilterType'],
-		_callbacks?: Callbacks,
-		options: Abortable = {}
+		_callbacks?: Callbacks
 	): Promise<[Document, number][]> {
-		return this.#run(options, async (operation) => {
+		return this.#run({}, async (operation) => {
 			assertNonNegativeInteger('k', k)
 
 			if (k === 0) {
@@ -791,10 +789,9 @@ export class YDBVectorStore extends VectorStore {
 	async similaritySearchVectorWithScore(
 		query: ArrayLike<number>,
 		k: number,
-		filter?: this['FilterType'],
-		options: Abortable = {}
+		filter?: this['FilterType']
 	): Promise<[Document, number][]> {
-		return this.#run(options, (operation) => {
+		return this.#run({}, (operation) => {
 			return this.#searchVector(query, k, filter, operation)
 		})
 	}

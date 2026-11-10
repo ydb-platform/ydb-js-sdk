@@ -152,15 +152,16 @@ await store.addDocuments(docs, {
   ids,
   signal: AbortSignal.timeout(30_000),
 })
-let results = await store.similaritySearch('query', 4, undefined, undefined, {
-  signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),
+let retriever = store.asRetriever({
+  k: 4,
+  filter: { source: 'docs' },
 })
-let retrieved = await store.asRetriever().invoke('query', {
-  signal: AbortSignal.timeout(5_000),
+let results = await retriever.invoke('query', {
+  signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),
 })
 ```
 
-У `similaritySearch` и `similaritySearchWithScore` четвёртый аргумент сохраняет назначение LangChain callbacks, а параметры операции передаются пятым аргументом. У `similaritySearchVectorWithScore` они передаются четвёртым аргументом. `addDocuments`, `addVectors` и `delete` принимают их вместе с остальными параметрами; `drop` и `createVectorIndex` — единственным необязательным аргументом.
+Методы поиска сохраняют штатные сигнатуры LangChain: `similaritySearch(query, k?, filter?, callbacks?)`, `similaritySearchWithScore(query, k?, filter?, callbacks?)` и `similaritySearchVectorWithScore(vector, k, filter?)`. Для текстового поиска с отменой передавайте `signal` в конфигурацию `retriever.invoke`. `addDocuments`, `addVectors` и `delete` принимают `signal` в существующем объекте параметров; `drop` и `createVectorIndex` — в необязательном аргументе `{ signal }`.
 
 Сигнал действует на весь вызов: получение эмбеддингов, подготовку таблицы, все пакеты и повторы запросов. Отсчёт начинается при создании сигнала; при повторной передаче действует тот же срок. Отменённая операция не начинает следующие записи. Интерфейс LangChain `EmbeddingsInterface` не принимает сигнал отмены, поэтому уже отправленный запрос к модели может продолжать работу. Стор прекращает его ожидание; `close()` не ждёт такой запрос после отмены операции. Отмена записи в YDB не доказывает, что запись не была выполнена; при повторе сохраняйте ID документов.
 
