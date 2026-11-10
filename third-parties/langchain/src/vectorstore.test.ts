@@ -148,30 +148,26 @@ test('invalid options fail before the store registers with the driver', () => {
 })
 
 test('each attempt binds fresh parameters with the same IDs, embeddings and filters', async () => {
-	let execute = vi.fn(async (_text: string, _params?: QueryParameters) => {
-		return { resultSets: [] }
-	})
+	let { client, execute, retrySession } = fakeClient()
 	let session = { execute } as unknown as QueryExecutor
 
-	type Run = (executor: QueryExecutor) => Promise<unknown>
-	let retrySession = vi.fn(async (options: OperationOptions | Run, callback?: Run) => {
+	retrySession.mockImplementation(async (options, callback) => {
 		let run = typeof options === 'function' ? options : callback!
 		await run(session)
 
 		return run(session)
 	})
 
-	let queryClient = { driver: stubDriver, retrySession } as unknown as QueryClient
 	let vector = [1, 2]
 	let filter = { source: 'docs' }
 	let embedQuery = vi.fn(async () => {
 		return vector
 	})
 	let embedDocuments = vi.fn(embeddings.embedDocuments)
-	let store = YDBVectorStore.fromExistingTable(
+	await using store = YDBVectorStore.fromExistingTable(
 		{ embedDocuments, embedQuery },
 		{
-			queryClient,
+			queryClient: client,
 			table: 'vectors',
 		}
 	)
@@ -182,7 +178,7 @@ test('each attempt binds fresh parameters with the same IDs, embeddings and filt
 		vector[0] = 3
 		filter.source = 'changed'
 
-		return { resultSets: [] }
+		return { resultSets: [{ rows: [] }] }
 	})
 
 	await store.similaritySearch('query', 2, filter)
