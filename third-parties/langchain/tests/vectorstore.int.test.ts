@@ -129,9 +129,10 @@ test('UPSERT replaces existing document on same ID', async () => {
 	expect(results[0]!.pageContent).toBe('updated content')
 })
 
-test('LangChain indexing preserves record IDs and removes stale vectors during cleanup', async () => {
+test('LangChain indexing preserves record IDs and removes stale vectors during cleanup', async (tc) => {
 	await using store = makeStore({
 		dropExistingTable: true,
+		operationOptions: { signal: tc.signal },
 	})
 	let clock = 0
 	let records = new Map<string, number>()
@@ -272,9 +273,10 @@ test('multi-key metadata filter narrows results to all matching keys', async () 
 	expect(results[0]!.pageContent).toBe('wiki en')
 })
 
-test('metadata filters distinguish nested JSON paths from quoted literal keys', async () => {
+test('metadata filters distinguish nested JSON paths from quoted literal keys', async (tc) => {
 	await using store = makeStore({
 		dropExistingTable: true,
+		operationOptions: { signal: tc.signal },
 	})
 	await store.addDocuments([
 		new Document({

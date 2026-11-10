@@ -47,6 +47,7 @@
 		"test:int": "vitest --run --project int"
 	},
 	"dependencies": {
+		"@ydbjs/abortable": "^6.1.0",
 		"@ydbjs/core": "^6.3.1",
 		"@ydbjs/query": "^6.3.0",
 		"@ydbjs/value": "^6.0.8"
