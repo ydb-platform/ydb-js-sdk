@@ -52,3 +52,55 @@ test('rejects Variant schemas before decoding root, absent Optional or empty Lis
 		)
 	}
 })
+
+test('rejects PostgreSQL text, binary and null values without native coercion', () => {
+	let type = create(Ydb.TypeSchema, {
+		type: { case: 'pgType', value: { typeName: 'pgint4', oid: 23 } },
+	})
+	let values = [
+		create(Ydb.ValueSchema, { value: { case: 'textValue', value: '42' } }),
+		create(Ydb.ValueSchema, {
+			value: { case: 'bytesValue', value: new Uint8Array([0, 0, 0, 42]) },
+		}),
+		create(Ydb.ValueSchema, { value: { case: 'nullFlagValue', value: 0 } }),
+	]
+
+	for (let value of values) {
+		expect(() => {
+			return fromYdb(value, type)
+		}).toThrow('YDB PostgreSQL values are not supported: use .raw() or { raw: true }.')
+	}
+})
+
+test('rejects nested PostgreSQL schemas in absent Optionals and empty Lists', () => {
+	let pg = create(Ydb.TypeSchema, {
+		type: { case: 'pgType', value: { typeName: 'pgint4', oid: 23 } },
+	})
+	let optional = create(Ydb.TypeSchema, {
+		type: {
+			case: 'optionalType',
+			value: { item: { type: { case: 'listType', value: { item: pg } } } },
+		},
+	})
+	let list = create(Ydb.TypeSchema, {
+		type: {
+			case: 'listType',
+			value: {
+				item: {
+					type: { case: 'structType', value: { members: [{ name: 'value', type: pg }] } },
+				},
+			},
+		},
+	})
+	let absent = create(Ydb.ValueSchema, { value: { case: 'nullFlagValue', value: 0 } })
+	let empty = create(Ydb.ValueSchema)
+
+	for (let [value, type] of [
+		[absent, optional],
+		[empty, list],
+	] as const) {
+		expect(() => {
+			return fromYdb(value, type)
+		}).toThrow('YDB PostgreSQL values are not supported: use .raw() or { raw: true }.')
+	}
+})

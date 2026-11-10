@@ -1,5 +1,8 @@
 import { runInNewContext } from 'node:vm'
+import { create } from '@bufbuild/protobuf'
 import { WireType } from '@bufbuild/protobuf/wire'
+import { TypeSchema } from '@ydbjs/api/value'
+import { TypeKind } from '@ydbjs/value'
 import { List } from '@ydbjs/value/list'
 import { Bool, Bytes, Double, Int32, Int64, Text } from '@ydbjs/value/primitive'
 import { expect, test } from 'vitest'
@@ -97,4 +100,28 @@ test('parameter validation rejects an out-of-range int64 wire field', () => {
 	expect(() => {
 		return encodeParameters({ input })
 	}).toThrow(/out of range/)
+})
+
+test('parameter validation rejects custom PostgreSQL values, including nested parameters', () => {
+	let type = create(TypeSchema, {
+		type: { case: 'pgType', value: { typeName: 'pgint4', oid: 23 } },
+	})
+	let wire = new Text('42').encode()
+	let value = {
+		type: {
+			kind: TypeKind.PRIMITIVE,
+			encode: () => {
+				return type
+			},
+		},
+		encode: () => {
+			return wire
+		},
+	}
+
+	for (let input of [value, new List(value)]) {
+		expect(() => {
+			return encodeParameters({ input })
+		}).toThrow('PostgreSQL query parameters are not supported')
+	}
 })
