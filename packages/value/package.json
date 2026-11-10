@@ -93,10 +93,6 @@
 		"./void": {
 			"development": "./src/void.ts",
 			"default": "./dist/void.js"
-		},
-		"./pg": {
-			"development": "./src/pg.ts",
-			"default": "./dist/pg.js"
 		}
 	},
 	"publishConfig": {

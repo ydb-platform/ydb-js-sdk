@@ -110,5 +110,7 @@ function assertParameterType(type: WireType): void {
 			throw new TypeError(
 				'Variant query parameters are not supported; read Variant results in raw mode'
 			)
+		case 'pgType':
+			throw new TypeError('PostgreSQL query parameters are not supported')
 	}
 }

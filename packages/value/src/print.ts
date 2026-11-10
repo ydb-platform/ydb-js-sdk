@@ -5,7 +5,6 @@ import type { DictType } from './dict.js'
 import type { ListType } from './list.js'
 import type { OptionalType } from './optional.ts'
 import { ExtendedPrimitiveTypeId, type PrimitiveTypeId } from './primitive.js'
-import type { PgType } from './pg.js'
 import type { TaggedType } from './tagged.js'
 import type { PrimitiveType } from './primitive.js'
 import type { StructType } from './struct.js'
@@ -107,16 +106,6 @@ export function typeToString(type: Type): string {
 			return `Tagged<${typeToString((type as TaggedType).itemType)},${JSON.stringify((type as TaggedType).tag)}>`
 		case TypeKind.VOID:
 			return 'Void'
-		case TypeKind.PG_TYPE: {
-			let name = (type as PgType).typeName
-			if (!/^_?pg[a-z][a-z0-9_]*$/.test(name)) {
-				throw new TypeError(
-					'A canonical Pg typeName is required to format a PostgreSQL type as YQL'
-				)
-			}
-
-			return name
-		}
 		case TypeKind.OPTIONAL:
 			return `Optional<${typeToString((type as OptionalType).itemType)}>`
 		case TypeKind.EMPTY_LIST:

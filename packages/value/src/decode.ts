@@ -6,7 +6,6 @@ import { Empty, EmptyType } from './empty.js'
 import { List, ListType } from './list.js'
 import { Null, NullType } from './null.js'
 import { Optional, OptionalType } from './optional.js'
-import { Pg, PgType } from './pg.js'
 import { Tagged, TaggedType } from './tagged.js'
 import { Void, VoidType } from './void.js'
 import { Primitive, PrimitiveType } from './primitive.js'
@@ -45,7 +44,9 @@ function decodeType(wire: Ydb.Type): Type {
 		case 'taggedType':
 			return new TaggedType(wire.type.value.tag, decodeType(wire.type.value.type!))
 		case 'pgType':
-			return new PgType(wire.type.value)
+			throw new TypeError(
+				'YDB PostgreSQL values are not supported: use .raw() or { raw: true }.'
+			)
 		case 'voidType':
 			return new VoidType()
 		case 'nullType':
@@ -91,12 +92,6 @@ function decodeValue(wire: Ydb.Value, type: Type): Value {
 		}
 		case TypeKind.TAGGED:
 			return new Tagged(decodeValue(wire, (type as TaggedType).itemType), type as TaggedType)
-		case TypeKind.PG_TYPE:
-			if (wire.value.case === 'nullFlagValue') return new Pg(null, type as PgType)
-			if (wire.value.case === 'textValue' || wire.value.case === 'bytesValue')
-				return new Pg(wire.value.value, type as PgType)
-			throw new TypeError('Pg value requires text, bytes or null')
-
 		case TypeKind.LIST:
 			if (wire.value.case !== undefined)
 				throw new TypeError('List cannot contain a scalar value')
