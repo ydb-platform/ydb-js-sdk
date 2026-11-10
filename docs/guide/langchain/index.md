@@ -83,6 +83,8 @@ await using store = new YDBVectorStore(embeddings, { queryClient })
 await store.similaritySearch('YDB vector search', 4)
 ```
 
+`close()` rejects new operations and waits for active store operations, including document ingestion. It leaves a borrowed `QueryClient` and `Driver` open.
+
 ## Static Helpers
 
 ```typescript
@@ -138,6 +140,30 @@ let vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
 ```
 
 With `k: 0`, search returns an empty array without embedding or accessing the table. A null or invalid score returned by YDB causes an error rather than being converted to zero.
+
+## Cancellation and Timeouts
+
+Pass `signal` to control cancellation for each operation. Use `AbortSignal.timeout(milliseconds)` for a time limit, or combine it with an application signal using `AbortSignal.any(...)`. Retrievers propagate the signal supplied to `invoke`, including when used inside a `RunnableSequence`.
+
+```typescript
+await store.addDocuments(docs, {
+  ids,
+  signal: AbortSignal.timeout(30_000),
+})
+let retriever = store.asRetriever({
+  k: 4,
+  filter: { source: 'docs' },
+})
+let results = await retriever.invoke('query', {
+  signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),
+})
+```
+
+Search methods retain the standard LangChain signatures: `similaritySearch(query, k?, filter?, callbacks?)`, `similaritySearchWithScore(query, k?, filter?, callbacks?)`, and `similaritySearchVectorWithScore(vector, k, filter?)`. For cancellable text search, pass `signal` through the retriever's `invoke` configuration. `addDocuments`, `addVectors`, and `delete` accept `signal` in their existing options; `drop` and `createVectorIndex` accept an optional `{ signal }` argument.
+
+The signal covers the complete call: embedding, schema initialization, all batches, and query retries. The time limit starts when the signal is created; reusing the signal shares the same deadline. A cancelled operation starts no further writes. LangChain's `EmbeddingsInterface` does not accept a cancellation signal, so an already dispatched embedding request may continue running. The store stops waiting for it, and `close()` does not wait for that request after the operation is cancelled. Cancelling a YDB write does not establish whether it committed; keep document IDs stable when retrying.
+
+Store argument and state errors use the `YDBVectorStoreError` classes. YDB, embedding-provider, and vector-value errors retain their original types.
 
 ## Metadata Filtering
 

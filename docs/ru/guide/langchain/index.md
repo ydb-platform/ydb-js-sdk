@@ -85,6 +85,8 @@ await using store = new YDBVectorStore(embeddings, { queryClient })
 await store.similaritySearch('векторный поиск в YDB', 4)
 ```
 
+`close()` запрещает новые операции и ждёт завершения уже начатых операций стора, включая загрузку документов. Переданные извне `QueryClient` и `Driver` остаются открытыми.
+
 ## Статические хелперы
 
 ```typescript
@@ -140,6 +142,30 @@ let vectorResults = await store.similaritySearchVectorWithScore(queryVector, 4)
 ```
 
 При `k: 0` методы поиска возвращают пустой массив без запроса к модели эмбеддингов и без обращения к таблице. Если YDB возвращает `null` или некорректный score, поиск завершается ошибкой вместо подмены результата нулём.
+
+## Отмена и ограничения времени
+
+Передавайте `signal`, чтобы управлять отменой операции. Для ограничения времени используйте `AbortSignal.timeout(миллисекунды)`. Через `AbortSignal.any(...)` его можно объединить с сигналом отмены приложения. Retriever передаёт сигнал из `invoke` операции стора, в том числе при вызове внутри `RunnableSequence`.
+
+```typescript
+await store.addDocuments(docs, {
+  ids,
+  signal: AbortSignal.timeout(30_000),
+})
+let retriever = store.asRetriever({
+  k: 4,
+  filter: { source: 'docs' },
+})
+let results = await retriever.invoke('query', {
+  signal: AbortSignal.any([externalSignal, AbortSignal.timeout(5_000)]),
+})
+```
+
+Методы поиска сохраняют штатные сигнатуры LangChain: `similaritySearch(query, k?, filter?, callbacks?)`, `similaritySearchWithScore(query, k?, filter?, callbacks?)` и `similaritySearchVectorWithScore(vector, k, filter?)`. Для текстового поиска с отменой передавайте `signal` в конфигурацию `retriever.invoke`. `addDocuments`, `addVectors` и `delete` принимают `signal` в существующем объекте параметров; `drop` и `createVectorIndex` — в необязательном аргументе `{ signal }`.
+
+Сигнал действует на весь вызов: получение эмбеддингов, подготовку таблицы, все пакеты и повторы запросов. Отсчёт начинается при создании сигнала; при повторной передаче действует тот же срок. Отменённая операция не начинает следующие записи. Интерфейс LangChain `EmbeddingsInterface` не принимает сигнал отмены, поэтому уже отправленный запрос к модели может продолжать работу. Стор прекращает его ожидание; `close()` не ждёт такой запрос после отмены операции. Отмена записи в YDB не доказывает, что запись не была выполнена; при повторе сохраняйте ID документов.
+
+Ошибки проверки аргументов и состояния используют классы `YDBVectorStoreError`. Ошибки YDB, модели эмбеддингов и значений векторов сохраняют свои исходные типы.
 
 ## Фильтрация по метаданным
 

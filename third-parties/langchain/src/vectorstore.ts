@@ -1,10 +1,18 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import type { Abortable } from 'node:events'
+import { abortable, linkSignals } from '@ydbjs/abortable'
 import { Driver, type DriverOptions, kRegisterLibrary } from '@ydbjs/core'
 import { QueryClient, identifier } from '@ydbjs/query'
 import { Uint64 } from '@ydbjs/value/primitive'
 import { Float32Vector } from '@ydbjs/value/vector'
 import type { Callbacks } from '@langchain/core/callbacks/manager'
 import type { EmbeddingsInterface } from '@langchain/core/embeddings'
-import { VectorStore } from '@langchain/core/vectorstores'
+import {
+	VectorStore,
+	VectorStoreRetriever,
+	type VectorStoreRetrieverInput,
+} from '@langchain/core/vectorstores'
+import { type RunnableConfig, ensureConfig } from '@langchain/core/runnables'
 import { Document } from '@langchain/core/documents'
 
 import pkg from '../package.json' with { type: 'json' }
@@ -217,7 +225,7 @@ export type YDBVectorStoreExistingTableConfig = Omit<
 export type YDBFilter = Record<string, string>
 
 /** IDs supplied here take precedence over document IDs. */
-export interface YDBVectorStoreAddOptions {
+export interface YDBVectorStoreAddOptions extends Abortable {
 	ids?: string[]
 }
 
@@ -226,7 +234,7 @@ export interface YDBVectorStoreAddOptions {
  * table; otherwise rows matching `ids` are removed. Empty/omitted `ids` is a
  * no-op.
  */
-export type YDBVectorStoreDeleteParams = {
+export type YDBVectorStoreDeleteParams = Abortable & {
 	ids?: string[]
 	deleteAll?: boolean
 }
@@ -353,6 +361,32 @@ class YDBVectorIndexConfig {
 	}
 }
 
+interface TableInitialization {
+	promise: Promise<void>
+	controller: AbortController | undefined
+	waiters: number
+}
+
+let retrieverContext = new AsyncLocalStorage<{
+	store: YDBVectorStore
+	signal: AbortSignal | undefined
+}>()
+
+class YDBVectorStoreRetriever<T extends YDBVectorStore> extends VectorStoreRetriever<T> {
+	override invoke(input: string, options?: RunnableConfig): Promise<Document[]> {
+		let config = ensureConfig(options)
+		return retrieverContext.run(
+			{
+				store: this.vectorStore,
+				signal: config.signal,
+			},
+			() => {
+				return super.invoke(input, config)
+			}
+		)
+	}
+}
+
 /**
  * LangChain vector store backed by YDB. See the package README for usage examples.
  *
@@ -365,7 +399,7 @@ export class YDBVectorStore extends VectorStore {
 	#client: QueryClient
 	#ownsClient: boolean
 	#ownedDriver?: Driver
-	#promise: Promise<void> | undefined
+	#initialization: TableInitialization | undefined
 
 	#table: string
 	#columnMap: YDBColumnMap
@@ -379,6 +413,7 @@ export class YDBVectorStore extends VectorStore {
 	#dropExistingTable: boolean
 
 	#closing?: Promise<void>
+	#pending = new Set<Promise<unknown>>()
 
 	override _vectorstoreType(): string {
 		return 'ydb'
@@ -466,33 +501,105 @@ export class YDBVectorStore extends VectorStore {
 		}
 	}
 
-	async #ensureTable(): Promise<void> {
-		this.#assertOpen()
+	#track<T>(work: Promise<T>): Promise<T> {
+		this.#pending.add(work)
+		let remove = () => {
+			this.#pending.delete(work)
+		}
+		void work.then(remove, remove)
 
-		this.#promise ??= this.#runInit().catch((error: unknown) => {
-			// An unconfirmed DROP must not run again on the next read or write.
-			if (!this.#dropExistingTable) {
-				this.#promise = undefined
-			}
-
-			throw error
-		})
-
-		await this.#promise
+		return work
 	}
 
-	async #runInit(): Promise<void> {
+	#run<T>(options: Abortable, action: (operation: Abortable) => Promise<T>): Promise<T> {
+		this.#assertOpen()
+
+		if (this.#client.closed) {
+			this.#client.signal?.throwIfAborted()
+			throw new YDBVectorStoreOperationError('Query client is closed.')
+		}
+
+		let context = retrieverContext.getStore()
+		let inheritedSignal = context?.store === this ? context.signal : undefined
+		let linked = linkSignals(this.#client.signal, inheritedSignal, options.signal)
+		let operation: Abortable = {
+			signal: linked.signal,
+		}
+		let work = Promise.resolve().then(async () => {
+			try {
+				linked.signal.throwIfAborted()
+				return await action(operation)
+			} finally {
+				linked[Symbol.dispose]()
+			}
+		})
+		return this.#track(work)
+	}
+
+	async #ensureTable(operation: Abortable): Promise<void> {
+		operation.signal?.throwIfAborted()
+		let initialization = this.#initialization
+
+		if (!initialization) {
+			let controller = new AbortController()
+			let current: TableInitialization = {
+				controller,
+				waiters: 0,
+				promise: this.#runInit({ ...operation, signal: controller.signal }),
+			}
+
+			current.promise = this.#track(
+				current.promise.then(
+					() => {
+						current.controller = undefined
+						return undefined
+					},
+					(error: unknown) => {
+						current.controller = undefined
+
+						// An unconfirmed DROP must not run again on the next read or write.
+						if (!this.#dropExistingTable && this.#initialization === current) {
+							this.#initialization = undefined
+						}
+
+						throw error
+					}
+				)
+			)
+			this.#initialization = current
+			initialization = current
+		}
+
+		initialization.waiters++
+
+		try {
+			await abortable(operation.signal, initialization.promise)
+			operation.signal?.throwIfAborted()
+		} finally {
+			initialization.waiters--
+
+			if (initialization.waiters === 0 && initialization.controller) {
+				initialization.controller.abort(operation.signal?.reason)
+
+				if (!this.#dropExistingTable && this.#initialization === initialization) {
+					this.#initialization = undefined
+				}
+			}
+		}
+	}
+
+	async #runInit(operation: Abortable): Promise<void> {
 		let { id, document, embedding, metadata } = this.#columnMap
 
 		if (this.#dropExistingTable) {
-			await this.#client.retrySession((session) => {
+			await this.#client.retrySession(operation, (session) => {
 				return session.execute(`DROP TABLE IF EXISTS ${this.#table}`)
 			})
 
 			this.#dropExistingTable = false
 		}
 
-		await this.#client.retrySession((session) => {
+		await this.#client.retrySession(operation, (session) => {
 			return session.execute(`CREATE TABLE IF NOT EXISTS ${this.#table} (
 				${id} Utf8,
 				${document} Utf8,
@@ -519,21 +626,23 @@ export class YDBVectorStore extends VectorStore {
 		documents: Document[],
 		options: YDBVectorStoreAddOptions = {}
 	): Promise<string[]> {
-		this.#assertOpen()
-		assertSameLength('vectors', vectors.length, 'documents', documents.length)
-		let ids = documentIds(documents, options)
-		this.#validateDimensions(vectors)
+		return this.#run(options, async (operation) => {
+			assertSameLength('vectors', vectors.length, 'documents', documents.length)
+			let ids = documentIds(documents, options)
+			this.#validateDimensions(vectors)
 
-		for (let i = 0; i < vectors.length; i += this.#batchSize) {
-			// oxlint-disable-next-line no-await-in-loop
-			await this.#writeBatch(
-				vectors.slice(i, i + this.#batchSize),
-				documents.slice(i, i + this.#batchSize),
-				ids.slice(i, i + this.#batchSize)
-			)
-		}
+			for (let i = 0; i < vectors.length; i += this.#batchSize) {
+				// oxlint-disable-next-line no-await-in-loop
+				await this.#writeBatch(
+					vectors.slice(i, i + this.#batchSize),
+					documents.slice(i, i + this.#batchSize),
+					ids.slice(i, i + this.#batchSize),
+					operation
+				)
+			}
 
-		return ids
+			return ids
+		})
 	}
 
 	#validateDimensions(
@@ -578,7 +687,8 @@ export class YDBVectorStore extends VectorStore {
 	async #writeBatch(
 		vectors: ArrayLike<number>[],
 		documents: Document[],
-		ids: string[]
+		ids: string[],
+		operation: Abortable
 	): Promise<void> {
 		let batch = documents.map((doc, i) => {
 			return {
@@ -589,12 +699,12 @@ export class YDBVectorStore extends VectorStore {
 			}
 		})
 
-		await this.#ensureTable()
+		await this.#ensureTable(operation)
 		let { id, document, embedding, metadata } = this.#columnMap
 		let text = `UPSERT INTO ${this.#table} (${id}, ${document}, ${embedding}, ${metadata})
 			SELECT id, document, embedding, CAST(metadata AS Json) FROM AS_TABLE($batch)`
 
-		await this.#client.retrySession((session) => {
+		await this.#client.retrySession(operation, (session) => {
 			return session.execute(text, { batch })
 		})
 	}
@@ -608,25 +718,30 @@ export class YDBVectorStore extends VectorStore {
 		documents: Document[],
 		options: YDBVectorStoreAddOptions = {}
 	): Promise<string[]> {
-		this.#assertOpen()
-		let ids = documentIds(documents, options)
-		let dimension = this.#indexConfig.vectorDimension
+		return this.#run(options, async (operation) => {
+			let ids = documentIds(documents, options)
+			let dimension = this.#indexConfig.vectorDimension
 
-		for (let i = 0; i < documents.length; i += this.#batchSize) {
-			let batch = documents.slice(i, i + this.#batchSize)
-			// oxlint-disable-next-line no-await-in-loop
-			let vectors = await this.embeddings.embedDocuments(
-				batch.map((doc) => {
-					return doc.pageContent
-				})
-			)
-			assertSameLength('vectors', vectors.length, 'documents', batch.length)
-			dimension = this.#validateDimensions(vectors, dimension)
-			// oxlint-disable-next-line no-await-in-loop
-			await this.#writeBatch(vectors, batch, ids.slice(i, i + this.#batchSize))
-		}
+			for (let i = 0; i < documents.length; i += this.#batchSize) {
+				operation.signal?.throwIfAborted()
+				let batch = documents.slice(i, i + this.#batchSize)
+				// oxlint-disable-next-line no-await-in-loop
+				let vectors = await abortable(
+					operation.signal,
+					this.embeddings.embedDocuments(
+						batch.map((doc) => {
+							return doc.pageContent
+						})
+					)
+				)
+				assertSameLength('vectors', vectors.length, 'documents', batch.length)
+				dimension = this.#validateDimensions(vectors, dimension)
+				// oxlint-disable-next-line no-await-in-loop
+				await this.#writeBatch(vectors, batch, ids.slice(i, i + this.#batchSize), operation)
+			}
 
-		return ids
+			return ids
+		})
 	}
 
 	override async similaritySearch(
@@ -648,16 +763,17 @@ export class YDBVectorStore extends VectorStore {
 		filter?: this['FilterType'],
 		_callbacks?: Callbacks
 	): Promise<[Document, number][]> {
-		this.#assertOpen()
-		assertNonNegativeInteger('k', k)
+		return this.#run({}, async (operation) => {
+			assertNonNegativeInteger('k', k)
 
-		if (k === 0) {
-			return []
-		}
+			if (k === 0) {
+				return []
+			}
 
-		let vector = await this.embeddings.embedQuery(query)
+			let vector = await abortable(operation.signal, this.embeddings.embedQuery(query))
 
-		return this.#searchVector(vector, k, filter)
+			return this.#searchVector(vector, k, filter, operation)
+		})
 	}
 
 	/**
@@ -675,14 +791,16 @@ export class YDBVectorStore extends VectorStore {
 		k: number,
 		filter?: this['FilterType']
 	): Promise<[Document, number][]> {
-		this.#assertOpen()
-		return this.#searchVector(query, k, filter)
+		return this.#run({}, (operation) => {
+			return this.#searchVector(query, k, filter, operation)
+		})
 	}
 
 	async #searchVector(
 		query: ArrayLike<number>,
 		k: number,
-		filter: this['FilterType'] | undefined
+		filter: this['FilterType'] | undefined,
+		operation: Abortable
 	): Promise<[Document, number][]> {
 		assertNonNegativeInteger('k', k)
 
@@ -730,20 +848,23 @@ export class YDBVectorStore extends VectorStore {
 			score: number | null
 		}
 
-		await this.#ensureTable()
+		await this.#ensureTable(operation)
 
-		let { resultSets } = await this.#client.retrySession({ idempotent: true }, (session) => {
-			let parameters: Record<string, Uint64 | Float32Vector | string> = {
-				vector,
-				k: new Uint64(BigInt(k)),
+		let { resultSets } = await this.#client.retrySession(
+			{ ...operation, idempotent: true },
+			(session) => {
+				let parameters: Record<string, Uint64 | Float32Vector | string> = {
+					vector,
+					k: new Uint64(BigInt(k)),
+				}
+
+				entries.forEach(([, value], i) => {
+					parameters['filter' + i] = value
+				})
+
+				return session.execute<[SearchResultRow]>(text, parameters)
 			}
-
-			entries.forEach(([, value], i) => {
-				parameters['filter' + i] = value
-			})
-
-			return session.execute<[SearchResultRow]>(text, parameters)
-		})
+		)
 
 		return (resultSets[0]?.rows ?? []).map((row) => {
 			if (typeof row.score !== 'number' || !Number.isFinite(row.score)) {
@@ -776,31 +897,33 @@ export class YDBVectorStore extends VectorStore {
 	 *   Takes precedence over `ids`.
 	 */
 	override async delete(params: YDBVectorStoreDeleteParams): Promise<void> {
-		if (params.deleteAll !== undefined && typeof params.deleteAll !== 'boolean') {
-			throw new YDBVectorStoreArgumentError('deleteAll must be a boolean.')
-		}
-		if (params.ids !== undefined) {
-			validateIds(params.ids)
-		}
-		if (params.deleteAll === true) {
-			await this.#ensureTable()
+		return this.#run(params, async (operation) => {
+			if (params.deleteAll !== undefined && typeof params.deleteAll !== 'boolean') {
+				throw new YDBVectorStoreArgumentError('deleteAll must be a boolean.')
+			}
+			if (params.ids !== undefined) {
+				validateIds(params.ids)
+			}
+			if (params.deleteAll === true) {
+				await this.#ensureTable(operation)
 
-			await this.#client.retrySession((session) => {
-				return session.execute(`DELETE FROM ${this.#table}`)
-			})
-		} else if (params.ids && params.ids.length > 0) {
-			let ids = params.ids.slice()
-			await this.#ensureTable()
+				await this.#client.retrySession(operation, (session) => {
+					return session.execute(`DELETE FROM ${this.#table}`)
+				})
+			} else if (params.ids && params.ids.length > 0) {
+				let ids = params.ids.slice()
+				await this.#ensureTable(operation)
 
-			await this.#client.retrySession((session) => {
-				return session.execute(
-					`DELETE FROM ${this.#table} WHERE ${this.#columnMap.id} IN $ids`,
-					{
-						ids,
-					}
-				)
-			})
-		}
+				await this.#client.retrySession(operation, (session) => {
+					return session.execute(
+						`DELETE FROM ${this.#table} WHERE ${this.#columnMap.id} IN $ids`,
+						{
+							ids,
+						}
+					)
+				})
+			}
+		})
 	}
 
 	/**
@@ -808,22 +931,25 @@ export class YDBVectorStore extends VectorStore {
 	 * All data is permanently deleted. The store can be reused after this call —
 	 * the next operation re-creates the table (without re-dropping).
 	 */
-	async drop(): Promise<void> {
-		this.#assertOpen()
+	async drop(options: Abortable = {}): Promise<void> {
+		return this.#run(options, async (operation) => {
+			// Wait out any in-flight CREATE TABLE so DROP doesn't race with it.
+			try {
+				await abortable(
+					operation.signal,
+					this.#initialization?.promise ?? Promise.resolve()
+				)
+			} catch {
+				operation.signal?.throwIfAborted()
+			}
 
-		// Wait out any in-flight CREATE TABLE so DROP doesn't race with it.
-		try {
-			await this.#promise
-		} catch {
-			// Init failure is irrelevant — we're dropping the table anyway.
-		}
+			await this.#client.retrySession(operation, (session) => {
+				return session.execute(`DROP TABLE IF EXISTS ${this.#table}`)
+			})
 
-		await this.#client.retrySession((session) => {
-			return session.execute(`DROP TABLE IF EXISTS ${this.#table}`)
+			this.#dropExistingTable = false
+			this.#initialization = undefined
 		})
-
-		this.#dropExistingTable = false
-		this.#promise = undefined
 	}
 
 	/**
@@ -840,18 +966,19 @@ export class YDBVectorStore extends VectorStore {
 	 * Requires `indexEnabled: true` AND `indexVectorDimension` in the store config.
 	 * Throws if the index already exists (re-building requires dropping first).
 	 */
-	async createVectorIndex(): Promise<void> {
-		if (!this.#indexConfig.isEnabled()) {
-			throw new YDBVectorStoreOperationError(
-				'Cannot create vector index: indexEnabled is false in config.'
-			)
-		}
+	async createVectorIndex(options: Abortable = {}): Promise<void> {
+		return this.#run(options, async (operation) => {
+			if (!this.#indexConfig.isEnabled()) {
+				throw new YDBVectorStoreOperationError(
+					'Cannot create vector index: indexEnabled is false in config.'
+				)
+			}
 
-		await this.#ensureTable()
+			await this.#ensureTable(operation)
 
-		let index = this.#indexConfig
-		await this.#client.retrySession((session) => {
-			return session.execute(`ALTER TABLE ${this.#table}
+			let index = this.#indexConfig
+			await this.#client.retrySession(operation, (session) => {
+				return session.execute(`ALTER TABLE ${this.#table}
 				ADD INDEX ${index.name}
 				GLOBAL USING vector_kmeans_tree
 				ON (${this.#columnMap.embedding})
@@ -862,18 +989,44 @@ export class YDBVectorStore extends VectorStore {
 					levels=${index.levels},
 					clusters=${index.clusters}
 				)`)
+			})
 		})
 	}
 
-	/**
-	 * Drain the session pool if the store created it, then close any owned driver.
-	 */
+	/** Drain this store's operations, then release only resources it owns. */
 	close(): Promise<void> {
-		return (this.#closing ??= this.#ownsClient
-			? this.#client.close().finally(() => {
-					return this.#ownedDriver?.close()
-				})
-			: Promise.resolve())
+		return (this.#closing ??= this.#close())
+	}
+
+	async #close(): Promise<void> {
+		while (this.#pending.size > 0) {
+			// oxlint-disable-next-line no-await-in-loop
+			await Promise.allSettled(this.#pending)
+		}
+
+		if (this.#ownsClient) {
+			try {
+				await this.#client.close()
+			} finally {
+				this.#ownedDriver?.close()
+			}
+		}
+	}
+
+	override asRetriever(
+		kOrFields?: number | Partial<VectorStoreRetrieverInput<this>>,
+		filter?: this['FilterType'],
+		callbacks?: Callbacks,
+		tags?: string[],
+		metadata?: Record<string, unknown>,
+		verbose?: boolean
+	): VectorStoreRetriever<this> {
+		let retriever = super.asRetriever(kOrFields, filter, callbacks, tags, metadata, verbose)
+		if (retriever.searchType === 'mmr') {
+			return new YDBVectorStoreRetriever({ ...retriever, searchType: 'mmr' })
+		}
+
+		return new YDBVectorStoreRetriever({ ...retriever, searchType: 'similarity' })
 	}
 
 	[Symbol.asyncDispose](): Promise<void> {
@@ -966,7 +1119,7 @@ export class YDBVectorStore extends VectorStore {
 		}
 
 		let store = new YDBVectorStore(embeddings, config)
-		store.#promise = Promise.resolve()
+		store.#initialization = { promise: Promise.resolve(), controller: undefined, waiters: 0 }
 
 		return store
 	}
