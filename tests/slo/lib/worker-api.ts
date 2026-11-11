@@ -8,6 +8,16 @@ export type WorkerData = {
 export type ControlMessage = { type: 'stop' }
 export const CONTROL_CHANNEL = 'slo-workload-control'
 
+export function isAbortedBySignal(error: unknown, signal: AbortSignal): boolean {
+	return (
+		signal.aborted &&
+		(error === signal.reason ||
+			(error instanceof Error &&
+				error.name === 'AbortError' &&
+				error.cause === signal.reason))
+	)
+}
+
 // Aborts the given controller when a 'stop' message is received on the control channel.
 export function abortOnStop(ctrl: AbortController): Disposable {
 	let ch = new BroadcastChannel(CONTROL_CHANNEL)
@@ -34,7 +44,9 @@ export async function runPaced(
 ): Promise<void> {
 	let limiter = new RateLimiter(rps)
 	let inflight = new Set<Promise<void>>()
-	while (!signal.aborted) {
+	let failed = false
+	let failure: unknown
+	while (!signal.aborted && !failed) {
 		if (inflight.size >= maxConcurrency) {
 			// oxlint-disable-next-line no-await-in-loop
 			await Promise.race(inflight)
@@ -42,11 +54,24 @@ export async function runPaced(
 		try {
 			// oxlint-disable-next-line no-await-in-loop
 			await limiter.wait(signal)
-		} catch {
+		} catch (error) {
+			if (!isAbortedBySignal(error, signal) && !failed) {
+				failed = true
+				failure = error
+			}
 			break
 		}
-		let p = op().finally(() => inflight.delete(p))
+		if (signal.aborted || failed) break
+		let p = op()
+			.catch((error) => {
+				if (!isAbortedBySignal(error, signal) && !failed) {
+					failed = true
+					failure = error
+				}
+			})
+			.finally(() => inflight.delete(p))
 		inflight.add(p)
 	}
 	await Promise.allSettled(inflight)
+	if (failed) throw failure
 }

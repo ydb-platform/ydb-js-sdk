@@ -31,7 +31,7 @@ jobs:
           - name: regular
             workload_suffix: ''
             bridge_mode: false
-            fail_on_workload_error: false
+            fail_on_workload_error: true
           - name: 2dc
             workload_suffix: '-2dc'
             bridge_mode: true
@@ -119,6 +119,12 @@ jobs:
         with:
           node-version: latest
 
+      - name: Use current workload checker with baseline SDK
+        run: |
+          cp -a \
+            "$GITHUB_WORKSPACE/current/tests/slo"/{index.ts,instrument.ts,lib,scripts,workloads,package.json} \
+            "$GITHUB_WORKSPACE/baseline/tests/slo/"
+
       - name: Build current workload image
         run: |
           npm --prefix "$GITHUB_WORKSPACE/current" ci
@@ -140,7 +146,8 @@ jobs:
             "$GITHUB_WORKSPACE/baseline/tests/slo"
 
       - name: Run ${{ matrix.topology.name }} SLO Tests
-        uses: ydb-platform/ydb-slo-action/init@6b8e6cd4b96d70e747fbba2f2cfa196a6e2b2717
+        # Pin legacy telemetry fixes until ydb-slo-action#81 is merged.
+        uses: ydb-platform/ydb-slo-action/init@d66bd1e10f893e5f70d542c4430a3cffb6d6f9f8
         timeout-minutes: 35
         with:
           github_issue: ${{ github.event.pull_request.number }}
@@ -161,3 +168,4 @@ jobs:
             ${{ matrix.sdk.command }}
             --kv.read.rps=1000
             --kv.write.rps=100
+          workload_type: table

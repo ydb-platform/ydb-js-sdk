@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
@@ -34,8 +35,15 @@ meter
 		r.observe(u.arrayBuffers, { worker: 'main', type: 'arrayBuffers' })
 	})
 
-installSafetyHandlers('log', (kind, _err) => {
+let ctrl = new AbortController()
+let runFailed = false
+
+installSafetyHandlers('log', (kind, err) => {
 	sdk_process_errors_total.add(1, { worker: 'main', kind })
+	if (cli.workers.some((name) => name === 'kv.read' || name === 'kv.write')) {
+		runFailed = true
+		ctrl.abort(err)
+	}
 })
 
 // ---- CLI parsing ----------------------------------------------------------
@@ -121,9 +129,9 @@ function resolveWorker(name: string): URL {
 
 // ---- Global state ---------------------------------------------------------
 let cli = parseArgv(process.argv.slice(2))
+process.env['SLO_KV_NAMESPACE'] ??= randomUUID().replaceAll('-', '')
 let DURATION = parseInt(process.env['WORKLOAD_DURATION'] || '60', 10)
 
-let ctrl = new AbortController()
 process.on('SIGINT', () => {
 	console.error('[index] SIGINT, aborting')
 	ctrl.abort()
@@ -168,16 +176,16 @@ const RESTART_CAP = 3
 const RESTART_WINDOW_MS = 60_000
 const BACKOFF_MS = [250, 500, 1000]
 
-let runFailed = false
-
 async function runForever(name: string): Promise<void> {
 	let url = resolveWorker(name)
 	let data: WorkerData = { name, params: cli.params.get(name) ?? {} }
+	let kvWorker = name === 'kv.read' || name === 'kv.write'
 
 	let restartTimestamps: number[] = []
 
 	while (!ctrl.signal.aborted) {
 		let worker = new Worker(url, { workerData: data })
+		let terminated = false
 		console.log(`[index] spawned ${name}`)
 
 		// oxlint-disable-next-line no-await-in-loop
@@ -193,10 +201,17 @@ async function runForever(name: string): Promise<void> {
 				settle(1)
 			})
 			worker.on('exit', (c) => settle(c ?? 1))
+			worker.on('message', (message: { type: string }) => {
+				if (kvWorker && message.type === 'failure') {
+					runFailed = true
+					ctrl.abort()
+				}
+			})
 
 			let onAbort = () => {
 				let killer = setTimeout(() => {
 					console.error(`[index] ${name} did not exit in 5s, terminating`)
+					terminated = true
 					worker.terminate().catch(() => {})
 				}, 5000)
 				killer.unref()
@@ -204,6 +219,13 @@ async function runForever(name: string): Promise<void> {
 			if (ctrl.signal.aborted) onAbort()
 			else ctrl.signal.addEventListener('abort', onAbort, { once: true })
 		})
+
+		if (kvWorker && exitCode !== 0 && !terminated) {
+			console.error(`[index] ${name} failed with code ${exitCode}`)
+			runFailed = true
+			ctrl.abort()
+			return
+		}
 
 		if (ctrl.signal.aborted) {
 			console.log(`[index] ${name} exited (${exitCode}) during shutdown`)
