@@ -46,7 +46,7 @@ Transaction options:
 
 - `accessMode`: `'read write' | 'read only'`.
 - `isolationLevel`: `'serializableReadWrite' | 'snapshotReadOnly'`.
-- `idempotent`: if `true`, allows automatic retries for the transaction on network errors.
+- `idempotent`: if `true`, permits retrying the entire callback for retryable failures; all work in the callback must be safe to repeat.
 
 ## Schema Options
 

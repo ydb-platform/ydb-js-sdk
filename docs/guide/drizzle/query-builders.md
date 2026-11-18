@@ -38,7 +38,7 @@ In addition to standard Drizzle methods (`where`, `orderBy`, `limit`, etc.), the
 Example:
 
 ```ts
-const rows = await db
+let rows = await db
   .select()
   .from(users)
   .without(users.password)
@@ -60,7 +60,7 @@ The adapter supports 10 join types, including YDB-specific semi-joins:
 | `.crossJoin()` | `.exclusionJoin()`: Rows without a match in the other table.   |
 
 ```ts
-const inactiveUsers = await db
+let inactiveUsers = await db
   .select()
   .from(users)
   .leftOnlyJoin(posts, eq(users.id, posts.authorId))
@@ -132,33 +132,29 @@ await db
 Common Table Expressions in YDB are rendered as variable bindings.
 
 ```ts
-const activeUsers = db
-  .$with('active_users')
-  .as(db.select().from(users).where(eq(users.active, true)))
+let activeUsers = db.$with('active_users').as(db.select().from(users).where(eq(users.active, true)))
 
-const rows = await db.with(activeUsers).select().from(activeUsers).execute()
+let rows = await db.with(activeUsers).select().from(activeUsers).execute()
 ```
 
 ## Prepared Queries
 
-Use `.prepare()` for frequently executed queries to save on parsing and planning overhead.
+`.prepare()` creates a reusable query object containing the rendered YQL and values already supplied to the builder. Its execution methods accept no parameters; build another query to use different values. Named placeholders and server-side prepared statements are not supported.
+
+The optional name accepted by `prepare(name?)` is currently ignored.
 
 ```ts
-const selectUser = db
-  .select()
-  .from(users)
-  .where(eq(users.id, sql.placeholder('id')))
-  .prepare()
+let selectUser = db.select().from(users).where(eq(users.id, 1)).prepare()
 
-const user = await selectUser.execute({ id: 1 })
+let user = await selectUser.execute()
 ```
 
 Builders execute with `.execute()`. Prepared queries also expose `.all()`, `.get()`, and `.values()`.
 
 ```ts
-const prepared = db.select({ id: users.id, name: users.name }).from(users).prepare('users')
+let prepared = db.select({ id: users.id, name: users.name }).from(users).prepare()
 
-const rows = await prepared.all()
-const first = await prepared.get()
-const values = await prepared.values()
+let rows = await prepared.all()
+let first = await prepared.get()
+let values = await prepared.values()
 ```

@@ -13,7 +13,7 @@ Use `ydbTable` to define your tables. In YDB, a **Primary Key is mandatory**.
 ```ts
 import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const users = ydbTable('users', {
+export let users = ydbTable('users', {
   id: integer('id').primaryKey(),
   name: text('name').notNull(),
 })
@@ -28,13 +28,15 @@ export const users = ydbTable('users', {
 ```ts
 import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const memberships = ydbTable(
+export let memberships = ydbTable(
   'memberships',
   {
     userId: integer('user_id').notNull(),
     orgId: integer('org_id').notNull(),
   },
-  (table) => [primaryKey({ columns: [table.userId, table.orgId] })]
+  (table) => {
+    return [primaryKey({ columns: [table.userId, table.orgId] })]
+  }
 )
 ```
 
@@ -45,11 +47,11 @@ Use `ydbTableCreator` to apply a global prefix or transformation to all table na
 ```ts
 import { ydbTableCreator } from '@ydbjs/drizzle-adapter/schema'
 
-const appTable = ydbTableCreator((name) => `myapp/${name}`)
-
-export const users = appTable('users', {
-  /* ... */
+let appTable = ydbTableCreator((name) => {
+  return `myapp/${name}`
 })
+
+export let users = appTable('users', {/* ... */})
 ```
 
 ## Data Types
@@ -108,7 +110,7 @@ import { bigint, bytes, json, text, timestamp, ydbTable } from '@ydbjs/drizzle-a
 
 type Profile = { timezone: string; flags: string[] }
 
-export const profiles = ydbTable('profiles', {
+export let profiles = ydbTable('profiles', {
   id: bigint('id').primaryKey(),
   displayName: text('display_name').notNull(),
   avatar: bytes('avatar'),
@@ -141,13 +143,15 @@ id: integer('id').primaryKey()
 ```ts
 import { integer, primaryKey, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const details = ydbTable(
+export let details = ydbTable(
   'details',
   {
     orderId: integer('order_id').notNull(),
     lineNum: integer('line_num').notNull(),
   },
-  (table) => [primaryKey({ columns: [table.orderId, table.lineNum] })]
+  (table) => {
+    return [primaryKey({ columns: [table.orderId, table.lineNum] })]
+  }
 )
 ```
 
@@ -158,17 +162,11 @@ Secondary indexes in YDB are stored as separate internal tables.
 ```ts
 import { index, uniqueIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const users = ydbTable(
-  'users',
-  {
-    /* ... */
-  },
-  (table) => [
-    index('users_tenant_idx').on(table.tenantId),
-    index('users_email_idx').on(table.email).global().sync().cover(table.name),
-    uniqueIndex('users_login_idx').on(table.login),
-  ]
-)
+export let users = ydbTable('users', {/* ... */}, (table) => [
+  index('users_tenant_idx').on(table.tenantId),
+  index('users_email_idx').on(table.email).global().sync().cover(table.name),
+  uniqueIndex('users_login_idx').on(table.login),
+])
 ```
 
 - `.global()` / `.local()`: Index locality (Global is default).
@@ -182,7 +180,7 @@ YDB supports specialized indexes for AI-driven vector search.
 ```ts
 import { bytes, integer, vectorIndex, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const embeddings = ydbTable(
+export let embeddings = ydbTable(
   'embeddings',
   {
     id: integer('id').primaryKey(),
