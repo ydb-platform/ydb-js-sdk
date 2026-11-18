@@ -34,15 +34,15 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
 		"./budget": {
-			"development": "./src/budget.ts",
+			"ydbjs-source": "./src/budget.ts",
 			"default": "./dist/budget.js"
 		},
 		"./strategy": {
-			"development": "./src/strategy.ts",
+			"ydbjs-source": "./src/strategy.ts",
 			"default": "./dist/strategy.js"
 		}
 	},

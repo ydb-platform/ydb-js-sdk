@@ -34,11 +34,11 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
 		"./register": {
-			"development": "./src/register.ts",
+			"ydbjs-source": "./src/register.ts",
 			"default": "./dist/register.js"
 		}
 	},

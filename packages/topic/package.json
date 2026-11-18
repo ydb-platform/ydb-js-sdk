@@ -35,23 +35,23 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
 		"./codec": {
-			"development": "./src/codec.ts",
+			"ydbjs-source": "./src/codec.ts",
 			"default": "./dist/codec.js"
 		},
 		"./reader": {
-			"development": "./src/reader/index.ts",
+			"ydbjs-source": "./src/reader/index.ts",
 			"default": "./dist/reader/index.js"
 		},
 		"./writer": {
-			"development": "./src/writer/index.ts",
+			"ydbjs-source": "./src/writer/index.ts",
 			"default": "./dist/writer/index.js"
 		},
 		"./message": {
-			"development": "./src/message.ts",
+			"ydbjs-source": "./src/message.ts",
 			"default": "./dist/message.js"
 		}
 	},

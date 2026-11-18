@@ -35,71 +35,71 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		"./auth": {
-			"development": "./src/auth.ts",
+			"ydbjs-source": "./src/auth.ts",
 			"default": "./dist/auth.js"
 		},
 		"./bridge": {
-			"development": "./src/bridge.ts",
+			"ydbjs-source": "./src/bridge.ts",
 			"default": "./dist/bridge.js"
 		},
 		"./cms": {
-			"development": "./src/cms.ts",
+			"ydbjs-source": "./src/cms.ts",
 			"default": "./dist/cms.js"
 		},
 		"./coordination": {
-			"development": "./src/coordination.ts",
+			"ydbjs-source": "./src/coordination.ts",
 			"default": "./dist/coordination.js"
 		},
 		"./discovery": {
-			"development": "./src/discovery.ts",
+			"ydbjs-source": "./src/discovery.ts",
 			"default": "./dist/discovery.js"
 		},
 		"./export": {
-			"development": "./src/export.ts",
+			"ydbjs-source": "./src/export.ts",
 			"default": "./dist/export.js"
 		},
 		"./federation-discovery": {
-			"development": "./src/federation_discovery.ts",
+			"ydbjs-source": "./src/federation_discovery.ts",
 			"default": "./dist/federation_discovery.js"
 		},
 		"./import": {
-			"development": "./src/import.ts",
+			"ydbjs-source": "./src/import.ts",
 			"default": "./dist/import.js"
 		},
 		"./monitoring": {
-			"development": "./src/monitoring.ts",
+			"ydbjs-source": "./src/monitoring.ts",
 			"default": "./dist/monitoring.js"
 		},
 		"./operation": {
-			"development": "./src/operation.ts",
+			"ydbjs-source": "./src/operation.ts",
 			"default": "./dist/operation.js"
 		},
 		"./query": {
-			"development": "./src/query.ts",
+			"ydbjs-source": "./src/query.ts",
 			"default": "./dist/query.js"
 		},
 		"./rate-limiter": {
-			"development": "./src/rate_limiter.ts",
+			"ydbjs-source": "./src/rate_limiter.ts",
 			"default": "./dist/rate_limiter.js"
 		},
 		"./scheme": {
-			"development": "./src/scheme.ts",
+			"ydbjs-source": "./src/scheme.ts",
 			"default": "./dist/scheme.js"
 		},
 		"./scripting": {
-			"development": "./src/scripting.ts",
+			"ydbjs-source": "./src/scripting.ts",
 			"default": "./dist/scripting.js"
 		},
 		"./table": {
-			"development": "./src/table.ts",
+			"ydbjs-source": "./src/table.ts",
 			"default": "./dist/table.js"
 		},
 		"./topic": {
-			"development": "./src/topic.ts",
+			"ydbjs-source": "./src/topic.ts",
 			"default": "./dist/topic.js"
 		},
 		"./value": {
-			"development": "./src/value.ts",
+			"ydbjs-source": "./src/value.ts",
 			"default": "./dist/value.js"
 		}
 	},
