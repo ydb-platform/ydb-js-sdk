@@ -9,11 +9,20 @@ import type { RetryContext } from './context.js'
  *
  * @example
  * ```ts
- * import { retry, fixed } from '@ydbjs/retry'
+ * import { retry, strategies } from '@ydbjs/retry'
  *
- * await retry(() => fetch('https://example.com'), {
- *     strategy: fixed(1000),
- * })
+ * await retry(
+ *   {
+ *     strategy: strategies.fixed(1000),
+ *     budget: 3,
+ *     retry: (error) => {
+ *       return error instanceof TypeError
+ *     },
+ *   },
+ *   (signal) => {
+ *     return fetch('https://example.com', { signal })
+ *   }
+ * )
  * ```
  */
 export interface RetryStrategy {

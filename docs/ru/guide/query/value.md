@@ -4,45 +4,43 @@ title: Query — типы и @ydbjs/value
 
 # Работа с типами YDB и пакетом @ydbjs/value
 
-@ydbjs/value отвечает за типобезопасную конвертацию значений между JS и YDB:
+`@ydbjs/value` преобразует значения между JavaScript и YDB:
 
 - fromJs(js) — конвертирует JS‑значение в типизированное YDB‑значение (инференс типа).
 - toJs(ydb) — преобразует YDB‑значение обратно в нативный JS.
-- Экспортирует классы типов и значений: Struct, List, Tuple, Dict, Optional, Null, примитивы и др.
+- Корень пакета экспортирует функции преобразования и интерфейсы `Type` и `Value`; конструкторы доступны в подпутях, например `@ydbjs/value/optional` и `@ydbjs/value/struct`.
 
 ## Быстрый старт
 
 ```ts
 import { fromJs } from '@ydbjs/value'
+
 await sql`INSERT INTO users SELECT * FROM AS_TABLE(${[{ id: 1, name: 'Alice' }]})`
 
 // Явная обёртка (обычно не требуется):
 await sql`SELECT * FROM users WHERE meta = ${fromJs({ enabled: true })}`
 ```
 
-Интерполяции в sql`...` автоматически вызывают fromJs, поэтому явное использование нужно редко — в основном для контроля типа.
+Интерполяции в sql`...` автоматически вызывают `fromJs`. Явный вызов использует те же правила вывода типов; для конкретного типа YDB нужны конструкторы Value.
 
 ## Optional (nullable)
 
-В YDB nullable поля представлены типом `Optional<T>`. В JS это `null`.
+В YDB nullable-поля представлены типом `Optional<T>`. Отсутствующий Optional преобразуется в JavaScript `null`, но `fromJs(null)` создаёт отдельный тип `Null` и не может определить `T`.
 
 ```ts
-import { Optional } from '@ydbjs/value'
+import { Optional } from '@ydbjs/value/optional'
+import { Int32, Int32Type, TextType } from '@ydbjs/value/primitive'
 
-// НЕЛЬЗЯ: передавать null без явного типа — из JS null невозможно понять YDB‑тип Optional над каким именно T
-// await sql`SELECT * FROM users WHERE middle_name = ${null}` // так делать не нужно
+let middleName = new Optional(null, new TextType())
+let absentAge = new Optional(null, new Int32Type())
+let age = new Optional(new Int32(42))
 
-// Делайте так: указывайте тип явно, оборачивая значение в Optional с явным типом
-// Пример: middle_name имеет тип Optional<Text>
-import { Optional } from '@ydbjs/value'
-import { TextType } from '@ydbjs/value/primitive'
-await sql`SELECT * FROM users WHERE middle_name = ${new Optional(null, new TextType())}`
-
-// Явный Optional, если нужно управлять типом поля:
-await sql`SELECT * FROM users WHERE age = ${Optional.int32(null)}`
+await sql`SELECT ${middleName} AS middle_name, ${absentAge} AS absent_age, ${age} AS age`
 ```
 
-При генерации табличных параметров из массива объектов отсутствующие поля автоматически становятся Optional в результирующем Struct.
+Шаблон отклоняет интерполяции с обычными `null` и `undefined`. Именованные привязки `.parameter()` и объект параметров SQL-клиента принимают `null` как YDB `Null`, для которого может понадобиться `DECLARE`; это не отсутствующий Optional с известным типом. Для проверки отсутствия значения в колонке используйте `IS NULL`, а не сравнение с отсутствующим Optional.
+
+При преобразовании массива объектов все поля становятся Optional, а пропущенные поля — отсутствующими значениями. Явный `null` не получает тип поля из другой строки: `fromJs([{ age: null }, { age: 42 }])` отклоняет несовместимые типы.
 
 ## Контейнерные типы
 
@@ -66,23 +64,25 @@ await sql`INSERT INTO events SELECT * FROM AS_TABLE(${[
 Явное построение типов (когда нужен точный контроль):
 
 ```ts
-import { List, Struct, Optional } from '@ydbjs/value'
-import { Int32Type, TextType } from '@ydbjs/value/primitive'
+import { List, ListType } from '@ydbjs/value/list'
+import { Optional, OptionalType } from '@ydbjs/value/optional'
+import { Int32, Int32Type, Text, TextType } from '@ydbjs/value/primitive'
+import { Struct, StructType } from '@ydbjs/value/struct'
 
-// Struct<{ id: Int32; name: Optional<Text> }>
-const userType = new Struct({
-  id: new Int32Type(),
-  name: new Optional(null, new TextType()).type, // только тип, значение зададим отдельно
-})
+let userType = new StructType(['id', 'name'], [new Int32Type(), new OptionalType(new TextType())])
 
-// List<Struct<...>> со значениями
-const users = new List(
-  new Struct({ id: 1, name: new Optional(null, new TextType()) }, userType.type),
-  new Struct({ id: 2, name: new Optional('Bob', new TextType()) }, userType.type)
+let users = new List(
+  [
+    new Struct({ id: new Int32(1) }, userType),
+    new Struct({ id: new Int32(2), name: new Optional(new Text('Bob')) }, userType),
+  ],
+  new ListType(userType)
 )
 
 await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 ```
+
+`StructType` описывает схему полей, а `Struct` содержит объекты Value. При явной схеме пропущенные Optional-поля становятся отсутствующими значениями. Явный `ListType` сохраняет тип элемента даже для пустого списка. Поля без Optional нужны, например, для табличных параметров с колонками `NOT NULL`.
 
 ## Примитивы и специальные типы
 
@@ -94,31 +94,35 @@ await sql`INSERT INTO t(id, ts, meta) VALUES (${new Uint64(1n)}, ${new Timestamp
 
 Обычно достаточно нативных JS типов (number, string, boolean, Date) и fromJs — он корректно выведет типы. Специальные классы пригодятся для явного контроля формата/диапазона.
 
+Результаты `Variant` и PostgreSQL, в том числе во вложенных схемах, требуют raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у тегового запроса. Обычное преобразование отклоняет такие схемы даже внутри отсутствующих Optional и пустых контейнеров. Raw-ячейка содержит protobuf `Ydb.Value`, а `QueryClient` сохраняет схему в `columns[].type`. Сама ячейка не служит SDK Value или полным типизированным параметром.
+
 ## fromJs и toJs
 
 ```ts
 import { fromJs, toJs } from '@ydbjs/value'
 
-const ydbVal = fromJs({ a: 1, b: [true, false] })
+let ydbVal = fromJs({ a: 1, b: [true, false] })
 console.log(toJs(ydbVal)) // { a: 1, b: [true, false] }
 ```
+
+Декодированные Struct и строки запросов в объектном режиме имеют нулевой прототип. Проверяйте наличие полей через `Object.hasOwn(record, name)`; унаследованных методов вроде `record.hasOwnProperty()` у них нет.
+
+`fromYdb(wireValue, wireType)` восстанавливает SDK Value со схемой. `toJs(value)` преобразует его в JavaScript и может терять различия, например уровни вложенных Optional или микросекунды Timestamp. По умолчанию типы с часовым поясом и расширенные типы даты и времени остаются SDK Values. Для результатов Temporal задайте `temporal: true` при создании клиента; приложение должно предоставить `globalThis.Temporal`. TzDate и TzDate32 остаются Values и в этом режиме. См. [полные правила преобразования](https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/value#read-results).
 
 ## Печать типов (debug)
 
 ```ts
-import { QueryClient } from '@ydbjs/query'
+import { fromJs } from '@ydbjs/value'
 import { typeToString } from '@ydbjs/value/print'
 
-await using client = new QueryClient(driver)
+let value = fromJs({ id: 42, name: 'Alice' })
 
-let result = await client.retrySession((session) => session.execute('SELECT 1 AS a'))
-
-console.log(typeToString(result.resultSets[0]!.columns[0]!.type!))
+console.log(typeToString(value.type)) // Struct<id:Int32,name:Utf8>
 ```
 
 ## Рекомендации
 
 - Для параметров используйте нативные JS значения — SDK сам обернёт их в YDB Value.
 - Для сложных структур передавайте plain объекты/массивы — fromJs построит тип автоматически.
-- Для nullable полей достаточно null; явный Optional используйте при жёстком контроле типа.
+- Для отсутствующего значения с известным типом YDB используйте `new Optional(null, itemType)`.
 - Избегайте смешения гетерогенных типов в одном массиве, кроме ожидаемого кейса объединения структур (поля станут Optional).

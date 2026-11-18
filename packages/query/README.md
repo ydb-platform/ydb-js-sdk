@@ -18,6 +18,8 @@ The `@ydbjs/query` package provides a tagged template API and a raw SQL client f
 
 ## Installation
 
+Supported Node.js versions: `^22.23.5 || ^24.22.3 || >=26.13.1`.
+
 ```sh
 npm install @ydbjs/core @ydbjs/query
 ```
@@ -150,11 +152,11 @@ Server invariants were checked in YDB 26.3.1.20 (`50df67c51b946ac2cd7f4f88d49f70
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 
-const driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const sql = query(driver)
-const resultSets = await sql`SELECT 1 + 1 AS sum`
+await using sql = query(driver)
+let resultSets = await sql`SELECT 1 + 1 AS sum`
 console.log(resultSets) // [ [ { sum: 2 } ] ]
 ```
 
@@ -163,8 +165,8 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 The SQL tag replaces interpolated values with placeholders (`$p0`, `$p1`, …) and sends each value and its YDB type in the request's parameter map. In V7, it no longer generates `DECLARE` statements. YDB 26.3.1.20 covers implicit parameter types in its [Query Service tests](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/ut/query/kqp_params_ut.cpp#L1196-L1228).
 
 ```ts
-const userId = 42n
-const userName = 'Alice'
+let userId = 42n
+let userName = 'Alice'
 await sql`
   SELECT * FROM users
   WHERE id = ${userId} AND name = ${userName}
@@ -198,7 +200,7 @@ await sql`SELECT ${id} AS id`
 #### Arrays, Structs, and Table Parameters
 
 ```ts
-const users = [
+let users = [
   { id: 1, name: 'Alice' },
   { id: 2, name: 'Bob' },
 ]
@@ -209,8 +211,8 @@ await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 
 ```ts
 // Serializable read-write transaction (default)
-const result = await sql.begin(async (tx) => {
-  await tx`UPDATE users SET active = false WHERE last_login < CurrentUtcTimestamp() - Interval('P1Y')`
+let result = await sql.begin(async (tx) => {
+  await tx`UPDATE users SET active = false WHERE id = ${42}`
   return await tx`SELECT * FROM users WHERE active = false`
 })
 
@@ -235,17 +237,26 @@ let [users, counts] = await sql<[UserRow, CountRow]>`
 
 console.log(users[0]?.id, counts[0]?.count)
 
-let result = await client.retrySession((session) =>
-  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
-)
+let result = await client.retrySession((session) => {
+  return session.execute<[UserRow, CountRow]>(
+    'SELECT id FROM users; SELECT COUNT(*) AS count FROM users;'
+  )
+})
 
 console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
 console.log(result.resultSets[0].columns, result.stats, result.metadata)
 
 // Listen for query statistics and retries
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
-q.on('stats', (stats) => console.log('Query stats:', stats))
-q.on('retry', (ctx) => console.log('Retrying:', ctx))
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+
+q.on('stats', (stats) => {
+  console.log('Query stats:', stats)
+})
+
+q.on('retry', (ctx) => {
+  console.log('Retrying:', ctx)
+})
+
 await q
 ```
 
@@ -289,7 +300,7 @@ await sql`SELECT * FROM users WHERE meta = ${meta}`
 
 Object result rows and decoded Struct values use `Object.create(null)`, including rows returned by tagged SQL and `.raw()`. Column names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to test field presence; result records do not inherit methods from `Object.prototype`. Array-mode rows and raw protobuf cells keep their respective representations.
 
-`Variant` values are available only as raw results, including when nested in containers. Use `session.execute(text, parameters, { raw: true })` or tagged SQL's `.raw()`; ordinary result conversion rejects them. Raw cells retain the protobuf `Ydb.Value`, and `QueryClient` result sets retain their schemas in `columns[].type`. The SDK does not provide typed `Variant` values or infer a selected alternative from ambiguous wire data.
+`Variant` and PostgreSQL values are available only as raw results, including when nested in containers. Use `session.execute(text, parameters, { raw: true })` or tagged SQL's `.raw()`; ordinary result conversion rejects them. Raw cells retain the protobuf `Ydb.Value`, and `QueryClient` result sets retain their schemas in `columns[].type`. The SDK does not provide typed `Variant` values or infer a selected alternative from ambiguous wire data.
 
 By default, Date, Datetime and Timestamp results use JavaScript `Date`, and Interval uses a number of microseconds.
 Date has day precision, Datetime has whole-second precision, and Timestamp microseconds are truncated to milliseconds in this default representation.
@@ -314,7 +325,7 @@ Raw results bypass JavaScript conversion.
 
 TypeScript projects require TypeScript 7 or later; SDK declarations include the standard Temporal types automatically.
 The SDK uses the runtime's `globalThis.Temporal` and does not include or install a polyfill.
-Node.js 26.3+ and Bun 1.4.3+ provide native Temporal; on Node.js 22/24, install and initialize an implementation in the application before creating a Temporal-enabled client.
+When the supported runtime does not provide Temporal, install and initialize an implementation in the application before creating a Temporal-enabled client.
 See [Temporal setup and the complete result mapping](../value/README.md#temporal-setup).
 Client construction throws immediately if `temporal: true` is requested without Temporal.
 Default result conversion and ordinary JavaScript `Date` inputs work without it.
@@ -330,7 +341,7 @@ You can enable and access query execution statistics:
 
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
 await q
 console.log(q.stats())
 ```
@@ -376,8 +387,12 @@ let result = await statement
 using sql = query(driver)
 let statement = sql`SELECT 1 AS id`
 let result = statement.then(
-  (rows) => rows,
-  (error) => error
+  (rows) => {
+    return rows
+  },
+  (error) => {
+    return error
+  }
 )
 sql.destroy()
 await result
@@ -450,39 +465,41 @@ ydb.query.transaction
 
 ```ts
 import { channel, tracingChannel } from 'node:diagnostics_channel'
+import type { DriverIdentity } from '@ydbjs/core'
 
-tracingChannel('tracing:ydb:query.execute').subscribe({
+type ExecuteContext = {
+  driver: DriverIdentity
+  sessionId: string
+  nodeId: bigint
+}
+
+tracingChannel<ExecuteContext>('tracing:ydb:query.execute').subscribe({
   start(ctx) {
-    span.start({
-      name: 'ydb.query.execute',
-      attributes: {
-        'db.system.name': 'ydb',
-        'db.namespace': ctx.driver.database,
-        'db.query.text': ctx.text,
-        'ydb.session.id': ctx.sessionId,
-        'ydb.node.id': Number(ctx.nodeId),
-        'ydb.isolation': ctx.isolation,
-      },
+    console.log('Query started:', {
+      database: ctx.driver.database,
+      sessionId: ctx.sessionId,
+      nodeId: ctx.nodeId,
     })
   },
-  asyncEnd() {
-    span.end()
-  },
-  error(ctx) {
-    span.recordException(ctx.error)
-    span.end()
+  asyncEnd(ctx) {
+    console.log('Query completed:', ctx.sessionId)
   },
 })
 
-channel('ydb:query.session.closed').subscribe((msg) => {
-  // msg.uptime is in ms; convert to seconds when feeding OTel histograms.
-  metrics.sessionLifetime.record(msg.uptime / 1000, { reason: msg.reason })
+channel('ydb:query.session.closed').subscribe((message) => {
+  let event = message as { driver: DriverIdentity; uptime: number; reason: string }
+
+  console.log('Session closed:', {
+    database: event.driver.database,
+    uptimeSeconds: event.uptime / 1000,
+    reason: event.reason,
+  })
 })
 ```
 
-### ⚠️ Subscribers must be safe
+### Subscriber errors
 
-**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy subscriber can break a query mid-flight or leak a session lease. `@ydbjs/query` does **not** wrap your subscribers; wrap them yourself in `try/catch`.
+`node:diagnostics_channel` invokes subscribers synchronously. An exception thrown by a subscriber triggers an `uncaughtException` and can terminate the process. The SDK does not wrap subscribers; handle failures inside callbacks that call your telemetry code. Keep subscriber state separate from the publisher's context.
 
 ### Stability
 
