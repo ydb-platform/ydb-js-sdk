@@ -18,11 +18,11 @@ This is the high-level overview of the `@ydbjs/query` client. For details, conti
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 
-const driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const sql = query(driver)
-const rows = await sql`SELECT 1 + 1 AS sum`
+await using sql = query(driver)
+let [rows] = await sql`SELECT 1 + 1 AS sum`
 console.log(rows)
 ```
 
@@ -31,7 +31,7 @@ console.log(rows)
 ### Parameters and AS_TABLE {#examples-parameters}
 
 ```ts
-const users = [
+let users = [
   { id: 1, name: 'Alice' },
   { id: 2, name: 'Bob' },
 ]
@@ -53,8 +53,12 @@ await sql`SELECT $id AS id`.parameter('id', id)
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
 
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
-q.on('stats', (s) => console.log('Stats:', s))
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+
+q.on('stats', (s) => {
+  console.log('Stats:', s)
+})
+
 await q
 ```
 
@@ -62,11 +66,11 @@ await q
 
 ```ts
 // Array of values (column order)
-const vals = await sql`SELECT 1 AS a, 2 AS b`.values()
-console.log(vals) // [ [1, 2] ]
+let vals = await sql`SELECT 1 AS a, 2 AS b`.values()
+console.log(vals) // [[[1, 2]]]
 
-// Raw TypedValue
-const raw = await sql`SELECT 1`.raw()
+// Raw protobuf Ydb.Value cells, without their column types
+let raw = await sql`SELECT 1`.raw()
 ```
 
 ### Per-call isolation {#examples-isolation}
@@ -93,12 +97,12 @@ try {
 
 ```ts
 // Safe dynamic table/column names
-const table = sql.identifier('users')
-const column = sql.identifier('created_at')
-const rows = await sql`SELECT ${column} FROM ${table} WHERE id = ${42}`
+let table = sql.identifier('users')
+let column = sql.identifier('created_at')
+let rows = await sql`SELECT ${column} FROM ${table} WHERE id = ${42}`
 
 // Unsafe fragments for trusted code only (migrations, DDL)
-await sql`PRAGMA TablePathPrefix(${sql.unsafe('/Root/dev')});`
+await sql`PRAGMA TablePathPrefix(${sql.unsafe("'/Root/dev'")});`
 ```
 
 ### Query events and retries {#examples-events}
@@ -106,20 +110,25 @@ await sql`PRAGMA TablePathPrefix(${sql.unsafe('/Root/dev')});`
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
 
-const q = sql`SELECT * FROM heavy_table`.idempotent(true).withStats(StatsMode.FULL)
+let q = sql`SELECT * FROM heavy_table`.idempotent(true).withStats(StatsMode.FULL)
 
-q.on('retry', (ctx) => console.log('retry attempt', ctx.attempt, ctx.error))
-q.on('stats', (s) => console.log('cpu(us)=', s.queryPhaseStats?.cpuTimeUs))
+q.on('retry', (ctx) => {
+  console.log('retry attempt', ctx.attempt, ctx.error)
+})
+
+q.on('stats', (s) => {
+  console.log('cpu(us)=', s.totalCpuTimeUs)
+})
+
 await q
 ```
 
 ### Cancellation and timeouts {#examples-cancel}
 
 ```ts
-const ac = new AbortController()
-setTimeout(() => ac.abort('user cancelled'), 1000)
+let signal = AbortSignal.timeout(1000)
 
-await sql`SELECT pg_sleep(10)`.timeout(5000).signal(ac.signal)
+await sql`SELECT COUNT(*) FROM users`.signal(signal)
 ```
 
 ### Isolation modes {#examples-isolation-modes}
@@ -146,9 +155,14 @@ await sql`SELECT 1`.pool('analytics')
 ### Transaction hooks {#examples-tx-hooks}
 
 ```ts
-const result = await sql.begin(async (tx, signal) => {
-  tx.onCommit(() => console.log('committing tx', tx.transactionId))
-  tx.onRollback((err) => console.log('rolling back tx', err))
+let result = await sql.begin(async (tx, signal) => {
+  tx.onCommit(() => {
+    console.log('committing tx', tx.transactionId)
+  })
+
+  tx.onRollback((err) => {
+    console.log('rolling back tx', err)
+  })
 
   await tx`UPSERT INTO audit(id, ts) VALUES (${1}, CurrentUtcDatetime())`
   return await tx`SELECT * FROM audit WHERE id = ${1}`

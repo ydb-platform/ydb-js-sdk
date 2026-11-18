@@ -18,6 +18,8 @@
 
 ## Установка
 
+Поддерживаемые версии Node.js: `^22.23.5 || ^24.22.3 || >=26.13.1`.
+
 ```sh
 npm install @ydbjs/core @ydbjs/query
 ```
@@ -116,11 +118,11 @@ let result = await client.retryTransaction(
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 
-const driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const sql = query(driver)
-const resultSets = await sql`SELECT 1 + 1 AS sum`
+await using sql = query(driver)
+let resultSets = await sql`SELECT 1 + 1 AS sum`
 console.log(resultSets) // [ [ { sum: 2 } ] ]
 ```
 
@@ -129,8 +131,8 @@ console.log(resultSets) // [ [ { sum: 2 } ] ]
 Тег `sql` подставляет в текст запроса имена параметров (`$p0`, `$p1`, …). Значение и тип YDB каждого параметра SDK передаёт отдельно от текста запроса. В V7 тег больше не добавляет `DECLARE`. В YDB 26.3.1.20 запросы с неявными типами параметров входят в [тесты Query Service](https://github.com/ydb-platform/ydb/blob/50df67c51b946ac2cd7f4f88d49f706cf8195116/ydb/core/kqp/ut/query/kqp_params_ut.cpp#L1196-L1228).
 
 ```ts
-const userId = 42n
-const userName = 'Alice'
+let userId = 42n
+let userName = 'Alice'
 await sql`
   SELECT * FROM users
   WHERE id = ${userId} AND name = ${userName}
@@ -164,7 +166,7 @@ await sql`SELECT ${id} AS id`
 #### Массивы, структуры и табличные параметры
 
 ```ts
-const users = [
+let users = [
   { id: 1, name: 'Alice' },
   { id: 2, name: 'Bob' },
 ]
@@ -175,8 +177,8 @@ await sql`INSERT INTO users SELECT * FROM AS_TABLE(${users})`
 
 ```ts
 // Serializable read-write (по умолчанию)
-const result = await sql.begin(async (tx) => {
-  await tx`UPDATE users SET active = false WHERE last_login < CurrentUtcTimestamp() - Interval('P1Y')`
+let result = await sql.begin(async (tx) => {
+  await tx`UPDATE users SET active = false WHERE id = ${42}`
   return await tx`SELECT * FROM users WHERE active = false`
 })
 
@@ -191,14 +193,27 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
 // Несколько наборов результатов
-type Result = [{ id: number }, { count: number }]
-const [rows, [{ count }]] =
-  await sql<Result>`SELECT id FROM users; SELECT COUNT(*) as count FROM users;`
+type UserRow = { id: bigint }
+type CountRow = { count: bigint }
+
+let [rows, counts] = await sql<[UserRow, CountRow]>`
+  SELECT id FROM users;
+  SELECT COUNT(*) AS count FROM users;
+`
+
+console.log(rows[0]?.id, counts[0]?.count)
 
 // Подписка на статистику и ретраи
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
-q.on('stats', (stats) => console.log('Query stats:', stats))
-q.on('retry', (ctx) => console.log('Retrying:', ctx))
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+
+q.on('stats', (stats) => {
+  console.log('Query stats:', stats)
+})
+
+q.on('retry', (ctx) => {
+  console.log('Retrying:', ctx)
+})
+
 await q
 ```
 
@@ -238,13 +253,21 @@ let meta = { foo: 'bar' }
 await sql`SELECT * FROM users WHERE meta = ${meta}`
 ```
 
-Результаты с `Variant`, в том числе внутри контейнеров, доступны только в raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у tagged SQL. Обычная конвертация отклоняет такие значения. Raw-ячейки сохраняют protobuf `Ydb.Value`, а наборы результатов `QueryClient` — схемы в `columns[].type`. SDK не предоставляет типизированные значения `Variant` и не определяет выбранную альтернативу по неоднозначным wire-данным.
+Результаты с `Variant` и PostgreSQL-типами, в том числе внутри контейнеров, доступны только в raw mode: `session.execute(text, parameters, { raw: true })` или `.raw()` у tagged SQL. Обычная конвертация отклоняет такие значения. Raw-ячейки сохраняют protobuf `Ydb.Value`, а наборы результатов `QueryClient` — схемы в `columns[].type`. SDK не предоставляет типизированные значения `Variant` и не определяет выбранную альтернативу по неоднозначным wire-данным.
+
+Строки в объектном режиме и декодированные Struct создаются через `Object.create(null)`, включая строки `.raw()`. Имена `__proto__` и `constructor` остаются обычными собственными полями; проверяйте наличие поля через `Object.hasOwn(row, name)`.
+
+По умолчанию Date, Datetime и Timestamp возвращаются как JavaScript `Date`, Interval — как число микросекунд. Timestamp при этом теряет доли миллисекунды. Date32, Datetime64, Timestamp64, Interval64 и все типы с часовым поясом остаются SDK Values.
+Для результатов Temporal задайте `new QueryClient(driver, { temporal: true })` или `query(driver, { temporal: true })`. `query(client)` наследует настройку клиента.
+Приложение должно предоставить `globalThis.Temporal` до создания такого клиента; SDK не устанавливает полифил. Если Temporal нет в среде, подключите реализацию в приложении. Конструктор отклоняет `temporal: true` без Temporal.
+Преобразование действует и на вложенные значения: даты становятся PlainDate, моменты времени — Instant, интервалы — Duration, время с часовым поясом — ZonedDateTime. TzDate и TzDate32 остаются Values, потому что Temporal не представляет дату с часовым поясом без времени суток. Raw-режим обходит преобразование.
+См. [настройку Temporal и полное соответствие типов](../value/README.md#temporal-setup).
 
 ## Статистика запросов
 
 ```ts
 import { StatsMode } from '@ydbjs/api/query'
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
 await q
 console.log(q.stats())
 ```
@@ -269,7 +292,7 @@ import { unsafe } from '@ydbjs/query'
 await sql`SELECT * FROM users ${unsafe('ORDER BY created_at DESC')}`
 ```
 
-Заметка по безопасности: identifier() лишь экранирует обратные кавычки и оборачивает имя в обратные кавычки. Не передавайте туда непроверенный ввод — используйте валидацию/allow‑list.
+`identifier()` заключает один идентификатор в обратные кавычки и экранирует обратные слеши и кавычки. Приложение должно отдельно проверять, какие таблицы и колонки разрешены вызывающему коду.
 
 При интерполяции и привязке по имени SDK передаёт значения отдельно от текста запроса. В JSON-объекте поля `type` и `encode` остаются обычными полями данных. Текст SQL, фрагменты для `unsafe()` и строковый разделитель для `join()` должны поступать из доверенного кода. Геттеры, прокси и пользовательские реализации `Value` могут выполнять код при преобразовании.
 
@@ -290,8 +313,12 @@ let result = await statement
 using sql = query(driver)
 let statement = sql`SELECT 1 AS id`
 let result = statement.then(
-  (rows) => rows,
-  (error) => error
+  (rows) => {
+    return rows
+  },
+  (error) => {
+    return error
+  }
 )
 sql.destroy()
 await result
