@@ -37,19 +37,22 @@ npm install @ydbjs/topic
 import { Driver } from '@ydbjs/core'
 import { topic } from '@ydbjs/topic'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
-const t = topic(driver)
+let t = topic(driver)
 
 // Reader
 await using reader = t.createReader({
   topic: '/Root/my-topic',
   consumer: 'my-consumer',
 })
-for await (const batch of reader.read()) {
-  for (const msg of batch) console.log(new TextDecoder().decode(msg.payload))
+for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
+  for (let msg of batch) {
+    console.log(new TextDecoder().decode(msg.payload))
+  }
   await reader.commit(batch)
+  break
 }
 
 // Writer
@@ -65,10 +68,10 @@ await writer.flush()
 
 ```ts
 import { Driver } from '@ydbjs/core'
-import { createTopicReader, createTopicTxReader } from '@ydbjs/topic/reader'
-import { createTopicWriter, createTopicTxWriter } from '@ydbjs/topic/writer'
+import { createTopicReader } from '@ydbjs/topic/reader'
+import { createTopicWriter } from '@ydbjs/topic/writer'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
 await using reader = createTopicReader(driver, {
@@ -105,7 +108,7 @@ await using writer = createTopicWriter(driver, {
 TopicReaderSource поддерживает фильтры партиций и временные селекторы:
 
 ```ts
-const source = {
+let source = {
   path: '/Root/my-topic',
   partitionIds: [0n, 1n],
   maxLag: '5m',
@@ -116,19 +119,23 @@ const source = {
 ### Чтение и коммиты
 
 ```ts
-const t = topic(driver)
+let t = topic(driver)
 await using reader = t.createReader({ topic: source, consumer: 'svc-a' })
 
-for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
-  if (!batch.length) continue
+for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
+  if (!batch.length) {
+    continue
+  }
 
-  for (const m of batch) doSomething(m)
+  for (let m of batch) {
+    doSomething(m)
+  }
 
   // Вариант A: простой — await commit
   await reader.commit(batch)
 
   // Вариант B: быстрый — fire‑and‑forget
-  // void reader.commit(batch)
+  // await reader.commit(batch)
 }
 ```
 
@@ -159,19 +166,25 @@ for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
 ### Запись
 
 ```ts
-const t = topic(driver)
+let t = topic(driver)
 await using writer = t.createWriter({
   topic: '/Root/my-topic',
   producer: 'json-producer',
 })
 
-const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-writer.write(payload) // fire-and-forget (void)
+let payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
+writer.write(payload)
 // flush() возвращает последний подтверждённый seqNo
-const lastSeqNo = await writer.flush()
+let lastSeqNo = await writer.flush()
 ```
 
-`write()` принимает только `Uint8Array` — строки/объекты кодируйте самостоятельно.
+`write()` принимает только `Uint8Array` — строки и объекты кодируйте самостоятельно. При RAW writer может удерживать переданный буфер без копирования. Один неизменяемый буфер можно передать в несколько вызовов; не меняйте его байты и не отсоединяйте backing buffer до подтверждения всех записей через `onAck` или `flush()`, вызванный после этих записей. Metadata и временные метки копируются при приёме сообщения.
+
+`flush(signal?)` ждёт записей, принятых до вызова, и возвращает seqNo этой границы. Последующие `write()` не продлевают ожидание. Отмена ожидания не отзывает принятые записи. `close(signal?)` прекращает приём новых сообщений и дожидается всей очереди.
+
+`destroy(reason?)` немедленно останавливает транспорт и таймеры, удаляет ожидающие записи и отклоняет ожидающие flush/close. Повторно использовать writer нельзя. Синхронный `using` вызывает `destroy()`, а `await using` дожидается записей через `close()`.
+
+Наблюдатели `onAck` и `onCommittedOffset` не задерживают завершение flush и commit. Синхронные исключения и отклонённые промисы callback записываются в лог; если работу callback нужно завершить до остановки приложения, дождитесь её отдельно.
 
 ## Транзакции
 
@@ -185,18 +198,19 @@ import { query } from '@ydbjs/query'
 import { createTopicTxReader } from '@ydbjs/topic/reader'
 import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
-const qc = query(driver)
+await using qc = query(driver)
 
 await qc.transaction(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, {
+  let reader = createTopicTxReader(tx, driver, {
     topic: '/Root/my-topic',
     consumer: 'svc-a',
   })
-  for await (const batch of reader.read({ signal })) {
+  for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000, signal })) {
     // обработка...
+    break
   }
 
-  const writer = createTopicTxWriter(tx, driver, {
+  let writer = createTopicTxWriter(tx, driver, {
     topic: '/Root/my-topic',
     producer: 'p1',
   })
@@ -215,10 +229,14 @@ Reader: через `codecMap`, Writer: передайте объект `Compress
 import { Codec } from '@ydbjs/api/topic'
 import * as zlib from 'node:zlib'
 
-const MyGzip = {
+let MyGzip = {
   codec: Codec.GZIP,
-  compress: (p: Uint8Array) => zlib.gzipSync(p),
-  decompress: (p: Uint8Array) => zlib.gunzipSync(p),
+  compress(payload: Uint8Array) {
+    return zlib.gzipSync(payload)
+  },
+  decompress(payload: Uint8Array) {
+    return zlib.gunzipSync(payload)
+  },
 }
 
 await using reader = createTopicReader(driver, {
@@ -236,7 +254,7 @@ await using writer = createTopicWriter(driver, {
 
 ## Экспортируемые модули
 
-- `@ydbjs/topic`: `topic(driver)` и типы
+- `@ydbjs/topic`: `topic(driver)` и `TopicClient`
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader` и типы
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter` и типы, включая `TopicTxWriter`
 

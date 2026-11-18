@@ -13,21 +13,22 @@ import { query } from '@ydbjs/query'
 import { createTopicTxReader } from '@ydbjs/topic/reader'
 import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
-const sql = query(driver)
+await using sql = query(driver)
 
 await sql.transaction(async (tx, signal) => {
   // ВАЖНО: не используйте `using` в транзакции.
   // Reader/Writer управляются хуками транзакции и корректно завершаются автоматически.
-  const reader = createTopicTxReader(tx, driver, {
+  let reader = createTopicTxReader(tx, driver, {
     topic: '/Root/my-topic',
     consumer: 'c1',
   })
 
-  for await (const batch of reader.read({ signal })) {
+  for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000, signal })) {
     // обработка
+    break
   }
 
-  const writer = createTopicTxWriter(tx, driver, {
+  let writer = createTopicTxWriter(tx, driver, {
     topic: '/Root/my-topic',
     producer: 'p1',
   })
@@ -37,4 +38,4 @@ await sql.transaction(async (tx, signal) => {
 })
 ```
 
-Примечание: TopicTxReader регистрирует обновление оффсетов в `tx.onCommit`, TopicTxWriter — `flush` в `tx.onCommit`, и оба освобождаются в `tx.onClose/tx.onRollback`. Поэтому ручное `close()/destroy()` или `using` внутри тела транзакции не нужно и может помешать корректной фиксации.
+Примечание: TopicTxReader регистрирует обновление оффсетов в `tx.onCommit`, TopicTxWriter дожидается принятых записей через `close(signal)` в `tx.onCommit`. Reader закрывается после регистрации оффсетов; rollback и закрытие без коммита уничтожают оставшуюся работу. Поэтому ручное `close()/destroy()` или `using` внутри тела транзакции не нужно и может помешать корректной фиксации.

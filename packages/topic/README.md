@@ -37,21 +37,24 @@ Two ways to use the client:
 import { Driver } from '@ydbjs/core'
 import { topic } from '@ydbjs/topic'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
-const t = topic(driver)
+let t = topic(driver)
 
 // Reader
 await using reader = t.createReader({
   topic: '/Root/my-topic',
   consumer: 'my-consumer',
 })
-for await (const batch of reader.read()) {
+for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
   // Process messages
-  for (const msg of batch) console.log(new TextDecoder().decode(msg.payload))
+  for (let msg of batch) {
+    console.log(new TextDecoder().decode(msg.payload))
+  }
   // Commit processed offsets (see performance note below)
   await reader.commit(batch)
+  break
 }
 
 // Writer
@@ -67,10 +70,10 @@ await writer.flush()
 
 ```ts
 import { Driver } from '@ydbjs/core'
-import { createTopicReader, createTopicTxReader } from '@ydbjs/topic/reader'
-import { createTopicWriter, createTopicTxWriter } from '@ydbjs/topic/writer'
+import { createTopicReader } from '@ydbjs/topic/reader'
+import { createTopicWriter } from '@ydbjs/topic/writer'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
 await driver.ready()
 
 await using reader = createTopicReader(driver, {
@@ -107,7 +110,7 @@ Buffered messages remain encoded until `read()` selects them for delivery. `maxB
 TopicReaderSource supports partition filters and time‑based selectors:
 
 ```ts
-const source = {
+let source = {
   path: '/Root/my-topic',
   partitionIds: [0n, 1n],
   // Skip messages older than 5 minutes
@@ -120,14 +123,18 @@ const source = {
 ### Reading and committing
 
 ```ts
-const t = topic(driver)
+let t = topic(driver)
 await using reader = t.createReader({ topic: source, consumer: 'svc-a' })
 
-for await (const batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
-  if (!batch.length) continue // periodic empty batches when no data
+for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000 })) {
+  if (!batch.length) {
+    continue
+  }
 
   // Handle messages
-  for (const m of batch) doSomething(m)
+  for (let m of batch) {
+    doSomething(m)
+  }
 
   // Option A (simple): await commit for each batch
   await reader.commit(batch)
@@ -163,9 +170,7 @@ Commit semantics: each message acknowledges its own offset range (plus any serve
 ### Writing messages
 
 ```ts
-import { Codec } from '@ydbjs/api/topic'
-
-const t = topic(driver)
+let t = topic(driver)
 await using writer = t.createWriter({
   topic: '/Root/my-topic',
   producer: 'json-producer',
@@ -176,10 +181,10 @@ await using writer = t.createWriter({
   },
 })
 
-const payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
-writer.write(payload) // fire-and-forget (void)
+let payload = new TextEncoder().encode(JSON.stringify({ foo: 'bar', ts: Date.now() }))
+writer.write(payload)
 // flush() returns the last acknowledged seqNo
-const lastSeqNo = await writer.flush()
+let lastSeqNo = await writer.flush()
 ```
 
 `write()` accepts `Uint8Array` only. Encode your own objects/strings as needed. With RAW, the writer may retain your buffer without copying it. The same unchanged buffer may be passed to multiple `write()` calls, including while earlier writes are awaiting acknowledgment. Do not change its bytes or detach its backing buffer until all writes using it are acknowledged through `onAck` or a completed `flush()` called after those writes. Metadata and timestamps are copied when `write()` accepts the message.
@@ -202,18 +207,19 @@ import { query } from '@ydbjs/query'
 import { createTopicTxReader } from '@ydbjs/topic/reader'
 import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
-const qc = query(driver)
+await using qc = query(driver)
 
 await qc.transaction(async (tx, signal) => {
-  const reader = createTopicTxReader(tx, driver, {
+  let reader = createTopicTxReader(tx, driver, {
     topic: '/Root/my-topic',
     consumer: 'svc-a',
   })
-  for await (const batch of reader.read({ signal })) {
+  for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000, signal })) {
     // process batch...
+    break
   }
 
-  const writer = createTopicTxWriter(tx, driver, {
+  let writer = createTopicTxWriter(tx, driver, {
     topic: '/Root/my-topic',
     producer: 'p1',
   })
@@ -232,10 +238,14 @@ Reader supports custom decompression through `codecMap` and writer via a `Compre
 import { Codec } from '@ydbjs/api/topic'
 import * as zlib from 'node:zlib'
 
-const MyGzip = {
+let MyGzip = {
   codec: Codec.GZIP,
-  compress: (p: Uint8Array) => zlib.gzipSync(p),
-  decompress: (p: Uint8Array) => zlib.gunzipSync(p),
+  compress(payload: Uint8Array) {
+    return zlib.gzipSync(payload)
+  },
+  decompress(payload: Uint8Array) {
+    return zlib.gunzipSync(payload)
+  },
 }
 
 await using reader = createTopicReader(driver, {
@@ -253,7 +263,7 @@ await using writer = createTopicWriter(driver, {
 
 ## Exports
 
-- `@ydbjs/topic`: `topic(driver)` and types
+- `@ydbjs/topic`: `topic(driver)` and `TopicClient`
 - `@ydbjs/topic/reader`: `createTopicReader`, `createTopicTxReader`, reader types
 - `@ydbjs/topic/writer`: `createTopicWriter`, `createTopicTxWriter`, writer types including `TopicTxWriter`
 

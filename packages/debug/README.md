@@ -27,32 +27,32 @@ import { loggers } from '@ydbjs/debug'
 
 // Create a topic writer with debug logging
 class TopicWriter {
-  private dbg = loggers.topic.extend('writer')
+  #dbg = loggers.topic.extend('writer')
 
   constructor(producerId: string) {
-    this.dbg.log('creating writer with producer: %s', producerId)
+    this.#dbg.log('creating writer with producer: %s', producerId)
   }
 
   async connect() {
-    this.dbg.log('connecting to topic service')
+    this.#dbg.log('connecting to topic service')
     try {
       // ... connection logic
-      this.dbg.log('connected successfully')
+      this.#dbg.log('connected successfully')
     } catch (error) {
-      this.dbg.log('error during connection: %O', error)
+      this.#dbg.log('error during connection: %O', error)
       throw error
     }
   }
 
   write(message: Uint8Array) {
-    if (this.dbg.enabled) {
-      this.dbg.log('writing message, size: %d bytes', message.length)
+    if (this.#dbg.enabled) {
+      this.#dbg.log('writing message, size: %d bytes', message.length)
     }
     // ... write logic
   }
 
   destroy(reason?: Error) {
-    this.dbg.log('writer destroyed, reason: %O', reason)
+    this.#dbg.log('writer destroyed, reason: %O', reason)
   }
 }
 ```
@@ -96,10 +96,10 @@ loggers.grpc.log('%s %s', method, status)
 ### Creating Scoped Loggers
 
 ```typescript
-import { ydbLogger } from '@ydbjs/debug'
+import { loggers } from '@ydbjs/debug'
 
 // Create a logger for a specific category and subcategory
-let writerLogger = ydbLogger.createLogger('topic', 'writer')
+let writerLogger = loggers.topic.extend('writer')
 writerLogger.log('writer initialized with producer %s', producerId)
 
 // Extend an existing logger
@@ -109,20 +109,15 @@ authLogger.log('fetching token from metadata service')
 
 ### Available Categories
 
-- `api` - API calls and responses
 - `auth` - Authentication and token management
+- `coordination` - Coordination sessions, locks, and elections
 - `grpc` - gRPC client operations
 - `driver` - Driver lifecycle and connection management
-- `discovery` - Service discovery
-- `session` - Session management
 - `query` - Query execution
 - `topic` - Topic operations
 - `tx` - Transaction operations
 - `retry` - Retry logic
 - `error` - Error handling
-- `perf` - Performance metrics
-- `error` - Error handling
-- `perf` - Performance metrics
 
 ## Environment Variables
 
@@ -148,16 +143,16 @@ This package is designed specifically for the YDB JavaScript SDK and provides co
 loggers.auth.log('token refreshed successfully')
 loggers.grpc.log('POST /Ydb.Topic.StreamWrite OK')
 loggers.driver.log('driver initialized with %d endpoints', 3)
-loggers.session.log('created new session, active: %d', 5)
+loggers.query.extend('pool').log('active sessions: %d', 5)
 ```
 
 ## Architecture
 
 The debug system follows Playwright's centralized approach:
 
-- **Single logger instance** (`YDBDebugLogger`) manages all debug output
+- **Category loggers** (`YDBDebugLogger`) provide consistent namespaces
 - **Category-based organization** with predefined categories
 - **Color coding** for visual distinction in terminal output
 - **Efficient caching** of debug instances to avoid recreation
 
-This approach provides better performance and consistency compared to creating individual debug instances throughout the codebase.
+Reuse a scoped logger for repeated messages; `extend()` creates a new logger instance.
