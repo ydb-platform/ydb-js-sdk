@@ -31,7 +31,7 @@ Runnable-приложение, которое покрывает большин�
 ```ts
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 
-const db = createDrizzle({
+let db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
   schema,
   logger: true,
@@ -40,15 +40,17 @@ const db = createDrizzle({
 
 ### Управление жизненным циклом
 
-При использовании `connectionString` адаптер владеет базовым драйвером. Используйте `$client` для управления его состоянием:
+`db.$client` имеет интерфейс `YdbExecutor`, в котором `ready` и `close` необязательны. При строке подключения адаптер владеет SDK Driver и закрывает его через `$client.close()`. Обёртка `YdbDriver` оставляет переданный извне SDK Driver открытым; приложение закрывает его после завершения всех потребителей.
 
-- `await db.$client.ready()`: позволяет убедиться, что драйвер инициализирован и база доступна.
-- `db.$client.close()`: закрывает пул сессий и освобождает ресурсы драйвера. Синхронный; возвращает `void`. **Обязательно вызывайте этот метод при завершении работы приложения.**
+Закрывайте принадлежащий приложению исполнитель после завершения работы:
 
 ```ts
-await db.$client.ready()
-// ... логика приложения ...
-db.$client.close()
+try {
+  await db.$client.ready?.()
+  // Application queries.
+} finally {
+  await db.$client.close?.()
+}
 ```
 
 ## Выполнение запросов
@@ -69,11 +71,11 @@ import { sql } from 'drizzle-orm'
 
 await db.execute(sql`DELETE FROM users WHERE id = ${1}`)
 
-const rows = await db.all(sql`SELECT * FROM users`)
-const first = await db.get(sql`SELECT * FROM users LIMIT 1`)
-const values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
+let rows = await db.all(sql`SELECT * FROM users`)
+let first = await db.get(sql`SELECT * FROM users LIMIT 1`)
+let values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
 
-const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
+let firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
 ```
 
 ## Построители запросов
@@ -102,9 +104,9 @@ const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).fr
 ```ts
 import { eq } from 'drizzle-orm'
 
-const activeCount = await db.$count(users, eq(users.active, true))
+let activeCount = await db.$count(users, eq(users.active, true))
 
-const rows = await db.select({ id: users.id, name: users.name }).from(users).limit(10).execute()
+let rows = await db.select({ id: users.id, name: users.name }).from(users).limit(10).execute()
 ```
 
 ## Транзакции
@@ -128,7 +130,6 @@ await db.transaction(
   {
     accessMode: 'read write',
     isolationLevel: 'serializableReadWrite',
-    idempotent: true,
   }
 )
 ```
@@ -144,8 +145,10 @@ await db.transaction(
 Если при инициализации была передана `schema`, доступен высокоуровневый API для работы со связями через `db.query.*`.
 
 ```ts
-const user = await db.query.users.findFirst({
-  where: (u, { eq }) => eq(u.id, 1),
+let user = await db.query.users.findFirst({
+  where: (u, { eq }) => {
+    return eq(u.id, 1)
+  },
   with: {
     posts: {
       columns: {
@@ -153,7 +156,9 @@ const user = await db.query.users.findFirst({
         title: true,
       },
       limit: 5,
-      orderBy: (p, { desc }) => [desc(p.id)],
+      orderBy: (p, { desc }) => {
+        return [desc(p.id)]
+      },
     },
     profile: true,
   },

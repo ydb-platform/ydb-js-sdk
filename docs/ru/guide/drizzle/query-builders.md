@@ -38,7 +38,7 @@ db.selectDistinctOn([users.name], { id: users.id }) // SELECT DISTINCT ON (...)
 Пример:
 
 ```ts
-const rows = await db
+let rows = await db
   .select()
   .from(users)
   .without(users.password)
@@ -60,7 +60,7 @@ const rows = await db
 | `.crossJoin()`   | `.exclusionJoin()`: строки без соответствия в противоположной таблице.    |
 
 ```ts
-const inactiveUsers = await db
+let inactiveUsers = await db
   .select()
   .from(users)
   .leftOnlyJoin(posts, eq(users.id, posts.authorId))
@@ -132,33 +132,29 @@ await db
 Common Table Expressions в YDB рендерятся как переменные-биндинги.
 
 ```ts
-const activeUsers = db
-  .$with('active_users')
-  .as(db.select().from(users).where(eq(users.active, true)))
+let activeUsers = db.$with('active_users').as(db.select().from(users).where(eq(users.active, true)))
 
-const rows = await db.with(activeUsers).select().from(activeUsers).execute()
+let rows = await db.with(activeUsers).select().from(activeUsers).execute()
 ```
 
 ## Подготовленные запросы (Prepared Queries)
 
-Используйте `.prepare()` для часто выполняемых запросов, чтобы сэкономить на парсинге и планировании.
+`.prepare()` создаёт объект для повторного выполнения с уже сгенерированным YQL и значениями, переданными в построитель. Методы выполнения не принимают параметры; для других значений создайте новый запрос. Именованные placeholders и серверные prepared statements не поддерживаются.
+
+Необязательное имя в `prepare(name?)` принимается, но сейчас игнорируется.
 
 ```ts
-const selectUser = db
-  .select()
-  .from(users)
-  .where(eq(users.id, sql.placeholder('id')))
-  .prepare()
+let selectUser = db.select().from(users).where(eq(users.id, 1)).prepare()
 
-const user = await selectUser.execute({ id: 1 })
+let user = await selectUser.execute()
 ```
 
 Построители выполняются через `.execute()`. Prepared queries дополнительно дают `.all()`, `.get()` и `.values()`.
 
 ```ts
-const prepared = db.select({ id: users.id, name: users.name }).from(users).prepare('users')
+let prepared = db.select({ id: users.id, name: users.name }).from(users).prepare()
 
-const rows = await prepared.all()
-const first = await prepared.get()
-const values = await prepared.values()
+let rows = await prepared.all()
+let first = await prepared.get()
+let values = await prepared.values()
 ```

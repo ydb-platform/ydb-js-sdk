@@ -20,28 +20,32 @@ This is the high-level overview of the YDB Drizzle adapter. For details, continu
 
 ## Quick Start
 
+Schema declarations do not create database tables. Apply migrations before running the queries below; see [Migrations](/guide/drizzle/migrator).
+
 ```ts
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 import { integer, text, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 import { eq } from 'drizzle-orm'
 
-export const users = ydbTable('users', {
+export let users = ydbTable('users', {
   id: integer('id').primaryKey(),
   name: text('name').notNull(),
 })
 
-const db = createDrizzle({
+let db = createDrizzle({
   connectionString: process.env.YDB_CONNECTION_STRING!,
   schema: { users },
 })
 
 await db.insert(users).values({ id: 1, name: 'Alice' }).execute()
 
-const row = await db.query.users.findFirst({
-  where: (user, { eq }) => eq(user.id, 1),
+let row = await db.query.users.findFirst({
+  where: (user, { eq }) => {
+    return eq(user.id, 1)
+  },
 })
 
-const selected = await db
+let selected = await db
   .select({ id: users.id, name: users.name })
   .from(users)
   .where(eq(users.id, 1))
@@ -68,7 +72,7 @@ import {
   ydbTable,
 } from '@ydbjs/drizzle-adapter/schema'
 
-export const events = ydbTable(
+export let events = ydbTable(
   'events',
   {
     id: integer('id').primaryKey(),
@@ -92,7 +96,7 @@ export const events = ydbTable(
 await db.insert(users).values({ id: 1, name: 'Alice' }).execute()
 await db.upsert(users).values({ id: 1, name: 'Alice Updated' }).execute()
 
-const rows = await db.select().from(users).where(eq(users.id, 1)).execute()
+let rows = await db.select().from(users).where(eq(users.id, 1)).execute()
 
 await db.update(users).set({ name: 'Alice' }).where(eq(users.id, 1)).execute()
 await db.delete(users).where(eq(users.id, 1)).execute()
@@ -101,12 +105,16 @@ await db.delete(users).where(eq(users.id, 1)).execute()
 ### Relations {#examples-relations}
 
 ```ts
-const user = await db.query.users.findFirst({
-  where: (u, { eq }) => eq(u.id, 1),
+let user = await db.query.users.findFirst({
+  where: (u, { eq }) => {
+    return eq(u.id, 1)
+  },
   with: {
     posts: {
       limit: 5,
-      orderBy: (p, { desc }) => [desc(p.id)],
+      orderBy: (p, { desc }) => {
+        return [desc(p.id)]
+      },
     },
   },
 })
@@ -151,7 +159,7 @@ await db
   .from(asTable('$rows', 'r'))
   .execute()
 
-const valueSource = valuesTable([{ id: 1, name: 'Alice' }], {
+let valueSource = valuesTable([{ id: 1, name: 'Alice' }], {
   alias: 'v',
   columns: ['id', 'name'],
 })
@@ -168,7 +176,7 @@ import { vectorIndexView } from '@ydbjs/drizzle-adapter/schema'
 import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
 
-const nearest = await db
+let nearest = await db
   .select()
   .from(vectorIndexView(images, 'images_vector_idx', 'images'))
   .orderBy(knnCosineDistance(images.embedding, sql`$target`))
