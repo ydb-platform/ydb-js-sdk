@@ -20,7 +20,7 @@
 npm install @ydbjs/topic
 ```
 
-Требуется Node.js 22.15+ в ветке 22.x или Node.js 23.8+.
+Требуется Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 Контрибьюторам: карты внутренних конечных автоматов — в [ARCHITECTURE.md](ARCHITECTURE.md).
 

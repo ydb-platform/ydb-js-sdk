@@ -125,7 +125,7 @@ See [`@ydbjs/auth` README](../../packages/auth/README.md#observability-via-noded
 
 ## Requirements
 
-- Node.js >= 20.19
+- Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`
 - Valid Yandex Cloud Service Account authorized key
 
 ## License

@@ -8,7 +8,7 @@ This guide covers installation, connection setup, schema declaration, basic CRUD
 
 ## Requirements
 
-- Node.js 20.19 or newer.
+- Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 - `drizzle-orm` installed next to the adapter.
 - A YDB database, either local (`grpc://localhost:2136/local`) or remote.
 

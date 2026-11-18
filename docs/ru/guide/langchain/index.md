@@ -9,7 +9,7 @@ description: 'YDB VectorStore для LangChain.js: KNN-поиск, фильтр�
 
 ## Установка
 
-Требуется Node.js `^22.15.0 || >=23.8.0`.
+Требуется Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 ```bash
 npm install @ydbjs/langchain @langchain/core
