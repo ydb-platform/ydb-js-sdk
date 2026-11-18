@@ -22,7 +22,7 @@ jobs:
       matrix:
         sdk:
           - name: node-kv
-            image: node
+            image: node:26.13.1
             command: --setup=kv.setup --teardown=kv.teardown --worker=kv.read --worker=kv.write
           - name: bun-kv
             image: oven/bun
@@ -117,7 +117,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: latest
+          node-version: '26.13.1'
 
       - name: Build current workload image
         run: |

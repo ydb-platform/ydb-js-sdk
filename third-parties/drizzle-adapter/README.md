@@ -22,7 +22,7 @@ The `@ydbjs/drizzle-adapter` package wires [Drizzle ORM](https://orm.drizzle.tea
 npm install @ydbjs/drizzle-adapter drizzle-orm
 ```
 
-Requires Node.js 20.19+ and `drizzle-orm@^0.45.2`.
+Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` and `drizzle-orm@^0.45.2`.
 
 ## How It Works
 
@@ -249,7 +249,7 @@ Mapped errors carry non-enumerable `kind`, `retryable`, `statusCode`, and the or
 
 ## Limitations
 
-- ESM-only; Node.js 20.19+; no CommonJS build
+- ESM-only; Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`; no CommonJS build
 - Transactions are not nestable through the adapter — use one boundary per unit of work
 - `references()` is metadata for Drizzle relations; YDB does not enforce foreign keys
 - Unique indexes must be created with `CREATE TABLE`; adding one to an existing table is rejected by the DDL builder

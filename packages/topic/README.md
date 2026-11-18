@@ -20,7 +20,7 @@ High‑level, type‑safe clients for YDB Topics (publish–subscribe message st
 npm install @ydbjs/topic
 ```
 
-Requires Node.js 22.15+ on the 22.x release line, or Node.js 23.8+.
+Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 Contributing? The internal state machines are mapped in [ARCHITECTURE.md](ARCHITECTURE.md).
 

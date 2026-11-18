@@ -1,6 +1,6 @@
 # @ydbjs/grpc
 
-A gRPC client and server over `node:http2`, with Promise unary calls and AsyncIterable streams. Runs on Node.js `^22.15.0 || >=23.8.0` or Bun `>=1.4.3`. Cancellation waits use `@ydbjs/abortable`.
+A gRPC client and server over `node:http2`, with Promise unary calls and AsyncIterable streams. Runs on Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` or Bun `>=1.4.3`. Cancellation waits use `@ydbjs/abortable`.
 
 ## Calling YDB services
 

@@ -22,7 +22,7 @@ It is designed for long-lived async workflows where predictable state transition
 npm install @ydbjs/fsm
 ```
 
-Requires Node.js `>= 20.19.0`.
+Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 ## Quick Start
 
