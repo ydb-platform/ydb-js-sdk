@@ -34,7 +34,7 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		}
 	},
