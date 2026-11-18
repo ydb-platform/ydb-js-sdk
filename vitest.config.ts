@@ -1,12 +1,13 @@
 import { defineConfig } from 'vitest/config'
 
-// Every packages/* package.json "exports" carries a "development" condition
-// pointing at its src/**.ts (see AGENTS.md); resolving with that condition
-// makes @ydbjs/* imports hit source directly instead of ./dist/**.js, so
-// tests run against live edits and v8 coverage attributes back to src/**.ts.
+// Use workspace sources without opting consumers into unpublished files
+// when their tools enable the standard "development" condition.
 export default defineConfig({
 	resolve: {
-		conditions: ['development'],
+		conditions: ['ydbjs-source', 'development'],
+	},
+	ssr: {
+		resolve: { conditions: ['ydbjs-source', 'module', 'node', 'development'] },
 	},
 	test: {
 		execArgv: ['--expose-gc'],
@@ -14,7 +15,10 @@ export default defineConfig({
 		projects: [
 			{
 				resolve: {
-					conditions: ['development'],
+					conditions: ['ydbjs-source', 'development'],
+				},
+				ssr: {
+					resolve: { conditions: ['ydbjs-source', 'module', 'node', 'development'] },
 				},
 				test: {
 					name: {
@@ -35,7 +39,10 @@ export default defineConfig({
 			},
 			{
 				resolve: {
-					conditions: ['development'],
+					conditions: ['ydbjs-source', 'development'],
+				},
+				ssr: {
+					resolve: { conditions: ['ydbjs-source', 'module', 'node', 'development'] },
 				},
 				test: {
 					name: {
@@ -63,7 +70,10 @@ export default defineConfig({
 			},
 			{
 				resolve: {
-					conditions: ['development'],
+					conditions: ['ydbjs-source', 'development'],
+				},
+				ssr: {
+					resolve: { conditions: ['ydbjs-source', 'module', 'node', 'development'] },
 				},
 				test: {
 					name: {
