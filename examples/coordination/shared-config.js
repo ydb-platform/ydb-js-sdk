@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { CoordinationClient } from '@ydbjs/coordination'
@@ -5,33 +6,33 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
-await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
 let text = new TextDecoder()
 
-let nodePath = '/local/shared-config-example'
+let nodePath = `${driver.database.replace(/\/$/, '')}/shared-config-example-${randomUUID()}`
 let semaphoreName = 'config'
 
 // ── publisher ─────────────────────────────────────────────────────────────────
 
 // Publishes a new config value by updating the semaphore data field.
-// All active watchers receive the update immediately.
+// Watchers receive the current state; intermediate updates may be coalesced.
 // createSession is fine here — config publish is a one-shot operation.
 async function publishConfig(config, signal) {
-	await using session = await client.createSession(nodePath, {}, signal)
-	let semaphore = session.semaphore(semaphoreName)
-	await semaphore.update(utf8.encode(JSON.stringify(config)), signal)
-	console.log('[publisher] published:', config)
+	let session = await client.createSession(nodePath, {}, signal)
+	try {
+		await session.semaphore(semaphoreName).update(utf8.encode(JSON.stringify(config)), signal)
+		console.log('[publisher] published:', config)
+	} finally {
+		await session.close()
+	}
 }
 
 // ── watcher ───────────────────────────────────────────────────────────────────
 
 // Subscribes to config changes via watch({ data: true }).
-// watch() yields immediately with the current value, then on every change —
-// so after a session restart the latest config is always received first.
-// No stale state, no missed updates.
+// A new watch starts with the current value; this is not an event log.
 async function watchConfig(signal) {
 	console.log('[watcher] starting')
 
@@ -48,12 +49,14 @@ async function watchConfig(signal) {
 				let config = JSON.parse(text.decode(description.data))
 				console.log('[watcher] config updated:', config)
 			}
-		} catch (e) {
+		} catch (error) {
 			if (session.signal.aborted) {
 				console.log('[watcher] session expired, reconnecting')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			await session.close()
 		}
 
 		break
@@ -66,35 +69,34 @@ async function watchConfig(signal) {
 
 async function main() {
 	let ctrl = new AbortController()
-
-	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
-
-	try {
-		await client.createNode(nodePath, {})
-	} catch {
-		// Node may already exist — that is fine.
-	}
-
-	// Ensure the config semaphore exists before publishing.
-	try {
-		await using session = await client.createSession(nodePath, {}, ctrl.signal)
-		await session
-			.semaphore(semaphoreName)
-			.create({ limit: 1, data: utf8.encode('{}') }, ctrl.signal)
-	} catch {
-		// Already exists — that is fine.
-	}
+	let timer = setTimeout(() => {
+		ctrl.abort(new Error('example timeout'))
+	}, 5_000)
+	let workers = []
+	let created = false
 
 	try {
-		// Watcher starts first, then publisher pushes updates at intervals.
-		// The watcher receives the current value immediately on connect,
-		// then each subsequent update as it arrives.
-		await Promise.all([watchConfig(ctrl.signal), publishUpdates(ctrl.signal)])
+		await client.createNode(nodePath, {}, ctrl.signal)
+		created = true
+
+		let session = await client.createSession(nodePath, {}, ctrl.signal)
+		try {
+			await session
+				.semaphore(semaphoreName)
+				.create({ limit: 1, data: utf8.encode('{}') }, ctrl.signal)
+		} finally {
+			await session.close()
+		}
+
+		workers = [watchConfig(ctrl.signal), publishUpdates(ctrl.signal)]
+		await Promise.all(workers)
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
-		await client.dropNode(nodePath).catch(() => {})
-		driver.close()
+		await Promise.allSettled(workers)
+		if (created) {
+			await client.dropNode(nodePath, AbortSignal.timeout(5_000))
+		}
 	}
 }
 
@@ -113,7 +115,12 @@ async function publishUpdates(signal) {
 	}
 }
 
-main().catch((error) => {
+try {
+	await driver.ready()
+	await main()
+} catch (error) {
 	console.error(error)
-	process.exit(1)
-})
+	process.exitCode = 1
+} finally {
+	driver.close()
+}

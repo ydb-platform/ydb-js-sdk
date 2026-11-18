@@ -6,6 +6,8 @@ title: Getting Started
 
 This guide helps you connect to YDB from JavaScript/TypeScript and run your first queries. Examples use `@ydbjs/core`.
 
+Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
+
 ## Connection string
 
 - Format: `grpc://host:port/database` or `grpcs://host:port/database` (TLS)
@@ -32,7 +34,7 @@ Pass `credentialsProvider` in the driver options. Supported strategies:
 import { Driver } from '@ydbjs/core'
 import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token'
 
-const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
+using driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new AccessTokenCredentialsProvider({
     token: process.env.YDB_TOKEN!,
   }),
@@ -46,8 +48,8 @@ await driver.ready()
 import { Driver } from '@ydbjs/core'
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
-const authEndpoint = 'grpcs://ydb.example.com:2135' // AuthService endpoint
-const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
+let authEndpoint = 'grpcs://ydb.example.com:2135' // AuthService endpoint
+using driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
     {
       username: process.env.YDB_USER!,
@@ -65,7 +67,7 @@ await driver.ready()
 import { Driver } from '@ydbjs/core'
 import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata'
 
-const driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
+using driver = new Driver(process.env.YDB_CONNECTION_STRING!, {
   credentialsProvider: new MetadataCredentialsProvider({
     // endpoint?: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token'
   }),
@@ -79,7 +81,7 @@ await driver.ready()
 import { Driver } from '@ydbjs/core'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 
-const driver = new Driver('grpc://localhost:2136/local', {
+using driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: new AnonymousCredentialsProvider(),
 })
 await driver.ready()
@@ -96,7 +98,7 @@ import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
 let cs = process.env['YDB_CONNECTION_STRING']!
 let creds = new EnvironCredentialsProvider(cs)
 
-const driver = new Driver(cs, {
+using driver = new Driver(cs, {
   credentialsProvider: creds,
   secureOptions: creds.secureOptions,
 })
@@ -128,10 +130,12 @@ Pass `secureOptions` (Node.js `tls.SecureContextOptions`). For `grpcs://...`, sy
 import { Driver } from '@ydbjs/core'
 import * as fs from 'node:fs'
 
-const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
+using driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   secureOptions: {
     ca: fs.readFileSync('/etc/ssl/custom/ca.pem'),
-    servername: 'ydb.example.com', // SNI if needed
+  },
+  transportOptions: {
+    tls: { servername: 'ydb.example.com' },
   },
 })
 await driver.ready()
@@ -143,7 +147,7 @@ await driver.ready()
 import { Driver } from '@ydbjs/core'
 import * as fs from 'node:fs'
 
-const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
+using driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   secureOptions: {
     ca: fs.readFileSync('/etc/ssl/custom/ca.pem'),
     cert: fs.readFileSync('/etc/ssl/custom/client.crt'),
@@ -163,8 +167,8 @@ import { Driver } from '@ydbjs/core'
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 import * as fs from 'node:fs'
 
-const authEndpoint = 'grpcs://ydb.example.com:2135'
-const driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
+let authEndpoint = 'grpcs://ydb.example.com:2135'
+using driver = new Driver('grpcs://ydb.example.com:2135/your-db', {
   credentialsProvider: new StaticCredentialsProvider(
     {
       username: 'user',

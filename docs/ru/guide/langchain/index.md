@@ -12,7 +12,7 @@ description: 'YDB VectorStore для LangChain.js: KNN-поиск, фильтр�
 Требуется Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 ```bash
-npm install @ydbjs/langchain @langchain/core
+npm install @ydbjs/langchain @langchain/core @langchain/openai
 ```
 
 ## Быстрый старт
@@ -89,12 +89,12 @@ await store.similaritySearch('векторный поиск в YDB', 4)
 
 ```typescript
 // Создать стор и вставить документы за один вызов
-let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
+await using createdStore = await YDBVectorStore.fromDocuments(docs, embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
 
 // Подключиться к существующей таблице без CREATE TABLE
-let store = YDBVectorStore.fromExistingTable(embeddings, {
+await using existingStore = YDBVectorStore.fromExistingTable(embeddings, {
   driver,
   table: 'my_vectors',
 })
@@ -231,6 +231,10 @@ let store = new YDBVectorStore(embeddings, {
   },
 })
 ```
+
+## Отмена и завершение работы
+
+Адаптер сохраняет стандартные сигнатуры поиска LangChain. Операции YDB не принимают `AbortSignal` на отдельный вызов; сигнал, переданный в вызов retriever, не передаётся в YDB. Перед закрытием стора дождитесь завершения вызовов приложения, включая запросы эмбеддингов. `close()` закрывает только клиент запросов и Driver, созданные самим стором.
 
 ## Примеры
 

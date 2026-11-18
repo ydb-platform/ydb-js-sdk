@@ -13,21 +13,22 @@ import { query } from '@ydbjs/query'
 import { createTopicTxReader } from '@ydbjs/topic/reader'
 import { createTopicTxWriter } from '@ydbjs/topic/writer'
 
-const sql = query(driver)
+await using sql = query(driver)
 
 await sql.transaction(async (tx, signal) => {
   // IMPORTANT: do not use `using` in a transaction.
   // Reader/Writer are managed by transaction hooks and shut down automatically.
-  const reader = createTopicTxReader(tx, driver, {
+  let reader = createTopicTxReader(tx, driver, {
     topic: '/Root/my-topic',
     consumer: 'c1',
   })
 
-  for await (const batch of reader.read({ signal })) {
+  for await (let batch of reader.read({ limit: 100, batchWindowMs: 1000, signal })) {
     // processing
+    break
   }
 
-  const writer = createTopicTxWriter(tx, driver, {
+  let writer = createTopicTxWriter(tx, driver, {
     topic: '/Root/my-topic',
     producer: 'p1',
   })
@@ -37,4 +38,4 @@ await sql.transaction(async (tx, signal) => {
 })
 ```
 
-Note: TopicTxReader registers offset updates in `tx.onCommit`, TopicTxWriter triggers `flush` in `tx.onCommit`, and both are disposed on `tx.onClose/tx.onRollback`. Manual `close()/destroy()` or `using` inside the transaction body is unnecessary and may interfere with commit.
+Note: TopicTxReader registers offset updates in `tx.onCommit`, TopicTxWriter drains accepted writes with `close(signal)` in `tx.onCommit`. The reader closes after registering offsets; rollback and uncommitted close destroy remaining work. Manual `close()/destroy()` or `using` inside the transaction body is unnecessary and may interfere with commit.

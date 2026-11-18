@@ -12,7 +12,7 @@ Distributed coordination client for [YDB](https://ydb.tech): semaphores, mutexes
 - **Automatic reconnection** — sessions reconnect transparently; pending operations retry automatically
 - **Typed errors** — `SessionClosedError`, `SessionExpiredError`, `LeaseReleasedError`, `LeaderChangedError` for reliable `instanceof` checks
 - **Session lifecycle signals** — `session.signal` aborts when the session closes or expires
-- **`await using` support** — all resources implement `Symbol.asyncDispose`
+- **`await using` support** — sessions, leases, locks, and leadership handles implement `Symbol.asyncDispose`
 
 ## Installation
 
@@ -47,7 +47,7 @@ CoordinationSession
 import { Driver } from '@ydbjs/core'
 import { CoordinationClient } from '@ydbjs/coordination'
 
-let driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 let client = new CoordinationClient(driver)
 
 // Create a coordination node (once, during provisioning)
@@ -62,6 +62,8 @@ await client.createNode('/local/my-app', {})
 | `openSession()`   | Long-running work: automatically recreates the session after expiry |
 | `withSession()`   | Callback style with guaranteed cleanup                              |
 
+A session yielded by `openSession()` remains caller-owned. Declare `await using activeSession = session` in each loop body so `break`, return, and exceptions close it. The next session is created only after the loop body finishes and the previous session has expired; the iterator does not interrupt application work.
+
 ---
 
 ## Mutex
@@ -72,17 +74,22 @@ A mutex provides exclusive access. Under the hood it acquires all tokens of an e
 
 ```typescript
 for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
-  let mutex = session.mutex('job-lock')
+  await using activeSession = session
+
+  let mutex = activeSession.mutex('job-lock')
 
   try {
     // Blocks until the lock is acquired.
     await using lock = await mutex.lock()
 
     console.log('lock acquired — doing exclusive work')
-    await doWork(lock.signal)
+    await doWork(AbortSignal.any([activeSession.signal, lock.signal]))
     // lock.release() called automatically here
-  } catch {
-    if (session.signal.aborted) continue // session expired, retry
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -97,16 +104,15 @@ await using session = await client.createSession('/local/my-app', {}, signal)
 let mutex = session.mutex('job-lock')
 
 let lock = await mutex.tryLock()
-if (!lock) {
+if (lock) {
+  await using _ = lock
+  await doWork(AbortSignal.any([session.signal, lock.signal]))
+} else {
   console.log('mutex is busy — skipping')
-  return
 }
-
-await using _ = lock
-await doWork(lock.signal)
 ```
 
-`lock.signal` aborts when the lock is released. Use `session.signal` to detect session death.
+`lock.signal` aborts after a local release succeeds or fails; a release failure becomes its reason. It does not establish whether the server still holds the lock. Use `session.signal` to detect the end of the session.
 
 ---
 
@@ -120,12 +126,12 @@ A semaphore controls access to a shared resource with a configurable token count
 await using session = await client.createSession('/local/my-app', {}, signal)
 let sem = session.semaphore('connections')
 
-// Create once (idempotent — catch if already exists)
+// Provision once; create() rejects if the semaphore already exists.
 await sem.create({ limit: 10 })
 
 // Acquire one token — blocks until available
 await using lease = await sem.acquire({ count: 1 })
-await doWork(lease.signal)
+await doWork(AbortSignal.any([session.signal, lease.signal]))
 // lease.release() called automatically here
 ```
 
@@ -147,28 +153,33 @@ await using lease = await sem.acquire({
 
 ```typescript
 let lease = await sem.tryAcquire({ count: 1 })
-if (!lease) {
+if (lease) {
+  await using _ = lease
+} else {
   console.log('semaphore at capacity')
-  return
 }
-await using _ = lease
 ```
 
 ### Watch for changes
 
-`watch()` yields immediately with the current state, then again on every server-side change. Reconnects automatically after session expiry.
+`watch()` yields the current state and watches the requested fields. Changes may be coalesced; this is a state subscription, not an event log. After session expiry, start a new watch on the next session from `openSession()`.
 
 ```typescript
 for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
-  let sem = session.semaphore('config')
+  await using activeSession = session
+
+  let sem = activeSession.semaphore('config')
 
   try {
     for await (let desc of sem.watch({ data: true })) {
       let config = JSON.parse(new TextDecoder().decode(desc.data))
       console.log('config updated:', config)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -189,11 +200,22 @@ await session.semaphore('config').update(utf8.encode(JSON.stringify({ version: 2
 
 An election is a named semaphore where exactly one session can hold the single token. The holder is the leader.
 
+Create the election semaphore once during provisioning, before starting candidates. `campaign()` does not create it. Repeating this setup for an existing semaphore returns `ALREADY_EXISTS`.
+
+```ts
+{
+  await using setup = await client.createSession('/local/my-app', {})
+  await setup.semaphore('primary').create({ limit: 1 })
+}
+```
+
 ### Campaign for leadership
 
 ```typescript
 for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
-  let election = session.election('primary')
+  await using activeSession = session
+
+  let election = activeSession.election('primary')
 
   try {
     // Blocks until this session wins. Attach initial leader data (e.g. endpoint).
@@ -201,15 +223,14 @@ for await (let session of client.openSession('/local/my-app', { recoveryWindow: 
 
     console.log('elected — doing leader work')
 
-    // Update leader data without re-election.
-    await leadership.proclaim(utf8.encode('worker-a:9090'))
-
-    // leadership.signal aborts when leadership is lost.
-    await doLeaderWork(leadership.signal)
+    await doLeaderWork(AbortSignal.any([activeSession.signal, leadership.signal]))
 
     // leadership.resign() called automatically here
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -217,11 +238,15 @@ for await (let session of client.openSession('/local/my-app', { recoveryWindow: 
 }
 ```
 
+`leadership.signal` reflects the local lease release; it does not abort on session expiry by itself. Combine it with `session.signal` for leader work. `proclaim(data)` updates semaphore-level data, while `leader()` and `observe()` return the owner data supplied to `campaign()`. Use `semaphore.watch({ data: true })` to observe semaphore-level updates.
+
 ### Observe leader changes
 
 ```typescript
 for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
-  let election = session.election('primary')
+  await using activeSession = session
+
+  let election = activeSession.election('primary')
 
   try {
     // Yields on every leader change. state.signal aborts when the leader changes.
@@ -234,8 +259,11 @@ for await (let session of client.openSession('/local/my-app', { recoveryWindow: 
       let endpoint = new TextDecoder().decode(state.data)
       console.log(state.isMe ? 'i am leader:' : 'current leader:', endpoint)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -261,6 +289,8 @@ Sessions, locks, and leases implement `Symbol.asyncDispose` for graceful cleanup
 
 For a session, `close()` sends `SessionStop` and waits for the server to acknowledge it or close the stream. `destroy()` immediately cancels the stream, clears timers and queued watch notifications, and rejects pending operations. A destroyed session cannot be reused. `using session` calls `destroy()`; `await using session` calls `close()`.
 
+Create the persistent `quota` semaphore once with a positive limit before running this example; acquiring a lease does not create it.
+
 ```typescript
 // Session, lock, and lease released in reverse declaration order —
 // guaranteed even if an exception is thrown.
@@ -268,7 +298,7 @@ await using session = await client.createSession('/local/my-app', {}, signal)
 await using _lock = await session.mutex('job').lock()
 await using _lease = await session.semaphore('quota').acquire({ count: 1 })
 
-await doWork()
+await doWork(session.signal)
 // _lease.release()  ← first
 // _lock.release()   ← second
 // session.close()   ← last
@@ -304,8 +334,8 @@ await client.dropNode('/local/my-app')
 | ---------------- | ------------- | -------- | ------------------------------------------------------------- |
 | `recoveryWindow` | `number` (ms) | `30_000` | How long the server preserves the session during a disconnect |
 | `description`    | `string`      | `''`     | Human-readable label visible in server diagnostics            |
-| `startTimeout`   | `number` (ms) | —        | Timeout for the initial session handshake                     |
-| `retryBackoff`   | `number` (ms) | —        | Base delay between reconnect attempts                         |
+| `startTimeout`   | `number` (ms) | `3_000`  | Timeout for the initial session handshake                     |
+| `retryBackoff`   | `number` (ms) | `30`     | Base delay between reconnect attempts                         |
 
 ---
 
@@ -313,14 +343,14 @@ await client.dropNode('/local/my-app')
 
 All error classes are exported from `@ydbjs/coordination` and can be checked with `instanceof`.
 
-| Error                   | When                                                      | Found in                            |
-| ----------------------- | --------------------------------------------------------- | ----------------------------------- |
-| `SessionClosedError`    | Session was closed (gracefully or destroyed)              | `session.signal.reason`             |
-| `SessionExpiredError`   | Recovery window expired — server dropped the session      | `session.signal.reason`             |
-| `LeaseReleasedError`    | Semaphore lease was released                              | `lease.signal.reason`               |
-| `LeaderChangedError`    | A new leader replaced the previous one during `observe()` | `LeaderState.signal.reason`         |
-| `ObservationEndedError` | The `observe()` async iterator finished                   | `LeaderState.signal.reason`         |
-| `TryAcquireMissError`   | Non-blocking acquire found no available tokens (internal) | thrown by `acquire(waitTimeout: 0)` |
+| Error                   | When                                                      | Found in                                |
+| ----------------------- | --------------------------------------------------------- | --------------------------------------- |
+| `SessionClosedError`    | Session was closed (gracefully or destroyed)              | `session.signal.reason`                 |
+| `SessionExpiredError`   | Recovery window expired — server dropped the session      | `session.signal.reason`                 |
+| `LeaseReleasedError`    | Semaphore lease was released                              | `lease.signal.reason`                   |
+| `LeaderChangedError`    | A new leader replaced the previous one during `observe()` | `LeaderState.signal.reason`             |
+| `ObservationEndedError` | The `observe()` async iterator finished                   | `LeaderState.signal.reason`             |
+| `TryAcquireMissError`   | Non-blocking acquire found no available tokens (internal) | thrown by `acquire({ waitTimeout: 0 })` |
 
 ```typescript
 import { SessionExpiredError, LeaseReleasedError } from '@ydbjs/coordination'

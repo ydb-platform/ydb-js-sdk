@@ -15,7 +15,7 @@ The `@ydbjs/error` package provides utilities for handling YDB-specific errors i
 Install the package using npm:
 
 ```sh
-npm install @ydbjs/error@6.0.0-alpha.2
+npm install @ydbjs/error
 ```
 
 ## Usage
@@ -25,18 +25,21 @@ npm install @ydbjs/error@6.0.0-alpha.2
 ### Handling YDB Errors
 
 ```ts
+import { create } from '@bufbuild/protobuf'
 import { YDBError } from '@ydbjs/error'
-import { StatusIds_StatusCode } from '@ydbjs/api/operation'
+import { IssueMessageSchema, StatusIds_StatusCode } from '@ydbjs/api/operation'
 
 try {
   throw new YDBError(StatusIds_StatusCode.ABORTED, [
-    { severity: 0, issueCode: 14, message: 'Some error message' },
+    create(IssueMessageSchema, { severity: 0, issueCode: 14, message: 'Some error message' }),
   ])
 } catch (error) {
   if (error instanceof YDBError) {
     console.error('YDB Error:', error.message)
     console.error('Error Code:', error.code)
   }
+
+  throw error
 }
 ```
 

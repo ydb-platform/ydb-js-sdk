@@ -29,12 +29,11 @@ export YDB_CONNECTION_STRING=grpc://localhost:2136/local
 
 ### Leader Election — `election.js`
 
-Multiple workers compete to become the active leader.
-Only one holds leadership at a time. When the leader resigns or its
-session expires, the next candidate takes over automatically.
+One candidate acquires leadership while another session observes the elected endpoint and resignation. Each run creates and removes its own coordination node.
 
-Demonstrates: `election.campaign()`, `leadership.proclaim()`,
-`election.observe()`, `election.leader()`
+`leadership.signal` alone does not detect session expiry; leader work must also use `session.signal`. `proclaim()` changes semaphore-level data, while `leader()` and `observe()` return acquisition metadata. The example combines the session and lease signals for leader work and uses a fresh coordination node for each run.
+
+Demonstrates: `election.campaign()`, `election.observe()`, `election.leader()`
 
 ```bash
 npm run election
@@ -75,7 +74,7 @@ npm run service-discovery
 
 A publisher pushes config updates into a semaphore's data field.
 All watchers receive the current value immediately on connect,
-then each subsequent update in real time. No stale state after session restart.
+then the latest observed state after changes. Updates can be coalesced; this is not a durable event log.
 
 Demonstrates: `semaphore.update(data)`, `semaphore.watch({ data: true })`
 
@@ -85,15 +84,9 @@ npm run shared-config
 
 ---
 
-### Resource Management with `await using` — `resource-management.js`
+### Resource Management — `resource-management.js`
 
-Shows the old `try/finally` pattern side by side with the modern `await using`
-equivalent for sessions, locks, leases, and leadership. Explains why
-`await using` is the right default: disposal is guaranteed by the language,
-cleanup order is deterministic (innermost first), and nesting disappears.
-
-Demonstrates: `await using session`, `await using lock`, `await using lease`,
-`await using leadership`, error safety, multiple resources in one scope.
+Demonstrates nested `try/finally` cleanup for sessions, locks, leases, and leadership, including failure paths and reverse acquisition order. The JavaScript examples run directly on the supported Node.js 22 release line, where native `using` syntax is unavailable. TypeScript examples in the [package README](../../packages/coordination/README.md) show the equivalent `await using` form after compilation.
 
 ```bash
 npm run resource-management
@@ -103,5 +96,5 @@ npm run resource-management
 
 ## Further Reading
 
-- [DESIGN.md](../../packages/coordination/DESIGN.md) — architecture, use-case scenarios, design decisions
+- [Package README](../../packages/coordination/README.md) — setup, session ownership, and signal semantics
 - [YDB Coordination Service](https://ydb.tech/docs/en/concepts/coordination)

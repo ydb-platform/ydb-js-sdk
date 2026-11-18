@@ -12,8 +12,8 @@ title: Coordination — Обзор
 import { Driver } from '@ydbjs/core'
 import { CoordinationClient } from '@ydbjs/coordination'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
-const client = new CoordinationClient(driver)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+let client = new CoordinationClient(driver)
 
 // Создать узел координации один раз при подготовке окружения
 await client.createNode('/local/my-app', {})
@@ -22,7 +22,7 @@ await client.createNode('/local/my-app', {})
 await using session = await client.createSession('/local/my-app', {})
 await using lock = await session.mutex('job-lock').lock()
 
-await doWork(lock.signal)
+await doWork(AbortSignal.any([session.signal, lock.signal]))
 // lock.release()  ← вызывается автоматически
 // session.close() ← вызывается автоматически
 ```
@@ -35,22 +35,29 @@ await doWork(lock.signal)
 | `openSession()`   | Долгоживущая работа: автоматически пересоздаёт сессию после её истечения |
 | `withSession()`   | Стиль с колбэком и гарантированной очисткой ресурсов                     |
 
+Сессией, полученной из `openSession()`, управляет вызывающий код. Объявите `await using activeSession = session` в теле цикла, чтобы закрывать её при `break`, возврате и исключениях. Следующая сессия создаётся только после завершения тела цикла и истечения предыдущей; итератор сам не прерывает работу приложения.
+
 `openSession()` — предпочтительный выбор для сервисов, работающих непрерывно.
 Когда сервер инвалидирует сессию (например, из-за сетевой недоступности), `openSession()` автоматически
 создаёт новую и повторно входит в тело цикла — никакой ручной логики переподключения не нужно.
 
 ```ts
-const ctrl = new AbortController()
+let ctrl = new AbortController()
 
-for await (const session of client.openSession(
+for await (let session of client.openSession(
   '/local/my-app',
   { recoveryWindow: 15_000 },
   ctrl.signal
 )) {
+  await using activeSession = session
+
   try {
-    await doWork(session)
-  } catch {
-    if (session.signal.aborted) continue // сессия истекла — повтор
+    await doWork(activeSession.signal)
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -58,8 +65,7 @@ for await (const session of client.openSession(
 }
 ```
 
-`session.signal` прерывается в момент истечения сессии на сервере, поэтому любая нижележащая
-операция, принявшая этот сигнал, отменится автоматически.
+`session.signal` прерывается, когда клиент обнаруживает истечение сессии или закрывает её. Он не сообщает точный момент потери сессии на сервере. Передавайте этот сигнал работе, которая должна остановиться вместе с локальной сессией.
 
 ## Мьютекс
 
@@ -69,18 +75,19 @@ for await (const session of client.openSession(
 ### Блокирующий захват
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
-  try {
-    await using lock = await session.mutex('job-lock').lock()
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
 
-    await doWork(lock.signal)
+  try {
+    await using lock = await activeSession.mutex('job-lock').lock()
+
+    await doWork(AbortSignal.any([activeSession.signal, lock.signal]))
     // lock.release() вызывается автоматически
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -95,18 +102,16 @@ for await (const session of client.openSession(
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
 
-const lock = await session.mutex('job-lock').tryLock()
-if (!lock) {
+let lock = await session.mutex('job-lock').tryLock()
+if (lock) {
+  await using _ = lock
+  await doWork(AbortSignal.any([session.signal, lock.signal]))
+} else {
   console.log('мьютекс занят — пропускаем')
-  return
 }
-
-await using _ = lock
-await doWork(lock.signal)
 ```
 
-`lock.signal` прерывается при освобождении блокировки. Используйте `session.signal` для обнаружения смерти сессии. Поэтому
-его можно передавать в нижележащие операции для их автоматической отмены.
+`lock.signal` прерывается после успеха или ошибки локального освобождения; ошибка становится его reason. Этот сигнал не доказывает, что сервер освободил блокировку. Завершение сессии отслеживайте через `session.signal`.
 
 ## Семафор
 
@@ -116,14 +121,14 @@ await doWork(lock.signal)
 
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
-const sem = session.semaphore('connections')
+let sem = session.semaphore('connections')
 
 // Создать один раз (перехватить AlreadyExists, если семафор уже существует)
 await sem.create({ limit: 10 })
 
 // Захватить один токен — блокирует до появления свободного токена
 await using lease = await sem.acquire({ count: 1 })
-await doWork(lease.signal)
+await doWork(AbortSignal.any([session.signal, lease.signal]))
 // lease.release() вызывается автоматически
 ```
 
@@ -133,7 +138,7 @@ await doWork(lease.signal)
 освобождается последний токен — предварительный вызов `create()` не нужен.
 
 ```ts
-const utf8 = new TextEncoder()
+let utf8 = new TextEncoder()
 
 await using lease = await sem.acquire({
   count: 1,
@@ -145,35 +150,33 @@ await using lease = await sem.acquire({
 ### Неблокирующая попытка
 
 ```ts
-const lease = await sem.tryAcquire({ count: 1 })
-if (!lease) {
+let lease = await sem.tryAcquire({ count: 1 })
+if (lease) {
+  await using _ = lease
+  await doWork(AbortSignal.any([session.signal, lease.signal]))
+} else {
   console.log('семафор заполнен')
-  return
 }
-
-await using _ = lease
-await doWork(lease.signal)
 ```
 
 ### Наблюдение за изменениями
 
-`watch()` немедленно отдаёт текущее состояние, а затем повторяет при каждом серверном
-изменении. После перезапуска сессии первым всегда приходит актуальное состояние — никаких
-устаревших данных, никаких пропущенных обновлений.
+`watch()` отдаёт текущее состояние и следит за выбранными полями. Несколько изменений могут объединяться в одно уведомление: это подписка на состояние, а не журнал событий. После истечения сессии начните новое наблюдение на следующей сессии из `openSession()`.
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    for await (const desc of session.semaphore('config').watch({ data: true })) {
-      const config = JSON.parse(new TextDecoder().decode(desc.data))
+    for await (let desc of activeSession.semaphore('config').watch({ data: true })) {
+      let config = JSON.parse(new TextDecoder().decode(desc.data))
       console.log('конфиг обновлён:', config)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -193,34 +196,40 @@ await session.semaphore('config').update(new TextEncoder().encode(JSON.stringify
 Выборы — это именованный семафор, где ровно одна сессия может удерживать единственный токен.
 Владелец токена является лидером.
 
+Создайте семафор выборов один раз при подготовке приложения, до запуска кандидатов. `campaign()` не создаёт его. Повторный вызов для существующего семафора возвращает `ALREADY_EXISTS`.
+
+```ts
+{
+  await using setup = await client.createSession('/local/my-app', {})
+  await setup.semaphore('primary').create({ limit: 1 })
+}
+```
+
 ### Участие в выборах
 
 `campaign()` блокирует выполнение, пока эта сессия не победит в выборах.
 
 ```ts
-const utf8 = new TextEncoder()
+let utf8 = new TextEncoder()
 
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    await using leadership = await session.election('primary').campaign(
+    await using leadership = await activeSession.election('primary').campaign(
       utf8.encode('worker-a:8080') // начальные данные лидера (например, адрес)
     )
 
     console.log('избран — начинаем работу лидера')
 
-    // Обновить данные лидера без повторных выборов; все наблюдатели видят изменение немедленно.
-    await leadership.proclaim(utf8.encode('worker-a:9090'))
-
-    // leadership.signal прерывается при потере лидерства (истечение сессии, отставка).
-    await doLeaderWork(leadership.signal)
+    await doLeaderWork(AbortSignal.any([activeSession.signal, leadership.signal]))
 
     // leadership.resign() вызывается автоматически здесь
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -228,30 +237,31 @@ for await (const session of client.openSession(
 }
 ```
 
+`leadership.signal` отражает локальное освобождение захвата и сам по себе не прерывается при истечении сессии. Для работы лидера объединяйте его с `session.signal`. `proclaim(data)` обновляет данные самого семафора, а `leader()` и `observe()` возвращают данные владельца, переданные в `campaign()`. Изменения данных семафора отслеживайте через `semaphore.watch({ data: true })`.
+
 ### Наблюдение за сменой лидера
 
-`observe()` отдаёт значение при каждой смене лидера: избрание нового, обновление данных через
-`proclaim()` или отставка. `state.signal` прерывается при смене лидера, что удобно для
-ограничения работы рамками одного срока лидерства.
+`observe()` выдаёт изменения владельца (`sessionId` и порядок захвата), а после ухода лидера — отсутствие владельца. `state.signal` прерывается, когда итератор замечает смену владельца или завершается. Для получения изменений нужно продолжать чтение итератора; время жизни сессии отслеживайте также через `session.signal`.
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    for await (const state of session.election('primary').observe()) {
+    for await (let state of activeSession.election('primary').observe()) {
       if (!state.data.length) {
         console.log('лидер отсутствует')
         continue
       }
 
-      const endpoint = new TextDecoder().decode(state.data)
+      let endpoint = new TextDecoder().decode(state.data)
       console.log(state.isMe ? 'я лидер:' : 'текущий лидер:', endpoint)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -263,7 +273,7 @@ for await (const session of client.openSession(
 
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
-const leader = await session.election('primary').leader()
+let leader = await session.election('primary').leader()
 if (leader) {
   console.log('лидер:', new TextDecoder().decode(leader.data))
 }
@@ -275,12 +285,14 @@ if (leader) {
 управления временем жизни. Ресурсы освобождаются в обратном порядке объявления — гарантированно
 даже при возникновении исключения.
 
+Перед запуском примера создайте постоянный семафор `quota` с положительным лимитом; получение lease не создаёт семафор.
+
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
 await using _lock = await session.mutex('job').lock()
 await using _lease = await session.semaphore('quota').acquire({ count: 1 })
 
-await doWork()
+await doWork(session.signal)
 // _lease.release()  ← первым
 // _lock.release()   ← вторым
 // session.close()   ← последним
@@ -292,13 +304,13 @@ await doWork()
 ## Управление узлами
 
 ```ts
-const client = new CoordinationClient(driver)
+let client = new CoordinationClient(driver)
 
 // Создать узел координации (серверный контейнер для сессий и семафоров)
 await client.createNode('/local/my-app', {})
 
 // Получить текущую конфигурацию узла
-const desc = await client.describeNode('/local/my-app')
+let desc = await client.describeNode('/local/my-app')
 
 // Обновить конфигурацию узла
 await client.alterNode('/local/my-app', { selfCheckPeriod: 1000 })
@@ -313,27 +325,34 @@ await client.dropNode('/local/my-app')
 | ---------------- | ------------- | ------------ | -------------------------------------------------------------- |
 | `recoveryWindow` | `number` (мс) | `30_000`     | Сколько времени сервер сохраняет сессию при разрыве соединения |
 | `description`    | `string`      | `''`         | Читаемая метка, видимая в диагностике сервера                  |
-| `startTimeout`   | `number` (мс) | —            | Таймаут для начального установления сессии                     |
-| `retryBackoff`   | `number` (мс) | —            | Базовая задержка между попытками переподключения               |
+| `startTimeout`   | `number` (мс) | `3_000`      | Таймаут для начального установления сессии                     |
+| `retryBackoff`   | `number` (мс) | `30`         | Базовая задержка между попытками переподключения               |
 
 ## Примеры {#examples}
+
+`doWork(signal)`, `doLeaderWork(signal)` и `waitForAbort(signal)` в примерах обозначают функции приложения. Они должны завершаться ошибкой при отмене сигнала, в том числе если сигнал уже был отменён до вызова.
 
 ### Мьютекс: эксклюзивная блокировка задачи {#examples-mutex}
 
 ```ts
 // Два воркера конкурируют — в каждый момент работает только один.
 async function runWorker(id: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using lock = await session.mutex('job').lock()
+      await using lock = await activeSession.mutex('job').lock()
       console.log(`worker-${id}: блокировка получена`)
-      await doWork(lock.signal)
-    } catch {
-      if (session.signal.aborted) continue
+      await doWork(AbortSignal.any([activeSession.signal, lock.signal]))
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -346,25 +365,30 @@ await Promise.all([runWorker('a', ctrl.signal), runWorker('b', ctrl.signal)])
 ### Service discovery: эфемерная регистрация эндпоинтов {#examples-service-discovery}
 
 ```ts
-const utf8 = new TextEncoder()
-const text = new TextDecoder()
+let utf8 = new TextEncoder()
+let text = new TextDecoder()
 
 // Воркер: регистрируется, пока живёт сессия; автоматически снимается при её истечении.
 async function register(endpoint: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using _lease = await session.semaphore('endpoints').acquire({
+      await using _lease = await activeSession.semaphore('endpoints').acquire({
         count: 1,
         ephemeral: true,
         data: utf8.encode(endpoint),
       })
-      await waitForAbort(session.signal)
-    } catch {
-      if (session.signal.aborted) continue
+      await waitForAbort(activeSession.signal)
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -373,18 +397,25 @@ async function register(endpoint: string, signal: AbortSignal) {
 
 // Наблюдатель: следит за актуальным списком эндпоинтов.
 async function watch(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const desc of session.semaphore('endpoints').watch({ owners: true })) {
-        const endpoints = (desc.owners ?? []).map((o) => text.decode(o.data))
+      for await (let desc of activeSession.semaphore('endpoints').watch({ owners: true })) {
+        let endpoints = (desc.owners ?? []).map((owner) => {
+          return text.decode(owner.data)
+        })
         console.log('доступные воркеры:', endpoints)
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -393,6 +424,8 @@ async function watch(signal: AbortSignal) {
 ```
 
 ### Общая конфигурация: распределение в реальном времени {#examples-shared-config}
+
+До запуска этих функций создайте постоянный семафор `config` с `limit: 1` и начальными JSON-данными, например `new TextEncoder().encode('{}')`. Методы `update()` и `watch()` не создают семафор.
 
 ```ts
 // Публикатор: разовое обновление.
@@ -403,17 +436,22 @@ async function publish(config: object, signal: AbortSignal) {
 
 // Подписчик: получает текущее значение немедленно, затем каждое изменение.
 async function subscribe(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const desc of session.semaphore('config').watch({ data: true })) {
+      for await (let desc of activeSession.semaphore('config').watch({ data: true })) {
         console.log('конфиг:', JSON.parse(new TextDecoder().decode(desc.data)))
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -424,22 +462,27 @@ async function subscribe(signal: AbortSignal) {
 ### Выборы лидера с автоматическим переключением {#examples-election}
 
 ```ts
-const utf8 = new TextEncoder()
-const text = new TextDecoder()
+let utf8 = new TextEncoder()
+let text = new TextDecoder()
 
 // Кандидат: участвует в выборах и удерживает лидерство до истечения сессии.
 async function runCandidate(name: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using leadership = await session.election('primary').campaign(utf8.encode(name))
+      await using leadership = await activeSession.election('primary').campaign(utf8.encode(name))
       console.log(`${name}: избран`)
-      await waitForAbort(leadership.signal) // удерживать до потери
-    } catch {
-      if (session.signal.aborted) continue
+      await waitForAbort(AbortSignal.any([activeSession.signal, leadership.signal]))
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -448,18 +491,23 @@ async function runCandidate(name: string, signal: AbortSignal) {
 
 // Наблюдатель: реагирует на смену лидера.
 async function observe(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const state of session.election('primary').observe()) {
-        const leader = state.data.length ? text.decode(state.data) : '(нет)'
+      for await (let state of activeSession.election('primary').observe()) {
+        let leader = state.data.length ? text.decode(state.data) : '(нет)'
         console.log('лидер:', leader, state.isMe ? '← я' : '')
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break

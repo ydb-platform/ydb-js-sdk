@@ -51,7 +51,10 @@ let runtime = createMachineRuntime<State, Context, {}, Event, Effect, Output>({
         return { state: 'running', effects: [{ type: 'counter.log', message: 'started' }] }
 
       case 'counter.increment':
-        if (runtime.state !== 'running') return
+        if (runtime.state !== 'running') {
+          return
+        }
+
         context.count += event.step ?? 1
         runtime.emit({ type: 'counter.value', value: context.count })
         return { effects: [{ type: 'counter.log', message: `count=${context.count}` }] }
@@ -68,7 +71,7 @@ let runtime = createMachineRuntime<State, Context, {}, Event, Effect, Output>({
   },
 })
 
-void (async () => {
+let outputs = (async () => {
   for await (let out of runtime) {
     console.log(out)
   }
@@ -80,6 +83,7 @@ runtime.dispatch({ type: 'counter.finish' })
 
 await runtime.close('done')
 await runtime.destroy('finalized')
+await outputs
 ```
 
 ## Core Concepts

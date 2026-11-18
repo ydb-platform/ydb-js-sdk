@@ -2,58 +2,81 @@ import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { topic } from '@ydbjs/topic'
 
-let cs = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
+let cs = process.env['YDB_CONNECTION_STRING'] || 'grpc://localhost:2136/local'
 let driver = new Driver(cs)
-await driver.ready()
+let signal = AbortSignal.timeout(30_000)
+let topicPath = 'demo-topic'
 
-console.log('Connected to', cs)
+try {
+	await driver.ready(signal)
 
-// Basic non-transactional reader/writer
-{
+	console.log('Connected to', cs)
+
 	let t = topic(driver)
-	await using reader = t.createReader({
-		topic: '/Root/demo-topic',
+	let reader = t.createReader({
+		topic: topicPath,
 		consumer: 'demo-consumer',
 	})
-	await using writer = t.createWriter({
-		topic: '/Root/demo-topic',
-		producer: 'demo-producer',
-	})
 
-	writer.write(new TextEncoder().encode('hello'))
-	await writer.flush()
+	try {
+		let writer = t.createWriter({
+			topic: topicPath,
+			producer: 'demo-producer',
+		})
 
-	for await (let batch of reader.read()) {
-		console.log('read batch size:', batch.length)
-		await reader.commit(batch)
-		break
+		try {
+			// Leave one message for the transactional reader below.
+			writer.write(new TextEncoder().encode('hello'))
+			writer.write(new TextEncoder().encode('transaction input'))
+			await writer.flush(signal)
+
+			for await (let batch of reader.read({ limit: 1, signal })) {
+				if (batch.length === 0) {
+					continue
+				}
+
+				console.log('read batch size:', batch.length)
+				await reader.commit(batch)
+				break
+			}
+		} finally {
+			await writer.close()
+		}
+	} finally {
+		await reader.close()
 	}
-}
 
-// Transactional reader/writer
-{
-	let t = topic(driver)
 	let sql = query(driver)
 
-	await sql.begin(async (tx) => {
-		let reader = t.createTxReader(tx, {
-			topic: '/Root/demo-topic',
-			consumer: 'demo-consumer',
-		})
+	try {
+		await sql.begin({ signal }, async (tx, attemptSignal) => {
+			let txReader = t.createTxReader(tx, {
+				topic: topicPath,
+				consumer: 'demo-consumer',
+			})
 
-		for await (let batch of reader.read({ batchWindowMs: 100 })) {
-			console.log('read batch size:', batch.length)
-			break
-		}
+			for await (let batch of txReader.read({ limit: 1, signal: attemptSignal })) {
+				if (batch.length === 0) {
+					continue
+				}
 
-		let writer = t.createTxWriter(tx, {
-			topic: '/Root/demo-topic',
-			producer: 'tx-producer',
+				console.log('transactional batch size:', batch.length)
+				break
+			}
+
+			let txWriter = t.createTxWriter(tx, {
+				topic: topicPath,
+				producer: 'tx-producer',
+			})
+
+			txWriter.write(new TextEncoder().encode('in tx'))
+			// Transaction hooks commit offsets, drain writes and close both clients.
 		})
-		writer.write(new TextEncoder().encode('in tx'))
-		// writer will flush on tx.onCommit
-	})
+	} finally {
+		await sql.close()
+	}
+} finally {
+	driver.close()
 }
 
-driver.close()
 console.log('Done')
