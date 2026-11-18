@@ -60,7 +60,7 @@ Run migrations as one deployment step before rolling out application instances. 
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 import { migrate } from '@ydbjs/drizzle-adapter/migrator'
 
-const db = createDrizzle({
+let db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
 })
 
