@@ -5,7 +5,7 @@ Each file covers one real-world use case independently.
 
 ## Prerequisites
 
-- Node.js >= 20.19
+- Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`
 - Running YDB instance (local or remote)
 - Built packages (run `npm run build` from the repository root)
 

@@ -4,9 +4,12 @@ FROM mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
 # RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 #     && apt-get -y install --no-install-recommends <your-pkg>
 
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=hydrogen"
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=iron"
-RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install --lts=jod"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 22.23.5"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 24.22.3"
+RUN su node -c "source /usr/local/share/nvm/nvm.sh && nvm install 26.13.1 && nvm alias default 26.13.1"
+
+ENV NODE_VERSION=26.13.1
+ENV PATH="/usr/local/share/nvm/versions/node/v26.13.1/bin:${PATH}"
 
 # [Optional] Uncomment if you want to install more global node modules
 ARG NODE_MODULES="turbo prettier typescript @changesets/cli @arethetypeswrong/cli"

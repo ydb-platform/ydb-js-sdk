@@ -1,5 +1,5 @@
 # node, oven/bun
-ARG image="node"
+ARG image="node:26.13.1"
 
 FROM ${image}
 WORKDIR /usr/src/app

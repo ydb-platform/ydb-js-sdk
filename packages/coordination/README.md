@@ -20,7 +20,7 @@ Distributed coordination client for [YDB](https://ydb.tech): semaphores, mutexes
 npm install @ydbjs/coordination
 ```
 
-Requires Node.js >= 20.19.
+Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 ## Overview
 

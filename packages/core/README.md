@@ -11,7 +11,7 @@ The `@ydbjs/core` package provides the core driver and connection management for
 - Pluggable authentication via `@ydbjs/auth` providers
 - Automatic endpoint discovery and failover
 - TypeScript support with type definitions
-- Compatible with Node.js 22.15 and newer
+- Compatible with Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`
 
 ## Installation
 

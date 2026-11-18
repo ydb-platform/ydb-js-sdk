@@ -13,7 +13,7 @@ This example demonstrates how to use `@ydbjs/fsm` as a lightweight async-first m
 
 ## Prerequisites
 
-- Node.js `>= 20.19.0`
+- Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`
 - npm `>= 10`
 
 ## Running the example

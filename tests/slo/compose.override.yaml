@@ -2,14 +2,14 @@
 # defined by compose.yaml. Merged automatically by `docker compose`.
 #
 # The Dockerfile bundles `dist/` (built by `npm run build` here), so build the
-# workload first. IMAGE selects the base runtime: `node` (default) or `oven/bun`.
+# workload first. IMAGE selects the base runtime: `node:26.13.1` (default) or `oven/bun`.
 services:
   workload-current:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        image: ${IMAGE:-node}
+        image: ${IMAGE:-node:26.13.1}
       platforms:
         - linux/amd64
     image: ${WORKLOAD_CURRENT_IMAGE:-ydb-app-current}
