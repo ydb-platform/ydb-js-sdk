@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { CoordinationClient } from '@ydbjs/coordination'
@@ -5,13 +6,12 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
-await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
 let text = new TextDecoder()
 
-let nodePath = '/local/election-example'
+let nodePath = `${driver.database.replace(/\/$/, '')}/election-example-${randomUUID()}`
 let electionName = 'api-leader'
 
 // ── leader ────────────────────────────────────────────────────────────────────
@@ -27,28 +27,27 @@ async function runLeader(signal) {
 
 			// campaign() blocks until this session wins the election.
 			// Only one session can hold the token at a time.
-			await using leadership = await election.campaign(utf8.encode('worker-a:starting'))
+			let leadership = await election.campaign(utf8.encode('worker-a:8080'))
 
-			console.log('[leader] elected — publishing endpoint')
+			try {
+				console.log('[leader] elected: worker-a:8080')
+				await printCurrentLeader(session.signal)
 
-			// Simulate startup time before the real endpoint is known.
-			await sleep(300, undefined, { signal: session.signal })
+				let workSignal = AbortSignal.any([session.signal, leadership.signal])
+				await sleep(2_000, undefined, { signal: workSignal })
 
-			// Update leader data without re-election — all observers see it immediately.
-			await leadership.proclaim(utf8.encode('worker-a:8080'))
-			console.log('[leader] proclaimed endpoint: worker-a:8080')
-
-			// Hold leadership until the session dies or external signal fires.
-			await sleep(2_000, undefined, { signal: leadership.signal })
-
-			console.log('[leader] resigning')
-			// await using → resign() called automatically here
-		} catch (e) {
+				console.log('[leader] resigning')
+			} finally {
+				await leadership.resign()
+			}
+		} catch (error) {
 			if (session.signal.aborted) {
-				console.log('[leader] session expired, re-entering election')
+				console.log('[leader] session ended')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			await session.close()
 		}
 
 		// One leadership cycle is enough for this example.
@@ -67,8 +66,7 @@ async function runFollower(signal) {
 		let election = session.election(electionName)
 
 		try {
-			// observe() yields on every leader change: new leader, proclaim, or no leader.
-			// state.signal aborts when the leader changes — useful for scoping work.
+			// Owner changes are observed only while the iterator keeps advancing.
 			for await (let state of election.observe()) {
 				let endpoint = text.decode(state.data)
 
@@ -83,12 +81,14 @@ async function runFollower(signal) {
 					console.log('[follower] current leader:', endpoint)
 				}
 			}
-		} catch (e) {
+		} catch (error) {
 			if (session.signal.aborted) {
-				console.log('[follower] session expired, reconnecting')
+				console.log('[follower] session ended')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			await session.close()
 		}
 
 		break
@@ -100,14 +100,17 @@ async function runFollower(signal) {
 // ── one-shot leader query ─────────────────────────────────────────────────────
 
 async function printCurrentLeader(signal) {
-	await using session = await client.createSession(nodePath, {}, signal)
-	let election = session.election(electionName)
-	let leader = await election.leader(signal)
+	let session = await client.createSession(nodePath, {}, signal)
 
-	if (leader) {
-		console.log('[query] current leader:', text.decode(leader.data))
-	} else {
-		console.log('[query] no leader right now')
+	try {
+		let leader = await session.election(electionName).leader(signal)
+		if (leader) {
+			console.log('[query] current leader:', text.decode(leader.data))
+		} else {
+			console.log('[query] no leader right now')
+		}
+	} finally {
+		await session.close()
 	}
 }
 
@@ -115,43 +118,44 @@ async function printCurrentLeader(signal) {
 
 async function main() {
 	let ctrl = new AbortController()
-
-	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
-
-	try {
-		await client.createNode(nodePath, {})
-	} catch {
-		// Node may already exist — that is fine.
-	}
-
-	// Ensure the election semaphore exists before leader and follower start.
-	// observe() calls watchSemaphore which requires the semaphore to already
-	// exist — if the follower races ahead of the leader's campaign() the
-	// server returns NOT_FOUND.
-	try {
-		await using session = await client.createSession(nodePath, {}, ctrl.signal)
-		await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
-	} catch {
-		// May already exist — that is fine.
-	}
+	let timer = setTimeout(() => {
+		ctrl.abort(new Error('example timeout'))
+	}, 5_000)
+	let workers = []
+	let created = false
 
 	try {
-		// Leader and follower run concurrently in the same process.
-		// In a real system they would be separate worker processes.
-		await Promise.all([runLeader(ctrl.signal), runFollower(ctrl.signal)])
+		await client.createNode(nodePath, {}, ctrl.signal)
+		created = true
 
-		// One-shot snapshot query.
-		await printCurrentLeader(ctrl.signal)
+		{
+			let session = await client.createSession(nodePath, {}, ctrl.signal)
+			try {
+				await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
+			} finally {
+				await session.close()
+			}
+		}
+
+		workers = [runLeader(ctrl.signal), runFollower(ctrl.signal)]
+		await Promise.all(workers)
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
-		await client.dropNode(nodePath).catch(() => {})
-		driver.close()
+		await Promise.allSettled(workers)
+
+		if (created) {
+			await client.dropNode(nodePath, AbortSignal.timeout(5_000))
+		}
 	}
 }
 
-main().catch((error) => {
-	if (error?.message === 'example timeout') return
+try {
+	await driver.ready()
+	await main()
+} catch (error) {
 	console.error(error)
-	process.exit(1)
-})
+	process.exitCode = 1
+} finally {
+	driver.close()
+}

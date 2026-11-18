@@ -51,16 +51,16 @@ import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
-const driver = new Driver('grpc://localhost:2136/local', {
-  credentialsProvider: new StaticCredentialsProvider({
-    username: 'username',
-    password: 'password',
-  }),
+using driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: new StaticCredentialsProvider(
+    { username: 'username', password: 'password' },
+    'grpc://localhost:2136'
+  ),
 })
 await driver.ready()
 
-const sql = query(driver)
-const result = await sql`SELECT 1`
+await using sql = query(driver)
+let result = await sql`SELECT 1`
 ```
 
 ### Static Credentials (Manual Usage)
@@ -68,7 +68,7 @@ const result = await sql`SELECT 1`
 ```ts
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
-const provider = new StaticCredentialsProvider(
+let provider = new StaticCredentialsProvider(
   {
     username: 'username',
     password: 'password',
@@ -76,7 +76,7 @@ const provider = new StaticCredentialsProvider(
   'grpc://localhost:2136/local'
 )
 
-const token = await provider.getToken()
+let token = await provider.getToken()
 // The token can be used in custom gRPC calls if needed
 ```
 
@@ -85,13 +85,13 @@ const token = await provider.getToken()
 ```ts
 import { AccessTokenCredentialsProvider } from '@ydbjs/auth/access-token'
 
-const provider = new AccessTokenCredentialsProvider({
+let provider = new AccessTokenCredentialsProvider({
   token: 'your-access-token',
 })
 
 // Use with driver
 import { Driver } from '@ydbjs/core'
-const driver = new Driver('grpc://localhost:2136/local', {
+using driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: provider,
 })
 await driver.ready()
@@ -103,7 +103,7 @@ await driver.ready()
 import { Driver } from '@ydbjs/core'
 import { AnonymousCredentialsProvider } from '@ydbjs/auth/anonymous'
 
-const driver = new Driver('grpc://localhost:2136/local', {
+using driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: new AnonymousCredentialsProvider(),
 })
 await driver.ready()
@@ -114,14 +114,14 @@ await driver.ready()
 ```ts
 import { MetadataCredentialsProvider } from '@ydbjs/auth/metadata'
 
-const provider = new MetadataCredentialsProvider({
+let provider = new MetadataCredentialsProvider({
   // Optional: override endpoint or flavor for your cloud
   // endpoint: 'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token',
   // flavor: 'Google',
 })
 
 import { Driver } from '@ydbjs/core'
-const driver = new Driver('grpc://localhost:2136/local', {
+using driver = new Driver('grpc://localhost:2136/local', {
   credentialsProvider: provider,
 })
 await driver.ready()
@@ -138,7 +138,7 @@ import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
 let cs = process.env.YDB_CONNECTION_STRING!
 let creds = new EnvironCredentialsProvider(cs)
 
-let driver = new Driver(cs, {
+using driver = new Driver(cs, {
   credentialsProvider: creds,
   secureOptions: creds.secureOptions,
 })
@@ -230,7 +230,7 @@ Retry-loop spans are emitted from `@ydbjs/retry` automatically (`tracing:ydb:ret
 
 ### ⚠️ Subscribers must be safe
 
-**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy subscriber can break a `getToken()` call. `@ydbjs/auth` does **not** wrap your subscribers; wrap them yourself in `try/catch`.
+`node:diagnostics_channel` invokes subscribers synchronously. Node reports a thrown subscriber error as an uncaught exception on a later tick; it can terminate the process. `@ydbjs/auth` does not wrap subscribers, so catch errors inside each subscriber rather than around `getToken()`.
 
 ### Stability
 

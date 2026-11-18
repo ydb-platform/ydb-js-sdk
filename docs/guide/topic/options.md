@@ -7,10 +7,10 @@ title: Topic — Options
 ## Reader
 
 - `topic`: `string | TopicReaderSource | TopicReaderSource[]`
-  - `TopicReaderSource`: `{ path: string; partitionIds?: bigint[]; maxLag?: number | string | Duration; readFrom?: Date | Timestamp }`
+  - `TopicReaderSource`: `{ path: string; partitionIds?: bigint[]; maxLag?: number | string | Duration; readFrom?: number | Date | Timestamp }`
 - `consumer`: `string`
-- `codecMap?`: `Map<Codec | number, CompressionCodec>` — additional decompression codecs (built-in ZSTD needs Node.js 22.15+ / 23.8+)
-- `maxBufferBytes?`: `bigint` — internal buffer limit (default 8 MiB)
+- `codecMap?`: `Map<Codec | number, CompressionCodec>` — additional decompression codecs (built-ins: RAW, GZIP, ZSTD)
+- `maxBufferBytes?`: `bigint` — server read-credit budget (default 8 MiB), not a limit on decompressed memory; an oversized message may exceed it
 - `updateTokenIntervalMs?`: `number` — token refresh interval (default 60000)
 - `gracefulShutdownTimeoutMs?`: `number` — force-close deadline for graceful `close()` before pending commits are dropped (default 30000)
 - `recoveryWindowMs?`: `number` — terminal reconnect window; unbounded by default (reconnect forever), pass a finite ms value to bound it
@@ -25,9 +25,9 @@ Methods and behavior:
   - Returns a sequence of message batches. `limit` caps the total messages fetched per iteration to control latency/memory. `batchWindowMs` sets the max time to accumulate a batch before yielding; on an idle topic, the iterator yields an empty batch `[]`, enabling non‑blocking event loop integration. `signal` cancels waiting/reading.
   - Rationale: long blocking reads hurt cooperative multitasking; time‑based empty yields simplify scheduling without busy‑wait.
 - `commit(messages | message)`: `Promise<void>`
-  - Confirms processing up to the corresponding offset per affected partition (idempotent). Ensures subsequent reads start after the committed offset. Accepts one message or an array (a batch).
+  - Acknowledges only the supplied messages and server-side offset holes preceding them. Later commits do not acknowledge a message left uncommitted. The consumer offset advances over contiguous acknowledged ranges; committing out of order is supported, but a later commit waits for earlier gaps to be acknowledged.
   - Why: implements at‑least‑once. Commit separates “read” from “processed” and enables safe recovery.
-  - Performance: awaiting `commit()` on the hot path reduces throughput. Fire‑and‑forget (`void reader.commit(batch)`) is acceptable with `onCommittedOffset` as an observation mechanism.
+  - Await the commit promise to observe acknowledgment or failure. When commits run concurrently, retain their promises and handle rejections.
 - `close()`: `Promise<void>`
   - Graceful shutdown: stops accepting new data, waits for pending commits with a guard timeout, and stops background tasks.
 - `destroy(reason?)`: `void`
@@ -54,10 +54,10 @@ Methods and behavior:
 - `write(payload: Uint8Array, extra?)`: `void`
   - Buffers a message. You may provide `seqNo` (manual mode), `createdAt`, `metadataItems`. Non‑blocking; actual sending occurs on `flush()` or by a periodic flusher. The final `seqNo` is obtained via `flush()` or `onAck`.
   - Why `seqNo`: `producer + seqNo` ensures idempotency, deterministic acks, and per‑partition order.
-- `flush()`: `Promise<bigint>`
-  - Flushes buffered messages, waits for inflight confirmations, and returns the last acknowledged `seqNo`. Use at checkpoints (e.g., service shutdown).
-- `close()`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources). Rejects if the drain fails.
-- `destroy()`: `void` — immediate stop without delivery guarantees.
+- `flush(signal?)`: `Promise<bigint>`
+  - Waits for writes accepted before this call and returns their sequence boundary. Later writes do not extend the wait. Cancelling the wait does not revoke accepted writes.
+- `close(signal?)`: `Promise<void>` — graceful stop (no new messages, wait for flush, free resources). Rejects if the drain fails.
+- `destroy(reason?)`: `void` — immediate stop without delivery guarantees.
 
 Acknowledgements:
 
@@ -73,6 +73,6 @@ Retries and resilience:
 Transactional variants:
 
 - `createTopicTxReader(tx, ...)` and `createTopicTxWriter(tx, ...)` are bound to a Query transaction.
-  - TxReader tracks read offsets and sends `updateOffsetsInTransaction` on `tx.onCommit`.
-  - TxWriter triggers `flush` on `tx.onCommit` and shuts down correctly on `tx.onRollback/onClose`.
-  - Both implement `AsyncDisposable`/`Disposable`, but `using` is optional — the transaction controls their lifecycle.
+  - TxReader tracks delivered offsets and sends `updateOffsetsInTransaction` on `tx.onCommit`.
+  - TxWriter drains accepted writes through `close(signal)` in `tx.onCommit`; rollback or uncommitted close destroys pending work.
+  - Let transaction hooks own their lifecycle. Do not close or dispose them inside the transaction callback: cleanup before commit can prevent delivery or offset updates.

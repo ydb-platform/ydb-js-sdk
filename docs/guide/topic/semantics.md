@@ -19,7 +19,7 @@ title: Topic — Semantics
 
 Buffering:
 
-- Internal buffer limited by `maxBufferBytes`.
+- `maxBufferBytes` limits server read credit, not decompressed memory or RSS; an oversized message may exceed it. Payloads are decoded as `read()` delivers them.
 - `codecMap` controls payload decompression.
 
 Resilience:
@@ -38,5 +38,5 @@ Resilience:
 ## Transactions
 
 - TxReader: tracks read offsets and sends `updateOffsetsInTransaction` on tx commit.
-- TxWriter: awaits `flush` before commit (via `tx.onCommit`).
-- `using` is optional (both implement `AsyncDisposable`/`Disposable`); lifecycle is managed by transaction hooks.
+- TxWriter: drains accepted writes through `close(signal)` before commit (via `tx.onCommit`).
+- Transaction hooks own cleanup. Do not use `using` or close the reader/writer inside the transaction callback; commit still needs them.

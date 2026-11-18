@@ -45,7 +45,7 @@ Use `transportOptions` to configure keepalive intervals, connection and stream w
 import { Driver } from '@ydbjs/core'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 
-let driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
 let discovery = driver.createClient(DiscoveryServiceDefinition)
@@ -63,7 +63,7 @@ Declare topic readers and writers after the driver so their `await using` cleanu
 
 ```ts
 import { Driver } from '@ydbjs/core'
-import { createTopicWriter } from '@ydbjs/topic'
+import { createTopicWriter } from '@ydbjs/topic/writer'
 
 using driver = new Driver('grpc://localhost:2136/local')
 await using writer = createTopicWriter(driver, {
@@ -84,17 +84,17 @@ Closing the Driver cancels local RPCs. A request already received by YDB may sti
 import { Driver } from '@ydbjs/core'
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 
-const driver = new Driver('grpc://localhost:2136/local', {
-  credentialsProvider: new StaticCredentialsProvider({
-    username: 'user',
-    password: 'pass',
-  }),
+using driver = new Driver('grpc://localhost:2136/local', {
+  credentialsProvider: new StaticCredentialsProvider(
+    { username: 'user', password: 'pass' },
+    'grpc://localhost:2136'
+  ),
 })
 await driver.ready()
 // ...
 ```
 
-You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from `@ydbjs/auth`.
+You can also use `AccessTokenCredentialsProvider`, `AnonymousCredentialsProvider`, or `MetadataCredentialsProvider` from their respective `@ydbjs/auth/access-token`, `@ydbjs/auth/anonymous`, and `@ydbjs/auth/metadata` entries.
 
 ### Token acquisition timeout
 
@@ -124,7 +124,7 @@ the primary pile — falling back to the synchronized pile only when the primary
 available node — enable `ydb.sdk.prefer_primary_pile`:
 
 ```ts
-const driver = new Driver('grpc://localhost:2136/local', {
+using driver = new Driver('grpc://localhost:2136/local', {
   'ydb.sdk.prefer_primary_pile': true,
 })
 ```
@@ -238,7 +238,7 @@ tracingChannel('tracing:ydb:driver.discovery').subscribe({
 
 ### ⚠️ Subscribers must be safe
 
-**`node:diagnostics_channel` invokes subscribers synchronously, on the publishing thread.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy subscriber can break a `Driver.ready()`, abort a discovery round, or leak a gRPC channel.
+`node:diagnostics_channel` invokes subscribers synchronously. Node reports a thrown subscriber error as an uncaught exception on a later tick; it can terminate the process. A `try/catch` around the SDK operation does not contain that error.
 
 `@ydbjs/core` does **not** wrap your subscribers. It is your responsibility to keep them safe:
 
