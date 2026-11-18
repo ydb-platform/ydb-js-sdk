@@ -32,16 +32,21 @@ async function runWorker(id, signal) {
 				await sleep(500, undefined, { signal: workSignal })
 				console.log(`[worker-${id}] work done, releasing`)
 			} finally {
-				await lock.release()
+				await lock.release(AbortSignal.timeout(5_000))
 			}
 		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log(`[worker-${id}] session expired, retrying`)
 				continue
 			}
 			throw error
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		break
@@ -69,10 +74,14 @@ async function tryWork(signal) {
 			await sleep(200, undefined, { signal: workSignal })
 			console.log('[tryLock] optional work done')
 		} finally {
-			await lock.release()
+			await lock.release(AbortSignal.timeout(5_000))
 		}
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -87,10 +96,12 @@ async function main() {
 	let created = false
 
 	try {
+		await driver.ready(ctrl.signal)
 		await client.createNode(nodePath, {}, ctrl.signal)
 		created = true
 		workers = [runWorker('a', ctrl.signal), runWorker('b', ctrl.signal), tryWork(ctrl.signal)]
 		await Promise.all(workers)
+		ctrl.signal.throwIfAborted()
 	} finally {
 		clearTimeout(timer)
 		ctrl.abort()
@@ -102,7 +113,6 @@ async function main() {
 }
 
 try {
-	await driver.ready()
 	await main()
 } catch (error) {
 	console.error(error)

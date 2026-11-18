@@ -25,7 +25,11 @@ async function publishConfig(config, signal) {
 		await session.semaphore(semaphoreName).update(utf8.encode(JSON.stringify(config)), signal)
 		console.log('[publisher] published:', config)
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -48,21 +52,30 @@ async function watchConfig(signal) {
 
 				let config = JSON.parse(text.decode(description.data))
 				console.log('[watcher] config updated:', config)
+				if (config.version === 3) {
+					return
+				}
 			}
+			signal.throwIfAborted()
+			throw new Error('Configuration watch ended before version 3 was observed')
 		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log('[watcher] session expired, reconnecting')
 				continue
 			}
 			throw error
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
-
-		break
 	}
 
-	console.log('[watcher] done')
+	signal.throwIfAborted()
+	throw new Error('Configuration watch ended before version 3 was observed')
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -76,6 +89,7 @@ async function main() {
 	let created = false
 
 	try {
+		await driver.ready(ctrl.signal)
 		await client.createNode(nodePath, {}, ctrl.signal)
 		created = true
 
@@ -85,11 +99,16 @@ async function main() {
 				.semaphore(semaphoreName)
 				.create({ limit: 1, data: utf8.encode('{}') }, ctrl.signal)
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		workers = [watchConfig(ctrl.signal), publishUpdates(ctrl.signal)]
 		await Promise.all(workers)
+		ctrl.signal.throwIfAborted()
 	} finally {
 		clearTimeout(timer)
 		ctrl.abort()
@@ -116,7 +135,6 @@ async function publishUpdates(signal) {
 }
 
 try {
-	await driver.ready()
 	await main()
 } catch (error) {
 	console.error(error)

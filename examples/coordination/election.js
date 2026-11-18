@@ -16,7 +16,7 @@ let electionName = 'api-leader'
 
 // ── leader ────────────────────────────────────────────────────────────────────
 
-async function runLeader(signal) {
+async function runLeader(signal, observed, follower) {
 	console.log('[leader] starting')
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
@@ -32,22 +32,29 @@ async function runLeader(signal) {
 			try {
 				console.log('[leader] elected: worker-a:8080')
 				await printCurrentLeader(session.signal)
+				await Promise.race([observed, follower])
+				signal.throwIfAborted()
 
 				let workSignal = AbortSignal.any([session.signal, leadership.signal])
 				await sleep(2_000, undefined, { signal: workSignal })
 
 				console.log('[leader] resigning')
 			} finally {
-				await leadership.resign()
+				await leadership.resign(AbortSignal.timeout(5_000))
 			}
 		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log('[leader] session ended')
 				continue
 			}
 			throw error
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		// One leadership cycle is enough for this example.
@@ -59,21 +66,29 @@ async function runLeader(signal) {
 
 // ── follower ──────────────────────────────────────────────────────────────────
 
-async function runFollower(signal) {
+async function runFollower(signal, onStarted, onObserved) {
 	console.log('[follower] starting')
+	let observedLeader = false
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
 		let election = session.election(electionName)
 
 		try {
-			// Owner changes are observed only while the iterator keeps advancing.
+			onStarted()
+			// The candidate waits for onObserved before it can resign.
 			for await (let state of election.observe()) {
 				let endpoint = text.decode(state.data)
 
 				if (!state.data.length) {
 					console.log('[follower] no leader currently')
+					if (observedLeader) {
+						return
+					}
 					continue
 				}
+
+				observedLeader = true
+				onObserved()
 
 				if (state.isMe) {
 					console.log('[follower] i am the leader:', endpoint)
@@ -81,20 +96,26 @@ async function runFollower(signal) {
 					console.log('[follower] current leader:', endpoint)
 				}
 			}
+			signal.throwIfAborted()
+			throw new Error('Election watch ended before leadership and resignation were observed')
 		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log('[follower] session ended')
 				continue
 			}
 			throw error
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
-
-		break
 	}
 
-	console.log('[follower] done')
+	signal.throwIfAborted()
+	throw new Error('Election watch ended before leadership and resignation were observed')
 }
 
 // ── one-shot leader query ─────────────────────────────────────────────────────
@@ -110,7 +131,11 @@ async function printCurrentLeader(signal) {
 			console.log('[query] no leader right now')
 		}
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -125,6 +150,7 @@ async function main() {
 	let created = false
 
 	try {
+		await driver.ready(ctrl.signal)
 		await client.createNode(nodePath, {}, ctrl.signal)
 		created = true
 
@@ -133,12 +159,25 @@ async function main() {
 			try {
 				await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
 			} finally {
-				await session.close()
+				try {
+					await session.close(AbortSignal.timeout(5_000))
+				} finally {
+					session.destroy()
+				}
 			}
 		}
 
-		workers = [runLeader(ctrl.signal), runFollower(ctrl.signal)]
+		let started = Promise.withResolvers()
+		let observed = Promise.withResolvers()
+		let follower = runFollower(ctrl.signal, started.resolve, observed.resolve)
+		workers = [follower]
+		await Promise.race([started.promise, follower])
+		ctrl.signal.throwIfAborted()
+
+		let leader = runLeader(ctrl.signal, observed.promise, follower)
+		workers.push(leader)
 		await Promise.all(workers)
+		ctrl.signal.throwIfAborted()
 	} finally {
 		clearTimeout(timer)
 		ctrl.abort()
@@ -151,7 +190,6 @@ async function main() {
 }
 
 try {
-	await driver.ready()
 	await main()
 } catch (error) {
 	console.error(error)

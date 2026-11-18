@@ -17,7 +17,11 @@ async function sessionUsage(signal) {
 	try {
 		console.log('[session] session ready, sessionId:', session.sessionId)
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -30,10 +34,14 @@ async function lockUsage(signal) {
 			console.log('[lock] lock acquired, doing work')
 			await sleep(200, undefined, { signal: session.signal })
 		} finally {
-			await lock.release()
+			await lock.release(AbortSignal.timeout(5_000))
 		}
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -44,10 +52,14 @@ async function errorSafety(signal) {
 		try {
 			throw expectedFailure
 		} finally {
-			await lock.release()
+			await lock.release(AbortSignal.timeout(5_000))
 		}
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -61,13 +73,17 @@ async function multiResource(signal) {
 				console.log('[resources] all resources acquired')
 				await sleep(200, undefined, { signal: session.signal })
 			} finally {
-				await lease.release()
+				await lease.release(AbortSignal.timeout(5_000))
 			}
 		} finally {
-			await lock.release()
+			await lock.release(AbortSignal.timeout(5_000))
 		}
 	} finally {
-		await session.close()
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -80,15 +96,20 @@ async function campaignExample(signal) {
 				let workSignal = AbortSignal.any([session.signal, leadership.signal])
 				await sleep(200, undefined, { signal: workSignal })
 			} finally {
-				await leadership.resign()
+				await leadership.resign(AbortSignal.timeout(5_000))
 			}
 		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				continue
 			}
 			throw error
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 		break
 	}
@@ -102,6 +123,7 @@ async function main() {
 	let created = false
 
 	try {
+		await driver.ready(ctrl.signal)
 		await client.createNode(nodePath, {}, ctrl.signal)
 		created = true
 
@@ -110,7 +132,11 @@ async function main() {
 			await session.semaphore('quota').create({ limit: 10 }, ctrl.signal)
 			await session.semaphore('leader').create({ limit: 1 }, ctrl.signal)
 		} finally {
-			await session.close()
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		console.log('Session lifetime')
@@ -134,6 +160,7 @@ async function main() {
 
 		console.log('Leadership')
 		await campaignExample(ctrl.signal)
+		ctrl.signal.throwIfAborted()
 	} finally {
 		clearTimeout(timer)
 		ctrl.abort()
@@ -144,7 +171,6 @@ async function main() {
 }
 
 try {
-	await driver.ready()
 	await main()
 } catch (error) {
 	console.error(error)
