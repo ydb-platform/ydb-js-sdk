@@ -190,7 +190,7 @@ async function campaignExample(signal) {
 
 async function main() {
 	let ctrl = new AbortController()
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 10_000)
+	let timer = setTimeout(() => ctrl.abort(new Error('example timeout')), 10_000)
 
 	try {
 		await client.createNode(nodePath, {})
@@ -235,13 +235,14 @@ async function main() {
 
 		console.log('\nAll examples completed.')
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
 }
 
-main().catch((error) => {
+await main().catch((error) => {
 	console.error(error)
 	process.exit(1)
 })

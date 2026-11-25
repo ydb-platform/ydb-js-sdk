@@ -5,6 +5,7 @@
 	"type": "module",
 	"description": "Examples of using @ydbjs/coordination: leader election, distributed mutex, service discovery, shared config",
 	"scripts": {
+		"test": "npm run election && npm run mutex && npm run service-discovery && npm run shared-config && npm run resource-management",
 		"election": "node election.js",
 		"mutex": "node mutex.js",
 		"service-discovery": "node service-discovery.js",

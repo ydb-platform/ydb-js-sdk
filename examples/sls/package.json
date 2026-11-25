@@ -9,6 +9,7 @@
 	},
 	"scripts": {
 		"start": "node index.js",
+		"test": "node --test e2e.js",
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
 	"dependencies": {

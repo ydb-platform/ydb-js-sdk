@@ -18,7 +18,7 @@ let semaphoreName = 'endpoints'
 // The server creates the semaphore automatically (limit = MAX_UINT64 for ephemeral).
 // When the session dies — gracefully or by expiry — the token is released and
 // the worker disappears from the endpoint list automatically.
-async function runWorker(endpoint, signal) {
+async function runWorker(endpoint, signal, { onRegistered, stop = signal } = {}) {
 	console.log(`[worker] ${endpoint} starting`)
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
@@ -33,9 +33,10 @@ async function runWorker(endpoint, signal) {
 			})
 
 			console.log(`[worker] ${endpoint} registered`)
+			onRegistered?.()
 
 			// Hold registration until the session dies or external signal fires.
-			await waitForAbort(lease.signal)
+			await waitForAbort(AbortSignal.any([lease.signal, session.signal, stop]))
 
 			// await using → lease.release() called here.
 			// The endpoint disappears from the owners list immediately.
@@ -99,14 +100,16 @@ async function main() {
 	}
 
 	try {
-		// Three workers register concurrently. The watcher observes the live list.
-		// After 2 seconds, worker-b is stopped to demonstrate automatic deregistration.
-		let bCtrl = new AbortController()
-		setTimeout(() => bCtrl.abort(new Error('worker-b stopping')), 2_000)
-
+		// The watcher needs a registered owner before it can describe the ephemeral semaphore.
+		let registered = Promise.withResolvers()
+		let firstWorker = runWorker('worker-a:8080', ctrl.signal, {
+			onRegistered: registered.resolve,
+		})
+		await Promise.race([registered.promise, firstWorker])
+		ctrl.signal.throwIfAborted()
 		await Promise.all([
-			runWorker('worker-a:8080', ctrl.signal),
-			runWorker('worker-b:8081', bCtrl.signal),
+			firstWorker,
+			runWorker('worker-b:8081', ctrl.signal, { stop: AbortSignal.timeout(2_000) }),
 			runWorker('worker-c:8082', ctrl.signal),
 			watchEndpoints(ctrl.signal),
 		])
@@ -127,7 +130,7 @@ function waitForAbort(signal) {
 	})
 }
 
-main().catch((error) => {
+await main().catch((error) => {
 	console.error(error)
 	process.exit(1)
 })

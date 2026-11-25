@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "tsc && tsc -p type-tests",
+		"test": "npm run build && npm run demo && npm run memory -- 64 0",
 		"demo": "node dist/demo.js",
 		"memory": "node --expose-gc --max-old-space-size=128 dist/memory.js"
 	},

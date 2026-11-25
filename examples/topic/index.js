@@ -3,8 +3,10 @@ import { query } from '@ydbjs/query'
 import { topic } from '@ydbjs/topic'
 
 let cs = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:2136/local'
-let driver = new Driver(cs)
-await driver.ready()
+let topicPath = process.env.YDB_TOPIC || 'demo-topic'
+let signal = AbortSignal.timeout(30_000)
+using driver = new Driver(cs)
+await driver.ready(signal)
 
 console.log('Connected to', cs)
 
@@ -12,18 +14,19 @@ console.log('Connected to', cs)
 {
 	let t = topic(driver)
 	await using reader = t.createReader({
-		topic: '/Root/demo-topic',
+		topic: topicPath,
 		consumer: 'demo-consumer',
 	})
 	await using writer = t.createWriter({
-		topic: '/Root/demo-topic',
+		topic: topicPath,
 		producer: 'demo-producer',
 	})
 
 	writer.write(new TextEncoder().encode('hello'))
-	await writer.flush()
+	writer.write(new TextEncoder().encode('transaction input'))
+	await writer.flush(signal)
 
-	for await (let batch of reader.read()) {
+	for await (let batch of reader.read({ limit: 1, signal })) {
 		console.log('read batch size:', batch.length)
 		await reader.commit(batch)
 		break
@@ -33,21 +36,21 @@ console.log('Connected to', cs)
 // Transactional reader/writer
 {
 	let t = topic(driver)
-	let sql = query(driver)
+	await using sql = query(driver)
 
-	await sql.begin(async (tx) => {
+	await sql.begin({ signal }, async (tx, attemptSignal) => {
 		let reader = t.createTxReader(tx, {
-			topic: '/Root/demo-topic',
+			topic: topicPath,
 			consumer: 'demo-consumer',
 		})
 
-		for await (let batch of reader.read({ batchWindowMs: 100 })) {
-			console.log('read batch size:', batch.length)
+		for await (let batch of reader.read({ limit: 1, signal: attemptSignal })) {
+			console.log('transactional batch size:', batch.length)
 			break
 		}
 
 		let writer = t.createTxWriter(tx, {
-			topic: '/Root/demo-topic',
+			topic: topicPath,
 			producer: 'tx-producer',
 		})
 		writer.write(new TextEncoder().encode('in tx'))
@@ -55,5 +58,4 @@ console.log('Connected to', cs)
 	})
 }
 
-driver.close()
 console.log('Done')

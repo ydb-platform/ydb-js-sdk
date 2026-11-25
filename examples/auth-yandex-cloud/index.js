@@ -12,6 +12,7 @@
  * 2. Установите переменную YDB_CONNECTION_STRING (опционально)
  * 3. Запустите: npm start
  */
+import assert from 'node:assert/strict'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Driver } from '@ydbjs/core'
@@ -23,7 +24,9 @@ let connectionString =
 	'grpcs://ydb.serverless.yandexcloud.net:2135/?database=/ru-central1/.../...'
 
 // Path to authorized key file (relative to this file)
-let keyPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../authorized_key.json')
+let keyPath =
+	process.env.YDB_SERVICE_ACCOUNT_KEY_FILE_CREDENTIALS ??
+	path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../authorized_key.json')
 
 console.log('🔑 Using Service Account key from:', keyPath)
 console.log('🔗 Connecting to:', connectionString)
@@ -42,6 +45,7 @@ try {
 	// Test simple query
 	let sql = query(driver)
 	let [[result]] = await sql`SELECT 1 as test_value`
+	assert.equal(result.test_value, 1)
 
 	console.log('✅ Query executed successfully!')
 	console.log('📊 Result:', result)

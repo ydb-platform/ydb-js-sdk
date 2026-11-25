@@ -49,13 +49,9 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          sha=$(git rev-parse HEAD)
-          version="0.0.0-preview-${sha:0:7}"
-          if [[ -n "$PR_NUMBER" ]]; then
-            version="0.0.0-pr-$PR_NUMBER-${sha:0:7}"
-          fi
+          version="${PR_NUMBER:+$PR_NUMBER-}$(git rev-parse --short=7 HEAD)"
           npm pkg set "version=$version" -w packages -w third-parties
-          npm exec -- pkg-pr-new publish --no-compact --no-template './packages/*' './third-parties/*'
+          npx --yes pkg-pr-new@0.0.94 publish --no-compact --no-template './packages/*' './third-parties/*'
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   examples:
@@ -68,7 +64,10 @@ jobs:
       ydb:
         image: ydbplatform/local-ydb:26.3.1.20@sha256:c8fd4cdd30c8d48cf8e6c5b70a5e683a332862b033970c5e319d75dcfa006a5c
         ports:
+          - 2135:2135
           - 2136:2136
+        volumes:
+          - /tmp/ydb_certs:/ydb_certs
         env:
           YDB_USE_IN_MEMORY_PDISKS: true
         options: --hostname localhost
@@ -80,9 +79,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '26.13.1'
-      - name: Run QueryClient and Drizzle examples
+      - run: npm ci --workspaces=false --ignore-scripts --no-audit --no-fund
+      - name: Test examples with published packages
         env:
           PREVIEW_PACKAGES: ${{ needs.publish.outputs.packages }}
           PREVIEW_VERSION: ${{ needs.publish.outputs.version }}
           YDB_CONNECTION_STRING: grpc://localhost:2136/local
-        run: node scripts/test-preview-examples.mjs
+          YDB_CONNECTION_STRING_SECURE: grpcs://localhost:2135/local
+          YDB_SSL_ROOT_CERTIFICATES_FILE: /tmp/ydb_certs/ca.pem
+        run: node examples/test-previews.mjs

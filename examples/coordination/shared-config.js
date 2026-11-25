@@ -47,6 +47,7 @@ async function watchConfig(signal) {
 
 				let config = JSON.parse(text.decode(description.data))
 				console.log('[watcher] config updated:', config)
+				if (config.version === 3) return
 			}
 		} catch (e) {
 			if (session.signal.aborted) {
@@ -68,7 +69,7 @@ async function main() {
 	let ctrl = new AbortController()
 
 	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
+	let timer = setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
 
 	try {
 		await client.createNode(nodePath, {})
@@ -91,7 +92,9 @@ async function main() {
 		// The watcher receives the current value immediately on connect,
 		// then each subsequent update as it arrives.
 		await Promise.all([watchConfig(ctrl.signal), publishUpdates(ctrl.signal)])
+		ctrl.signal.throwIfAborted()
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
@@ -113,7 +116,7 @@ async function publishUpdates(signal) {
 	}
 }
 
-main().catch((error) => {
+await main().catch((error) => {
 	console.error(error)
 	process.exit(1)
 })

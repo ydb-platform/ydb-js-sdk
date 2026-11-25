@@ -8,6 +8,7 @@
 		"access": "restricted"
 	},
 	"scripts": {
+		"test": "node --test e2e.js",
 		"start": "node index.js",
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},
