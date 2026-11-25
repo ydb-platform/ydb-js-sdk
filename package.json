@@ -33,6 +33,7 @@
 		"@vitest/coverage-v8": "^5.0.5",
 		"oxfmt": "^0.74.0",
 		"oxlint": "^1.89.0",
+		"pkg-pr-new": "0.0.94",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.5",
 		"zx": "^8.8.5"
