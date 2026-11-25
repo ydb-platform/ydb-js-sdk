@@ -158,17 +158,32 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		options: TransactionExecuteOptions,
 		callback: TransactionContextCallback<T>
 	): Promise<T>
-	async function transact<T>(
+	function transact<T>(
 		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
 		callback?: TransactionContextCallback<T>
 	): Promise<T> {
-		return (await transactWithTimestamp(optionsOrCallback, callback)).result
+		return runTransaction(optionsOrCallback, callback, (options, run) =>
+			client.retryTransaction(options, run)
+		)
 	}
 
-	async function transactWithTimestamp<T>(
+	function transactWithTimestamp<T>(
 		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
 		callback?: TransactionContextCallback<T>
 	): Promise<TransactionResult<T>> {
+		return runTransaction(optionsOrCallback, callback, (options, run) =>
+			client.retryTransactionWithTimestamp(options, run)
+		)
+	}
+
+	async function runTransaction<T, R>(
+		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
+		callback: TransactionContextCallback<T> | undefined,
+		retryTransaction: (
+			options: TransactionExecuteOptions,
+			run: (transaction: Transaction, signal: AbortSignal) => Promise<T>
+		) => Promise<R>
+	): Promise<R> {
 		if (typeof optionsOrCallback === 'function' && callback !== undefined)
 			throw new TypeError('Use transaction(options, callback) when passing options.')
 		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
@@ -177,28 +192,26 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 			throw new TypeError('transaction() requires an async callback.')
 		let callbackFailed = false
 		let callbackError: unknown
-		return client
-			.retryTransactionWithTimestamp(options, (transaction, signal) =>
-				ctx.run({ client, executor: transaction, signal }, async () => {
-					callbackFailed = false
-					try {
-						return await caller(transactionSQL(transaction), signal)
-					} catch (error) {
-						callbackFailed = true
-						callbackError = error
-						throw error
-					}
-				})
-			)
-			.catch((error) => {
-				if (
-					callbackFailed &&
-					error === callbackError &&
-					!isRetryableError(error, options.idempotent)
-				)
-					throw new Error('Transaction failed.', { cause: error })
-				throw error
+		return retryTransaction(options, (transaction, signal) =>
+			ctx.run({ client, executor: transaction, signal }, async () => {
+				callbackFailed = false
+				try {
+					return await caller(transactionSQL(transaction), signal)
+				} catch (error) {
+					callbackFailed = true
+					callbackError = error
+					throw error
+				}
 			})
+		).catch((error) => {
+			if (
+				callbackFailed &&
+				error === callbackError &&
+				!isRetryableError(error, options.idempotent)
+			)
+				throw new Error('Transaction failed.', { cause: error })
+			throw error
+		})
 	}
 
 	function run<T>(callback: SessionContextCallback<T>): Promise<T>

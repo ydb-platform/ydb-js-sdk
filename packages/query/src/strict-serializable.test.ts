@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { create, toBinary } from '@bufbuild/protobuf'
 
 import { YDBError } from '@ydbjs/error'
@@ -11,7 +11,7 @@ import {
 } from '@ydbjs/api/query'
 
 import { startClientServer } from './client.fixtures.js'
-import { query } from './index.js'
+import { QueryClient, query } from './index.js'
 import { virtualTimestampFromProto } from './virtual-timestamp.js'
 
 async function startServer() {
@@ -114,6 +114,20 @@ test('returns commit timestamp from CommitTransactionResponse without changing b
 		txId: 18446744073709551615n,
 	})
 	expect(result).toBe(42)
+})
+
+test('uses the supplied client retryTransaction for begin and transaction', async () => {
+	srv = await startServer()
+	let client = new QueryClient(srv.driver)
+	let retryTransaction = vi.spyOn(client, 'retryTransaction')
+	await using sql = query(client)
+
+	await expect(sql.begin(async () => 1)).resolves.toBe(1)
+	await expect(
+		sql.transaction({ isolation: 'strictSerializableReadWrite' }, async () => 2)
+	).resolves.toBe(2)
+
+	expect(retryTransaction).toHaveBeenCalledTimes(2)
 })
 
 test('leaves commit timestamp absent when the commit response omits it', async () => {
