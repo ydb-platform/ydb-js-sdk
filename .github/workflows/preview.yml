@@ -3,18 +3,86 @@ name: Package previews
 on:
   push:
     branches: [main]
+  pull_request_review:
+    types: [submitted]
 
 permissions:
   contents: read
 
 jobs:
-  publish:
+  review:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.review.commit_id == github.event.pull_request.head.sha
     runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.reviewer.outputs.allowed }}
+    steps:
+      - name: Check reviewer has write access
+        id: reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWER: ${{ github.event.review.user.login }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$REVIEWER/permission" \
+            --jq '"allowed=\(.permission == "write" or .permission == "admin")"' >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: review
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.review.outputs.allowed == 'true') }}
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
+      packages: ${{ steps.publish.outputs.packages }}
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.review.commit_id || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: npm run build
       - name: Publish commit previews
-        run: npm exec -- pkg-pr-new publish --no-compact --no-template --previewVersion './packages/*' './third-parties/*'
+        id: publish
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          version="0.0.0-preview-${sha:0:7}"
+          if [[ -n "$PR_NUMBER" ]]; then
+            version="0.0.0-pr-$PR_NUMBER-${sha:0:7}"
+          fi
+          npm pkg set "version=$version" -w packages -w third-parties
+          npm exec -- pkg-pr-new publish --no-compact --no-template './packages/*' './third-parties/*'
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  examples:
+    name: E2E with published packages
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      ydb:
+        image: ydbplatform/local-ydb:26.3.1.20@sha256:c8fd4cdd30c8d48cf8e6c5b70a5e683a332862b033970c5e319d75dcfa006a5c
+        ports:
+          - 2136:2136
+        env:
+          YDB_USE_IN_MEMORY_PDISKS: true
+        options: --hostname localhost
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.publish.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26.13.1'
+      - name: Run QueryClient and Drizzle examples
+        env:
+          PREVIEW_PACKAGES: ${{ needs.publish.outputs.packages }}
+          PREVIEW_VERSION: ${{ needs.publish.outputs.version }}
+          YDB_CONNECTION_STRING: grpc://localhost:2136/local
+        run: node scripts/test-preview-examples.mjs
