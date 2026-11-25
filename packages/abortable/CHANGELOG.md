@@ -1,5 +1,15 @@
 # @ydbjs/abortable
 
+## 7.0.0
+
+### Major Changes
+
+- [#752](https://github.com/ydb-platform/ydb-js-sdk/pull/752) [`96a35de`](https://github.com/ydb-platform/ydb-js-sdk/commit/96a35de0c3c38606adccaee3dcdc629e0b287705) Thanks [@polRk](https://github.com/polRk)! - Require patched Node.js releases: ^22.23.5 || ^24.22.3 || >=26.13.1. Node.js 20 and unsupported odd-numbered release lines are no longer supported.
+
+### Minor Changes
+
+- [#680](https://github.com/ydb-platform/ydb-js-sdk/pull/680) [`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6) Thanks [@polRk](https://github.com/polRk)! - Accept an optional abort signal and return the original Promise when it is absent. Observe late rejections after cancellation, including when the signal was already aborted, without cancelling the underlying operation.
+
 ## 6.1.0
 
 ### Minor Changes

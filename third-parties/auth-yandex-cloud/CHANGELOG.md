@@ -1,5 +1,20 @@
 # @ydbjs/auth-yandex-cloud
 
+## 0.3.0
+
+### Minor Changes
+
+- [#752](https://github.com/ydb-platform/ydb-js-sdk/pull/752) [`96a35de`](https://github.com/ydb-platform/ydb-js-sdk/commit/96a35de0c3c38606adccaee3dcdc629e0b287705) Thanks [@polRk](https://github.com/polRk)! - Require patched Node.js releases: ^22.23.5 || ^24.22.3 || >=26.13.1. Node.js 20 and unsupported odd-numbered release lines are no longer supported.
+
+### Patch Changes
+
+- [#675](https://github.com/ydb-platform/ydb-js-sdk/pull/675) [`7380673`](https://github.com/ydb-platform/ydb-js-sdk/commit/7380673c1f41fff1329521202dc8759419ee9b1f) Thanks [@polRk](https://github.com/polRk)! - Keep shared token refreshes independent of individual callers. Static, metadata, and Yandex Cloud providers own a five-second foreground request budget, including retries; static and Yandex Cloud background refreshes have a thirty-second budget. Cancelling a token request stops only that caller's wait. Cached reads and callers joining a refresh do not create provider timeouts.
+- Updated dependencies [[`1cb8668`](https://github.com/ydb-platform/ydb-js-sdk/commit/1cb8668cb014cf7603114666eb0f21064792eaa6), [`a389fc4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a389fc49a435b0a2686f0085b00f663d07f98096), [`96a35de`](https://github.com/ydb-platform/ydb-js-sdk/commit/96a35de0c3c38606adccaee3dcdc629e0b287705), [`7380673`](https://github.com/ydb-platform/ydb-js-sdk/commit/7380673c1f41fff1329521202dc8759419ee9b1f), [`ee92bca`](https://github.com/ydb-platform/ydb-js-sdk/commit/ee92bca539ff1e6886ece37722a8c491ee2c2e77), [`9e16c2c`](https://github.com/ydb-platform/ydb-js-sdk/commit/9e16c2c2524658a1f56fdd465a317f4a2ae64846), [`a4022e4`](https://github.com/ydb-platform/ydb-js-sdk/commit/a4022e4f218fa49d12796435f8722f7acd8b3d28), [`ea3692f`](https://github.com/ydb-platform/ydb-js-sdk/commit/ea3692fc850072a84a8d812826786642ccc1b1c1)]:
+  - @ydbjs/abortable@7.0.0
+  - @ydbjs/auth@7.0.0
+  - @ydbjs/retry@7.0.0
+  - @ydbjs/debug@7.0.0
+
 ## 0.2.0
 
 ### Minor Changes
