@@ -68,9 +68,15 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 	): Promise<T>
 
 	beginWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
-	beginWithTimestamp<T>(options: TransactionExecuteOptions, fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	beginWithTimestamp<T>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
 	transactionWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
-	transactionWithTimestamp<T>(options: TransactionExecuteOptions, fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
 
 	/**
 	 * Create an UnsafeString that represents a DB identifier (table, column).

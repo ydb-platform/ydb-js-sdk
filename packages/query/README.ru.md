@@ -198,6 +198,8 @@ await write
 const timestamp = write.commitTimestamp()
 ```
 
+В низкоуровневом Query API `commitTimestamp` доступен в результате `session.execute()` или в `stream.summary` после полного чтения потока.
+
 Для явной транзакции используйте `beginWithTimestamp` или `transactionWithTimestamp`. Они возвращают результат callback и опциональное время коммита. Результат старых `begin` и `transaction` не меняется.
 
 ```ts

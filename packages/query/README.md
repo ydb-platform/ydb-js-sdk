@@ -232,6 +232,8 @@ await write
 const timestamp = write.commitTimestamp()
 ```
 
+With the raw Query API, read `commitTimestamp` on the result of `session.execute()` or on `stream.summary` after fully consuming the stream.
+
 For an explicit transaction, `beginWithTimestamp` and `transactionWithTimestamp` return the callback result together with an optional commit timestamp. Existing `begin` and `transaction` return values are unchanged.
 
 ```ts

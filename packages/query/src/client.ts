@@ -75,7 +75,12 @@ export interface StatementOptions extends Pick<OperationOptions, 'signal' | 'tim
 }
 
 export interface TransactionOptions extends OperationOptions {
-	isolation?: 'serializableReadWrite' | 'strictSerializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite' | undefined
+	isolation?:
+		| 'serializableReadWrite'
+		| 'strictSerializableReadWrite'
+		| 'snapshotReadOnly'
+		| 'snapshotReadWrite'
+		| undefined
 }
 
 export type TransactionResult<T> = {
@@ -668,7 +673,9 @@ export class QueryClient implements AsyncDisposable, Disposable {
 	}
 
 	async #retryTransaction<T>(
-		optionsOrCallback: TransactionOptions | ((transaction: Transaction, signal: AbortSignal) => Promise<T>),
+		optionsOrCallback:
+			| TransactionOptions
+			| ((transaction: Transaction, signal: AbortSignal) => Promise<T>),
 		callback?: (transaction: Transaction, signal: AbortSignal) => Promise<T>
 	): Promise<TransactionResult<T>> {
 		if (typeof optionsOrCallback === 'function' && callback !== undefined)
@@ -679,7 +686,14 @@ export class QueryClient implements AsyncDisposable, Disposable {
 			throw new TypeError('retryTransaction() requires an async callback.')
 		validateOperation(options)
 		let isolation = options.isolation ?? 'serializableReadWrite'
-		if (!['serializableReadWrite', 'strictSerializableReadWrite', 'snapshotReadOnly', 'snapshotReadWrite'].includes(isolation))
+		if (
+			![
+				'serializableReadWrite',
+				'strictSerializableReadWrite',
+				'snapshotReadOnly',
+				'snapshotReadWrite',
+			].includes(isolation)
+		)
 			throw new TypeError('Unsupported transaction isolation.')
 		return transactionCh.tracePromise(
 			() =>
@@ -771,7 +785,10 @@ export class QueryClient implements AsyncDisposable, Disposable {
 						committed = true
 						attempt.committed = true
 						if (isolation === 'strictSerializableReadWrite') {
-							commitTimestamp = virtualTimestampFromProto(response.commitTimestamp, this.#driver.identity)
+							commitTimestamp = virtualTimestampFromProto(
+								response.commitTimestamp,
+								this.#driver.identity
+							)
 						}
 					} catch (cause) {
 						attempt.seal()
@@ -1055,7 +1072,10 @@ async function* readQuery<Row>(
 			throw serverError
 		}
 		if (options.isolation === 'strictSerializableReadWrite') {
-			summary.commitTimestamp = virtualTimestampFromProto(trailingCommitTimestamp, driver.identity)
+			summary.commitTimestamp = virtualTimestampFromProto(
+				trailingCommitTimestamp,
+				driver.identity
+			)
 		}
 		complete(summary)
 		done?.resolve()

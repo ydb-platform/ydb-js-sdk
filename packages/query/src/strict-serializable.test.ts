@@ -1,97 +1,53 @@
 import { afterEach, expect, test } from 'vitest'
 import { create, toBinary } from '@bufbuild/protobuf'
-import { createServer } from 'nice-grpc'
 
-import { Driver } from '@ydbjs/core'
 import { YDBError } from '@ydbjs/error'
 import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 import {
-	BeginTransactionResponseSchema,
 	CommitTransactionResponseSchema,
-	CreateSessionResponseSchema,
-	DeleteSessionResponseSchema,
 	type ExecuteQueryResponsePart,
 	ExecuteQueryResponsePartSchema,
-	QueryServiceDefinition,
-	SessionStateSchema,
 	TransactionSettingsSchema,
 } from '@ydbjs/api/query'
 
+import { startClientServer } from './client.fixtures.js'
 import { query } from './index.js'
 import { virtualTimestampFromProto } from './virtual-timestamp.js'
 
 async function startServer() {
 	let executeParts: ExecuteQueryResponsePart[] = []
 	let commitTimestamp: { planStep: bigint; txId: bigint } | undefined
-	let beginModes: Array<string | undefined> = []
-	let executeModes: Array<string | undefined> = []
-	let server = createServer()
-	server.add(
-		{
-			createSession: QueryServiceDefinition.createSession,
-			deleteSession: QueryServiceDefinition.deleteSession,
-			attachSession: QueryServiceDefinition.attachSession,
-			beginTransaction: QueryServiceDefinition.beginTransaction,
-			commitTransaction: QueryServiceDefinition.commitTransaction,
-			executeQuery: QueryServiceDefinition.executeQuery,
+	let server = await startClientServer({
+		commitTransaction() {
+			return create(CommitTransactionResponseSchema, {
+				status: StatusIds_StatusCode.SUCCESS,
+				commitTimestamp,
+			})
 		},
-		{
-			async createSession() {
-				return create(CreateSessionResponseSchema, {
-					status: StatusIds_StatusCode.SUCCESS,
-					sessionId: 'session-1',
-					nodeId: 1n,
-				})
-			},
-			async deleteSession() {
-				return create(DeleteSessionResponseSchema, { status: StatusIds_StatusCode.SUCCESS })
-			},
-			async *attachSession(_request, context) {
-				yield create(SessionStateSchema, { status: StatusIds_StatusCode.SUCCESS })
-				await new Promise<void>((resolve) => {
-					context.signal.addEventListener('abort', () => resolve(), { once: true })
-				})
-			},
-			async beginTransaction(request) {
-				beginModes.push(request.txSettings?.txMode.case)
-				return create(BeginTransactionResponseSchema, {
-					status: StatusIds_StatusCode.SUCCESS,
-					txMeta: { id: 'tx-1' },
-				})
-			},
-			async commitTransaction() {
-				return create(CommitTransactionResponseSchema, {
-					status: StatusIds_StatusCode.SUCCESS,
-					commitTimestamp,
-				})
-			},
-			async *executeQuery(request) {
-				executeModes.push(
-					request.txControl?.txSelector.case === 'beginTx'
-						? request.txControl.txSelector.value.txMode.case
-						: undefined
-				)
-				for (let responsePart of executeParts) yield responsePart
-			},
-		}
-	)
-	let port = await server.listen('127.0.0.1:0')
-	let driver = new Driver(`grpc://127.0.0.1:${port}/local`, {
-		'ydb.sdk.enable_discovery': false,
+		async *executeQuery() {
+			yield* executeParts
+		},
 	})
 	return {
-		driver,
-		beginModes,
-		executeModes,
+		driver: server.driver,
+		get beginModes() {
+			return server.begins.map((request) => request.txSettings?.txMode.case)
+		},
+		get executeModes() {
+			return server.executions.map((request) =>
+				request.txControl?.txSelector.case === 'beginTx'
+					? request.txControl.txSelector.value.txMode.case
+					: undefined
+			)
+		},
 		setExecuteParts(parts: ExecuteQueryResponsePart[]) {
 			executeParts = parts
 		},
 		setCommitTimestamp(value: typeof commitTimestamp) {
 			commitTimestamp = value
 		},
-		async close() {
-			driver.close()
-			await server.shutdown()
+		close() {
+			server[Symbol.dispose]()
 		},
 	}
 }
@@ -99,8 +55,8 @@ async function startServer() {
 type Server = Awaited<ReturnType<typeof startServer>>
 let srv: Server | undefined
 
-afterEach(async () => {
-	await srv?.close()
+afterEach(() => {
+	srv?.close()
 	srv = undefined
 })
 
