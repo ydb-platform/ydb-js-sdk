@@ -30,7 +30,7 @@ Example:
 ```ts
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 
-const db = createDrizzle({
+let db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
   schema,
   logger: true,
@@ -39,15 +39,17 @@ const db = createDrizzle({
 
 ### Lifecycle Management
 
-When a `connectionString` is used, the adapter owns the underlying driver. Use `$client` to manage its lifecycle:
+`db.$client` has the `YdbExecutor` interface, where `ready` and `close` are optional. With a connection string, the adapter owns the SDK driver and closes it through `$client.close()`. A `YdbDriver` wrapping an existing SDK driver leaves that driver open; the application closes it after all consumers finish.
 
-- `await db.$client.ready()`: ensures the driver is initialized and the database is accessible.
-- `db.$client.close()`: closes the session pool and releases driver resources. Synchronous; returns `void`. **Always call this when the application shuts down.**
+Close an executor owned by your application when its work finishes:
 
 ```ts
-await db.$client.ready()
-// ... application logic ...
-db.$client.close()
+try {
+  await db.$client.ready?.()
+  // Application queries.
+} finally {
+  await db.$client.close?.()
+}
 ```
 
 ## Execution Methods
@@ -68,11 +70,11 @@ import { sql } from 'drizzle-orm'
 
 await db.execute(sql`DELETE FROM users WHERE id = ${1}`)
 
-const rows = await db.all(sql`SELECT * FROM users`)
-const first = await db.get(sql`SELECT * FROM users LIMIT 1`)
-const values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
+let rows = await db.all(sql`SELECT * FROM users`)
+let first = await db.get(sql`SELECT * FROM users LIMIT 1`)
+let values = await db.values<[number, string]>(sql`SELECT id, name FROM users`)
 
-const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
+let firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).from(users).limit(1))
 ```
 
 ## Query Builders
@@ -101,9 +103,9 @@ const firstBuilt = await db.get(db.select({ id: users.id, name: users.name }).fr
 ```ts
 import { eq } from 'drizzle-orm'
 
-const activeCount = await db.$count(users, eq(users.active, true))
+let activeCount = await db.$count(users, eq(users.active, true))
 
-const rows = await db.select({ id: users.id, name: users.name }).from(users).limit(10).execute()
+let rows = await db.select({ id: users.id, name: users.name }).from(users).limit(10).execute()
 ```
 
 ## Transactions
@@ -127,7 +129,6 @@ await db.transaction(
   {
     accessMode: 'read write',
     isolationLevel: 'serializableReadWrite',
-    idempotent: true,
   }
 )
 ```
@@ -136,15 +137,17 @@ await db.transaction(
 
 - `accessMode`: `'read write'` (default) or `'read only'`. Use `'read only'` for optimized read-heavy transactions.
 - `isolationLevel`: `'serializableReadWrite'` (recommended for YDB) or `'snapshotReadOnly'`.
-- `idempotent`: if `true`, the adapter can automatically retry the transaction on network errors.
+- `idempotent`: if `true`, permits retrying the entire callback for retryable failures; all work in the callback must be safe to repeat.
 
 ## Relational Query API
 
 Typed relations are enabled by passing a `schema` during initialization. Use `db.query.*` for declarative data fetching without manual JOINs.
 
 ```ts
-const user = await db.query.users.findFirst({
-  where: (u, { eq }) => eq(u.id, 1),
+let user = await db.query.users.findFirst({
+  where: (u, { eq }) => {
+    return eq(u.id, 1)
+  },
   with: {
     posts: {
       columns: {
@@ -152,7 +155,9 @@ const user = await db.query.users.findFirst({
         title: true,
       },
       limit: 5,
-      orderBy: (p, { desc }) => [desc(p.id)],
+      orderBy: (p, { desc }) => {
+        return [desc(p.id)]
+      },
     },
     profile: true,
   },

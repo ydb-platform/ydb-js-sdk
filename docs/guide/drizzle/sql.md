@@ -32,7 +32,7 @@ Create a temporary data source from an array of objects (SQL `VALUES` equivalent
 import { valuesTable } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
 
-const v = valuesTable([{ id: 1, name: 'Alice' }], {
+let v = valuesTable([{ id: 1, name: 'Alice' }], {
   alias: 'v',
   columns: ['id', 'name'],
 })
@@ -84,7 +84,7 @@ Distance and similarity functions for AI-driven search, typically used in `order
 import { knnCosineDistance } from '@ydbjs/drizzle-adapter/sql'
 import { sql } from 'drizzle-orm'
 
-const nearest = await db
+let nearest = await db
   .select()
   .from(images)
   .orderBy(knnCosineDistance(images.embedding, sql`$target`))

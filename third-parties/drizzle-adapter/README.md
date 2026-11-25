@@ -19,7 +19,7 @@ The `@ydbjs/drizzle-adapter` package wires [Drizzle ORM](https://orm.drizzle.tea
 ## Installation
 
 ```sh
-npm install @ydbjs/drizzle-adapter drizzle-orm
+npm install @ydbjs/drizzle-adapter drizzle-orm@^0.45.2
 ```
 
 Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` and `drizzle-orm@^0.45.2`.
@@ -35,7 +35,7 @@ Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` and `drizzle-orm@^0.45.2`.
   | `@ydbjs/drizzle-adapter/sql`      | YQL expression helpers (hash UDFs, `currentUtc*`, `random*`, `unwrap`, `maxOf`/`minOf`, `Knn::*`, set operators, pragmas, scripts) |
   | `@ydbjs/drizzle-adapter/migrator` | `migrate()` plus `build*Sql` DDL builders and migration types                                                                      |
 
-- **Driver ownership**: `createDrizzle({ connectionString })` owns the driver and closes it with `db.$client.close?.()`. Pass `{ driver }` to share an existing `YdbDriver` with other YDB clients.
+- **Driver ownership**: `createDrizzle({ connectionString })` owns the driver and closes it with `db.$client.close?.()`. Pass `{ client: new YdbDriver(driver) }` to borrow an existing SDK `Driver`. `YdbDriver.close()` closes only a driver it created; the application remains responsible for a borrowed SDK driver.
 - **Query execution**: all builders go through `YdbSession`, which uses the same driver/pool as `@ydbjs/query` under the hood.
 - **Result records**: mapped rows and nested selection groups use `Object.create(null)`. Selected names such as `__proto__` and `constructor` are ordinary own properties. Use `Object.hasOwn(row, name)` to check field presence; records do not inherit object methods. Custom executor input rows still accept ordinary objects.
 - **Migrations**: `migrate()` records every applied migration in a YDB table; with `migrationLock` enabled, parallel deploy jobs coordinate through a lock table instead of racing.
@@ -43,6 +43,8 @@ Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` and `drizzle-orm@^0.45.2`.
 ## Usage
 
 ### Quick Start
+
+Schema declarations do not create database tables. Apply migrations before running these queries. See [Migrations](#migrations) below.
 
 ```ts
 import { eq } from 'drizzle-orm'
@@ -65,7 +67,9 @@ let users = ydbTable(
     email: text('email').notNull(),
     createdAt: timestamp('created_at').notNull(),
   },
-  (t) => [primaryKey(t.hash, t.id)]
+  (t) => {
+    return [primaryKey(t.hash, t.id)]
+  }
 )
 
 let db = createDrizzle({
@@ -108,7 +112,9 @@ let articles = ydbTable(
     slug: text('slug').notNull(),
     title: text('title').notNull(),
   },
-  (t) => [primaryKey(t.hash, t.slug)]
+  (t) => {
+    return [primaryKey(t.hash, t.slug)]
+  }
 )
 
 await db.insert(articles).values({
@@ -137,17 +143,25 @@ Transactions are not nestable through the adapter — open one boundary at the t
 `idempotent: true` opts the transaction into the `@ydbjs/retry` policy: on a retryable YDB failure the **entire callback re-runs from scratch**, not just the failed statement. Set it only when re-running the whole callback is safe.
 
 ```ts
-// Safe — only YDB mutations inside the callback
+// Repeating the same UPSERT values preserves the intended result.
 await db.transaction(
   async (tx) => {
-    await tx.insert(events).values({/* ... */}).execute()
+    await tx
+      .upsert(users)
+      .values({
+        hash: numericHash(1),
+        id: 1,
+        email: 'ada@example.com',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      })
+      .execute()
   },
   { isolationLevel: 'serializableReadWrite', idempotent: true }
 )
 ```
 
 ```ts
-// UNSAFE — the Stripe charge will fire twice on retry
+// External side effects can run more than once when the callback is retried.
 await db.transaction(
   async (tx) => {
     await stripe.charges.create({/* ... */}) // external side effect!

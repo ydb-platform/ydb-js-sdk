@@ -23,7 +23,7 @@ import { createDrizzle, many, one, relations } from '@ydbjs/drizzle-adapter'
 import { index, integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 
-export const users = ydbTable('example_users', {
+export let users = ydbTable('example_users', {
   id: integer('id').primaryKey(),
   email: text('email').notNull().unique('example_users_email_unique'),
   name: text('name').notNull(),
@@ -32,7 +32,7 @@ export const users = ydbTable('example_users', {
   updatedAt: timestamp('updated_at').notNull(),
 })
 
-export const projects = ydbTable(
+export let projects = ydbTable(
   'example_projects',
   {
     id: integer('id').primaryKey(),
@@ -42,10 +42,12 @@ export const projects = ydbTable(
     createdAt: timestamp('created_at').notNull(),
     updatedAt: timestamp('updated_at').notNull(),
   },
-  (table) => [index('example_projects_owner_idx').on(table.ownerId).global().sync()]
+  (table) => {
+    return [index('example_projects_owner_idx').on(table.ownerId).global().sync()]
+  }
 )
 
-export const tasks = ydbTable(
+export let tasks = ydbTable(
   'example_tasks',
   {
     id: integer('id').primaryKey(),
@@ -64,7 +66,7 @@ export const tasks = ydbTable(
   ]
 )
 
-export const taskSnapshots = ydbTable('example_task_snapshots', {
+export let taskSnapshots = ydbTable('example_task_snapshots', {
   id: integer('id').primaryKey(),
   projectId: integer('project_id').notNull(),
   assigneeId: integer('assignee_id').notNull(),
@@ -76,22 +78,22 @@ export const taskSnapshots = ydbTable('example_task_snapshots', {
   updatedAt: timestamp('updated_at').notNull(),
 })
 
-export const usersRelations = relations(users, ({ many }) => ({
+export let usersRelations = relations(users, ({ many }) => ({
   ownedProjects: many(projects),
   assignedTasks: many(tasks),
 }))
 
-export const projectsRelations = relations(projects, ({ one, many }) => ({
+export let projectsRelations = relations(projects, ({ one, many }) => ({
   owner: one(users, { fields: [projects.ownerId], references: [users.id] }),
   tasks: many(tasks),
 }))
 
-export const tasksRelations = relations(tasks, ({ one }) => ({
+export let tasksRelations = relations(tasks, ({ one }) => ({
   project: one(projects, { fields: [tasks.projectId], references: [projects.id] }),
   assignee: one(users, { fields: [tasks.assigneeId], references: [users.id] }),
 }))
 
-export const db = createDrizzle({
+export let db = createDrizzle({
   connectionString: process.env.YDB_CONNECTION_STRING!,
   schema: {
     users,
@@ -108,9 +110,9 @@ export const db = createDrizzle({
 ## CRUD и returning
 
 ```ts
-const now = new Date()
+let now = new Date()
 
-const inserted = await db
+let inserted = await db
   .insert(users)
   .values({
     id: 1,
@@ -182,21 +184,21 @@ await db.batchDelete(tasks).where(eq(tasks.status, 'done')).execute()
 ## Prepared reads
 
 ```ts
-const preparedUser = db
+let preparedUser = db
   .select({ id: users.id, email: users.email, name: users.name })
   .from(users)
   .where(eq(users.id, 1))
-  .prepare('get_user_by_id')
+  .prepare()
 
-const row = await preparedUser.get()
-const rows = await preparedUser.all()
-const values = await preparedUser.values()
+let row = await preparedUser.get()
+let rows = await preparedUser.all()
+let values = await preparedUser.values()
 ```
 
 Построители также можно передавать в методы выполнения на `db`.
 
 ```ts
-const firstTask = await db.get(
+let firstTask = await db.get(
   db.select({ id: tasks.id, title: tasks.title }).from(tasks).orderBy(asc(tasks.id)).limit(1)
 )
 ```
@@ -204,23 +206,27 @@ const firstTask = await db.get(
 ## Raw execution
 
 ```ts
-const allRows = await db.all(sql`SELECT id, email FROM ${users} ORDER BY id`)
-const oneRow = await db.get(sql`SELECT id, title FROM ${tasks} WHERE id = ${3001} LIMIT 1`)
-const rawValues = await db.values<[number, string]>(sql`SELECT id, name FROM ${users} ORDER BY id`)
+let allRows = await db.all(sql`SELECT id, email FROM ${users} ORDER BY id`)
+let oneRow = await db.get(sql`SELECT id, title FROM ${tasks} WHERE id = ${3001} LIMIT 1`)
+let rawValues = await db.values<[number, string]>(sql`SELECT id, name FROM ${users} ORDER BY id`)
 await db.execute(sql`DELETE FROM ${tasks} WHERE status = ${'archived'}`)
 ```
 
 ## Relations
 
 ```ts
-const result = await db.query.projects.findMany({
+let result = await db.query.projects.findMany({
   columns: { id: true, title: true, status: true },
-  orderBy: (project, { asc }) => [asc(project.id)],
+  orderBy: (project, { asc }) => {
+    return [asc(project.id)]
+  },
   with: {
     owner: { columns: { id: true, email: true, name: true } },
     tasks: {
       columns: { id: true, title: true, status: true, priority: true },
-      orderBy: (task, { desc }) => [desc(task.estimateHours)],
+      orderBy: (task, { desc }) => {
+        return [desc(task.estimateHours)]
+      },
       with: {
         assignee: { columns: { id: true, name: true } },
       },
@@ -232,7 +238,7 @@ const result = await db.query.projects.findMany({
 ## Joins, CTE и set operators
 
 ```ts
-const joinedRows = await db
+let joinedRows = await db
   .select({
     projectId: projects.id,
     projectTitle: projects.title,
@@ -245,13 +251,13 @@ const joinedRows = await db
   .orderBy(asc(projects.id), asc(tasks.id))
   .execute()
 
-const usersWithProjects = await db
+let usersWithProjects = await db
   .select({ id: users.id, name: users.name })
   .from(users)
   .leftSemiJoin(projects, eq(projects.ownerId, users.id))
   .execute()
 
-const backlog = db
+let backlog = db
   .$with('backlog')
   .as(
     db
@@ -260,26 +266,26 @@ const backlog = db
       .where(eq(tasks.status, 'todo'))
   )
 
-const backlogRows = await db.with(backlog).select().from(backlog).execute()
+let backlogRows = await db.with(backlog).select().from(backlog).execute()
 
-const projectOwners = db.selectDistinct({ userId: projects.ownerId }).from(projects)
-const taskAssignees = db.selectDistinct({ userId: tasks.assigneeId }).from(tasks)
+let projectOwners = db.selectDistinct({ userId: projects.ownerId }).from(projects)
+let taskAssignees = db.selectDistinct({ userId: tasks.assigneeId }).from(tasks)
 
-const activePeople = await projectOwners.union(taskAssignees).execute()
-const ownerAndAssignee = await projectOwners.intersect(taskAssignees).execute()
-const ownersWithoutTasks = await projectOwners.except(taskAssignees).execute()
+let activePeople = await projectOwners.union(taskAssignees).execute()
+let ownerAndAssignee = await projectOwners.intersect(taskAssignees).execute()
+let ownersWithoutTasks = await projectOwners.except(taskAssignees).execute()
 ```
 
 ## Distinct, grouping и windows
 
 ```ts
-const statuses = await db
+let statuses = await db
   .selectDistinct({ status: tasks.status })
   .from(tasks)
   .orderBy(asc(tasks.status))
   .execute()
 
-const newestProjectPerOwner = await db
+let newestProjectPerOwner = await db
   .selectDistinctOn([projects.ownerId], {
     ownerId: projects.ownerId,
     projectId: projects.id,
@@ -290,7 +296,7 @@ const newestProjectPerOwner = await db
   .orderBy(asc(projects.ownerId), desc(projects.updatedAt))
   .execute()
 
-const totals = await db
+let totals = await db
   .select({
     status: tasks.status,
     total: sql<number>`count(*)`,
@@ -308,7 +314,7 @@ const totals = await db
 ```ts
 import { asTable, values, valuesTable } from '@ydbjs/drizzle-adapter/sql'
 
-const lanes = await db
+let lanes = await db
   .select({ lane: sql<string>`lanes.lane`, weight: sql<number>`lanes.weight` })
   .fromValues(
     [
@@ -319,7 +325,7 @@ const lanes = await db
   )
   .execute()
 
-const priorityMap = valuesTable(
+let priorityMap = valuesTable(
   [
     { priority: 'high', band: 'P1' },
     { priority: 'medium', band: 'P2' },
@@ -327,18 +333,18 @@ const priorityMap = valuesTable(
   { alias: 'priority_map', columns: ['priority', 'band'] }
 )
 
-const mappedTasks = await db
+let mappedTasks = await db
   .select({ taskId: tasks.id, band: sql<string>`priority_map.band` })
   .from(tasks)
   .innerJoin(priorityMap, eq(tasks.priority, sql`priority_map.priority`))
   .execute()
 
-const source = values([{ id: 1, name: 'Ada' }])
-const valuesPreview = db
+let source = values([{ id: 1, name: 'Ada' }])
+let valuesPreview = db
   .select({ id: sql`v.id`, name: sql`v.name` })
   .from(sql`${source} AS v`)
   .toSQL()
-const asTablePreview = db
+let asTablePreview = db
   .select({ id: sql`r.id`, name: sql`r.name` })
   .from(asTable('$rows', 'r'))
   .toSQL()
@@ -373,7 +379,7 @@ await db
 ```ts
 await db.transaction(
   async (tx) => {
-    const newTask = {
+    let newTask = {
       id: 100,
       projectId: 10,
       assigneeId: 1,
@@ -401,7 +407,7 @@ await db.transaction(
 )
 
 await db.transaction(async (tx) => {
-  const newTask = {
+  let newTask = {
     id: 101,
     projectId: 10,
     assigneeId: 1,
@@ -448,20 +454,20 @@ await migrate(db, {
   ],
 })
 
-const createSql = buildCreateTableSql(tasks, { ifNotExists: true })
-const dropSql = buildDropTableSql(tasks, { ifExists: true })
-const migrationSql = buildMigrationSql([{ kind: 'create_table', table: tasks, ifNotExists: true }])
-const renameSql = buildRenameTableSql(tasks, 'example_tasks_archive')
-const alterSql = buildAlterTableSetOptionsSql(tasks, { auto_partitioning_by_size: true })
+let createSql = buildCreateTableSql(tasks, { ifNotExists: true })
+let dropSql = buildDropTableSql(tasks, { ifExists: true })
+let migrationSql = buildMigrationSql([{ kind: 'create_table', table: tasks, ifNotExists: true }])
+let renameSql = buildRenameTableSql(tasks, 'example_tasks_archive')
+let alterSql = buildAlterTableSetOptionsSql(tasks, { auto_partitioning_by_size: true })
 
-const tasksExpanded = ydbTable('example_tasks', {
+let tasksExpanded = ydbTable('example_tasks', {
   id: integer('id').primaryKey(),
   stage: text('stage').notNull(),
 })
-const tasksStatusIndex = index('example_tasks_status_idx').on(tasks.status).build(tasks)
+let tasksStatusIndex = index('example_tasks_status_idx').on(tasks.status).build(tasks)
 
-const addColumnsSql = buildAddColumnsSql(tasksExpanded, [tasksExpanded.stage])
-const addIndexSql = buildAddIndexSql(tasks, tasksStatusIndex)
+let addColumnsSql = buildAddColumnsSql(tasksExpanded, [tasksExpanded.stage])
+let addIndexSql = buildAddIndexSql(tasks, tasksStatusIndex)
 ```
 
 ## YQL scripts

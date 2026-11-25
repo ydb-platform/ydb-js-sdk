@@ -9,13 +9,13 @@ title: Drizzle Adapter — Быстрый старт
 ## Требования
 
 - Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
-- `drizzle-orm`, установленный рядом с адаптером.
+- `drizzle-orm@^0.45.2`, установленный рядом с адаптером.
 - База данных YDB — локальная (`grpc://localhost:2136/local`) или удалённая.
 
 ## Установка
 
 ```sh
-npm install @ydbjs/drizzle-adapter drizzle-orm
+npm install @ydbjs/drizzle-adapter drizzle-orm@^0.45.2
 ```
 
 ## Подключение
@@ -29,7 +29,7 @@ npm install @ydbjs/drizzle-adapter drizzle-orm
 ```ts
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 
-const db = createDrizzle({
+let db = createDrizzle({
   connectionString: process.env['YDB_CONNECTION_STRING']!,
 })
 ```
@@ -42,8 +42,8 @@ const db = createDrizzle({
 import { Driver } from '@ydbjs/core'
 import { YdbDriver, createDrizzle } from '@ydbjs/drizzle-adapter'
 
-const driver = new Driver('grpc://localhost:2136/local')
-const db = createDrizzle({
+let driver = new Driver('grpc://localhost:2136/local')
+let db = createDrizzle({
   client: new YdbDriver(driver),
 })
 ```
@@ -55,8 +55,8 @@ const db = createDrizzle({
 ```ts
 import { createDrizzle } from '@ydbjs/drizzle-adapter'
 
-const db = createDrizzle(async (sql, params, method, options) => {
-  const rows = await myTransport.execute({
+let db = createDrizzle(async (sql, params, method, options) => {
+  let rows = await myTransport.execute({
     sql,
     params,
     arrayMode: options?.arrayMode === true,
@@ -81,17 +81,21 @@ const db = createDrizzle(async (sql, params, method, options) => {
 ```ts
 import { integer, text, timestamp, ydbTable } from '@ydbjs/drizzle-adapter/schema'
 
-export const users = ydbTable('users', {
+export let users = ydbTable('users', {
   id: integer('id').primaryKey(),
   email: text('email').notNull().unique(),
   name: text('name'),
   createdAt: timestamp('created_at')
     .notNull()
-    .$defaultFn(() => new Date()),
+    .$defaultFn(() => {
+      return new Date()
+    }),
 })
 ```
 
 ## CRUD
+
+Объявление схемы не создаёт таблицы в базе данных. Примените миграции перед выполнением запросов ниже; см. [Миграции](/ru/guide/drizzle/migrator).
 
 ```ts
 import { and, eq, like } from 'drizzle-orm'
@@ -112,7 +116,7 @@ await db
   .onDuplicateKeyUpdate({ set: { name: 'Alice Updated' } })
   .execute()
 
-const filteredUsers = await db
+let filteredUsers = await db
   .select({
     userId: users.id,
     userName: users.name,
@@ -135,7 +139,7 @@ try {
     async (tx) => {
       await tx.insert(users).values({ id: 4, email: 'delta@example.com' }).execute()
 
-      const user = await tx.select().from(users).where(eq(users.id, 4)).execute()
+      let user = await tx.select().from(users).where(eq(users.id, 4)).execute()
       if (user.length === 0) {
         tx.rollback()
       }
@@ -143,12 +147,13 @@ try {
     {
       accessMode: 'read write',
       isolationLevel: 'serializableReadWrite',
-      idempotent: true,
     }
   )
 } catch (error) {
   if (error instanceof TransactionRollbackError) {
     console.log('transaction was rolled back')
+  } else {
+    throw error
   }
 }
 ```

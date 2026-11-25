@@ -19,13 +19,11 @@ import { Driver } from '@ydbjs/core'
 import { YdbDriver } from '@ydbjs/drizzle-adapter'
 
 // 1. From connection string
-const fromString = new YdbDriver('grpc://localhost:2136/local')
+let fromString = new YdbDriver('grpc://localhost:2136/local')
 
 // 2. From an existing SDK Driver instance
-const sdkDriver = new Driver({
-  /* ... */
-})
-const driver = new YdbDriver(sdkDriver)
+using sdkDriver = new Driver('grpc://localhost:2136/local')
+let driver = new YdbDriver(sdkDriver)
 ```
 
 **Note:** If `YdbDriver` creates the SDK driver (via connection string), it owns it and will close it when `driver.close()` is called.
@@ -44,26 +42,23 @@ const driver = new YdbDriver(sdkDriver)
 ### Key Methods
 
 - `.all()`, `.get()`, `.values()`, `.execute()`: Execute single queries in different formats.
-- `.prepareQuery(sql, fields, name, arrayMode)`: Creates a `YdbPreparedQuery` for reuse.
-- `.batch([queries])`: Executes multiple queries sequentially in one session.
+- `.prepareQuery(...)`: Internal method used by the public query builder’s `.prepare()`.
+- `.batch([queries])`: Executes multiple queries sequentially; this alone does not create a transaction or pin a server session.
 - `.count(query)`: Efficiently returns the row count.
 - `.transaction(callback)`: Starts a transactional session.
 
 ### YdbPreparedQuery
 
-Returned by `.prepare()`, this object allows executing the same query with different parameters without re-parsing the SQL.
+`.prepare()` creates a reusable query object containing the rendered YQL and values already supplied to the builder. Its execution methods accept no parameters; build another query to use different values. Named placeholders and server-side prepared statements are not supported.
+
+The optional name accepted by `prepare(name?)` is currently ignored.
 
 ```ts
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
-// `session` is obtained from a YdbDriver call site (e.g. inside `db.transaction`).
-const prepared = session.prepareQuery(
-  sql`SELECT * FROM users WHERE id = ${sql.placeholder('id')}`,
-  undefined,
-  'select_user'
-)
+let prepared = db.select().from(users).where(eq(users.id, 1)).prepare()
 
-await prepared.execute({ id: 1 })
+await prepared.execute()
 ```
 
 ## YdbDialect
@@ -76,15 +71,12 @@ await prepared.execute({ id: 1 })
 - **Rendering:** Low-level methods (`buildSelectQuery`, `buildInsertQuery`, etc.) used by query builders.
 - **Migrations:** Handles low-level migration logic, including history table management and hash validation.
 
-### sqlToQuery
+### Query rendering
 
-Transforms a Drizzle `sql` template into YQL with parameter placeholders.
+`YdbDialect.sqlToQuery()` renders SQL internally. Applications use `.toSQL()` on a builder:
 
 ```ts
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
-const dialect = new YdbDialect()
-const { sql: query, params } = dialect.sqlToQuery(sql`SELECT * FROM users WHERE id = ${1}`)
-// query  -> "SELECT * FROM users WHERE id = $p0"
-// params -> [1]
+let { sql: query, params } = db.select().from(users).where(eq(users.id, 1)).toSQL()
 ```
