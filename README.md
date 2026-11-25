@@ -39,6 +39,8 @@ npm install @ydbjs/core @ydbjs/query
 
 Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`. TypeScript projects require TypeScript 7 or later.
 
+Each push to `main` publishes a preview of its head commit. Open the commit’s **Continuous Releases** check for the npm install command for each package.
+
 ### 2) Connect and Query
 
 ```ts
