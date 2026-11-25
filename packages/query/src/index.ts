@@ -46,11 +46,6 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 	close(): Promise<void>
 	destroy(): void
 
-	// unsafe<T extends any[] = unknown[], P extends { toString(): string }[] = []>(
-	// 	strings: string | TemplateStringsArray,
-	// 	...values: P
-	// ): Query<T>
-
 	do<T = unknown>(fn: SessionContextCallback<T>): Promise<T>
 	do<T = unknown>(options: OperationOptions, fn: SessionContextCallback<T>): Promise<T>
 
@@ -67,18 +62,16 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 	): Promise<T>
 
 	/**
-	 * Create an UnsafeString that represents a DB identifier (table, column).
-	 * When used in a query, the identifier will be escaped.
+	 * Quote one database identifier, escaping backslashes and backticks.
 	 *
-	 * **WARNING: This function does not offer any protection against SQL injections,
-	 *            so you must validate any user input beforehand.**
+	 * The application must still decide which tables and columns a caller may select.
 	 *
 	 * @example ```ts
-	 * const query = sql`SELECT * FROM ${sql.identifier('my-table')}`;
+	 * let query = sql`SELECT * FROM ${sql.identifier('my-table')}`
 	 * // 'SELECT * FROM `my-table`'
 	 * ```
 	 */
-	identifier(value: string | { toString(): string }): UnsafeString
+	identifier(value: string): UnsafeString
 
 	/**
 	 * Create a composable {@link Fragment} from a tagged template. A fragment is

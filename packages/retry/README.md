@@ -15,185 +15,152 @@ The `@ydbjs/retry` package provides utilities for implementing retry logic in yo
 
 ## Installation
 
-To install the package, use your preferred package manager:
+Supported Node.js versions: `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
-```bash
-npm install @ydbjs/retry@6.0.0-alpha.2
+```sh
+npm install @ydbjs/retry
 ```
 
 ## Usage
 
-### Basic Example
-
-Here is an example of how to use the `@ydbjs/retry` package to implement retry logic:
-
-```ts
-import { retry, defaultRetryConfig } from '@ydbjs/retry'
-
-async function fetchData() {
-  return await retry(defaultRetryConfig, async () => {
-    // Your operation that might fail
-    const response = await fetch('https://example.com/api')
-    if (!response.ok) {
-      throw new Error('Failed to fetch data')
-    }
-    return response.json()
-  })
-}
-
-fetchData()
-  .then((data) => {
-    console.log('Data fetched successfully:', data)
-  })
-  .catch((error) => {
-    console.error('Failed to fetch data:', error)
-  })
-```
-
-### Configuration Options
-
-The `retry` function accepts the following configuration options:
-
-```ts
-import type { RetryConfig } from '@ydbjs/retry';
-
-const options: RetryConfig = {
-    /** Predicate to determine if an error is retryable */
-    retry?: boolean | ((error: RetryContext['error'], idempotent: boolean) => boolean),
-    /** Budget for retry attempts */
-    budget?: number | RetryBudget,
-    /** Strategy to calculate delay */
-    strategy?: number | RetryStrategy,
-    /** Idempotent operation */
-    idempotent?: boolean,
-    /** Hook to be called before retrying */
-    onRetry?: (ctx: RetryContext) => void,
-    /** Optional AbortSignal (from Abortable) */
-    signal?: AbortSignal,
-};
-```
-
-- `retry` (boolean | (error, idempotent) => boolean): Predicate to determine if an error is retryable. Receives both the error and the idempotent flag.
-- `budget` (number | RetryBudget): The budget for retry attempts. Can be a fixed number or a custom function.
-- `strategy` (number | RetryStrategy): Strategy to calculate delay between retries. Can be a fixed number or a custom function.
-- `idempotent` (boolean): Indicates if the operation is idempotent.
-- `onRetry` ((ctx) => void): Hook called before each retry attempt.
-- `signal` (AbortSignal): Optional signal to support cancellation.
-
-The default policy does not retry `ProtocolError`, including `MessageSizeError`, because replay does not repair an invalid message or its size limit. Server gRPC `ABORTED` and `RESOURCE_EXHAUSTED` statuses remain retryable. gRPC `INTERNAL`, `UNAVAILABLE`, and HTTP/2 overload resets require `idempotent: true`: these failures do not establish whether the server applied the request.
-
-Aborting `signal` always stops the retry loop without consulting the retry predicate, even when its reason looks retryable. The rejection preserves `signal.reason`, including cancellation during backoff. `onRetry` runs before every subsequent attempt, including attempts with zero backoff.
-
-## Advanced Usage
-
-### Custom Retry Strategy
-
-You can define your own retry strategy to control the delay between attempts:
+`retry(config, callback)` invokes the callback with an attempt-specific `AbortSignal`.
+The default predicate recognizes retryable YDB and gRPC errors; it does not retry arbitrary `Error` objects or failed HTTP responses.
+For another service, supply a predicate matching that service's retryable failures:
 
 ```ts
 import { retry } from '@ydbjs/retry'
 
-const customStrategy = (ctx, cfg) => {
-  // Exponential backoff with a cap
-  return Math.min(1000 * 2 ** ctx.attempt, 10000)
+class RetryableHttpError extends Error {}
+
+async function fetchData(signal: AbortSignal) {
+  return retry(
+    {
+      signal,
+      budget: 3,
+      strategy: 200,
+      retry: (error) => {
+        return error instanceof RetryableHttpError
+      },
+    },
+    async (attemptSignal) => {
+      let response = await fetch('https://example.com/api', { signal: attemptSignal })
+
+      if (response.status === 429 || response.status === 503) {
+        await response.body?.cancel()
+        throw new RetryableHttpError(`HTTP ${response.status}`)
+      }
+
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      return response.json()
+    }
+  )
 }
 
-await retry(
-  {
-    strategy: customStrategy,
-    budget: 5,
-    retry: (error) => error instanceof Error,
-  },
-  async () => {
-    // Your operation
-  }
-)
+let data = await fetchData(AbortSignal.timeout(5000))
+
+console.log(data)
 ```
 
-### Dynamic Retry Budget
+The example retries only HTTP 429 and 503 for a GET request; other HTTP failures and network errors remain terminal under its predicate.
+A callback can execute more than once. Its external effects must tolerate every retry allowed by the configured policy.
 
-Budgets can be dynamic, based on error type or context:
+### Configuration
 
 ```ts
-const dynamicBudget = (ctx, cfg) => {
-  // Allow more attempts for network errors
-  if (ctx.error && ctx.error.message.includes('network')) {
+import { type RetryConfig, isRetryableError } from '@ydbjs/retry'
+
+let options: RetryConfig = {
+  retry: isRetryableError,
+  budget: 3,
+  strategy: 200,
+  idempotent: true,
+  signal: AbortSignal.timeout(5000),
+  onRetry(ctx) {
+    console.log('Completed attempts:', ctx.attempt, 'Last error:', ctx.error)
+  },
+}
+```
+
+| Option       | Meaning                                                                                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `retry`      | Boolean or `(error, idempotent) => boolean`; defaults to `isRetryableError`.                                                                                                           |
+| `budget`     | Total allowed attempts, including the first, or a function `(ctx, config) => number`; defaults to `Infinity`.                                                                          |
+| `strategy`   | Number of milliseconds or a function `(ctx, config) => number`; defaults to YDB-specific exponential backoff. The elapsed duration of the failed attempt is subtracted before waiting. |
+| `idempotent` | Passed to the retry predicate; defaults to `false`. It does not by itself disable retries.                                                                                             |
+| `onRetry`    | Runs before a subsequent attempt, after its backoff; receives the count of completed failed attempts and the last error.                                                               |
+| `signal`     | Cancels the entire retry loop, including backoff and waiting for a running callback.                                                                                                   |
+
+`RetryConfig` and `RetryContext` are exported from `@ydbjs/retry`; `RetryBudget` is exported from `@ydbjs/retry/budget`, and `RetryStrategy` from `@ydbjs/retry/strategy`.
+Strategy helpers are available through the root `strategies` namespace or the `/strategy` subpath.
+
+The default policy does not retry `ProtocolError`, including `MessageSizeError`, because replay does not repair an invalid message or its size limit.
+Server gRPC `ABORTED` and `RESOURCE_EXHAUSTED` statuses remain retryable.
+gRPC `INTERNAL`, `UNAVAILABLE`, and HTTP/2 overload resets require `idempotent: true`: these failures do not establish whether the server applied the request.
+`TransactionCompletionError` is terminal because the transaction already committed.
+
+Aborting `signal` always stops the retry loop without consulting the retry predicate, even when its reason looks retryable.
+The rejection preserves `signal.reason`, including cancellation during backoff.
+Errors named `AbortError` or `TimeoutError` also stop retries.
+The callback must pass its signal to asynchronous work to stop that work; cancellation of the retry loop alone cannot stop arbitrary application promises.
+The attempt signal is aborted when that attempt finishes, so do not retain it for work outside the callback.
+
+## Custom strategies and budgets
+
+### Retry strategy
+
+```ts
+import type { RetryStrategy } from '@ydbjs/retry/strategy'
+
+let customStrategy: RetryStrategy = (ctx) => {
+  return Math.min(1000 * 2 ** ctx.attempt, 10_000)
+}
+```
+
+Pass it as `strategy` in the configuration.
+The first strategy call follows the first failed attempt, so `ctx.attempt` is `1`.
+
+### Dynamic budget
+
+```ts
+import type { RetryBudget } from '@ydbjs/retry/budget'
+
+let dynamicBudget: RetryBudget = (ctx) => {
+  if (ctx.error instanceof Error && ctx.error.message.includes('network')) {
     return 10
   }
+
   return 3
 }
-
-await retry(
-  {
-    budget: dynamicBudget,
-    // ...other config
-  },
-  async () => {
-    /* ... */
-  }
-)
 ```
 
-### onRetry Hook
+Pass it as `budget` in the configuration alongside a retry predicate appropriate for those errors.
+A larger budget does not make a non-retryable error retryable.
 
-You can use the `onRetry` hook to log or perform side effects on each retry:
+### Combining strategies
 
 ```ts
-await retry(
-  {
-    onRetry: (ctx) => {
-      console.log(`Retry attempt #${ctx.attempt} after error:`, ctx.error)
-    },
-    // ...other config
-  },
-  async () => {
-    /* ... */
-  }
-)
+import { strategies } from '@ydbjs/retry'
+
+let strategy = strategies.combine(strategies.exponential(500), strategies.jitter(100))
 ```
 
-### Combining Strategies
+`combine()` adds the strategy delays; `compose()` selects their maximum.
 
-You can compose multiple strategies for more advanced control:
-
-```ts
-import { strategies, retry } from '@ydbjs/retry'
-
-const combined = strategies.compose(strategies.exponential(500), strategies.jitter(100))
-
-await retry(
-  {
-    strategy: combined,
-    budget: 5,
-  },
-  async () => {
-    /* ... */
-  }
-)
-```
-
-### Using AbortSignal in Retry Callback
-
-You can use the `AbortSignal` provided to the retried function to support cancellation with custom clients (for example, a YDB driver from the core package):
+### Using the callback signal
 
 ```ts
-import { retry } from '@ydbjs/retry'
 import { Driver } from '@ydbjs/core'
+import { retry } from '@ydbjs/retry'
 
-const driver = new Driver('grpc://localhost:2135?database=/local')
+using driver = new Driver('grpc://localhost:2136/local')
 
-await retry(
-  {
-    budget: 5,
-  },
-  async (signal) => {
-    // Pass the signal to a method that supports AbortSignal, e.g., driver.ready
-    await driver.ready(signal)
-    // Or, if using a generated client:
-    // const client = driver.createClient(SomeServiceDefinition);
-    // return await client.someMethod(request, { signal });
-  }
-)
+await retry({ budget: 3, signal: AbortSignal.timeout(5000) }, async (signal) => {
+  await driver.ready(signal)
+})
 ```
 
 ## Observability via `node:diagnostics_channel`
@@ -204,72 +171,88 @@ Every code path that uses `retry()` — driver discovery, query execution, trans
 
 ### Channels
 
-| Channel                       | Type    | Payload                                                                                                                                                                                         |
-| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tracing:ydb:retry.run`       | tracing | `{ idempotent: boolean, outcome?: RetryOutcome }` — whole retry loop. `outcome` is set on the ctx before resolve / throw.                                                                       |
-| `tracing:ydb:retry.attempt`   | tracing | `{ attempt: number, idempotent: boolean, backoffMs: number }` — a single attempt (including the first); `backoffMs` is the wait actually observed before this attempt (`0` for `attempt === 1`) |
-| `ydb:retry.attempt.completed` | publish | `{ attempt: number, idempotent: boolean, outcome: RetryOutcome }` — emitted once per attempt with its outcome                                                                                   |
-| `ydb:retry.exhausted`         | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — ms. See below.                                                                                                              |
+| Channel                       | Type    | Payload                                                                                                                                                                                                                                  |
+| ----------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracing:ydb:retry.run`       | tracing | `{ idempotent: boolean, outcome?: RetryOutcome }` — whole retry loop. `outcome` is set on the ctx before resolve / throw.                                                                                                                |
+| `tracing:ydb:retry.attempt`   | tracing | `{ attempt: number, idempotent: boolean, backoffMs: number }` — a single attempt (including the first); `backoffMs` is the scheduled wait before this attempt, after subtracting the previous attempt duration (`0` for `attempt === 1`) |
+| `ydb:retry.attempt.completed` | publish | `{ attempt: number, idempotent: boolean, outcome: RetryOutcome }` — emitted once per attempt with its outcome                                                                                                                            |
+| `ydb:retry.exhausted`         | publish | `{ attempts: number, totalDuration: number, lastError: unknown }` — ms. See below.                                                                                                                                                       |
 
 ```ts
 type RetryOutcome = 'success' | 'retried' | 'non_retryable' | 'exhausted'
 ```
 
-`retry.attempt` is published once per attempt starting from `attempt: 1`. Because `tracingChannel.tracePromise` wraps every attempt, `tracing:ydb:retry.attempt.error` fires for **every** failed attempt — both the ones that will be retried and the final one that exits the loop. The final attempt's failure additionally surfaces on `tracing:ydb:retry.run.error`.
+`retry.attempt` is published once per attempt starting from `attempt: 1`. Because `tracingChannel.tracePromise` wraps every attempt, the `error` event of `tracingChannel('tracing:ydb:retry.attempt')` fires for **every** failed attempt — both the ones that will be retried and the final one that exits the loop. The final attempt's failure additionally surfaces on the run tracing channel's `error` event.
 
 `ydb:retry.attempt.completed` is the metrics-friendly companion: it fires exactly once per attempt regardless of success or failure, with an `outcome` tag suited for a `Counter`. Use it instead of subscribing to both `attempt.asyncEnd` and `attempt.error` when all you want is a count.
 
-`ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the caller's signal aborts or an attempt throws `AbortError` or `TimeoutError`: these terminate the loop immediately. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use `tracing:ydb:retry.run.error` for the broader "retry loop failed" signal.
-
-For end-to-end retry duration with outcome dimensions, read `outcome` off the `retry.run` ctx on `asyncEnd` / `error`:
-
-```ts
-tracingChannel('tracing:ydb:retry.run').subscribe({
-  asyncEnd(ctx) {
-    histogram.record(elapsed, { outcome: ctx.outcome })
-  },
-  error(ctx) {
-    histogram.record(elapsed, { outcome: ctx.outcome })
-  },
-})
-```
+`ydb:retry.exhausted` fires when the retry policy itself gives up — either the budget ran out or the predicate returned `false`. It does **not** fire when the caller's signal aborts or an attempt throws `AbortError` or `TimeoutError`: these terminate the loop immediately. Subscribers tracking "retry budget exhausted" should not expect this event for cancellations or timeouts; use the run tracing channel's `error` event for the broader "retry loop failed" signal.
 
 ### Subscribing
 
+Install subscribers before starting operations. Track timing separately from the publisher's context and record a completed run once, in `asyncEnd`:
+
 ```ts
 import { channel, tracingChannel } from 'node:diagnostics_channel'
+import type { RetryOutcome } from '@ydbjs/retry'
 
-tracingChannel('tracing:ydb:retry.run').subscribe({
+type RunContext = { idempotent: boolean; outcome?: RetryOutcome }
+
+let started = new WeakMap<RunContext, number>()
+
+tracingChannel<RunContext>('tracing:ydb:retry.run').subscribe({
   start(ctx) {
-    // ctx.idempotent
+    started.set(ctx, performance.now())
   },
-  asyncEnd() {
-    /* success */
-  },
-  error(ctx) {
-    /* ctx.error is the final failure */
+  asyncEnd(ctx) {
+    let start = started.get(ctx)
+
+    if (start === undefined) {
+      return
+    }
+
+    started.delete(ctx)
+    console.log('Retry run:', {
+      durationMs: performance.now() - start,
+      outcome: ctx.outcome,
+    })
   },
 })
 
-channel('ydb:retry.exhausted').subscribe((msg) => {
-  alert.budgetExhausted.add(1, { attempts: msg.attempts })
+channel('ydb:retry.exhausted').subscribe((message) => {
+  let event = message as { attempts: number; totalDuration: number }
+
+  console.log('Retry stopped:', event.attempts, event.totalDuration)
 })
 ```
 
-### ⚠️ Subscribers must be safe
+`error` and `asyncEnd` can both fire for a failed run. Do not record the same completed operation in both callbacks.
 
-**`node:diagnostics_channel` invokes subscribers synchronously.** Any exception thrown inside a subscriber propagates up the call stack and **will** disrupt the SDK — a buggy retry subscriber can break the very operation it observes. `@ydbjs/retry` does **not** wrap subscribers; wrap them yourself:
+### Subscriber errors
+
+`node:diagnostics_channel` invokes subscribers synchronously. An exception thrown by a subscriber triggers an `uncaughtException` and can terminate the process. The SDK does not wrap subscribers; handle failures inside callbacks that call your telemetry code:
 
 ```ts
-tracingChannel('tracing:ydb:retry.attempt').subscribe({
-  start(ctx) {
-    try {
-      span.startChild({ name: 'retry.attempt', attributes: { attempt: ctx.attempt } })
-    } catch (err) {
-      console.error('telemetry subscriber failed', err)
-    }
-  },
-})
+import { tracingChannel } from 'node:diagnostics_channel'
+
+function observeAttempts(record: (attempt: number) => void) {
+  let attempts = tracingChannel<{ attempt: number }>('tracing:ydb:retry.attempt')
+  let subscribers = {
+    start(ctx: { attempt: number }) {
+      try {
+        record(ctx.attempt)
+      } catch (error) {
+        console.error('Telemetry subscriber failed:', error)
+      }
+    },
+  }
+
+  attempts.subscribe(subscribers)
+
+  return () => {
+    attempts.unsubscribe(subscribers)
+  }
+}
 ```
 
 ### Stability
