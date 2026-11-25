@@ -28,48 +28,34 @@ npm run dev
 
 ## Особенности serverless
 
-### ⚠️ ВАЖНО: Создание драйвера в handler
+### Время жизни Driver и Query
 
-**YDB SDK использует HTTP/2 соединения, которые могут вызвать непредсказуемые проблемы при переиспользовании между вызовами функции в serverless окружениях!**
+Пример создаёт Driver внутри обработчика и закрывает его при завершении вызова. Если приложение использует пул запросов, закройте его до Driver:
 
 ```javascript
-// ❌ НЕПРАВИЛЬНО - НЕ ДЕЛАЙТЕ ТАК!
-let driver = new Driver(connectionString) // вне handler
+import { Driver } from '@ydbjs/core'
+import { query } from '@ydbjs/query'
 
 export async function handler(event) {
-  // использование driver - могут возникнуть странные ошибки!
-}
+  let driver = new Driver(process.env.YDB_CONNECTION_STRING)
 
-// ✅ ПРАВИЛЬНО - создавайте драйвер внутри handler
-export async function handler(event) {
-  let driver = new Driver(connectionString)
   try {
-    // используйте driver
+    let sql = query(driver)
+    try {
+      let resultSets = await sql`SELECT 1 + 1 AS sum`
+      return { statusCode: 200, body: { resultSets } }
+    } finally {
+      await sql.close()
+    }
   } finally {
-    driver.close() // освобождает gRPC ресурсы и закрывает event loop handles
+    driver.close()
   }
 }
 ```
 
-### Проблемы с HTTP/2 в serverless
+`await sql.close()` дожидается закрытия пула запросов; затем `driver.close()` синхронно закрывает соединения. Пример запускается как JavaScript без транспиляции, поэтому использует `try/finally`, совместимый с поддерживаемой веткой Node.js 22. Закрытие Driver само по себе не заменяет закрытие пула.
 
-В serverless окружениях (AWS Lambda, Yandex Cloud Functions, etc.) HTTP/2 соединения, переиспользуемые между вызовами функции, могут вызывать непредсказуемые проблемы: внезапные timeout'ы, зависающие запросы, intermittent ошибки соединения. Эти проблемы сложно диагностировать и воспроизвести.
-
-### Рекомендации
-
-1. **Всегда создавайте новый Driver внутри handler функции**
-2. **Обязательно вызывайте `driver.close()` в конце работы** - освобождает gRPC ресурсы и закрывает event loop handles
-3. **Не пытайтесь кэшировать Driver между вызовами**
-4. **SDK оптимизирован для быстрого создания соединений**
-
-### Почему важно закрывать драйвер
-
-Если не закрывать драйвер, то:
-
-- Остаются активные gRPC соединения и event loop handles
-- Возможны memory leaks в Node.js runtime
-- В serverless окружениях функция может "зависнуть" и не завершиться корректно
-- Накопление незакрытых ресурсов между вызовами
+Возможность сохранять Driver между вызовами зависит от жизненного цикла процесса и ограничений платформы. SDK не устанавливает общего запрета на повторное использование Driver; для такого режима нужна проверка поведения после заморозки и возобновления процесса в выбранной среде.
 
 ## Использование
 
@@ -86,7 +72,7 @@ npm install
 ### Yandex Cloud Functions
 
 1. Создайте функцию в [Yandex Cloud Console](https://console.cloud.yandex.ru/)
-2. Выберите среду выполнения Node.js 22
+2. Выберите среду выполнения с Node.js `^22.23.5 || ^24.22.3 || >=26.13.1` и проверьте фактическую patch-версию платформы
 3. Загрузите код или подключите Git репозиторий
 4. Настройте переменные окружения:
    - `YDB_CONNECTION_STRING` - строка подключения к YDB (например, `grpcs://ydb.serverless.yandexcloud.net:2135/ru-central1/b1xxxxxxxxxxxxxxxxx/etnxxxxxxxxxxxxxxxx`)

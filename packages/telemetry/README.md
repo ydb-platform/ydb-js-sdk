@@ -13,9 +13,7 @@ OpenTelemetry instrumentation for the YDB JavaScript SDK. Subscribes to
   `tracingChannel.tracePromise` which short-circuits if no one listens.
 - No monkey-patching. All instrumentation flows through
   `node:diagnostics_channel`.
-- Multi-driver attribution out of the box — every span and every metric data
-  point carries `db.namespace`, `server.address`, and `server.port` from the
-  publishing driver's identity (`@ydbjs/core` stamps it at publish-time).
+- Database-scoped spans and metrics carry `db.namespace`, `server.address`, and, when available, `server.port` from the publishing driver. Authentication and generic retry events can be independent of a driver.
 - Time unit conversion handled here: dc payloads stay in **milliseconds**
   (Node.js convention); spans and metrics are emitted in **seconds** (OTel
   canonical unit). Attribute keys never carry an `_ms` suffix.
@@ -107,10 +105,10 @@ and applies uniformly across all instrumentations.
 
 `ydb.Try` and `ydb.Transaction` are wrapper spans — useful for retry
 debugging but noise on a high-RPS service. A small custom sampler
-combined with `ParentBasedSampler` keeps the rest of the tree intact:
+can filter spans by name. Sampling a parent as `NOT_RECORD` also affects children when a `ParentBasedSampler` honors that parent, so use a name-based sampler directly if children must remain sampled:
 
 ```ts
-import { ParentBasedSampler, type Sampler, SamplingDecision } from '@opentelemetry/sdk-trace'
+import { type Sampler, SamplingDecision } from '@opentelemetry/sdk-trace'
 
 let DROPPED = new Set(['ydb.Try', 'ydb.Transaction'])
 
@@ -120,11 +118,13 @@ let dropWrappers: Sampler = {
       ? { decision: SamplingDecision.NOT_RECORD }
       : { decision: SamplingDecision.RECORD_AND_SAMPLED }
   },
-  toString: () => 'DropWrapperSpans',
+  toString() {
+    return 'DropWrapperSpans'
+  },
 }
 
 new NodeSDK({
-  sampler: new ParentBasedSampler({ root: dropWrappers }),
+  sampler: dropWrappers,
   // ...
 })
 ```
@@ -383,12 +383,14 @@ state.
 
 `register()` installs a metadata hook through `addMetadataHook` from `@ydbjs/core`. Before each RPC, the hook injects the active OpenTelemetry context into a copy of the caller's metadata. Driver then supplies its mandatory YDB headers and authentication token. The globally registered propagator controls the wire format; without one, injection is a no-op.
 
-Register telemetry before constructing Driver: each Driver captures the metadata hooks at construction time.
+Register telemetry before constructing Driver: each Driver captures the metadata hooks at construction time. Disabling instrumentation removes the registration for future drivers; existing drivers retain their captured propagation hook.
 
 ```ts
-sdk.start()                 // 1. OTel SDK
-register({ /* … */ })       // 2. @ydbjs/telemetry
-let driver = new Driver(…)  // 3. YDB driver — captures the metadata hook
+import { Driver } from '@ydbjs/core'
+
+sdk.start()
+let instrumentation = register()
+using driver = new Driver('grpc://localhost:2136/local')
 ```
 
 Default propagator is W3C `traceparent` / `tracestate`. Override with any
@@ -423,12 +425,12 @@ await tracer.startActiveSpan('checkout', async (span) => {
 })
 ```
 
-> **Note.** `@ydbjs/telemetry`'s own internal spans (`ydb.Query.ExecuteQuery`,
+> **Note.** `@ydbjs/telemetry`'s own internal spans (`ydb.ExecuteQuery`,
 > `ydb.AcquireSession`, …) are created via the global `TracerProvider` but
 > are **not** activated in OTel's `ContextManager` — they live in a private
 > `AsyncLocalStorage` used only for parent-child linkage between sibling
 > SDK spans. So a `SELECT` issued **without** a user-created outer span will
-> still produce a `ydb.Query.ExecuteQuery` span locally, but the
+> still produce a `ydb.ExecuteQuery` span locally, but the
 > `traceparent` sent to YDB will carry no trace id. Wrap YDB calls in your
 > own span (or in any other OTel-instrumented work) to get end-to-end
 > propagation.

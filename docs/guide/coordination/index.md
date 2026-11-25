@@ -12,8 +12,8 @@ Distributed coordination primitives for YDB: semaphores, mutexes, and leader ele
 import { Driver } from '@ydbjs/core'
 import { CoordinationClient } from '@ydbjs/coordination'
 
-const driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
-const client = new CoordinationClient(driver)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING']!)
+let client = new CoordinationClient(driver)
 
 // Create a coordination node once during provisioning
 await client.createNode('/local/my-app', {})
@@ -22,7 +22,7 @@ await client.createNode('/local/my-app', {})
 await using session = await client.createSession('/local/my-app', {})
 await using lock = await session.mutex('job-lock').lock()
 
-await doWork(lock.signal)
+await doWork(AbortSignal.any([session.signal, lock.signal]))
 // lock.release()  ← called automatically
 // session.close() ← called automatically
 ```
@@ -35,22 +35,29 @@ await doWork(lock.signal)
 | `openSession()`   | Long-running work: automatically recreates the session after expiry |
 | `withSession()`   | Callback style with guaranteed cleanup                              |
 
+A session yielded by `openSession()` remains caller-owned. Declare `await using activeSession = session` in each loop body so `break`, return, and exceptions close it. The next session is created only after the loop body finishes and the previous session has expired; the iterator does not interrupt application work.
+
 `openSession()` is the preferred choice for services that run continuously.
 When the server expires a session (e.g. due to a network partition), `openSession()` automatically
 creates a new one and re-enters the loop body — no manual reconnect logic needed.
 
 ```ts
-const ctrl = new AbortController()
+let ctrl = new AbortController()
 
-for await (const session of client.openSession(
+for await (let session of client.openSession(
   '/local/my-app',
   { recoveryWindow: 15_000 },
   ctrl.signal
 )) {
+  await using activeSession = session
+
   try {
-    await doWork(session)
-  } catch {
-    if (session.signal.aborted) continue // session expired — retry
+    await doWork(activeSession.signal)
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -58,8 +65,7 @@ for await (const session of client.openSession(
 }
 ```
 
-`session.signal` aborts the moment the session expires on the server, so any downstream
-operation that accepted the signal will cancel automatically.
+`session.signal` aborts when the client detects session expiry or closes the session. It does not report the exact instant when the server loses the session. Pass it to work that must stop when the local session ends.
 
 ## Mutex
 
@@ -69,18 +75,19 @@ ephemeral semaphore — no `createSemaphore` call is needed.
 ### Blocking lock
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
-  try {
-    await using lock = await session.mutex('job-lock').lock()
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
 
-    await doWork(lock.signal)
+  try {
+    await using lock = await activeSession.mutex('job-lock').lock()
+
+    await doWork(AbortSignal.any([activeSession.signal, lock.signal]))
     // lock.release() called automatically
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -95,17 +102,16 @@ for await (const session of client.openSession(
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
 
-const lock = await session.mutex('job-lock').tryLock()
-if (!lock) {
+let lock = await session.mutex('job-lock').tryLock()
+if (lock) {
+  await using _ = lock
+  await doWork(AbortSignal.any([session.signal, lock.signal]))
+} else {
   console.log('mutex busy — skipping')
-  return
 }
-
-await using _ = lock
-await doWork(lock.signal)
 ```
 
-`lock.signal` aborts when the lock is released. Use `session.signal` to detect session death.
+`lock.signal` aborts after a local release succeeds or fails; a release failure becomes its reason. It does not establish whether the server still holds the lock. Use `session.signal` to detect the end of the session.
 
 ## Semaphore
 
@@ -115,14 +121,14 @@ A semaphore controls concurrent access with a configurable token count.
 
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
-const sem = session.semaphore('connections')
+let sem = session.semaphore('connections')
 
-// Create once (catch AlreadyExists if it may already exist)
+// Provision once; create() rejects if the semaphore already exists.
 await sem.create({ limit: 10 })
 
 // Acquire one token — blocks until a token is available
 await using lease = await sem.acquire({ count: 1 })
-await doWork(lease.signal)
+await doWork(AbortSignal.any([session.signal, lease.signal]))
 // lease.release() called automatically
 ```
 
@@ -132,7 +138,7 @@ With `ephemeral: true` the server creates the semaphore on first acquire and del
 the last token is released — no prior `create()` call needed.
 
 ```ts
-const utf8 = new TextEncoder()
+let utf8 = new TextEncoder()
 
 await using lease = await sem.acquire({
   count: 1,
@@ -144,34 +150,33 @@ await using lease = await sem.acquire({
 ### Non-blocking try
 
 ```ts
-const lease = await sem.tryAcquire({ count: 1 })
-if (!lease) {
+let lease = await sem.tryAcquire({ count: 1 })
+if (lease) {
+  await using _ = lease
+  await doWork(AbortSignal.any([session.signal, lease.signal]))
+} else {
   console.log('semaphore at capacity')
-  return
 }
-
-await using _ = lease
-await doWork(lease.signal)
 ```
 
 ### Watch for changes
 
-`watch()` yields immediately with the current state and then again on every server-side change.
-After a session restart it delivers the latest state first — no stale data, no missed updates.
+`watch()` yields the current state and watches the requested fields. Changes may be coalesced; this is a state subscription, not an event log. After session expiry, start a new watch on the next session from `openSession()`.
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    for await (const desc of session.semaphore('config').watch({ data: true })) {
-      const config = JSON.parse(new TextDecoder().decode(desc.data))
+    for await (let desc of activeSession.semaphore('config').watch({ data: true })) {
+      let config = JSON.parse(new TextDecoder().decode(desc.data))
       console.log('config updated:', config)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -191,34 +196,40 @@ await session.semaphore('config').update(new TextEncoder().encode(JSON.stringify
 An election is a named semaphore where exactly one session can hold the single token at a time.
 The holder is the leader.
 
+Create the election semaphore once during provisioning, before starting candidates. `campaign()` does not create it. Repeating this setup for an existing semaphore returns `ALREADY_EXISTS`.
+
+```ts
+{
+  await using setup = await client.createSession('/local/my-app', {})
+  await setup.semaphore('primary').create({ limit: 1 })
+}
+```
+
 ### Campaign for leadership
 
 `campaign()` blocks until this session wins the election.
 
 ```ts
-const utf8 = new TextEncoder()
+let utf8 = new TextEncoder()
 
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    await using leadership = await session.election('primary').campaign(
+    await using leadership = await activeSession.election('primary').campaign(
       utf8.encode('worker-a:8080') // initial leader data (e.g. endpoint)
     )
 
     console.log('elected — starting leader work')
 
-    // Update leader data without re-election; all observers see it immediately.
-    await leadership.proclaim(utf8.encode('worker-a:9090'))
-
-    // leadership.signal aborts when leadership is lost (session expired, resigned).
-    await doLeaderWork(leadership.signal)
+    await doLeaderWork(AbortSignal.any([activeSession.signal, leadership.signal]))
 
     // leadership.resign() called automatically here
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -226,30 +237,31 @@ for await (const session of client.openSession(
 }
 ```
 
+`leadership.signal` reflects the local lease release; it does not abort on session expiry by itself. Combine it with `session.signal` for leader work. `proclaim(data)` updates semaphore-level data, while `leader()` and `observe()` return the owner data supplied to `campaign()`. Use `semaphore.watch({ data: true })` to observe semaphore-level updates.
+
 ### Observe leader changes
 
-`observe()` yields on every leader change: new leader elected, leader data updated via
-`proclaim()`, or leader resigned. `state.signal` aborts when the leader changes, making it
-easy to scope work to a single leadership term.
+`observe()` emits changes in the observed owner identity (`sessionId` and acquisition order), and the absence of an owner after a leader leaves. `state.signal` aborts when the iterator observes another owner or finishes. The iterator must keep advancing to receive changes; use `session.signal` as well for session lifetime.
 
 ```ts
-for await (const session of client.openSession(
-  '/local/my-app',
-  { recoveryWindow: 15_000 },
-  signal
-)) {
+for await (let session of client.openSession('/local/my-app', { recoveryWindow: 15_000 }, signal)) {
+  await using activeSession = session
+
   try {
-    for await (const state of session.election('primary').observe()) {
+    for await (let state of activeSession.election('primary').observe()) {
       if (!state.data.length) {
         console.log('no leader')
         continue
       }
 
-      const endpoint = new TextDecoder().decode(state.data)
+      let endpoint = new TextDecoder().decode(state.data)
       console.log(state.isMe ? 'i am leader:' : 'current leader:', endpoint)
     }
-  } catch {
-    if (session.signal.aborted) continue
+  } catch (error) {
+    if (activeSession.signal.aborted) {
+      continue
+    }
+
     throw error
   }
 
@@ -261,7 +273,7 @@ for await (const session of client.openSession(
 
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
-const leader = await session.election('primary').leader()
+let leader = await session.election('primary').leader()
 if (leader) {
   console.log('leader:', new TextDecoder().decode(leader.data))
 }
@@ -273,12 +285,14 @@ Every resource implements `Symbol.asyncDispose`, making `await using` the safest
 manage lifetimes. Resources are disposed in reverse declaration order — guaranteed even if
 an exception is thrown.
 
+Create the persistent `quota` semaphore once with a positive limit before running this example; acquiring a lease does not create it.
+
 ```ts
 await using session = await client.createSession('/local/my-app', {}, signal)
 await using _lock = await session.mutex('job').lock()
 await using _lease = await session.semaphore('quota').acquire({ count: 1 })
 
-await doWork()
+await doWork(session.signal)
 // _lease.release()  ← first
 // _lock.release()   ← second
 // session.close()   ← last
@@ -290,13 +304,13 @@ Without `await using` the equivalent requires nested `try/finally` blocks — on
 ## Node management
 
 ```ts
-const client = new CoordinationClient(driver)
+let client = new CoordinationClient(driver)
 
 // Create a coordination node (server-side container for sessions and semaphores)
 await client.createNode('/local/my-app', {})
 
 // Describe current node configuration
-const desc = await client.describeNode('/local/my-app')
+let desc = await client.describeNode('/local/my-app')
 
 // Update node configuration
 await client.alterNode('/local/my-app', { selfCheckPeriod: 1000 })
@@ -311,27 +325,34 @@ await client.dropNode('/local/my-app')
 | ---------------- | ------------- | -------- | ------------------------------------------------------------- |
 | `recoveryWindow` | `number` (ms) | `30_000` | How long the server preserves the session during a disconnect |
 | `description`    | `string`      | `''`     | Human-readable label visible in server diagnostics            |
-| `startTimeout`   | `number` (ms) | —        | Timeout for the initial session handshake                     |
-| `retryBackoff`   | `number` (ms) | —        | Base delay between reconnect attempts                         |
+| `startTimeout`   | `number` (ms) | `3_000`  | Timeout for the initial session handshake                     |
+| `retryBackoff`   | `number` (ms) | `30`     | Base delay between reconnect attempts                         |
 
 ## Examples {#examples}
+
+`doWork(signal)`, `doLeaderWork(signal)`, and `waitForAbort(signal)` below stand for application functions. They must reject when the signal aborts, including when it was already aborted before the call.
 
 ### Mutex: exclusive job lock {#examples-mutex}
 
 ```ts
 // Two workers compete — only one runs at a time.
 async function runWorker(id: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using lock = await session.mutex('job').lock()
+      await using lock = await activeSession.mutex('job').lock()
       console.log(`worker-${id}: lock acquired`)
-      await doWork(lock.signal)
-    } catch {
-      if (session.signal.aborted) continue
+      await doWork(AbortSignal.any([activeSession.signal, lock.signal]))
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -344,25 +365,30 @@ await Promise.all([runWorker('a', ctrl.signal), runWorker('b', ctrl.signal)])
 ### Service discovery: ephemeral endpoint registration {#examples-service-discovery}
 
 ```ts
-const utf8 = new TextEncoder()
-const text = new TextDecoder()
+let utf8 = new TextEncoder()
+let text = new TextDecoder()
 
 // Worker: register while the session lives; deregisters automatically on expiry.
 async function register(endpoint: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using _lease = await session.semaphore('endpoints').acquire({
+      await using _lease = await activeSession.semaphore('endpoints').acquire({
         count: 1,
         ephemeral: true,
         data: utf8.encode(endpoint),
       })
-      await waitForAbort(session.signal)
-    } catch {
-      if (session.signal.aborted) continue
+      await waitForAbort(activeSession.signal)
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -371,18 +397,25 @@ async function register(endpoint: string, signal: AbortSignal) {
 
 // Watcher: observe live endpoint list.
 async function watch(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const desc of session.semaphore('endpoints').watch({ owners: true })) {
-        const endpoints = (desc.owners ?? []).map((o) => text.decode(o.data))
+      for await (let desc of activeSession.semaphore('endpoints').watch({ owners: true })) {
+        let endpoints = (desc.owners ?? []).map((owner) => {
+          return text.decode(owner.data)
+        })
         console.log('available:', endpoints)
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -391,6 +424,8 @@ async function watch(signal: AbortSignal) {
 ```
 
 ### Shared config: real-time distribution {#examples-shared-config}
+
+Create the persistent `config` semaphore once with `limit: 1` and initial JSON data, such as `new TextEncoder().encode('{}')`, before starting these functions. Neither `update()` nor `watch()` creates it.
 
 ```ts
 // Publisher: one-shot update.
@@ -401,17 +436,22 @@ async function publish(config: object, signal: AbortSignal) {
 
 // Subscriber: receive current value immediately, then every change.
 async function subscribe(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const desc of session.semaphore('config').watch({ data: true })) {
+      for await (let desc of activeSession.semaphore('config').watch({ data: true })) {
         console.log('config:', JSON.parse(new TextDecoder().decode(desc.data)))
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -422,22 +462,27 @@ async function subscribe(signal: AbortSignal) {
 ### Leader election with failover {#examples-election}
 
 ```ts
-const utf8 = new TextEncoder()
-const text = new TextDecoder()
+let utf8 = new TextEncoder()
+let text = new TextDecoder()
 
 // Candidate: campaigns and holds leadership until the session expires.
 async function runCandidate(name: string, signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      await using leadership = await session.election('primary').campaign(utf8.encode(name))
+      await using leadership = await activeSession.election('primary').campaign(utf8.encode(name))
       console.log(`${name}: elected`)
-      await waitForAbort(leadership.signal) // hold until lost
-    } catch {
-      if (session.signal.aborted) continue
+      await waitForAbort(AbortSignal.any([activeSession.signal, leadership.signal]))
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break
@@ -446,18 +491,23 @@ async function runCandidate(name: string, signal: AbortSignal) {
 
 // Observer: reacts to leader changes.
 async function observe(signal: AbortSignal) {
-  for await (const session of client.openSession(
+  for await (let session of client.openSession(
     '/local/my-app',
     { recoveryWindow: 15_000 },
     signal
   )) {
+    await using activeSession = session
+
     try {
-      for await (const state of session.election('primary').observe()) {
-        const leader = state.data.length ? text.decode(state.data) : '(none)'
+      for await (let state of activeSession.election('primary').observe()) {
+        let leader = state.data.length ? text.decode(state.data) : '(none)'
         console.log('leader:', leader, state.isMe ? '← me' : '')
       }
-    } catch {
-      if (session.signal.aborted) continue
+    } catch (error) {
+      if (activeSession.signal.aborted) {
+        continue
+      }
+
       throw error
     }
     break

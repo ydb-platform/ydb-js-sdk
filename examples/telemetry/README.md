@@ -34,11 +34,10 @@ A quick local collector (one of):
 In your collector UI:
 
 - A root `demo.workload` span (your own).
-- Children: `ydb.Query.ExecuteQuery` (for the standalone `SELECT 1`) and
-  `ydb.Query.BeginTransaction` → `ydb.Query.ExecuteQuery` × 2 →
-  `ydb.Query.CommitTransaction` for the transaction block.
-- Pool lifecycle spans (`ydb.AttachSession`, `ydb.DeleteSession`) once the
-  example shuts down.
+- Children: `ydb.ExecuteQuery` (for the standalone `SELECT 1`) and
+  `ydb.Begin` → `ydb.ExecuteQuery` × 2 →
+  `ydb.Commit` for the transaction block.
+- Pool lifecycle spans such as `ydb.CreateSession` and `ydb.DeleteSession` as sessions are created and closed.
 
 In Prometheus / your metrics backend:
 

@@ -1,18 +1,3 @@
-/**
- * YDB Diagnostics Channel Example
- *
- * Подписывается на все события `node:diagnostics_channel`, которые публикуют
- * пакеты SDK (`@ydbjs/core`, `@ydbjs/retry`, `@ydbjs/auth`, `@ydbjs/query`),
- * выполняет один SELECT и одну транзакцию, и печатает весь стек событий в
- * консоль в порядке их возникновения.
- *
- * Цель — показать, как один телеметрический подписчик может построить трейсы,
- * метрики и логи поверх SDK, не подключая никакие OTel зависимости.
- *
- * Запуск:
- *   YDB_CONNECTION_STRING=grpc://localhost:2136/local node index.js
- */
-
 import { subscribe, tracingChannel } from 'node:diagnostics_channel'
 import { performance } from 'node:perf_hooks'
 
@@ -32,27 +17,39 @@ let publishChannels = [
 	'ydb:driver.failed',
 	'ydb:driver.closed',
 	// @ydbjs/core — discovery
-	'ydb:discovery.completed',
+	'ydb:driver.discovery.completed',
 	// @ydbjs/core — connection pool
-	'ydb:pool.connection.added',
-	'ydb:pool.connection.pessimized',
-	'ydb:pool.connection.unpessimized',
-	'ydb:pool.connection.retired',
-	'ydb:pool.connection.removed',
+	'ydb:driver.connection.added',
+	'ydb:driver.connection.pessimized',
+	'ydb:driver.connection.unpessimized',
+	'ydb:driver.connection.retired',
+	'ydb:driver.connection.removed',
+	'ydb:driver.connection.pool.opened',
+	'ydb:driver.connection.pool.stats',
+	'ydb:driver.pile.changed',
+	'ydb:driver.pile.fallback',
 	// @ydbjs/retry
 	'ydb:retry.exhausted',
+	'ydb:retry.attempt.completed',
 	// @ydbjs/auth
 	'ydb:auth.token.refreshed',
 	'ydb:auth.token.expired',
 	'ydb:auth.provider.failed',
 	// @ydbjs/query — session pool
-	'ydb:session.created',
-	'ydb:session.closed',
+	'ydb:query.session.created',
+	'ydb:query.session.closed',
+	'ydb:query.session.pool.opened',
+	'ydb:query.session.pool.closed',
+	'ydb:query.session.acquired',
+	'ydb:query.session.released',
+	'ydb:query.session.acquire.failed',
+	'ydb:query.session.waiter.enqueued',
+	'ydb:query.session.waiter.dequeued',
 ]
 
 let tracingChannels = [
 	// @ydbjs/core
-	'tracing:ydb:discovery',
+	'tracing:ydb:driver.discovery',
 	// @ydbjs/retry
 	'tracing:ydb:retry.run',
 	'tracing:ydb:retry.attempt',
@@ -61,8 +58,12 @@ let tracingChannels = [
 	// @ydbjs/query
 	'tracing:ydb:query.execute',
 	'tracing:ydb:query.transaction',
-	'tracing:ydb:session.acquire',
-	'tracing:ydb:session.create',
+	'tracing:ydb:query.session.acquire',
+	'tracing:ydb:query.session.create',
+	'tracing:ydb:query.session.delete',
+	'tracing:ydb:query.begin',
+	'tracing:ydb:query.commit',
+	'tracing:ydb:query.rollback',
 ]
 
 // ── Pretty printer ──────────────────────────────────────────────────────────
@@ -84,35 +85,55 @@ function indent() {
 }
 
 function format(value) {
-	if (typeof value === 'bigint') return `${value}n`
-	if (value instanceof Error) return `${value.name}(${value.message})`
-	return JSON.stringify(value, (_, v) => (typeof v === 'bigint' ? `${v}n` : v))
+	if (typeof value === 'bigint') {
+		return `${value}n`
+	}
+	if (value instanceof Error) {
+		return value.name
+	}
+	return JSON.stringify(value)
 }
 
 function describe(payload) {
-	if (!payload || typeof payload !== 'object') return ''
-	let entries = Object.entries(payload)
-		.filter(([k]) => k !== 'span' && k !== 'error' && k !== 'asyncId')
-		.map(([k, v]) => `${k}=${format(v)}`)
-	let extras = []
-	if ('error' in payload) extras.push(`error=${format(payload.error)}`)
-	return [...entries, ...extras].join(' ')
-}
-
-// Try to keep query text in logs short.
-function tidy(payload) {
-	if (!payload || typeof payload !== 'object') return payload
-	if ('text' in payload && typeof payload.text === 'string' && payload.text.length > 60) {
-		return { ...payload, text: payload.text.slice(0, 60) + '…' }
+	if (!payload || typeof payload !== 'object') {
+		return ''
 	}
-	return payload
+
+	// Query text, parameter values, tokens, and error messages may contain application data.
+	let entries = []
+	for (let key of [
+		'duration',
+		'uptime',
+		'nodeId',
+		'sessionId',
+		'txId',
+		'idempotent',
+		'isolation',
+		'attempt',
+		'attempts',
+		'backoffMs',
+		'outcome',
+		'provider',
+		'addedCount',
+		'removedCount',
+		'totalCount',
+	]) {
+		let value = payload[key]
+		if (['string', 'number', 'boolean', 'bigint'].includes(typeof value)) {
+			entries.push(`${key}=${format(value)}`)
+		}
+	}
+	if (payload.error instanceof Error) {
+		entries.push(`error=${payload.error.name}`)
+	}
+	return entries.join(' ')
 }
 
 // ── Subscriptions ───────────────────────────────────────────────────────────
 
 for (let name of publishChannels) {
 	subscribe(name, (msg) => {
-		let payload = describe(tidy(msg))
+		let payload = describe(msg)
 		console.log(`${ts()} ${indent()}● ${name}${payload ? '  ' + payload : ''}`)
 	})
 }
@@ -120,19 +141,22 @@ for (let name of publishChannels) {
 for (let name of tracingChannels) {
 	tracingChannel(name).subscribe({
 		start(ctx) {
-			let payload = describe(tidy(ctx))
+			let payload = describe(ctx)
 			console.log(`${ts()} ${indent()}┌─ ${name}${payload ? '  ' + payload : ''}`)
 			depth++
 		},
 		asyncEnd(ctx) {
-			if (failed.has(ctx)) return // `error` already printed for this span
+			if (failed.has(ctx)) {
+				return
+			}
 			depth = Math.max(0, depth - 1)
 			console.log(`${ts()} ${indent()}└─ ${name} ✓`)
 		},
 		error(ctx) {
 			failed.add(ctx)
 			depth = Math.max(0, depth - 1)
-			console.log(`${ts()} ${indent()}└─ ${name} ✗ ${format(ctx.error)}`)
+			let errorName = ctx.error instanceof Error ? ctx.error.name : 'non-Error failure'
+			console.log(`${ts()} ${indent()}└─ ${name} ✗ ${errorName}`)
 		},
 	})
 }
@@ -145,47 +169,37 @@ let connectionString = process.env.YDB_CONNECTION_STRING || 'grpc://localhost:21
 // unreachable from the host machine, hanging the demo on first RPC.
 let enableDiscovery = process.env.ENABLE_DISCOVERY === '1'
 
-console.log(`# diagnostics example, connecting to ${connectionString}`)
+console.log('# diagnostics example')
 console.log(`# discovery=${enableDiscovery ? 'on' : 'off'}\n`)
 
-// `using` for the driver and `await using` for the query client — dispose
-// runs in reverse order so the session pool drains (publishing
-// `session.closed{pool_close}`) BEFORE `driver.close()` fires `driver.closed`.
-using driver = new Driver(connectionString, {
+let driver = new Driver(connectionString, {
 	'ydb.sdk.enable_discovery': enableDiscovery,
 })
-await driver.ready()
+try {
+	await driver.ready()
+	let sql = query(driver)
 
-await using sql = query(driver)
+	try {
+		console.log('\n# 1. single-shot SELECT 1\n')
+		{
+			let [[row]] = await sql`SELECT 1 AS n`
+			console.log(`\n  → result: ${JSON.stringify(row)}\n`)
+		}
 
-// `Query` extends `EventEmitter`. Its `.finally` aborts an internal controller
-// which can synthesise a stray `'error'` event after the awaited result is
-// already resolved — unhandled by default. Demos run with the noisy event
-// silenced; production code should attach `.on('error', …)` per query or
-// install a process-level handler.
-process.on('uncaughtException', (err) => {
-	if (err instanceof Error && err.name === 'AbortError') return
-	throw err
-})
+		console.log('\n# 2. transaction with two SELECTs\n')
+		{
+			let result = await sql.begin(async (tx) => {
+				let [[a]] = await tx`SELECT 1 AS a`
+				let [[b]] = await tx`SELECT ${a.a + 1} AS b`
+				return b.b
+			})
+			console.log(`\n  → result: ${result}\n`)
+		}
 
-console.log('\n# 1. single-shot SELECT 1\n')
-{
-	let [[row]] = await sql`SELECT 1 AS n`
-	console.log(`\n  → result: ${JSON.stringify(row)}\n`)
+		console.log('\n# done, shutting down\n')
+	} finally {
+		await sql.close()
+	}
+} finally {
+	driver.close()
 }
-
-console.log('\n# 2. transaction with two SELECTs\n')
-{
-	let result = await sql.begin(async (tx) => {
-		let [[a]] = await tx`SELECT 1 AS a`
-		let [[b]] = await tx`SELECT ${a.a + 1} AS b`
-		return b.b
-	})
-	console.log(`\n  → result: ${result}\n`)
-}
-
-console.log('\n# done, shutting down\n')
-
-// `await using` above releases sql first (drains the session pool, fires
-// `session.closed{pool_close}`), then `using driver` closes the driver and
-// fires `driver.closed`. No manual close() calls needed.

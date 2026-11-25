@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { CoordinationClient } from '@ydbjs/coordination'
@@ -5,18 +6,17 @@ import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
-await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
 let text = new TextDecoder()
 
-let nodePath = '/local/election-example'
+let nodePath = `${driver.database.replace(/\/$/, '')}/election-example-${randomUUID()}`
 let electionName = 'api-leader'
 
 // ── leader ────────────────────────────────────────────────────────────────────
 
-async function runLeader(signal) {
+async function runLeader(signal, observed, follower) {
 	console.log('[leader] starting')
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
@@ -27,28 +27,34 @@ async function runLeader(signal) {
 
 			// campaign() blocks until this session wins the election.
 			// Only one session can hold the token at a time.
-			await using leadership = await election.campaign(utf8.encode('worker-a:starting'))
+			let leadership = await election.campaign(utf8.encode('worker-a:8080'))
 
-			console.log('[leader] elected — publishing endpoint')
+			try {
+				console.log('[leader] elected: worker-a:8080')
+				await printCurrentLeader(session.signal)
+				await Promise.race([observed, follower])
+				signal.throwIfAborted()
 
-			// Simulate startup time before the real endpoint is known.
-			await sleep(300, undefined, { signal: session.signal })
+				let workSignal = AbortSignal.any([session.signal, leadership.signal])
+				await sleep(2_000, undefined, { signal: workSignal })
 
-			// Update leader data without re-election — all observers see it immediately.
-			await leadership.proclaim(utf8.encode('worker-a:8080'))
-			console.log('[leader] proclaimed endpoint: worker-a:8080')
-
-			// Hold leadership until the session dies or external signal fires.
-			await sleep(2_000, undefined, { signal: leadership.signal })
-
-			console.log('[leader] resigning')
-			// await using → resign() called automatically here
-		} catch (e) {
+				console.log('[leader] resigning')
+			} finally {
+				await leadership.resign(AbortSignal.timeout(5_000))
+			}
+		} catch (error) {
 			if (session.signal.aborted) {
-				console.log('[leader] session expired, re-entering election')
+				signal.throwIfAborted()
+				console.log('[leader] session ended')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		// One leadership cycle is enough for this example.
@@ -60,22 +66,29 @@ async function runLeader(signal) {
 
 // ── follower ──────────────────────────────────────────────────────────────────
 
-async function runFollower(signal) {
+async function runFollower(signal, onStarted, onObserved) {
 	console.log('[follower] starting')
+	let observedLeader = false
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
 		let election = session.election(electionName)
 
 		try {
-			// observe() yields on every leader change: new leader, proclaim, or no leader.
-			// state.signal aborts when the leader changes — useful for scoping work.
+			onStarted()
+			// The candidate waits for onObserved before it can resign.
 			for await (let state of election.observe()) {
 				let endpoint = text.decode(state.data)
 
 				if (!state.data.length) {
 					console.log('[follower] no leader currently')
+					if (observedLeader) {
+						return
+					}
 					continue
 				}
+
+				observedLeader = true
+				onObserved()
 
 				if (state.isMe) {
 					console.log('[follower] i am the leader:', endpoint)
@@ -83,31 +96,46 @@ async function runFollower(signal) {
 					console.log('[follower] current leader:', endpoint)
 				}
 			}
-		} catch (e) {
+			signal.throwIfAborted()
+			throw new Error('Election watch ended before leadership and resignation were observed')
+		} catch (error) {
 			if (session.signal.aborted) {
-				console.log('[follower] session expired, reconnecting')
+				signal.throwIfAborted()
+				console.log('[follower] session ended')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
-
-		break
 	}
 
-	console.log('[follower] done')
+	signal.throwIfAborted()
+	throw new Error('Election watch ended before leadership and resignation were observed')
 }
 
 // ── one-shot leader query ─────────────────────────────────────────────────────
 
 async function printCurrentLeader(signal) {
-	await using session = await client.createSession(nodePath, {}, signal)
-	let election = session.election(electionName)
-	let leader = await election.leader(signal)
+	let session = await client.createSession(nodePath, {}, signal)
 
-	if (leader) {
-		console.log('[query] current leader:', text.decode(leader.data))
-	} else {
-		console.log('[query] no leader right now')
+	try {
+		let leader = await session.election(electionName).leader(signal)
+		if (leader) {
+			console.log('[query] current leader:', text.decode(leader.data))
+		} else {
+			console.log('[query] no leader right now')
+		}
+	} finally {
+		try {
+			await session.close(AbortSignal.timeout(5_000))
+		} finally {
+			session.destroy()
+		}
 	}
 }
 
@@ -115,43 +143,57 @@ async function printCurrentLeader(signal) {
 
 async function main() {
 	let ctrl = new AbortController()
-
-	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
-
-	try {
-		await client.createNode(nodePath, {})
-	} catch {
-		// Node may already exist — that is fine.
-	}
-
-	// Ensure the election semaphore exists before leader and follower start.
-	// observe() calls watchSemaphore which requires the semaphore to already
-	// exist — if the follower races ahead of the leader's campaign() the
-	// server returns NOT_FOUND.
-	try {
-		await using session = await client.createSession(nodePath, {}, ctrl.signal)
-		await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
-	} catch {
-		// May already exist — that is fine.
-	}
+	let timer = setTimeout(() => {
+		ctrl.abort(new Error('example timeout'))
+	}, 5_000)
+	let workers = []
+	let created = false
 
 	try {
-		// Leader and follower run concurrently in the same process.
-		// In a real system they would be separate worker processes.
-		await Promise.all([runLeader(ctrl.signal), runFollower(ctrl.signal)])
+		await driver.ready(ctrl.signal)
+		await client.createNode(nodePath, {}, ctrl.signal)
+		created = true
 
-		// One-shot snapshot query.
-		await printCurrentLeader(ctrl.signal)
+		{
+			let session = await client.createSession(nodePath, {}, ctrl.signal)
+			try {
+				await session.semaphore(electionName).create({ limit: 1 }, ctrl.signal)
+			} finally {
+				try {
+					await session.close(AbortSignal.timeout(5_000))
+				} finally {
+					session.destroy()
+				}
+			}
+		}
+
+		let started = Promise.withResolvers()
+		let observed = Promise.withResolvers()
+		let follower = runFollower(ctrl.signal, started.resolve, observed.resolve)
+		workers = [follower]
+		await Promise.race([started.promise, follower])
+		ctrl.signal.throwIfAborted()
+
+		let leader = runLeader(ctrl.signal, observed.promise, follower)
+		workers.push(leader)
+		await Promise.all(workers)
+		ctrl.signal.throwIfAborted()
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
-		await client.dropNode(nodePath).catch(() => {})
-		driver.close()
+		await Promise.allSettled(workers)
+
+		if (created) {
+			await client.dropNode(nodePath, AbortSignal.timeout(5_000))
+		}
 	}
 }
 
-main().catch((error) => {
-	if (error?.message === 'example timeout') return
+try {
+	await main()
+} catch (error) {
 	console.error(error)
-	process.exit(1)
-})
+	process.exitCode = 1
+} finally {
+	driver.close()
+}

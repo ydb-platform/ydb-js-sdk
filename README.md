@@ -45,11 +45,11 @@ Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`. TypeScript projects requir
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 
-const driver = new Driver('grpc://localhost:2136/local')
+using driver = new Driver('grpc://localhost:2136/local')
 await driver.ready()
 
-const sql = query(driver)
-const resultSets = await sql`SELECT 1 + 1 AS sum`
+await using sql = query(driver)
+let resultSets = await sql`SELECT 1 + 1 AS sum`
 console.log(resultSets) // [ [ { sum: 2 } ] ]
 ```
 
@@ -76,17 +76,15 @@ Project docs:
 
 ## Examples
 
-Examples
-
-- Parameterized query:
+### Parameterized query
 
 ```ts
-import { Int64, Optional, PrimitiveType } from '@ydbjs/value'
-const sql = query(driver)
-await sql`SELECT ${new Optional(new Int64(100n), new PrimitiveType('INT64'))};`
+import { Int64 } from '@ydbjs/value/primitive'
+
+await sql`SELECT ${new Int64(100n)} AS value`
 ```
 
-– Transactions:
+### Transactions
 
 ```ts
 await sql.begin(async (tx, signal) => {
@@ -95,16 +93,18 @@ await sql.begin(async (tx, signal) => {
 })
 ```
 
-– Error handling:
+### Error handling
 
 ```ts
-import { YdbError } from '@ydbjs/error'
+import { YDBError } from '@ydbjs/error'
 try {
   await sql`SELECT * FROM non_existent_table`
-} catch (e) {
-  if (e instanceof YdbError) {
-    console.error('YDB Error:', e.message)
+} catch (error) {
+  if (error instanceof YDBError) {
+    console.error('YDB Error:', error.message)
   }
+
+  throw error
 }
 ```
 

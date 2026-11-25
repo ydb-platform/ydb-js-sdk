@@ -9,7 +9,7 @@
 Requires Node.js `^22.23.5 || ^24.22.3 || >=26.13.1`.
 
 ```bash
-npm install @ydbjs/langchain @langchain/core
+npm install @ydbjs/langchain @langchain/core @langchain/openai
 ```
 
 ## Usage
@@ -91,12 +91,12 @@ let results = await store.similaritySearch('YDB vector search', 4)
 
 ```typescript
 // Create store and insert documents in one call
-let store = await YDBVectorStore.fromDocuments(docs, embeddings, {
+await using createdStore = await YDBVectorStore.fromDocuments(docs, embeddings, {
   connectionString: 'grpc://localhost:2136/local',
 })
 
 // Connect to an existing table without running CREATE TABLE
-let store = YDBVectorStore.fromExistingTable(embeddings, {
+await using existingStore = YDBVectorStore.fromExistingTable(embeddings, {
   driver,
   table: 'my_vectors',
 })
@@ -166,6 +166,10 @@ let store = new YDBVectorStore(embeddings, {
   strategy: YDBSearchStrategy.EuclideanDistance,
 })
 ```
+
+## Cancellation and shutdown
+
+The adapter keeps LangChain’s native search signatures. Its YDB operations do not accept a per-call `AbortSignal`; a signal passed to a LangChain retriever invocation is not forwarded to YDB. Wait for application calls, including embedding work, to finish before closing the store. `close()` closes only the query client and driver created by that store.
 
 ## License
 

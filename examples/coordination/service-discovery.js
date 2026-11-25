@@ -1,15 +1,16 @@
+import { randomUUID } from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { CoordinationClient } from '@ydbjs/coordination'
 import { Driver } from '@ydbjs/core'
 
 let connectionString = process.env.YDB_CONNECTION_STRING ?? 'grpc://localhost:2136/local'
 let driver = new Driver(connectionString)
-await driver.ready()
 let client = new CoordinationClient(driver)
 
 let utf8 = new TextEncoder()
 let text = new TextDecoder()
 
-let nodePath = '/local/service-discovery-example'
+let nodePath = `${driver.database.replace(/\/$/, '')}/service-discovery-example-${randomUUID()}`
 let semaphoreName = 'endpoints'
 
 // ── worker registration ───────────────────────────────────────────────────────
@@ -18,7 +19,7 @@ let semaphoreName = 'endpoints'
 // The server creates the semaphore automatically (limit = MAX_UINT64 for ephemeral).
 // When the session dies — gracefully or by expiry — the token is released and
 // the worker disappears from the endpoint list automatically.
-async function runWorker(endpoint, signal) {
+async function runWorker(endpoint, signal, stop, onRegistered) {
 	console.log(`[worker] ${endpoint} starting`)
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
@@ -26,25 +27,33 @@ async function runWorker(endpoint, signal) {
 
 		try {
 			// ephemeral: true — no createSemaphore needed, server handles it.
-			await using lease = await semaphore.acquire({
+			let lease = await semaphore.acquire({
 				count: 1,
 				data: utf8.encode(endpoint),
 				ephemeral: true,
 			})
 
-			console.log(`[worker] ${endpoint} registered`)
-
-			// Hold registration until the session dies or external signal fires.
-			await waitForAbort(lease.signal)
-
-			// await using → lease.release() called here.
-			// The endpoint disappears from the owners list immediately.
-		} catch (e) {
+			try {
+				console.log(`[worker] ${endpoint} registered`)
+				onRegistered?.()
+				await Promise.race([stop, waitForAbort(session.signal)])
+				signal.throwIfAborted()
+			} finally {
+				await lease.release(AbortSignal.timeout(5_000))
+			}
+		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log(`[worker] ${endpoint} session expired, re-registering`)
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
 
 		break
@@ -55,79 +64,127 @@ async function runWorker(endpoint, signal) {
 
 // ── endpoint watcher ──────────────────────────────────────────────────────────
 
-// watch() yields immediately with the current owner list, then on every change.
-// When the session restarts after expiry, the latest state is delivered again —
-// no stale data, no missed updates.
-async function watchEndpoints(signal) {
+// watch() reports current owners; intermediate changes may be coalesced.
+async function watchEndpoints(signal, onObservedB) {
 	console.log('[watcher] starting')
+	let observedB = false
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
 		let semaphore = session.semaphore(semaphoreName)
 
 		try {
 			for await (let description of semaphore.watch({ owners: true })) {
-				let endpoints = (description.owners ?? []).map((o) => text.decode(o.data))
+				let endpoints = (description.owners ?? []).map((owner) => {
+					return text.decode(owner.data)
+				})
 
 				console.log('[watcher] available workers:', endpoints.length ? endpoints : '(none)')
+				if (endpoints.includes('worker-b:8081')) {
+					observedB = true
+					onObservedB()
+				} else if (observedB) {
+					return
+				}
 			}
-		} catch (e) {
+			signal.throwIfAborted()
+			throw new Error('Endpoint watch ended before worker-b removal was observed')
+		} catch (error) {
 			if (session.signal.aborted) {
+				signal.throwIfAborted()
 				console.log('[watcher] session expired, reconnecting')
 				continue
 			}
-			throw e
+			throw error
+		} finally {
+			try {
+				await session.close(AbortSignal.timeout(5_000))
+			} finally {
+				session.destroy()
+			}
 		}
-
-		break
 	}
 
-	console.log('[watcher] done')
+	signal.throwIfAborted()
+	throw new Error('Endpoint watch ended before worker-b removal was observed')
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
 	let ctrl = new AbortController()
-
-	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
-
-	try {
-		await client.createNode(nodePath, {})
-	} catch {
-		// Node may already exist — that is fine.
-	}
+	let timer = setTimeout(() => {
+		ctrl.abort(new Error('example timeout'))
+	}, 5_000)
+	let stopWorkers = Promise.withResolvers()
+	let stopB = Promise.withResolvers()
+	let workers = []
+	let created = false
 
 	try {
-		// Three workers register concurrently. The watcher observes the live list.
-		// After 2 seconds, worker-b is stopped to demonstrate automatic deregistration.
-		let bCtrl = new AbortController()
-		setTimeout(() => bCtrl.abort(new Error('worker-b stopping')), 2_000)
+		await driver.ready(ctrl.signal)
+		await client.createNode(nodePath, {}, ctrl.signal)
+		created = true
 
-		await Promise.all([
-			runWorker('worker-a:8080', ctrl.signal),
-			runWorker('worker-b:8081', bCtrl.signal),
-			runWorker('worker-c:8082', ctrl.signal),
-			watchEndpoints(ctrl.signal),
-		])
+		// The watcher needs an existing ephemeral semaphore before its first describe.
+		let registered = Promise.withResolvers()
+		workers = [runWorker('worker-a:8080', ctrl.signal, stopWorkers.promise, registered.resolve)]
+		await Promise.race([registered.promise, workers[0]])
+		ctrl.signal.throwIfAborted()
+
+		let observedB = Promise.withResolvers()
+		let watcher = watchEndpoints(ctrl.signal, observedB.resolve)
+		let stopTask = (async () => {
+			await Promise.race([observedB.promise, watcher])
+			ctrl.signal.throwIfAborted()
+			await sleep(2_000, undefined, { signal: ctrl.signal })
+			stopB.resolve()
+		})()
+		workers.push(
+			runWorker('worker-b:8081', ctrl.signal, stopB.promise),
+			runWorker('worker-c:8082', ctrl.signal, stopWorkers.promise),
+			watcher,
+			stopTask
+		)
+
+		let completed = Promise.all(workers)
+		await Promise.race([watcher, completed])
+		ctrl.signal.throwIfAborted()
+		stopWorkers.resolve()
+		await completed
+		ctrl.signal.throwIfAborted()
 	} finally {
+		clearTimeout(timer)
+		stopB.resolve()
+		stopWorkers.resolve()
 		ctrl.abort()
-		await client.dropNode(nodePath).catch(() => {})
-		driver.close()
+		await Promise.allSettled(workers)
+		if (created) {
+			await client.dropNode(nodePath, AbortSignal.timeout(5_000))
+		}
 	}
 }
 
 function waitForAbort(signal) {
 	if (signal.aborted) {
-		return Promise.resolve()
+		return Promise.reject(signal.reason)
 	}
 
-	return new Promise((resolve) => {
-		signal.addEventListener('abort', resolve, { once: true })
+	return new Promise((_, reject) => {
+		signal.addEventListener(
+			'abort',
+			() => {
+				reject(signal.reason)
+			},
+			{ once: true }
+		)
 	})
 }
 
-main().catch((error) => {
+try {
+	await main()
+} catch (error) {
 	console.error(error)
-	process.exit(1)
-})
+	process.exitCode = 1
+} finally {
+	driver.close()
+}
