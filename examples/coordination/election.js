@@ -62,6 +62,7 @@ async function runLeader(signal) {
 
 async function runFollower(signal) {
 	console.log('[follower] starting')
+	let observedLeader = false
 
 	for await (let session of client.openSession(nodePath, { recoveryWindow: 15_000 }, signal)) {
 		let election = session.election(electionName)
@@ -74,9 +75,11 @@ async function runFollower(signal) {
 
 				if (!state.data.length) {
 					console.log('[follower] no leader currently')
+					if (observedLeader) return
 					continue
 				}
 
+				observedLeader = true
 				if (state.isMe) {
 					console.log('[follower] i am the leader:', endpoint)
 				} else {
@@ -117,7 +120,7 @@ async function main() {
 	let ctrl = new AbortController()
 
 	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
+	let timer = setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
 
 	try {
 		await client.createNode(nodePath, {})
@@ -144,14 +147,14 @@ async function main() {
 		// One-shot snapshot query.
 		await printCurrentLeader(ctrl.signal)
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
 }
 
-main().catch((error) => {
-	if (error?.message === 'example timeout') return
+await main().catch((error) => {
 	console.error(error)
 	process.exit(1)
 })

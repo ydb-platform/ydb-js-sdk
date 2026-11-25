@@ -1,7 +1,9 @@
+import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { Driver } from '@ydbjs/core'
 import { StaticCredentialsProvider } from '@ydbjs/auth/static'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 
 let cs = process.env.YDB_CONNECTION_STRING
 if (!cs) throw new Error('YDB_CONNECTION_STRING is required')
@@ -51,7 +53,8 @@ if (process.env.YDB_USER && process.env.YDB_PASSWORD && process.env.YDB_AUTH_END
 // Проверка Discovery
 let discovery = driver.createClient(DiscoveryServiceDefinition)
 let resp = await discovery.listEndpoints({ database: driver.database })
-console.log('Endpoints status:', resp.status)
+assert.equal(resp.operation?.status, StatusIds_StatusCode.SUCCESS)
+console.log('Endpoints status:', resp.operation.status)
 
 driver.close()
 console.log('Done')

@@ -32,7 +32,7 @@ async function runWorker(id, signal) {
 			console.log(`[worker-${id}] work done, releasing`)
 
 			// await using → lock.release() called automatically here
-		} catch {
+		} catch (error) {
 			if (session.signal.aborted) {
 				console.log(`[worker-${id}] session expired, retrying`)
 				continue
@@ -76,7 +76,7 @@ async function main() {
 	let ctrl = new AbortController()
 
 	// Stop everything after 5 seconds.
-	setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
+	let timer = setTimeout(() => ctrl.abort(new Error('example timeout')), 5_000)
 
 	try {
 		await client.createNode(nodePath, {})
@@ -92,14 +92,16 @@ async function main() {
 			runWorker('b', ctrl.signal),
 			tryWork(ctrl.signal),
 		])
+		ctrl.signal.throwIfAborted()
 	} finally {
+		clearTimeout(timer)
 		ctrl.abort()
 		await client.dropNode(nodePath).catch(() => {})
 		driver.close()
 	}
 }
 
-main().catch((error) => {
+await main().catch((error) => {
 	console.error(error)
 	process.exit(1)
 })

@@ -1,6 +1,8 @@
+import assert from 'node:assert/strict'
 import { Driver } from '@ydbjs/core'
 import { EnvironCredentialsProvider } from '@ydbjs/auth/environ'
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
+import { StatusIds_StatusCode } from '@ydbjs/api/operation'
 
 let cs = process.env.YDB_CONNECTION_STRING
 if (!cs) throw new Error('YDB_CONNECTION_STRING is required')
@@ -29,7 +31,8 @@ console.log('Connected to', cs)
 
 let discovery = driver.createClient(DiscoveryServiceDefinition)
 let resp = await discovery.listEndpoints({ database: driver.database })
-console.log('Endpoints status:', resp.status)
+assert.equal(resp.operation?.status, StatusIds_StatusCode.SUCCESS)
+console.log('Endpoints status:', resp.operation.status)
 
 driver.close()
 console.log('Done')

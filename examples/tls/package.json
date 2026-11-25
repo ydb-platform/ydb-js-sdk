@@ -7,6 +7,7 @@
 		"access": "restricted"
 	},
 	"scripts": {
+		"test": "YDB_CONNECTION_STRING=\"$YDB_CONNECTION_STRING_SECURE\" YDB_CA=\"$YDB_SSL_ROOT_CERTIFICATES_FILE\" YDB_USER=root YDB_PASSWORD=1234 YDB_AUTH_ENDPOINT=\"$YDB_CONNECTION_STRING_SECURE\" node index.js",
 		"start": "node index.js",
 		"dev": "DEBUG=ydbjs:* node index.js"
 	},

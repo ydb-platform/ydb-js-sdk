@@ -7,12 +7,12 @@ let initialContext = {
 }
 
 let effects = {
-	'counter.log'(effect) {
+	'counter.log'(_context, effect) {
 		console.log('[effect]', effect.message)
 	},
 }
 
-function transition(context, state, event, runtime) {
+function transition(context, event, runtime) {
 	switch (event.type) {
 		case 'counter.start':
 			runtime.emit({ type: 'counter.state', value: 'running' })
@@ -22,7 +22,7 @@ function transition(context, state, event, runtime) {
 			}
 
 		case 'counter.increment':
-			if (state !== 'running') {
+			if (runtime.state !== 'running') {
 				return
 			}
 
@@ -53,7 +53,8 @@ function transition(context, state, event, runtime) {
 async function main() {
 	let runtime = createMachineRuntime({
 		initialState,
-		context: initialContext,
+		ctx: initialContext,
+		env: {},
 		transition,
 		effects,
 	})
@@ -89,7 +90,4 @@ async function main() {
 	await outputsTask
 }
 
-void main().catch((error) => {
-	console.error(error)
-	process.exitCode = 1
-})
+await main()

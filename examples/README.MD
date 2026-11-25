@@ -12,6 +12,10 @@ EN: Examples belong to the root npm workspace so Changesets updates their SDK de
 
 RU: Примеры входят в корневой npm workspace, чтобы Changesets обновлял версии SDK в их зависимостях. Выполните `npm ci` из корня репозитория, затем запускайте нужный пример.
 
+EN: Preview CI installs the published SDK packages in every example directory and runs `npm test` if defined, otherwise `npm start`, against a disposable YDB instance.
+
+RU: CI устанавливает опубликованную сборку SDK в каждый каталог примера и запускает `npm test`, а при отсутствии такого скрипта — `npm start`. Для этих проверок поднимается отдельная YDB.
+
 ## 📦 Examples / Примеры
 
 ### 📁 [api/](./api/)
