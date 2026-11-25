@@ -35,63 +35,63 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
 		"./primitive": {
-			"development": "./src/primitive.ts",
+			"ydbjs-source": "./src/primitive.ts",
 			"default": "./dist/primitive.js"
 		},
 		"./optional": {
-			"development": "./src/optional.ts",
+			"ydbjs-source": "./src/optional.ts",
 			"default": "./dist/optional.js"
 		},
 		"./struct": {
-			"development": "./src/struct.ts",
+			"ydbjs-source": "./src/struct.ts",
 			"default": "./dist/struct.js"
 		},
 		"./dict": {
-			"development": "./src/dict.ts",
+			"ydbjs-source": "./src/dict.ts",
 			"default": "./dist/dict.js"
 		},
 		"./tuple": {
-			"development": "./src/tuple.ts",
+			"ydbjs-source": "./src/tuple.ts",
 			"default": "./dist/tuple.js"
 		},
 		"./list": {
-			"development": "./src/list.ts",
+			"ydbjs-source": "./src/list.ts",
 			"default": "./dist/list.js"
 		},
 		"./null": {
-			"development": "./src/null.ts",
+			"ydbjs-source": "./src/null.ts",
 			"default": "./dist/null.js"
 		},
 		"./uuid": {
-			"development": "./src/uuid.ts",
+			"ydbjs-source": "./src/uuid.ts",
 			"default": "./dist/uuid.js"
 		},
 		"./print": {
-			"development": "./src/print.ts",
+			"ydbjs-source": "./src/print.ts",
 			"default": "./dist/print.js"
 		},
 		"./decimal": {
-			"development": "./src/decimal.ts",
+			"ydbjs-source": "./src/decimal.ts",
 			"default": "./dist/decimal.js"
 		},
 		"./empty": {
-			"development": "./src/empty.ts",
+			"ydbjs-source": "./src/empty.ts",
 			"default": "./dist/empty.js"
 		},
 		"./tagged": {
-			"development": "./src/tagged.ts",
+			"ydbjs-source": "./src/tagged.ts",
 			"default": "./dist/tagged.js"
 		},
 		"./vector": {
-			"development": "./src/vector.ts",
+			"ydbjs-source": "./src/vector.ts",
 			"default": "./dist/vector.js"
 		},
 		"./void": {
-			"development": "./src/void.ts",
+			"ydbjs-source": "./src/void.ts",
 			"default": "./dist/void.js"
 		}
 	},

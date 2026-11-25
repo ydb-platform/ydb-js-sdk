@@ -2,7 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
 	resolve: {
-		conditions: ['development'],
+		conditions: ['ydbjs-source', 'development'],
+	},
+	ssr: {
+		resolve: { conditions: ['ydbjs-source', 'module', 'node', 'development'] },
 	},
 	test: {
 		name: 'grpc',

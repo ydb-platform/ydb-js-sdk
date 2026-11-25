@@ -35,27 +35,27 @@
 	"types": "dist/index.d.ts",
 	"exports": {
 		".": {
-			"development": "./src/index.ts",
+			"ydbjs-source": "./src/index.ts",
 			"default": "./dist/index.js"
 		},
 		"./access-token": {
-			"development": "./src/access-token.ts",
+			"ydbjs-source": "./src/access-token.ts",
 			"default": "./dist/access-token.js"
 		},
 		"./anonymous": {
-			"development": "./src/anonymous.ts",
+			"ydbjs-source": "./src/anonymous.ts",
 			"default": "./dist/anonymous.js"
 		},
 		"./metadata": {
-			"development": "./src/metadata.ts",
+			"ydbjs-source": "./src/metadata.ts",
 			"default": "./dist/metadata.js"
 		},
 		"./static": {
-			"development": "./src/static.ts",
+			"ydbjs-source": "./src/static.ts",
 			"default": "./dist/static.js"
 		},
 		"./environ": {
-			"development": "./src/environ.ts",
+			"ydbjs-source": "./src/environ.ts",
 			"default": "./dist/environ.js"
 		}
 	},
