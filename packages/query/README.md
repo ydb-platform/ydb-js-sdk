@@ -248,7 +248,7 @@ const { result, commitTimestamp } = await sql.beginWithTimestamp(
 
 The timestamp is present only when the server reports a successful StrictSerializableRW transaction with write effects. Its `planStep` and `txId` are `bigint` values preserving the full unsigned 64-bit range. Use `timestamp.compare(otherTimestamp)` for lexicographic order by `planStep`, then `txId`. Comparison requires both values to come from the same `Driver`; the SDK cannot verify that values from separate drivers refer to the same database.
 
-Real-server integration tests for both timestamp paths can be run with `YDB_STRICT_RW_INTEGRATION=1` and `YDB_CONNECTION_STRING` pointing to a server with `TableServiceConfig.EnableStrictSerializableIsolation` enabled. The shared CI server currently has this server-side option disabled.
+CI tests both timestamp paths against YDB with `TableServiceConfig.EnableStrictSerializableIsolation` enabled. To run these cases locally, point `YDB_CONNECTION_STRING` at a server with this setting enabled and set `YDB_STRICT_RW_INTEGRATION=1`.
 
 ### Advanced: Multiple Result Sets, Streaming, and Events
 

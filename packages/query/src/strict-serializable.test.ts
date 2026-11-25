@@ -30,16 +30,6 @@ async function startServer() {
 	})
 	return {
 		driver: server.driver,
-		get beginModes() {
-			return server.begins.map((request) => request.txSettings?.txMode.case)
-		},
-		get executeModes() {
-			return server.executions.map((request) =>
-				request.txControl?.txSelector.case === 'beginTx'
-					? request.txControl.txSelector.value.txMode.case
-					: undefined
-			)
-		},
 		setExecuteParts(parts: ExecuteQueryResponsePart[]) {
 			executeParts = parts
 		},
@@ -66,20 +56,6 @@ function part(commitTimestamp?: { planStep: bigint; txId: bigint }): ExecuteQuer
 		commitTimestamp,
 	})
 }
-
-test('sends StrictSerializableRW for explicit and single-query transactions', async () => {
-	srv = await startServer()
-	srv.setExecuteParts([part()])
-	await using sql = query(srv.driver)
-
-	await sql.begin({ isolation: 'strictSerializableReadWrite' }, async (tx) => {
-		await tx`SELECT 1`
-	})
-	await sql`SELECT 1`.isolation('strictSerializableReadWrite')
-
-	expect(srv.beginModes).toEqual(['strictSerializableReadWrite'])
-	expect(srv.executeModes).toEqual([undefined, 'strictSerializableReadWrite'])
-})
 
 test('encodes the StrictSerializableRW and commit timestamp protobuf fields', () => {
 	let mode = create(TransactionSettingsSchema, {
