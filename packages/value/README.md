@@ -8,6 +8,8 @@ Treat these objects and the protobuf returned by `encode()` as read-only: editin
 
 ## Installation
 
+Supported Node.js versions: `^22.23.5 || ^24.22.3 || >=26.13.1`.
+
 ```sh
 npm install @ydbjs/value
 ```
@@ -132,7 +134,7 @@ TzDate and TzDate32 take the local date and timezone from a ZonedDateTime, disca
 
 The SDK uses `globalThis.Temporal` supplied by the runtime or application and does not bundle, install or register a polyfill.
 Ordinary JavaScript `Date` inputs and default result conversion do not require Temporal.
-On runtimes with native Temporal, such as Node.js 26.3+ and Bun 1.4.3+, no setup is needed.
+On a supported runtime that provides `globalThis.Temporal`, no setup is needed.
 On Node.js 22/24, the application can install a polyfill:
 
 ```sh
@@ -385,16 +387,18 @@ Enabling it requires a global Temporal implementation even when the particular v
 Keep the typed Value or use raw query results when timezone text cannot be converted unambiguously.
 QueryClient and the tagged query API accept the same `temporal: true` option at client creation; see [Query value conversion](../query/README.md#value-conversion-and-type-safety).
 
-### Variant results
+### Variant and PostgreSQL results
 
-Variant values are available only as raw protobuf results.
-Typed decoding and Variant query parameters are unsupported, including Variant schemas nested inside other types.
+Variant and PostgreSQL values are available only as raw protobuf results.
+Typed decoding and query parameters with these schemas are unsupported, including when nested inside other types.
 Use raw results to inspect the value and its schema, or project the selected alternative and its discriminator explicitly in YQL.
 
 QueryClient exposes raw cells together with their column schemas:
 
 ```ts
-let result = await client.retrySession((session) => session.execute(queryText, {}, { raw: true }))
+let result = await client.retrySession((session) => {
+  return session.execute(queryText, {}, { raw: true })
+})
 let { columns, rows } = result.resultSets[0]!
 ```
 

@@ -1,145 +1,10 @@
-## title: Query — Options & API
-
-# Options and API `@ydbjs/query`
-
-This page provides a full overview of the query client API and its chainable options.
-
-## Client and basic syntax
-
-```ts
-import { Driver } from '@ydbjs/core'
-import { query } from '@ydbjs/query'
-
-let driver = new Driver(process.env.YDB_CONNECTION_STRING!)
-await driver.ready()
-
-let sql = query(driver)
-let rows = await sql`SELECT 1 AS one`
-```
-
-### Result sets
-
-`session.execute()` returns a `QueryResult<T>` object with `resultSets`, `stats` and `metadata`.
-Each result set contains `rows`, `columns` and `truncated`; empty result sets preserve their position and schema.
-Tagged SQL returns an array of row arrays; use the query handle's methods and events for statistics and metadata.
-The type argument is a tuple of row types, with one entry per result set; it does not validate the server schema at runtime.
-Streaming keeps its row type argument: `session.stream<Row>()` yields parts with `rows`, `columns`, `truncated` and `resultSetIndex` inside the retry callback.
-
-```ts
-import { QueryClient } from '@ydbjs/query'
-
-type UserRow = { id: bigint }
-type CountRow = { count: bigint }
-
-let [users, counts] = await sql<[UserRow, CountRow]>`
-  SELECT id FROM users;
-  SELECT COUNT(*) AS count FROM users;
-`
-
-console.log(users[0]?.id, counts[0]?.count)
-
-await using client = new QueryClient(driver)
-
-let result = await client.retrySession((session) =>
-  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
-)
-
-console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
-console.log(
-  result.resultSets[0].columns,
-  result.resultSets[0].truncated,
-  result.stats,
-  result.metadata
-)
-```
-
-## Chainable query options
-
-- `idempotent(flag?: boolean)` — marks a single call as idempotent, which enables retries for conditionally retryable error codes.
-  - Note: ignored inside `sql.begin`/`sql.transaction`.
-
-- `isolation(mode, settings?)` — sets isolation for a single call.
-  - Modes: `'implicit' | 'serializableReadWrite' | 'snapshotReadOnly' | 'onlineReadOnly' | 'staleReadOnly'`.
-  - Inside an active transaction, isolation is configured only at `sql.begin({ isolation })` / `sql.transaction(...)`. Applying `.isolation(...)` to `tx\`...\`` has no effect for a single statement.
-
-- `timeout(ms: number)` — total timeout for a single call; used when composing the AbortSignal.
-
-- `withStats(mode)` and `stats()` — enables QueryStats and lets you access them after await:
-  - mode: StatsMode.<...> from `@ydbjs/api/query` (e.g., StatsMode.FULL).
-
-- `values()` and `raw()` — result formats:
-  - Default: each result set contains objects `{ columnName: value }`.
-  - `values()`: each result set contains row arrays in column order.
-  - `raw()`: return protobuf `Ydb.Value` cells without converting to JS. Their types are available in the `QueryClient` result at `result.resultSets[0].columns`.
-
-- `syntax(mode)` — text syntax (default `YQL_V1`).
-
-- `pool(poolId)` — target pool (if configured server‑side by YDB Query services).
-
-- `parameter(name, value)` / `param(name, value)` — bind a JavaScript value or an explicit YDB Value by name. Pass `undefined` to remove the binding.
-
-- `signal(abortSignal)` — merge an external AbortSignal.
-
-- `execute()` — start execution “from outside” and get the same `Query<T>` (useful for fire‑and‑forget with events).
-
-- `cancel()` — cancel execution. Equivalent to `controller.abort()` for the internal AbortController.
-
-## Query events
-
-`Query<T>` instances emit events via `on(event, listener)`:
-
-- `retry` — fired on retry; good for logging.
-- `stats` — execution stats if `withStats()` is enabled.
-- `done` — completed with result.
-- `error` — execution error.
-- `cancel` — user cancellation.
-- `metadata` — gRPC trailers (e.g., server hints/headers).
-
-```ts
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
-q.on('retry', (ctx) => console.log('retry', ctx.attempt, ctx.error))
-q.on('stats', (s) => console.log('cpu', s.queryPhaseStats?.cpuTimeUs))
-await q
-```
-
-## Parameters and types
-
-Interpolations `${...}` are always parameterized and automatically converted through `@ydbjs/value`.
-
-- Named parameters:
-
-```ts
-await sql`SELECT $id AS id`.parameter('id', 42)
-```
-
-- Complex types (arrays, structs) and table parameters via `AS_TABLE(${arrayOfObjects})`.
-
-- Dynamic identifiers and “unsafe” fragments:
-  - `sql.identifier(name)` — escapes and quotes table/column identifiers.
-  - `sql.unsafe(text)` — for trusted migrations/service statements; never pass user input.
-
-## Errors and retries
-
-Queries throw `YDBError` (or others) on failure. Retries are governed by `idempotent()` and error codes.
-
-- `ABORTED/OVERLOADED/UNAVAILABLE/BAD_SESSION/SESSION_BUSY` — always retried.
-- `SESSION_EXPIRED/UNDETERMINED/TIMEOUT` — retried only with `idempotent(true)`.
-
-```ts
-try {
-  await sql`SELECT * FROM heavy_table`.idempotent(true).timeout(5000)
-} catch (e) {
-  // e instanceof YDBError
-}
-```
-
 ---
-
-## title: Query — опции и API
+title: Query — опции и API
+---
 
 # Опции и API `@ydbjs/query`
 
-Ниже — полный обзор API клиента запросов и чейнируемых опций.
+Клиент для SQL строкой, теговый интерфейс и настройки выполнения запросов.
 
 ## Клиент и базовый синтаксис
 
@@ -147,12 +12,53 @@ try {
 import { Driver } from '@ydbjs/core'
 import { query } from '@ydbjs/query'
 
-let driver = new Driver(process.env.YDB_CONNECTION_STRING!)
+using driver = new Driver(process.env['YDB_CONNECTION_STRING'] ?? 'grpc://localhost:2136/local')
 await driver.ready()
 
-let sql = query(driver)
-let rows = await sql`SELECT 1 AS one`
+await using sql = query(driver)
+let [rows] = await sql`SELECT 1 AS one`
 ```
+
+### SQL строкой и границы повтора
+
+`new QueryClient(driver)` предоставляет `retrySession(options, callback)` и `retryTransaction(options, callback)`; настройки можно опустить, callback всегда последний.
+У корневого клиента нет `execute()` или `stream()`: эти методы доступны на исполнителе внутри callback.
+`retrySession()` использует одну сессию на попытку, а `retryTransaction()` объединяет запросы в транзакцию.
+Callback может выполниться несколько раз, поэтому создавайте накопители внутри него и учитывайте повтор внешних эффектов.
+Дочитайте поток до выхода из callback; ранний `break` отменяет RPC и не считается успешным завершением.
+
+```ts
+import { QueryClient } from '@ydbjs/query'
+
+type Row = { id: bigint }
+
+await using client = new QueryClient(driver)
+
+let result = await client.retrySession(
+  { signal: AbortSignal.timeout(5000), idempotent: true },
+  (session) => {
+    return session.execute<[Row]>('SELECT $id AS id', { id: 42n })
+  }
+)
+
+console.log(result.resultSets[0].rows[0]?.id)
+```
+
+`query(client)` создаёт теговый интерфейс с общим пулом и жизненным циклом.
+`close()` ждёт завершения принятых операций; `destroy()` отменяет их немедленно.
+Оба метода оставляют переданный `Driver` открытым; закройте его после клиентов.
+
+### Результаты Temporal
+
+Настройте преобразование при создании клиента: `query(driver, { temporal: true })` или `new QueryClient(driver, { temporal: true })`.
+`query(client)` наследует настройку; она действует для обычных и потоковых результатов, включая вложенные значения.
+Это опция клиента, а не метод запроса; на вывод типов параметров она не влияет.
+
+Приложение должно предоставить `globalThis.Temporal` до создания клиента; SDK не устанавливает полифил.
+Если среда не предоставляет Temporal, установите `temporal-polyfill` и импортируйте `temporal-polyfill/global` в точке входа приложения.
+При отсутствии Temporal конструктор с `temporal: true` выбрасывает ошибку.
+Raw-результаты обходят преобразование; TzDate и TzDate32 в обоих режимах остаются SDK Values.
+См. [настройку и соответствие типов](https://github.com/ydb-platform/ydb-js-sdk/tree/main/packages/value#temporal-setup).
 
 ### Наборы результатов
 
@@ -177,9 +83,11 @@ console.log(users[0]?.id, counts[0]?.count)
 
 await using client = new QueryClient(driver)
 
-let result = await client.retrySession((session) =>
-  session.execute<[UserRow, CountRow]>('SELECT id FROM users; SELECT COUNT(*) AS count FROM users;')
-)
+let result = await client.retrySession((session) => {
+  return session.execute<[UserRow, CountRow]>(
+    'SELECT id FROM users; SELECT COUNT(*) AS count FROM users;'
+  )
+})
 
 console.log(result.resultSets[0].rows[0]?.id, result.resultSets[1].rows[0]?.count)
 console.log(
@@ -190,13 +98,13 @@ console.log(
 )
 ```
 
-## Чейнируемые опции запроса
+## Методы настройки запроса
 
 - `idempotent(flag?: boolean)` — помечает одиночный вызов как идемпотентный, что включает повторные попытки для кодов ошибок с «условной повторяемостью».
   - Внимание: игнорируется внутри `sql.begin`/`sql.transaction`.
 
 - `isolation(mode, settings?)` — задаёт изоляцию для одиночного вызова.
-  - Доступные режимы: `'implicit' | 'serializableReadWrite' | 'snapshotReadOnly' | 'onlineReadOnly' | 'staleReadOnly'`.
+  - Доступные режимы: `'implicit' | 'serializableReadWrite' | 'snapshotReadOnly' | 'snapshotReadWrite' | 'onlineReadOnly' | 'staleReadOnly'`.
   - Внутри активной транзакции изоляция задаётся только на уровне `sql.begin({ isolation })` / `sql.transaction(...)`. Применять `.isolation(...)` к `tx\`...\`` нельзя — она не действует для отдельного запроса.
 
 - `timeout(ms: number)` — общий таймаут выполнения одиночного запроса; учитывается при формировании AbortSignal.
@@ -215,9 +123,9 @@ console.log(
 
 - `parameter(name, value)` / `param(name, value)` — привязать JS-значение или явный YDB Value по имени. Передайте `undefined`, чтобы удалить привязку.
 
-- `signal(abortSignal)` — подмешать внешний AbortSignal.
+- `signal(abortSignal)` — задать внешний сигнал отмены. Повторный вызов заменяет его; для нескольких сигналов используйте `AbortSignal.any()`.
 
-- `execute()` — запустить выполнение «извне» и получить тот же `Query<T>` (удобно для fire‑and‑forget с событиями).
+- `execute()` — запустить выполнение и вернуть тот же `Query<T>`. Дождитесь объекта через `await`, чтобы получить результат или ошибку.
 
 - `cancel()` — отменить выполнение. Эквивалентно `controller.abort()` для внутреннего AbortController.
 
@@ -225,23 +133,32 @@ console.log(
 
 На экземпляре `Query<T>` доступны события (через `on(event, listener)`):
 
-- `retry` — срабатывает при повторе; полезно для логирования.
+- `retry` — получает `RetryContext` при повторе самостоятельного запроса. Для повтора callback используйте опцию `onRetry` у `retrySession()` или `retryTransaction()`.
 - `stats` — статистика выполнения, если включена `withStats()`.
-- `done` — завершение с результатом.
-- `error` — ошибка выполнения.
-- `cancel` — отмена исполнения пользователем.
+- `done` — получает массив наборов результатов, каждый набор — массив строк, как при `await query`.
+- `error` — получает ошибку выполнения, если на событие есть подписчик. Дождитесь запроса через `await`, чтобы обработать его отказ.
+- `cancel` — событие без аргументов при явном вызове `query.cancel()`. Отмена внешним сигналом и таймаут не публикуют это событие.
 - `metadata` — gRPC трейлеры (например, server hints/headers).
 
 ```ts
-const q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
-q.on('retry', (ctx) => console.log('retry', ctx.attempt, ctx.error))
-q.on('stats', (s) => console.log('cpu', s.queryPhaseStats?.cpuTimeUs))
+import { StatsMode } from '@ydbjs/api/query'
+
+let q = sql`SELECT * FROM users`.withStats(StatsMode.FULL)
+
+q.on('retry', (ctx) => {
+  console.log('retry', ctx.attempt, ctx.error)
+})
+
+q.on('stats', (s) => {
+  console.log('cpu(us)', s.totalCpuTimeUs)
+})
+
 await q
 ```
 
 ## Параметры и типы
 
-Интерполяции `${...}` всегда параметризуются и автоматически конвертируются через `@ydbjs/value`.
+Значения в `${...}` передаются как параметры через `@ydbjs/value`; `identifier()`, `fragment()` и `unsafe()` добавляют структуру SQL.
 
 - Именованные параметры:
 
@@ -259,8 +176,8 @@ await sql`SELECT $id AS id`.parameter('id', 42)
 
 Запрос выбрасывает `YDBError` (или другие ошибки) при неуспехе. Повторные попытки управляются флагом `idempotent()` и кодами ошибок.
 
-- Коды `ABORTED/OVERLOADED/UNAVAILABLE/BAD_SESSION/SESSION_BUSY` — повторяются всегда.
-- Коды `SESSION_EXPIRED/UNDETERMINED/TIMEOUT` — повторяются только при `idempotent(true)`.
+- Статусы YDB `ABORTED/OVERLOADED/UNAVAILABLE/BAD_SESSION/SESSION_BUSY` допускают повтор, пока хватает бюджета callback и операция не отменена.
+- Статусы YDB `SESSION_EXPIRED/UNDETERMINED/TIMEOUT` требуют `idempotent(true)`. Для транспорта действует отдельное правило: gRPC `INTERNAL` и `UNAVAILABLE` тоже требуют идемпотентности. Отмена вызывающим кодом и локальный таймаут завершают операцию.
 
 ```ts
 try {

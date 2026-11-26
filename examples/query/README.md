@@ -13,6 +13,9 @@
 
 ## Запуск
 
+Поддерживаемые версии Node.js: `^22.23.5 || ^24.22.3 || >=26.13.1`.
+Используйте отдельную базу для примера: он удаляет существующие строки из `test_table`.
+
 ```bash
 # Установите зависимости
 npm install
@@ -44,40 +47,53 @@ npm run dev
 
 ```javascript
 try {
-  // работа с базой данных
+  await driver.ready()
+  await sql`SELECT 1`
 } finally {
-  driver.close() // всегда закрывайте соединение
+  try {
+    await sql.close()
+  } finally {
+    driver.close()
+  }
 }
 ```
 
 ### ✅ Параметризованные запросы
 
 ```javascript
-let searchId = 2n
-let result = await sql`SELECT * FROM table WHERE id = ${searchId}`
+import { Uint64 } from '@ydbjs/value/primitive'
+
+let searchId = new Uint64(2n)
+let [rows] = await sql`SELECT * FROM test_table WHERE id = ${searchId}`
 ```
 
 ### ✅ Работа с JSON в YDB
 
 ```javascript
-// Поиск по JSON-полю
-await sql`SELECT * FROM table
-    WHERE JSON_EXISTS(metadata, "$.tags[*]" PASSING ${tag} AS target
-        WHERE @ == target)`
+await sql`
+  SELECT id, title FROM test_table
+  WHERE JSON_EXISTS(metadata, "$.tags[*]")
+`
 ```
 
 ### ✅ Массовая вставка данных
 
 ```javascript
-let data = [{ id: 1n, name: 'test' }, ...]
-await sql`INSERT INTO table SELECT * FROM AS_TABLE(${data})`
+import { Uint64 } from '@ydbjs/value/primitive'
+
+let data = [
+  { id: new Uint64(4n), title: 'First' },
+  { id: new Uint64(5n), title: 'Second' },
+]
+
+await sql`UPSERT INTO test_table (id, title) SELECT id, title FROM AS_TABLE(${data})`
 ```
 
 ## Рекомендации
 
 - **Используйте TypeScript** для лучшей типизации результатов
 - **Обрабатывайте ошибки** с помощью try/catch
-- **Всегда закрывайте соединения** в finally блоке
+- **Закрывайте клиент перед драйвером** в блоке finally
 - **Используйте параметры** вместо конкатенации строк
 - **Изучите YDB типы** в пакете `@ydbjs/value`
 
@@ -99,4 +115,4 @@ npm start
 - **Транзакции** с `sql.begin()` или `sql.transaction()`
 - **Статистику запросов** с `.withStats()`
 - **Различные уровни изоляции** транзакций
-- **Обработку на основе событий (event‑based)** для больших результатов
+- **Потоковое чтение** через `session.stream()` внутри `QueryClient.retrySession()`
