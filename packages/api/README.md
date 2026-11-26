@@ -2,6 +2,8 @@
 
 The `@ydbjs/api` package provides TypeScript/JavaScript bindings for interacting with YDB services. It includes generated gRPC service definitions and protocol buffer types for various YDB APIs.
 
+Query API bindings include the `StrictSerializableRWModeSettings` transaction mode and optional `commitTimestamp` fields on `CommitTransactionResponse` and `ExecuteQueryResponsePart`. Generated `VirtualTimestamp` fields use `bigint` for both `uint64` values.
+
 ## Features
 
 - gRPC service definitions for YDB APIs
@@ -24,6 +26,7 @@ npm install @ydbjs/api
 import { DiscoveryServiceDefinition } from '@ydbjs/api/discovery'
 import { CmsServiceDefinition } from '@ydbjs/api/cms'
 import { QueryServiceDefinition } from '@ydbjs/api/query'
+import { SecretServiceDefinition } from '@ydbjs/api/secret'
 import { PileState, PileState_State } from '@ydbjs/api/bridge' // bridge / multi-pile (2-DC) clusters
 ```
 

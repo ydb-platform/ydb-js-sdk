@@ -7,6 +7,7 @@ import type { RetryContext } from '@ydbjs/retry'
 import { type JSValue, type Value, fromJs } from '@ydbjs/value'
 
 import {
+	type Isolation,
 	type QueryClient,
 	type QueryExecutor,
 	type StatementOptions,
@@ -18,6 +19,7 @@ import { cancellationError } from './cancellation.js'
 import { SessionPoolClosedError } from './session-pool.js'
 
 import type { QueryResult, ResultTypes } from './result.js'
+import type { VirtualTimestamp } from './virtual-timestamp.js'
 
 type QueryRows<T extends ResultTypes> = {
 	[Index in keyof T]: T[Index][]
@@ -58,15 +60,10 @@ export class Query<T extends ResultTypes = ResultTypes>
 	#poolId: string | undefined
 
 	#stats: QueryStats | undefined
+	#commitTimestamp: VirtualTimestamp | undefined
 	#statsMode: StatsMode = StatsMode.UNSPECIFIED
 
-	#isolation:
-		| 'implicit'
-		| 'serializableReadWrite'
-		| 'snapshotReadOnly'
-		| 'snapshotReadWrite'
-		| 'onlineReadOnly'
-		| 'staleReadOnly' = 'implicit'
+	#isolation: Isolation = 'implicit'
 	#isolationSettings: { allowInconsistentReads: boolean } | {} = {}
 
 	#raw: boolean = false
@@ -179,6 +176,7 @@ export class Query<T extends ResultTypes = ResultTypes>
 					linked.signal.throwIfAborted()
 
 					this.#stats = result.stats
+					this.#commitTimestamp = result.commitTimestamp
 
 					if (this.#stats) {
 						this.emit('stats', this.#stats)
@@ -313,6 +311,7 @@ export class Query<T extends ResultTypes = ResultTypes>
 	 *
 	 * @param mode Transaction isolation level:
 	 *  - 'serializableReadWrite' — serializable read/write
+	 *  - 'strictSerializableReadWrite' — strict serializable read/write
 	 *  - 'snapshotReadOnly' — snapshot read-only
 	 *  - 'snapshotReadWrite' — snapshot read/write
 	 *  - 'onlineReadOnly' — online read-only
@@ -323,19 +322,18 @@ export class Query<T extends ResultTypes = ResultTypes>
 	 * @returns The current instance for chaining
 	 */
 	isolation(
-		mode:
-			| 'implicit'
-			| 'serializableReadWrite'
-			| 'snapshotReadOnly'
-			| 'snapshotReadWrite'
-			| 'onlineReadOnly'
-			| 'staleReadOnly',
+		mode: Isolation,
 		settings: { allowInconsistentReads: boolean } | {} | undefined = {}
 	) {
 		this.#isolation = mode
 		this.#isolationSettings = settings
 
 		return this
+	}
+
+	/** Returns the commit position after a successful StrictSerializableRW write query. */
+	commitTimestamp(): VirtualTimestamp | undefined {
+		return this.#commitTimestamp
 	}
 
 	/** Returns the query execution statistics */

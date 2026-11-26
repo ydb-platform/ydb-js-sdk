@@ -220,6 +220,36 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 })
 ```
 
+### StrictSerializableRW commit timestamps
+
+Use `strictSerializableReadWrite` to request the strict serializable read/write mode. For a single query, keep the `Query` object to read its commit timestamp after execution:
+
+```ts
+const write = sql`UPSERT INTO users (id, name) VALUES (1, 'Alice')`.isolation(
+  'strictSerializableReadWrite'
+)
+await write
+const timestamp = write.commitTimestamp()
+```
+
+With the raw Query API, read `commitTimestamp` on the result of `session.execute()` or on `stream.summary` after fully consuming the stream.
+
+For an explicit transaction, `beginWithTimestamp` and `transactionWithTimestamp` return the callback result together with an optional commit timestamp. Existing `begin` and `transaction` return values are unchanged.
+
+```ts
+const { result, commitTimestamp } = await sql.beginWithTimestamp(
+  { isolation: 'strictSerializableReadWrite' },
+  async (tx) => {
+    await tx`UPSERT INTO users (id, name) VALUES (1, 'Alice')`
+    return 'saved'
+  }
+)
+```
+
+The timestamp is present only when the server reports a successful StrictSerializableRW transaction with write effects. Its `planStep` and `txId` are `bigint` values preserving the full unsigned 64-bit range. Use `timestamp.compare(otherTimestamp)` for lexicographic order by `planStep`, then `txId`. Comparison requires both values to come from the same `Driver`; the SDK cannot verify that values from separate drivers refer to the same database.
+
+CI tests both timestamp paths against YDB with `TableServiceConfig.EnableStrictSerializableIsolation` enabled. To run these cases locally, point `YDB_CONNECTION_STRING` at a server with this setting enabled and set `YDB_STRICT_RW_INTEGRATION=1`.
+
 ### Advanced: Multiple Result Sets, Streaming, and Events
 
 ```ts

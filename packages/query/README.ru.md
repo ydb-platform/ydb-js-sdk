@@ -186,6 +186,36 @@ await sql.begin({ isolation: 'snapshotReadOnly', idempotent: true }, async (tx) 
 })
 ```
 
+### Время коммита StrictSerializableRW
+
+Режим `strictSerializableReadWrite` включает строгую сериализуемую транзакцию чтения и записи. Для одиночного запроса сохраните объект `Query`, чтобы после выполнения получить время коммита:
+
+```ts
+const write = sql`UPSERT INTO users (id, name) VALUES (1, 'Alice')`.isolation(
+  'strictSerializableReadWrite'
+)
+await write
+const timestamp = write.commitTimestamp()
+```
+
+В низкоуровневом Query API `commitTimestamp` доступен в результате `session.execute()` или в `stream.summary` после полного чтения потока.
+
+Для явной транзакции используйте `beginWithTimestamp` или `transactionWithTimestamp`. Они возвращают результат callback и опциональное время коммита. Результат старых `begin` и `transaction` не меняется.
+
+```ts
+const { result, commitTimestamp } = await sql.beginWithTimestamp(
+  { isolation: 'strictSerializableReadWrite' },
+  async (tx) => {
+    await tx`UPSERT INTO users (id, name) VALUES (1, 'Alice')`
+    return 'saved'
+  }
+)
+```
+
+Время коммита приходит только для успешной StrictSerializableRW-транзакции с эффектами записи. Поля `planStep` и `txId` имеют тип `bigint` и сохраняют полный диапазон `uint64`. Метод `compare` сравнивает сначала `planStep`, затем `txId`. Сравнивать можно только значения, полученные через один и тот же `Driver`: SDK не может проверить, что разные драйверы подключены к одной БД.
+
+В CI оба способа получения метки коммита проверяются на YDB с включённым `TableServiceConfig.EnableStrictSerializableIsolation`. Для локального прогона укажите сервер с этой настройкой в `YDB_CONNECTION_STRING` и задайте `YDB_STRICT_RW_INTEGRATION=1`.
+
 ### Продвинутое: несколько наборов результатов, стриминг и события
 
 ```ts

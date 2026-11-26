@@ -3,9 +3,12 @@ import type { QueryStats } from '@ydbjs/api/query'
 import type { Column } from '@ydbjs/api/value'
 import type { Metadata } from '@ydbjs/grpc'
 
+import type { VirtualTimestamp } from './virtual-timestamp.js'
+
 export interface QuerySummary {
 	stats?: QueryStats | undefined
 	metadata?: Metadata | undefined
+	commitTimestamp?: VirtualTimestamp | undefined
 }
 
 export interface QueryPart<Row = Record<string, unknown>> {

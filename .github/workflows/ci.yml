@@ -68,6 +68,7 @@ jobs:
 
     env:
       TEST_RUNTIME: ${{ matrix.runtime }}
+      YDB_STRICT_RW_INTEGRATION: '1'
       YDB_STATIC_CREDENTIALS_USER: root
       YDB_STATIC_CREDENTIALS_PASSWORD: 1234
       YDB_STATIC_CREDENTIALS_ENDPOINT: grpc://localhost:2136
@@ -78,6 +79,20 @@ jobs:
     steps:
       # Checkout the repository
       - uses: actions/checkout@v7
+      - name: Enable strict serializable isolation
+        env:
+          YDB_CONTAINER_ID: ${{ job.services.ydb.id }}
+        run: |
+          docker exec -i "$YDB_CONTAINER_ID" bash -ec 'cat > /tmp/strict-serializable.pb.txt
+          /ydbd -s localhost:2136 admin console configs update /tmp/strict-serializable.pb.txt' <<'PROTO'
+          Actions {
+            AddConfigItem {
+              ConfigItem {
+                Config { TableServiceConfig { EnableStrictSerializableIsolation: true } }
+              }
+            }
+          }
+          PROTO
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node-version }}

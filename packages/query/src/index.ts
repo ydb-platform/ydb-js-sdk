@@ -8,6 +8,7 @@ import {
 	type QueryExecutor,
 	type Transaction,
 	type TransactionOptions,
+	type TransactionResult,
 } from './client.js'
 import { Query } from './query.js'
 import type { ResultTypes } from './result.js'
@@ -65,6 +66,17 @@ export interface SQLClient extends SQL, AsyncDisposable, Disposable {
 		options: TransactionExecuteOptions,
 		fn: TransactionContextCallback<T>
 	): Promise<T>
+
+	beginWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	beginWithTimestamp<T>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T>(fn: TransactionContextCallback<T>): Promise<TransactionResult<T>>
+	transactionWithTimestamp<T>(
+		options: TransactionExecuteOptions,
+		fn: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>>
 
 	/**
 	 * Create an UnsafeString that represents a DB identifier (table, column).
@@ -146,10 +158,32 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		options: TransactionExecuteOptions,
 		callback: TransactionContextCallback<T>
 	): Promise<T>
-	async function transact<T>(
+	function transact<T>(
 		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
 		callback?: TransactionContextCallback<T>
 	): Promise<T> {
+		return runTransaction(optionsOrCallback, callback, (options, run) =>
+			client.retryTransaction(options, run)
+		)
+	}
+
+	function transactWithTimestamp<T>(
+		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
+		callback?: TransactionContextCallback<T>
+	): Promise<TransactionResult<T>> {
+		return runTransaction(optionsOrCallback, callback, (options, run) =>
+			client.retryTransactionWithTimestamp(options, run)
+		)
+	}
+
+	async function runTransaction<T, R>(
+		optionsOrCallback: TransactionExecuteOptions | TransactionContextCallback<T>,
+		callback: TransactionContextCallback<T> | undefined,
+		retryTransaction: (
+			options: TransactionExecuteOptions,
+			run: (transaction: Transaction, signal: AbortSignal) => Promise<T>
+		) => Promise<R>
+	): Promise<R> {
 		if (typeof optionsOrCallback === 'function' && callback !== undefined)
 			throw new TypeError('Use transaction(options, callback) when passing options.')
 		let options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
@@ -158,28 +192,26 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 			throw new TypeError('transaction() requires an async callback.')
 		let callbackFailed = false
 		let callbackError: unknown
-		return client
-			.retryTransaction(options, (transaction, signal) =>
-				ctx.run({ client, executor: transaction, signal }, async () => {
-					callbackFailed = false
-					try {
-						return await caller(transactionSQL(transaction), signal)
-					} catch (error) {
-						callbackFailed = true
-						callbackError = error
-						throw error
-					}
-				})
-			)
-			.catch((error) => {
-				if (
-					callbackFailed &&
-					error === callbackError &&
-					!isRetryableError(error, options.idempotent)
-				)
-					throw new Error('Transaction failed.', { cause: error })
-				throw error
+		return retryTransaction(options, (transaction, signal) =>
+			ctx.run({ client, executor: transaction, signal }, async () => {
+				callbackFailed = false
+				try {
+					return await caller(transactionSQL(transaction), signal)
+				} catch (error) {
+					callbackFailed = true
+					callbackError = error
+					throw error
+				}
 			})
+		).catch((error) => {
+			if (
+				callbackFailed &&
+				error === callbackError &&
+				!isRetryableError(error, options.idempotent)
+			)
+				throw new Error('Transaction failed.', { cause: error })
+			throw error
+		})
 	}
 
 	function run<T>(callback: SessionContextCallback<T>): Promise<T>
@@ -206,6 +238,8 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 		do: run,
 		begin: transact,
 		transaction: transact,
+		beginWithTimestamp: transactWithTimestamp,
+		transactionWithTimestamp: transactWithTimestamp,
 		identifier,
 		unsafe,
 		fragment,
@@ -214,6 +248,7 @@ export function query(source: Driver | QueryClient, clientOptions?: QueryOptions
 }
 
 export { type Query } from './query.js'
+export { type VirtualTimestamp } from './virtual-timestamp.js'
 export { identifier, unsafe, UnsafeString, fragment, join, Fragment } from './yql.js'
 export {
 	type SessionPoolOptions,
@@ -237,6 +272,7 @@ export type {
 	TransactionStatementOptions,
 	OperationOptions,
 	TransactionOptions,
+	TransactionResult,
 	Transaction,
 	Isolation,
 } from './client.js'
